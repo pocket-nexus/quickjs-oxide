@@ -144,3 +144,64 @@ fn runtime_teardown_applies_queued_bytecode_context_and_atom_releases() {
     drop(runtime);
     assert!(weak.upgrade().is_none());
 }
+
+#[test]
+fn live_heap_reference_release_has_no_runtime_cleanup_payload() {
+    use super::{Heap, ObjectData, RawId};
+    use crate::engine::object::shape::Shape;
+
+    let mut heap = Heap::new();
+    let shape = heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap();
+    let object = heap
+        .allocate_object(ObjectData::ordinary(shape, Vec::new()))
+        .unwrap();
+    heap.release_shape(shape).unwrap();
+    heap.retain_object(object).unwrap();
+    assert!(
+        heap.release_reference(RawId::Object(object))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(heap.object_strong_count(object).unwrap(), 1);
+    let cleanup = heap
+        .release_reference(RawId::Object(object))
+        .unwrap()
+        .unwrap();
+    assert_eq!(cleanup.finalized_objects, 1);
+    assert_eq!(cleanup.finalized_shapes, 1);
+    assert_eq!(heap.counts().live, 0);
+    assert!(heap.release_reference(RawId::Object(object)).is_err());
+}
+
+#[test]
+fn nonzero_release_still_drains_previously_queued_nodes() {
+    use super::{Heap, ObjectData, RawId};
+    use crate::engine::object::shape::Shape;
+
+    let mut heap = Heap::new();
+    let shape = heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap();
+    let queued = heap
+        .allocate_object(ObjectData::ordinary(shape, Vec::new()))
+        .unwrap();
+    let retained = heap
+        .allocate_object(ObjectData::ordinary(shape, Vec::new()))
+        .unwrap();
+    heap.release_shape(shape).unwrap();
+    heap.retain_object(retained).unwrap();
+    heap.release_raw_no_drain(RawId::Object(queued)).unwrap();
+    assert!(!heap.zero_queue.is_empty());
+    let cleanup = heap
+        .release_reference(RawId::Object(retained))
+        .unwrap()
+        .unwrap();
+    assert_eq!(cleanup.finalized_objects, 1);
+    assert_eq!(cleanup.finalized_shapes, 0);
+    assert!(heap.object(queued).is_err());
+    assert_eq!(heap.object_strong_count(retained).unwrap(), 1);
+    assert!(heap.zero_queue.is_empty());
+    // The existing public API still returns the full cleanup counters.
+    let cleanup = heap.release_object(retained).unwrap();
+    assert_eq!(cleanup.finalized_objects, 1);
+    assert_eq!(cleanup.finalized_shapes, 1);
+    assert_eq!(heap.counts().live, 0);
+}

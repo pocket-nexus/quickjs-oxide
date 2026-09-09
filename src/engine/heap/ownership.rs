@@ -3,7 +3,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::atom::{Atom, AtomError};
 use crate::engine::heap::runtime::{DeferredRefOp, RuntimeOperation, RuntimeState};
-use crate::engine::heap::{ContextId, FunctionBytecodeId, HeapError, ObjectId, VarRefId};
+use crate::engine::heap::{ContextId, FunctionBytecodeId, HeapError, ObjectId, RawId, VarRefId};
 
 impl Runtime {
     #[inline]
@@ -116,6 +116,14 @@ impl Runtime {
     }
 }
 impl RuntimeState {
+    #[inline]
+    fn release_heap_reference(&mut self, id: RawId) -> Result<(), RuntimeError> {
+        if let Some(cleanup) = self.heap.release_reference(id)? {
+            self.apply_cleanup(cleanup)?;
+        }
+        Ok(())
+    }
+
     /// Apply one raw release or restoration operation at an existing safe point.
     #[inline]
     pub(crate) fn apply_deferred_operation(
@@ -123,26 +131,12 @@ impl RuntimeState {
         operation: DeferredRefOp,
     ) -> Result<(), RuntimeError> {
         match operation {
-            DeferredRefOp::Object(object) => self
-                .heap
-                .release_object(object)
-                .map_err(RuntimeError::Heap)
-                .and_then(|cleanup| self.apply_cleanup(cleanup)),
-            DeferredRefOp::Context(context) => self
-                .heap
-                .release_context(context)
-                .map_err(RuntimeError::Heap)
-                .and_then(|cleanup| self.apply_cleanup(cleanup)),
-            DeferredRefOp::FunctionBytecode(bytecode) => self
-                .heap
-                .release_function_bytecode(bytecode)
-                .map_err(RuntimeError::Heap)
-                .and_then(|cleanup| self.apply_cleanup(cleanup)),
-            DeferredRefOp::VarRef(var_ref) => self
-                .heap
-                .release_var_ref(var_ref)
-                .map_err(RuntimeError::Heap)
-                .and_then(|cleanup| self.apply_cleanup(cleanup)),
+            DeferredRefOp::Object(object) => self.release_heap_reference(RawId::Object(object)),
+            DeferredRefOp::Context(context) => self.release_heap_reference(RawId::Context(context)),
+            DeferredRefOp::FunctionBytecode(bytecode) => {
+                self.release_heap_reference(RawId::FunctionBytecode(bytecode))
+            }
+            DeferredRefOp::VarRef(var_ref) => self.release_heap_reference(RawId::VarRef(var_ref)),
             DeferredRefOp::Atom(atom) => self.atoms.release(atom).map(drop).map_err(Into::into),
             DeferredRefOp::ActiveFramePop { token, depth } => {
                 if let Some(position) = self

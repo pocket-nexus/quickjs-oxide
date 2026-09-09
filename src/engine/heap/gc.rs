@@ -1011,8 +1011,22 @@ impl Heap {
     }
 
     pub(super) fn release_and_drain(&mut self, id: RawId) -> Result<HeapCleanup, HeapError> {
+        Ok(self.release_reference(id)?.unwrap_or_default())
+    }
+
+    /// Release one reference, returning runtime cleanup only when the zero
+    /// queue has work. Inspect the whole queue: an earlier no-drain release may
+    /// have queued a different node even when this reference remains nonzero.
+    #[inline]
+    pub(super) fn release_reference(
+        &mut self,
+        id: RawId,
+    ) -> Result<Option<HeapCleanup>, HeapError> {
         self.release_raw_no_drain(id)?;
-        self.drain_zero_queue()
+        if self.zero_queue.is_empty() {
+            return Ok(None);
+        }
+        self.drain_zero_queue().map(Some)
     }
 
     pub(super) fn release_raw_no_drain(&mut self, id: RawId) -> Result<(), HeapError> {
