@@ -24,6 +24,7 @@
 - [mod.rs](mod.rs)：模块入口、共享接口与子模块声明。
 - [native_stack.rs](native_stack.rs)：Deterministic native-call stack budgeting.。
 - [numeric.rs](numeric.rs)：numeric 的类型和操作实现。
+- [numeric_coercion_tests.rs](numeric_coercion_tests.rs)：原始值直通及对象转换顺序回归测试。
 - [numeric_execution.rs](numeric_execution.rs)：数值指令执行。
 - [protocol.rs](protocol.rs)：执行请求、宿主协议和 VM 入口。
 - [tests.rs](tests.rs)：模块回归测试。
