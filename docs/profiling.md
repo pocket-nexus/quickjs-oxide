@@ -6,6 +6,8 @@ allocation trace, lifecycle timing and benchmark workflow proposed in
 are off by default. This is an observability baseline, not a CPU/call-stack
 sampler or a claim of feature/performance parity with QuickJS.
 
+Measured remote results and validation evidence: [PocketLab baseline](reports/profiler-baseline.md).
+
 ## Build and run
 
 ```sh
