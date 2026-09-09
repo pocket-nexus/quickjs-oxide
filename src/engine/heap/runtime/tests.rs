@@ -861,5 +861,3 @@ mod shapes;
 mod weak_references;
 
 mod dynamic_import;
-
-mod static_property_keys;

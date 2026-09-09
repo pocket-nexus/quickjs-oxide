@@ -173,14 +173,14 @@ impl Heap {
                     if let Some(keys) = &data.property_key_atoms
                         && seen_property_keys.insert(Rc::as_ptr(keys))
                     {
-                        *property_keys.count.as_mut().unwrap() +=
-                            keys.iter().filter(|atom| !atom.is_null()).count();
                         add_storage(
                             &mut property_keys,
                             keys.len(),
                             keys.len(),
                             size_of::<Atom>(),
                         );
+                        *property_keys.count.as_mut().unwrap() -=
+                            keys.iter().filter(|atom| atom.is_null()).count();
                     }
                 }
                 _ => {}

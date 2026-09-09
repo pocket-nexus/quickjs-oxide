@@ -1,4 +1,8 @@
-use super::*;
+use super::Runtime;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::metadata::FunctionMetadata;
+use crate::engine::code::function::{UnlinkedConstant, UnlinkedFunction};
+use crate::engine::value::{JsString, Value};
 
 fn repeated_static_name_draft() -> UnlinkedFunction {
     UnlinkedFunction::fixture(
