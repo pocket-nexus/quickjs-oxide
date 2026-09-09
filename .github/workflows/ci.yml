@@ -68,6 +68,7 @@ jobs:
           cargo fmt --all -- --check
           ./scripts/checks/check-binary-object-boundary.sh
           PYTHONPATH=scripts/checks python3 -m unittest discover -s scripts/checks/binary_object/tests
+          python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'
           ./scripts/checks/check-no-test262-special-casing.sh
           node scripts/checks/check-test262-artifact-inventory.mjs
           node scripts/checks/check-bc5-pinned-atoms.mjs --self-test
@@ -99,6 +100,8 @@ jobs:
       - name: Run fast engine tests
         run: |
           cargo test --locked --workspace --all-targets
+          cargo test --locked -p quickjs-oxide-cli --features profiling --test profiling --bin qjs
+          cargo test --locked -p quickjs-oxide --features profiling --lib profiling_
           cargo test --locked --workspace --doc
           cargo test --locked --workspace --features test262-host --lib --bins
           cargo test --locked --features test262-host \
@@ -110,6 +113,7 @@ jobs:
       - name: Lint production targets
         run: |
           cargo clippy --locked --workspace --lib --bins -- -D warnings
+          cargo clippy --locked -p quickjs-oxide-cli --features profiling --bin qjs -- -D warnings
           cargo clippy --locked --test oracle -- -D warnings
           cargo clippy --locked --workspace --features test262-host \
             --lib --bins -- -D warnings
