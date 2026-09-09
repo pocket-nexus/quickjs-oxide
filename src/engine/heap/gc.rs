@@ -153,6 +153,8 @@ impl Heap {
     }
 
     /// Release one frame or closure ownership of a captured-variable cell.
+    // Keep the typed cleanup-returning entry point; Runtime uses optional cleanup.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn release_var_ref(&mut self, id: VarRefId) -> Result<HeapCleanup, HeapError> {
         self.release_and_drain(RawId::VarRef(id))
     }
@@ -163,6 +165,8 @@ impl Heap {
     }
 
     /// Release one function-bytecode reference and iteratively drain nodes.
+    // Keep the typed cleanup-returning entry point; Runtime uses optional cleanup.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn release_function_bytecode(
         &mut self,
         id: FunctionBytecodeId,
