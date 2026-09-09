@@ -238,7 +238,10 @@ struct ArenaSlot {
 /// A `Heap` is deliberately not internally synchronized.  The enclosing
 /// runtime chooses its single-threaded ownership boundary, as QuickJS does.
 pub struct Heap {
+    #[cfg(not(feature = "profiling"))]
     slots: Vec<ArenaSlot>,
+    #[cfg(feature = "profiling")]
+    slots: profiling::ArenaStorage,
     free: Vec<u32>,
     zero_queue: VecDeque<RawId>,
     weak_head: Option<ObjectId>,
@@ -374,6 +377,9 @@ pub use buffer_records::*;
 mod arena;
 
 mod allocation;
+
+#[cfg(feature = "profiling")]
+pub(crate) mod profiling;
 
 mod realm_storage;
 

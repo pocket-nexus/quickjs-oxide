@@ -6,6 +6,7 @@ Implementations have a single owner:
 | --- | --- |
 | `checks/` | Architecture and provenance checks, BC5 pin checks, oracle inventory, aggregate parity gate |
 | `test262/` | Suite preparation, admission generators, diagnostics, metrics and receipt verification |
+| `benchmark/` | External workload runners, profiler experiments and build/result provenance |
 | `quickjs/` | Pinned reference builds, cache tests, differential fixtures and dynamic-import traces |
 | `unicode/` | Unicode table generation and source-fingerprint verification |
 | `web/` | Playground build, Node/browser checks and Pages deployment tooling |

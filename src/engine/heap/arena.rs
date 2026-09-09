@@ -4,7 +4,10 @@ impl Heap {
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            #[cfg(not(feature = "profiling"))]
             slots: Vec::new(),
+            #[cfg(feature = "profiling")]
+            slots: profiling::ArenaStorage::new(),
             free: Vec::new(),
             zero_queue: VecDeque::new(),
             weak_head: None,

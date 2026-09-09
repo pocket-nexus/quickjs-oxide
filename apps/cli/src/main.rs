@@ -1,3 +1,5 @@
+mod profiling;
+
 use quickjs_oxide::QUICKJS_COMPAT_VERSION;
 use quickjs_oxide::engine::api::{
     Context, DebugInfoMode, DescriptorField, JsString, ModuleImportAttributes,
@@ -116,6 +118,7 @@ fn module_import_meta_properties(
 
 fn main() -> ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut profile = profiling::Options::default();
     let mut debug_info = DebugInfoMode::Full;
     let mut expression = None;
     let mut print_result = false;
@@ -148,9 +151,40 @@ fn main() -> ExitCode {
                 println!("      --strip-source strip only function source text");
                 println!("      --print-result print the script completion value");
                 println!("  -v, --version     show version and compatibility target");
+                profiling::help();
                 return ExitCode::SUCCESS;
             }
             "--quit" => quit = true,
+            "--dump" => profile.dump = true,
+            "--trace" => profile.trace = true,
+            "--profile-json" => profile.json = true,
+            "--profile-output" | "--profile-events" | "--profile-iterations" => {
+                let Some(value) = args.get(index) else {
+                    eprintln!("qjs: {option} requires a value");
+                    return ExitCode::from(2);
+                };
+                index += 1;
+                if option == "--profile-output" {
+                    profile.output = Some(value.clone());
+                } else {
+                    let number = value.parse::<usize>().ok().filter(|n| {
+                        if option == "--profile-events" {
+                            *n <= 1_000_000
+                        } else {
+                            (1..=10_000).contains(n)
+                        }
+                    });
+                    let Some(number) = number else {
+                        eprintln!("qjs: invalid value for {option}: {value}");
+                        return ExitCode::from(2);
+                    };
+                    if option == "--profile-events" {
+                        profile.events = Some(number);
+                    } else {
+                        profile.iterations = Some(number);
+                    }
+                }
+            }
             "--eval" => {
                 let Some(source) = args.get(index) else {
                     eprintln!("qjs: -e requires an expression");
@@ -165,6 +199,8 @@ fn main() -> ExitCode {
                         's' => debug_info = DebugInfoMode::StripDebug,
                         'm' => source_goal = SourceGoal::Module,
                         'q' => quit = true,
+                        'd' => profile.dump = true,
+                        'T' => profile.trace = true,
                         'v' => {
                             println!(
                                 "quickjs-oxide {} (QuickJS {} compatibility target)",
@@ -181,6 +217,7 @@ fn main() -> ExitCode {
                             println!("  -s                strip all debug information");
                             println!("      --strip-source strip only function source text");
                             println!("  -v, --version     show version and compatibility target");
+                            profiling::help();
                             return ExitCode::SUCCESS;
                         }
                         'e' => {
@@ -211,11 +248,27 @@ fn main() -> ExitCode {
         }
     }
 
+    if let Err(error) = profile.validate(quit) {
+        eprintln!("qjs: {error}");
+        return ExitCode::from(2);
+    }
     if quit {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let mut session = match profiling::Session::new(&profile) {
+            Ok(session) => session,
+            Err(error) => {
+                eprintln!("qjs: cannot open profiling output: {error}");
+                return ExitCode::from(2);
+            }
+        };
+        let runtime = session.runtime();
         runtime.set_debug_info_mode(debug_info);
-        let _context = runtime.new_context();
+        {
+            let _context = runtime.new_context();
+            let snapshot = session.snapshot_guard(&runtime);
+            snapshot.phase("initialized-before-context-drop");
+        }
+        drop(runtime);
+        session.lifecycle();
         return ExitCode::SUCCESS;
     }
     if let Some(source) = expression {
@@ -238,12 +291,14 @@ fn main() -> ExitCode {
             &args[index..],
             debug_info,
             print_result,
+            &profile,
         );
     }
     let Some(file) = args.get(index) else {
         println!("usage: qjs [options] [file [args]]");
         println!("  -e, --eval EXPR   evaluate EXPR");
         println!("  -v, --version     show version and compatibility target");
+        profiling::help();
         return ExitCode::SUCCESS;
     };
     match std::fs::read(file) {
@@ -261,6 +316,7 @@ fn main() -> ExitCode {
                 &args[index..],
                 debug_info,
                 print_result,
+                &profile,
             )
         }
         Err(error) => {
@@ -276,6 +332,7 @@ enum EvaluationSource<'a> {
     Bytes(&'a [u8]),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate(
     source: EvaluationSource<'_>,
     filename: &str,
@@ -284,14 +341,23 @@ fn evaluate(
     script_args: &[String],
     debug_info: DebugInfoMode,
     print_result: bool,
+    profile: &profiling::Options,
 ) -> ExitCode {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    // Declared before runtime so trace serialization happens after teardown.
+    let mut session = match profiling::Session::new(profile) {
+        Ok(session) => session,
+        Err(error) => {
+            eprintln!("qjs: cannot open profiling output: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let runtime = session.runtime();
     runtime.set_debug_info_mode(debug_info);
     // Upstream qjs installs its filesystem loader for every process, including
     // Script-goal `-e`, so dynamic import has the same host boundary everywhere.
     let _module_loader = runtime.set_module_loader(FileModuleLoader);
     let mut context = runtime.new_context();
+    let snapshot = session.snapshot_guard(&runtime);
     let script_args = match script_args
         .iter()
         .map(|argument| JsString::try_from_utf8(argument).map_err(RuntimeError::from))
@@ -337,6 +403,7 @@ fn evaluate(
                     }
                 }
             }
+            snapshot.phase("after-jobs-before-context-drop");
             if print_result {
                 println!("{}", completion_text(value));
             }

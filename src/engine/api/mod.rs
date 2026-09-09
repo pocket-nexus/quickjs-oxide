@@ -33,6 +33,9 @@ pub(crate) mod runtime_error;
 
 pub(crate) mod runtime;
 
+#[cfg(feature = "profiling")]
+pub mod profiling;
+
 #[cfg(feature = "test262-host")]
 pub(crate) mod test262_agent;
 

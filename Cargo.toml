@@ -17,6 +17,7 @@ num-traits = { workspace = true }
 default = []
 test262-host = []
 test-support = []
+profiling = []
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
 

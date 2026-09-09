@@ -21,3 +21,5 @@
 ## 模块加载契约
 
 `ModuleLoader` 只有 `normalize`、`check_attributes` 和 `load` 三个回调，均接收发起请求的 `&mut Context`。`load` 同时接收模块名与导入属性，直接返回 `ModuleLoadResult`；不再提供旧的仅字符串加载回调或逐层适配方法。默认名称规范化和空属性校验仍提供实际默认行为。
+
+- [profiling.rs](profiling.rs)：可选只读内存快照 API、有限容量诊断记录及数据契约。

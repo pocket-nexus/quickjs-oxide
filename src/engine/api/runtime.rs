@@ -30,6 +30,17 @@ impl Runtime {
     /// lifetime. The application selects the concrete provider at this embedding boundary.
     #[must_use]
     pub fn new_with_host_services(host_services: impl HostServices + 'static) -> Self {
+        Self::new_configured(
+            host_services,
+            #[cfg(feature = "profiling")]
+            None,
+        )
+    }
+
+    fn new_configured(
+        host_services: impl HostServices + 'static,
+        #[cfg(feature = "profiling")] trace: Option<super::profiling::AllocationTrace>,
+    ) -> Self {
         let host_services: Rc<dyn HostServices> = Rc::new(host_services);
         let domain_id = NEXT_RUNTIME_DOMAIN_ID.fetch_add(1, Ordering::Relaxed);
         assert_ne!(domain_id, 0, "runtime domain ID space exhausted");
@@ -45,7 +56,14 @@ impl Runtime {
         Self(Rc::new(RuntimeInner {
             state: RefCell::new(RuntimeState {
                 atoms,
-                heap: Heap::new(),
+                heap: {
+                    #[cfg(feature = "profiling")]
+                    {
+                        Heap::with_allocation_trace(trace)
+                    }
+                    #[cfg(not(feature = "profiling"))]
+                    Heap::new()
+                },
                 pending_exception: None,
                 pending_jobs: VecDeque::new(),
                 debug_info_mode: DebugInfoMode::Full,
@@ -74,6 +92,22 @@ impl Runtime {
             next_context_id: Cell::new(0),
             domain_id,
         }))
+    }
+
+    /// Start a bounded, partial allocation trace before runtime initialization.
+    /// The returned handle owns diagnostic records, never runtime/JS roots.
+    /// Read it after dropping every context, value and runtime handle to include
+    /// teardown. See `AllocationTrace` for the exact coverage contract.
+    #[cfg(feature = "profiling")]
+    #[must_use]
+    pub fn new_with_allocation_trace(
+        host_services: impl HostServices + 'static,
+        max_events: usize,
+    ) -> (Self, super::profiling::AllocationTrace) {
+        let trace = super::profiling::AllocationTrace::new(max_events);
+        let runtime = Self::new_configured(host_services, Some(trace.clone()));
+        trace.set_runtime_id(runtime.domain_id());
+        (runtime, trace)
     }
 
     /// Set the runtime-wide debug information policy for future compilations.

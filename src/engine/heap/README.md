@@ -38,3 +38,5 @@
 - [suspension_storage.rs](suspension_storage.rs)：suspension 的存储变更和引用边维护。
 - [tests/](tests/README.md)：子模块职责与文件说明。
 - [tests.rs](tests.rs)：模块回归测试。
+
+- [profiling.rs](profiling.rs)：可选 arena backing storage 跟踪和资源拥有者的内存统计。

@@ -338,7 +338,7 @@ impl AtomTable {
     ///
     /// Null and immediate integer atoms are not stored and are not counted.
     #[must_use]
-    #[cfg(test)]
+    #[cfg(any(test, feature = "profiling"))]
     pub const fn len(&self) -> usize {
         self.live_table_atoms
     }
