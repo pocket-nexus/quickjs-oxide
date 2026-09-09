@@ -216,7 +216,7 @@ mod enabled {
                     write!(out, ",\"timer\":\"monotonic-wall\",\"unit\":\"ns\",\"instrumentation\":\"off\",\"iterations\":{},\"phases\":[\"runtime_create\",\"context_create\",\"context_drop\",\"runtime_drop\"],\"samples\":[", samples.len())?;
                     for (index, sample) in samples.iter().enumerate() {
                         if index != 0 { write!(out, ",")?; }
-                        write!(out, "{:?}", sample)?;
+                        write!(out, "{sample:?}")?;
                     }
                     writeln!(out, "],\"minimum_per_phase_ns\":{:?},\"sum_of_phase_minima_ns\":{},\"aggregation\":\"independent-phase-minima; sum need not be one iteration\"}}", minimum, minimum.iter().sum::<u128>())
                 } else {
