@@ -55,6 +55,21 @@ fn static_property_keys_reuse_one_owned_atom_and_release_with_bytecode() {
         keys[0]
     };
     assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
+    #[cfg(feature = "profiling")]
+    {
+        let snapshot = runtime.memory_snapshot();
+        let keys = snapshot
+            .categories
+            .iter()
+            .find(|entry| entry.name == "bytecode_property_keys")
+            .unwrap();
+        assert_eq!(keys.count, Some(1));
+        assert_eq!(
+            keys.used_bytes,
+            Some(size_of::<crate::engine::atom::Atom>())
+        );
+        assert_eq!(snapshot, runtime.memory_snapshot());
+    }
     for _ in 0..3 {
         assert_eq!(
             context.execute(&bytecode).unwrap(),
@@ -84,10 +99,14 @@ fn static_property_keys_are_runtime_local_and_failed_publication_rolls_back() {
     let mut first_context = first.new_context();
     let second = Runtime::new();
     let second_context = second.new_context();
+    let expired = first.new_context();
+    let expired_realm = expired.realm;
+    drop(expired);
+    first.run_gc().unwrap();
     let baseline = first.test_atom_count();
     assert!(
         first
-            .publish_unlinked_function(second_context.realm, repeated_static_name_draft())
+            .publish_unlinked_function(expired_realm, repeated_static_name_draft())
             .is_err()
     );
     assert_eq!(first.test_atom_count(), baseline);
