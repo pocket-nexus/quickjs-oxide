@@ -66,15 +66,19 @@ The default initial matrix is `empty_loop`, `prop_read`, `array_read`,
 `func_call`, and `int_arith`. `--case` follows the original function-name prefix
 matching. The tool admits ordinary benchmark rows with N and ns/op; specialized
 sort output that does not match this contract is retained as incomplete rather
-than assigned a score. Neither engine uses `--std`, so both use the script's
-unchanged Date.now fallback. Its millisecond resolution and minimum-of-many
+than assigned a score. A shared prefix disables `performance`/`os` clock
+selection on both engines, preserving every byte of the original body and using
+its existing Date.now fallback. This is necessary because pinned QuickJS adds
+`performance.now` even without `--std`, while Oxide currently does not. A dynamic
+clock marker is checked on every run; mismatched clocks disqualify the result.
+Prepared microbench source stays in an external temporary directory, with its
+path/hash and exact prefix/hash recorded in metadata. Its millisecond resolution and minimum-of-many
 sampling limit what the resulting ns/op says; these are not individual-operation
-latency distributions. Engine-specific `performance`/`os` globals would change
-the clock: use the documented qjs binaries for this comparison.
+latency distributions. No ratio is admitted without the matching clock marker.
 
 Reference loading/saving in JS is not needed. Python records stdout, per-run
 ns/op, N, median/min/max/stdev across independent runs and per-case ratios.
-The workload itself is untouched. On engines without `std`/`fs`, the harness's
+Only the shared clock prefix is added; workload bodies are untouched. On engines without `std`/`fs`, the harness's
 reference-file operations are no-ops; Python owns result files.
 
 ## Profiler collection and overhead

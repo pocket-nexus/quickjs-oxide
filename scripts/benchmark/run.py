@@ -13,9 +13,16 @@ import statistics
 import subprocess
 import time
 import threading
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 LOAD = re.compile(r"load\('([^']+)'\);")
+MICROBENCH_CLOCK_PREFIX = (
+    "// Identical host clock adaptation; benchmark bodies below are unchanged.\n"
+    "var performance = undefined; var os = undefined;\n"
+    'console.log("__oxide_clock__:" + (typeof performance !== "undefined" ? '
+    '"performance.now" : typeof os !== "undefined" ? "os.now" : "Date.now"));\n'
+)
 NUMBER = r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 
 
@@ -112,22 +119,29 @@ def prepare_microbench(source, cases):
     selected = cases or ["empty_loop", "prop_read", "array_read", "func_call", "int_arith"]
     if len(set(selected)) != len(selected) or any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", c) for c in selected):
         raise ValueError("microbench cases must be unique function-name prefixes")
-    text = source.read_text()
+    original = source.read_bytes()
+    text = original.decode("utf-8")
     # Prefix matching is the unmodified upstream harness behavior. Preserve it.
     test_list = re.search(r"var test_list = \[(.*?)\];", text, re.S)
     if test_list is None:
         raise ValueError("unrecognized microbench test list")
     names = re.findall(r"\b[A-Za-z_]\w*\b", test_list[1])
     names.extend(re.findall(r"test_list.push\((\w+)\)", text))
+    prepared_dir = Path(tempfile.mkdtemp(prefix="quickjs-oxide-microbench-"))
+    prepared = prepared_dir / "microbench.js"
+    prepared.write_bytes(MICROBENCH_CLOCK_PREFIX.encode() + original)
     workloads = []
     for case in selected:
         expected = [name for name in names if name.startswith(case)]
         if not expected:
             raise ValueError(f"unknown microbench prefix: {case}")
-        workloads.append({"case": case, "path": str(source), "args": [case],
-                          "sha256": digest(source), "expected": expected})
-    return workloads, {"source": str(source), "sha256": digest(source), "adaptation": "none; same script and arguments; no --std on either qjs",
-                       "timer": "Date.now fallback (millisecond clock, rounded to next tick) for both qjs builds",
+        workloads.append({"case": case, "path": str(prepared), "args": [case],
+                          "sha256": digest(prepared), "expected": expected})
+    return workloads, {"source": str(source), "sha256": digest(source), "prepared_source": str(prepared),
+                       "prepared_sha256": digest(prepared), "adaptation": "identical prefix disables optional performance/os clocks on both engines; original body bytes unchanged",
+                       "adaptation_prefix": MICROBENCH_CLOCK_PREFIX,
+                       "adaptation_sha256": hashlib.sha256(MICROBENCH_CLOCK_PREFIX.encode()).hexdigest(),
+                       "timer": "verified Date.now fallback on every run (millisecond clock, rounded to next tick)",
                        "metric": "upstream minimum ns/op; lower is better; not a distribution of individual operations"}
 
 
@@ -145,6 +159,9 @@ def parse_v8(text, expected):
 
 
 def parse_microbench(text, expected):
+    clocks = [line for line in text.splitlines() if line.startswith("__oxide_clock__:")]
+    if clocks != ["__oxide_clock__:Date.now"]:
+        raise ValueError("missing or mismatched clock proof; microbench requires identical Date.now fallback")
     values = {}
     for line in text.splitlines():
         match = re.fullmatch(rf"\s*(\w+)\s+(\d+)\s+({NUMBER})\s*", line)

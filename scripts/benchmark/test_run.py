@@ -20,7 +20,24 @@ class Results(unittest.TestCase):
     def test_microbench_requires_every_selected_result(self):
         with self.assertRaises(ValueError):
             runner.parse_microbench(" prop_read 1000 2.3\n", ["prop_read", "prop_write"])
-        self.assertEqual(runner.parse_microbench(" prop_read 1000 2.3\n total 2.3\n", ["prop_read"])["prop_read"]["ns_per_op"], 2.3)
+        self.assertEqual(runner.parse_microbench("__oxide_clock__:Date.now\n prop_read 1000 2.3\n total 2.3\n", ["prop_read"])["prop_read"]["ns_per_op"], 2.3)
+
+    def test_microbench_rejects_wrong_clock_even_with_valid_results(self):
+        with self.assertRaises(ValueError):
+            runner.parse_microbench("__oxide_clock__:performance.now\n prop_read 1000 2.3\n", ["prop_read"])
+
+    def test_clock_adaptation_preserves_every_original_body_byte(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "microbench.js"
+            original = b"// synthetic fixture\r\nvar test_list = [empty_loop];\r\nfunction empty_loop(n) { return n; }\r\n"
+            source.write_bytes(original)
+            workloads, metadata = runner.prepare_microbench(source, ["empty_loop"])
+            prepared = Path(workloads[0]["path"])
+            self.assertEqual(prepared.read_bytes(), runner.MICROBENCH_CLOCK_PREFIX.encode() + original)
+            self.assertEqual(source.read_bytes(), original)
+            self.assertNotEqual(metadata["sha256"], metadata["prepared_sha256"])
+            prepared.unlink()
+            prepared.parent.rmdir()
 
     def test_one_failed_repetition_disqualifies_comparison(self):
         summary = runner.summarize([
