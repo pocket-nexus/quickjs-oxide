@@ -1,6 +1,7 @@
+use quickjs_oxide::engine::api::testing::{
+    to_exponential, to_fixed, to_precision, to_string_radix,
+};
 use std::process::Command;
-
-use quickjs_oxide::number::{to_exponential, to_fixed, to_precision, to_string_radix};
 
 #[test]
 fn number_formatting_kernel_matches_pinned_quickjs() {

@@ -23,7 +23,7 @@ def check(ctx):
         )
 
     construct_dispatch = ctx.stage3b_function(
-        "crates/engine/src/runtime.rs", "construct_internal_with_new_target", "stage3b-raw-construction"
+        "src/engine/heap/runtime/mod.rs", "construct_internal_with_new_target", "stage3b-raw-construction"
     )
 
     normalized_construct_dispatch = " ".join(construct_dispatch.split())
@@ -34,13 +34,13 @@ def check(ctx):
     ):
         ctx.fail("stage3b-raw-construction", "native, derived, and base paths must preserve one raw newTarget flow")
 
-    apply_host = ctx.stage3b_function("crates/engine/src/runtime/vm_host.rs", "apply", "stage3b-apply-order")
+    apply_host = ctx.stage3b_function("src/engine/vm/host_bridge.rs", "apply", "stage3b-apply-order")
 
     if " ".join(apply_host.split()).count("build_argument_list(") != 1:
         ctx.fail("stage3b-apply-order", "Apply must build a nonnull argument list exactly once")
 
     realm_object_impl = ctx.stage3b_function(
-        "crates/engine/src/runtime/internal_methods.rs", "function_realm_object_impl", "stage3b-function-realm"
+        "src/engine/object/internal_methods.rs", "function_realm_object_impl", "stage3b-function-realm"
     )
 
     if " ".join(realm_object_impl.split()).count(
@@ -49,15 +49,15 @@ def check(ctx):
         ctx.fail("stage3b-function-realm", "bound and Proxy realm traversal must each advance to their target")
 
     prototype_helper = ctx.stage3b_function(
-        "crates/engine/src/runtime.rs", "prototype_from_constructor_value", "stage3b-constructor-prototype"
+        "src/engine/heap/runtime/mod.rs", "prototype_from_constructor_value", "stage3b-constructor-prototype"
     )
 
     if re.search(r"\b(?:CallableRef|callable_from_value|as_callable)\b", prototype_helper):
         ctx.fail("stage3b-constructor-prototype", "prototype fallback must consume raw newTarget")
 
     native_borrowed_prototype_consumers = (
-        ("crates/engine/src/runtime.rs", "create_from_constructor_value"),
-        ("crates/engine/src/runtime/intrinsics/array.rs", "create_array_from_constructor"),
+        ("src/engine/heap/runtime/mod.rs", "create_from_constructor_value"),
+        ("src/engine/builtins/array.rs", "create_array_from_constructor"),
     )
 
     native_owned_prototype_consumers = deepcopy(evidence.NATIVE_OWNED_PROTOTYPE_CONSUMERS)
@@ -86,7 +86,7 @@ def check(ctx):
             ctx.fail(diagnostic, f"{ctx.relative}::{ctx.function_name} must preserve constructor-only capability")
 
     context_construct = ctx.stage3b_function(
-        "crates/engine/src/runtime/context/calls.rs", "construct_with_new_target", "stage3b-public-construction"
+        "src/engine/api/context/calls.rs", "construct_with_new_target", "stage3b-public-construction"
     )
 
     if "raw_new_target" in " ".join(context_construct.split()):
@@ -112,7 +112,7 @@ def check(ctx):
 
     stage3b_runtime_test_contracts = deepcopy(evidence.STAGE3B_RUNTIME_TEST_CONTRACTS)
 
-    runtime_tests_code = ctx.rust_code_only(ctx.read_source("crates/engine/src/runtime/tests.rs"))
+    runtime_tests_code = ctx.rust_code_only(ctx.read_source("src/engine/heap/runtime/tests.rs"))
 
     missing_stage3b_tests = []
 
@@ -124,7 +124,7 @@ def check(ctx):
             missing_stage3b_tests.append(ctx.name)
             continue
         declaration = ctx.declarations[0]
-        previous_item_end = runtime_tests_code.rfind("}", 0, declaration.start()) + 1
+        previous_item_end = max(runtime_tests_code.rfind("}", 0, declaration.start()), runtime_tests_code.rfind(";", 0, declaration.start())) + 1
         attributes = runtime_tests_code[previous_item_end:declaration.start()]
         if " ".join(attributes.split()) != "#[test]":
             missing_stage3b_tests.append(ctx.name)
@@ -132,7 +132,7 @@ def check(ctx):
     drifted_stage3b_tests = []
 
     for ctx.name, ctx.anchors in stage3b_runtime_test_contracts:
-        ctx.item = ctx.stage3b_function("crates/engine/src/runtime/tests.rs", ctx.name, "stage3b-runtime-evidence")
+        ctx.item = ctx.stage3b_function("src/engine/heap/runtime/tests.rs", ctx.name, "stage3b-runtime-evidence")
         ctx.normalized_item = " ".join(ctx.item.split())
         if any(anchor not in ctx.normalized_item for anchor in ctx.anchors):
             drifted_stage3b_tests.append(ctx.name)
@@ -226,7 +226,7 @@ def check(ctx):
             f"missing {missing_stage3c_tests}, drifted {drifted_stage3c_tests}",
         )
 
-    stage3d_runtime_tests_code = ctx.stage3b_code("crates/engine/src/runtime/tests.rs")
+    stage3d_runtime_tests_code = ctx.stage3b_code("src/engine/heap/runtime/tests.rs")
 
     stage3d_throw_wire_matches = list(re.finditer(
         r"\bconst[ \t\n]+QUICKJS_ORDINARY_THROW_BC5[ \t\n]*:"

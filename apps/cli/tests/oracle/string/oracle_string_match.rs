@@ -1,12 +1,9 @@
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
 };
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
-use crate::runtime_oracle::value_type;
+use crate::runtime_oracle::{eval_callable, eval_object, value_type};
+use quickjs_oxide::engine::api::{Context, JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{Context, JsString, Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.match branch (`quickjs.c` 45609-45657), abstract RegExpExec
@@ -520,7 +517,8 @@ fn match_protocol_recursion_is_catchable_and_recovers_like_pinned_quickjs() {
 
 #[test]
 fn match_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
@@ -662,7 +660,8 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
         .name("string-regexp-match-stack-proof".into())
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {
-            let runtime = Runtime::new();
+            let runtime =
+                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
             let mut context = runtime.new_context();
             context
                 .eval(
@@ -732,7 +731,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     };
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);

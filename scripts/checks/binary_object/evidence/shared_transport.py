@@ -2,7 +2,7 @@
 
 REVIEWED_ENTRYPOINTS = (('decode_graph_with_sab_transport',
   '\n'
-  '        pub(in crate::runtime) fn decode_graph_with_sab_transport(\n'
+  '        pub(in crate::engine::code) fn decode_graph_with_sab_transport(\n'
   "            input: SabTransportInput<'_>,\n"
   '            mode: ReaderMode,\n'
   '            wire_limits: WireLimits,\n'
@@ -21,7 +21,7 @@ REVIEWED_ENTRYPOINTS = (('decode_graph_with_sab_transport',
   '        '),
  ('decode_bytecode_image_with_sab_transport',
   '\n'
-  '        pub(in crate::runtime) fn decode_bytecode_image_with_sab_transport(\n'
+  '        pub(in crate::engine::code) fn decode_bytecode_image_with_sab_transport(\n'
   "            input: SabTransportInput<'_>,\n"
   '            mode: ReaderMode,\n'
   '            wire_limits: WireLimits,\n'

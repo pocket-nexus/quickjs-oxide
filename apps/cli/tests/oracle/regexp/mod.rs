@@ -6,9 +6,9 @@ use crate::support::quickjs_indexed_oracle;
 
 #[cfg(test)]
 mod quickjs_oracle_contract {
+    use super::quickjs_indexed_oracle::eval_indexed_plain_lines;
     use std::any::Any;
 
-    use super::quickjs_indexed_oracle::eval_indexed_plain_lines;
     use super::quickjs_oracle::{eval_std_lines, observe_completion};
 
     fn oracle() -> Option<std::ffi::OsString> {

@@ -28,9 +28,9 @@ EXPECTED_NATIVE_PLAN_VISIBLE_ITEMS = [('enum', 'NativeAtomClass'),
  ('fn', 'is_label_target_error'),
  ('fn', 'decode_native_code_plan')]
 
-EXPECTED_NATIVE_PLAN_USES = {'use crate::runtime::binary_object::pinned_atoms::{FIRST_DYNAMIC_ATOM, PinnedAtomKind};',
- 'use crate::runtime::binary_object::pinned_opcodes::{OpcodeFormat, PinnedOpcode};',
- 'use crate::runtime::binary_object::wire::WireString;',
+EXPECTED_NATIVE_PLAN_USES = {'use crate::engine::code::binary_object::pinned_atoms::{FIRST_DYNAMIC_ATOM, PinnedAtomKind};',
+ 'use crate::engine::code::binary_object::pinned_opcodes::{OpcodeFormat, PinnedOpcode};',
+ 'use crate::engine::code::binary_object::wire::WireString;',
  'use std::fmt;',
  'use super::{BytecodeImage, FunctionId, ImageAtom, ImageCode};'}
 

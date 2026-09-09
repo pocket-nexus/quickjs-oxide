@@ -1,20 +1,20 @@
 expect_full_rewrite_table < "$boundary_dir/canaries/stage3g_canaries.txt"
 expect_full_rewrite_rejected stage3g-translate-object-erased \
     stage3g-object-translation-route \
-    crates/engine/src/runtime/binary_object/function_translate/mod.rs \
+    src/engine/code/binary_object/function_translate/mod.rs \
     '                PendingOperation::Ready(operation) => operation,' \
     $'                PendingOperation::Ready(FunctionOp::Object) => continue,\n                PendingOperation::Ready(operation) => operation,'
 expect_full_rewrite_rejected stage3g-translate-object-alias-erased \
     stage3g-object-translation-route \
-    crates/engine/src/runtime/binary_object/function_translate/mod.rs \
+    src/engine/code/binary_object/function_translate/mod.rs \
     '                PendingOperation::Ready(operation) => operation,' \
     $'                PendingOperation::Ready(operation) => {\n                    use FunctionOp as O;\n                    if matches!(operation, O::Object) {\n                        continue;\n                    }\n                    operation\n                },'
 expect_full_rewrite_rejected stage3g-object-verifier-terminal-bypass \
-    stage3g-object-verifier crates/core/src/bytecode.rs \
+    stage3g-object-verifier src/engine/code/bytecode.rs \
     $'            Instruction::ThrowReadOnly(_)\n            | Instruction::ThrowRedeclaration(_)' \
     $'            Instruction::Object\n            | Instruction::ThrowReadOnly(_)\n            | Instruction::ThrowRedeclaration(_)'
 expect_full_rewrite_rejected stage3g-runtime-test-macro-shadow \
-    stage3e-runtime-evidence crates/engine/src/runtime/tests.rs \
+    stage3e-runtime-evidence src/engine/heap/runtime/tests.rs \
     $'fn trusted_quickjs_ordinary_object_verification_rolls_back_and_retries() {\n    let mut object_only = QUICKJS_ORDINARY_OBJECT_BC5.to_vec();' \
     $'fn trusted_quickjs_ordinary_object_verification_rolls_back_and_retries() {\n    macro_rules! assert_eq { ($($tokens:tt)*) => {}; }\n    let mut object_only = QUICKJS_ORDINARY_OBJECT_BC5.to_vec();'
 expect_full_rewrite_rejected stage3g-status-typed-hidden-wrapper \

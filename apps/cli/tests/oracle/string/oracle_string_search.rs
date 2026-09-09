@@ -2,12 +2,9 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::take_exception_object;
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
-
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.search branch (`quickjs.c` 45609-45657), abstract RegExpExec
@@ -380,7 +377,8 @@ fn regexp_symbol_search_abstract_exec_matches_pinned_quickjs() {
 
 #[test]
 fn search_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 

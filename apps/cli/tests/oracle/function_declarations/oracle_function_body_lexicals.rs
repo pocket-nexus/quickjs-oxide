@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::{Runtime, Value};
+use quickjs_oxide::engine::api::{Runtime, Value};
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -408,7 +408,8 @@ fn lexical_parser_diagnostics_match_pinned_quickjs() {
 }
 
 fn rust_value_observation(source: &str, description: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let value = runtime
         .new_context()
         .eval(source)

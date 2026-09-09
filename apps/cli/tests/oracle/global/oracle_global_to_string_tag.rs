@@ -1,5 +1,5 @@
 use super::quickjs_plain_eval_oracle::eval_plain_lines;
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, JsString,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value, WellKnownSymbol,
 };
@@ -151,7 +151,8 @@ fn global_to_string_tag_matches_pinned_quickjs() {
 
 #[test]
 fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_global = first.global_object().unwrap();
@@ -228,7 +229,8 @@ fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
@@ -413,8 +415,8 @@ fn rust_observations() -> Vec<String> {
 
 fn property_callable(
     runtime: &Runtime,
-    context: &mut quickjs_oxide::Context,
-    object: &quickjs_oxide::ObjectRef,
+    context: &mut quickjs_oxide::engine::api::Context,
+    object: &quickjs_oxide::engine::api::ObjectRef,
     name: &str,
 ) -> CallableRef {
     let key = runtime.intern_property_key(name).unwrap();
@@ -428,8 +430,8 @@ fn property_callable(
 }
 
 fn define_data_key(
-    context: &mut quickjs_oxide::Context,
-    object: &quickjs_oxide::ObjectRef,
+    context: &mut quickjs_oxide::engine::api::Context,
+    object: &quickjs_oxide::engine::api::ObjectRef,
     key: &PropertyKey,
     value: Value,
     writable: bool,
@@ -454,8 +456,8 @@ fn define_data_key(
 }
 
 fn define_value_key(
-    context: &mut quickjs_oxide::Context,
-    object: &quickjs_oxide::ObjectRef,
+    context: &mut quickjs_oxide::engine::api::Context,
+    object: &quickjs_oxide::engine::api::ObjectRef,
     key: &PropertyKey,
     value: Value,
 ) {
@@ -474,9 +476,9 @@ fn define_value_key(
 }
 
 fn call_to_string(
-    context: &mut quickjs_oxide::Context,
+    context: &mut quickjs_oxide::engine::api::Context,
     method: &CallableRef,
-    object: &quickjs_oxide::ObjectRef,
+    object: &quickjs_oxide::engine::api::ObjectRef,
 ) -> String {
     plain_value(
         context

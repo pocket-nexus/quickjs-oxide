@@ -1,40 +1,19 @@
-use js_sys::{Date, Math, Object, Reflect};
-use quickjs_oxide::value::number_to_string;
-use quickjs_oxide::{
-    Context, HostServices, JsString, PropertyKey, QUICKJS_COMPAT_VERSION, QUICKJS_OXIDE_VERSION,
-    Runtime, RuntimeError, Value,
+use js_sys::{Object, Reflect};
+use quickjs_oxide::engine::api::{
+    Context, JsString, PropertyKey, Runtime, RuntimeError, Value, number_to_string,
 };
+use quickjs_oxide::{QUICKJS_COMPAT_VERSION, QUICKJS_OXIDE_VERSION};
+use quickjs_oxide_web_host::WebHostServices;
+
 use wasm_bindgen::prelude::*;
 
 const PLAYGROUND_FILENAME: &str = "<playground>";
 const WEB_CAN_BLOCK: bool = false;
-const TWO_TO_THE_32: f64 = 4_294_967_296.0;
 
 const BUILD_COMMIT: &str = match option_env!("QUICKJS_OXIDE_COMMIT") {
     Some(commit) => commit,
     None => "local",
 };
-
-#[derive(Debug, Default)]
-struct WebHostServices;
-
-impl HostServices for WebHostServices {
-    fn now_millis(&self) -> i64 {
-        Date::now() as i64
-    }
-
-    fn timezone_offset_minutes(&self, epoch_millis: i64) -> i32 {
-        let date = Date::new(&JsValue::from_f64(epoch_millis as f64));
-        let offset = date.get_timezone_offset();
-        if offset.is_finite() { offset as i32 } else { 0 }
-    }
-
-    fn random_seed(&self) -> u64 {
-        let high = (Math::random() * TWO_TO_THE_32) as u64;
-        let low = (Math::random() * TWO_TO_THE_32) as u64;
-        (high << 32) | low
-    }
-}
 
 struct EvalResult {
     ok: bool,
@@ -125,9 +104,12 @@ fn evaluate_with_engine(source: &str) -> EvalResult {
     };
 
     loop {
-        match runtime.execute_pending_job() {
-            Ok(true) => {}
-            Ok(false) => break,
+        match runtime
+            .execute_pending_job()
+            .map_err(|error| error.into_error())
+        {
+            Ok(outcome) if outcome.executed() => {}
+            Ok(_) => break,
             Err(RuntimeError::Exception) => {
                 return EvalResult::exception(&runtime, &mut context);
             }
@@ -175,7 +157,7 @@ fn exception_text(runtime: &Runtime, value: &Value) -> String {
 
 fn diagnostic_property(
     runtime: &Runtime,
-    object: &quickjs_oxide::ObjectRef,
+    object: &quickjs_oxide::engine::api::ObjectRef,
     name: &str,
 ) -> Option<String> {
     let key = runtime.intern_property_key(name).ok()?;

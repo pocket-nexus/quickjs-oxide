@@ -1,13 +1,11 @@
+use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-
 use crate::runtime_oracle::run_cli;
-use std::ffi::OsStr;
 
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime, Value,
 };
-
-use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
+use std::ffi::OsStr;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -294,7 +292,8 @@ fn annex_b_statement_values_match_pinned_quickjs() {
     };
 
     for &(description, source) in VALUE_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -312,7 +311,8 @@ fn annex_b_statement_errors_match_pinned_quickjs() {
     };
 
     for &(description, source) in ERROR_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -334,7 +334,8 @@ fn program_label_annex_global_state_matches_pinned_quickjs() {
         "typeof globalThis.orderedLabelCollision",
         "orderedLabelCollision",
     ];
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let rust = sources
         .iter()
@@ -358,7 +359,8 @@ fn program_label_invokes_existing_global_setter_twice() {
         "Function.labelSetterHits=0;Function.labelSetterValue=0;Object.defineProperty(globalThis,'__qjo_label_accessor',{configurable:true,get:function(){return Function.labelSetterValue},set:function(value){Function.labelSetterHits++;Function.labelSetterValue=value}});0",
         "label:function __qjo_label_accessor(){return 17};Function.labelSetterHits+'|'+typeof __qjo_label_accessor+'|'+__qjo_label_accessor()",
     ];
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     context
         .eval("Function.labelSetterHits=0;Function.labelSetterValue=0")
@@ -442,7 +444,8 @@ fn with_annex_boundaries_match_pinned_quickjs() {
             oracle_accepts,
             "pinned QuickJS changed its with/Annex B boundary: {quickjs}"
         );
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let rust = observe_rust_eval(&runtime, &mut context, source, description);
         assert_eq!(
@@ -456,7 +459,8 @@ fn with_annex_boundaries_match_pinned_quickjs() {
 fn program_label_cross_realm_regression() {
     // Pinned with the QuickJS C API compile-in-A/execute-in-B path. The Rust
     // API exposes the same operation directly, so this remains unconditional.
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     defining.eval("globalThis.realmTag='A'").unwrap();

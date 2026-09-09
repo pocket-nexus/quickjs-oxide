@@ -1,6 +1,28 @@
+[package]
+name = "quickjs-oxide"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+
+[features]
+default = []
+test262-host = []
+test-support = []
+[dev-dependencies]
+quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
+
 [workspace]
-members = ["crates/core", "crates/compiler", "crates/engine", "crates/host", "crates/quickjs-oxide", "apps/cli", "apps/web", "tools/test262"]
-default-members = ["crates/quickjs-oxide", "apps/cli"]
+members = ["adapters/native", "adapters/web", ".", "apps/cli", "apps/web", "conformance/test262"]
+default-members = [".", "apps/cli"]
 resolver = "3"
 
 [workspace.package]
@@ -11,11 +33,9 @@ license = "MIT"
 repository = "https://github.com/pocket-stack/quickjs-oxide"
 
 [workspace.dependencies]
-quickjs-oxide-core = { path = "crates/core" }
-quickjs-oxide-compiler = { path = "crates/compiler" }
-quickjs-oxide-engine = { path = "crates/engine" }
-quickjs-oxide-host = { path = "crates/host" }
-quickjs-oxide = { path = "crates/quickjs-oxide", default-features = false }
+quickjs-oxide-web-host = { path = "adapters/web" }
+quickjs-oxide-host = { path = "adapters/native" }
+quickjs-oxide = { path = ".", default-features = false }
 num-bigint = "=0.5.1"
 num-traits = "=0.2.19"
 tz-rs = "=0.7.3"

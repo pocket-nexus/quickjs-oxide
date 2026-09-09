@@ -1,9 +1,8 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 #[derive(Debug, Eq, PartialEq)]
 struct Observation {
@@ -74,7 +73,8 @@ fn atom_cases() -> Vec<Vec<u16>> {
 }
 
 fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let function_key = runtime.intern_property_key("Function").unwrap();

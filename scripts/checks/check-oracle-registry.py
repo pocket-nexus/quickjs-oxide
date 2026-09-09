@@ -27,7 +27,7 @@ def inventory():
         path = path.resolve()
         if path in visited:
             fail(f'duplicate module registration: {path.relative_to(ROOT)}')
-        if not path.is_relative_to(ROOT / 'apps/cli/tests') and path != ROOT / 'crates/quickjs-oxide/tests/common/mod.rs':
+        if not path.is_relative_to(ROOT / 'apps/cli/tests') and path != ROOT / 'tests/common/mod.rs':
             fail(f'oracle module escapes tests/: {path}')
         visited.add(path)
         source = path.read_text()
@@ -52,7 +52,7 @@ def inventory():
             if paths:
                 allowed = {
                     (ORACLE / 'main.rs', '#[path = "../common/mod.rs"]'): '../common/mod.rs',
-                    (ROOT / 'apps/cli/tests/common/mod.rs', '#[path = "../../../../crates/quickjs-oxide/tests/common/mod.rs"]'): '../../../../crates/quickjs-oxide/tests/common/mod.rs',
+                    (ROOT / 'apps/cli/tests/common/mod.rs', '#[path = "../../../../tests/common/mod.rs"]'): '../../../../tests/common/mod.rs',
                 }
                 relative = allowed.get((path, paths[0])) if len(paths) == 1 else None
                 if relative is None:

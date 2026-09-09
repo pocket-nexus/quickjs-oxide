@@ -1,10 +1,9 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 // Deliberate current-slice boundary: Proxy/with resolution and source
 // let/const declaration instantiation stay out of this differential until the
@@ -149,7 +148,8 @@ fn identifier_delete_errors_and_function_stack_match_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let mut output = Vec::new();
@@ -433,7 +433,8 @@ fn value_text(value: Value) -> String {
 }
 
 fn rust_uncaught_error(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         context.eval_with_filename(source, "<cmdline>"),

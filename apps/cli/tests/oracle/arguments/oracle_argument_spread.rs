@@ -3,7 +3,7 @@ use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text as primitive_text,
 };
 use crate::runtime_oracle::error_string_property;
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -386,7 +386,8 @@ fn argument_spread_oracle_inventory_is_stable() {
 fn argument_spread_matches_pinned_expectations() {
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_rust(&runtime, &mut context, case.source, case.description);
         if actual != case.expected {
@@ -436,7 +437,8 @@ fn argument_spread_matches_pinned_quickjs() {
     };
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         let quickjs = observe_oracle(&oracle, case.source, case.description);
@@ -461,7 +463,8 @@ fn argument_spread_runtime_argument_limit_matches_pinned_quickjs() {
     let oracle = std::env::var_os("QJS_ORACLE");
     let mut failures = Vec::new();
     for case in BOUNDARY_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         if oxide != case.expected {

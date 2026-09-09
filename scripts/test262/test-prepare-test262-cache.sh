@@ -180,7 +180,7 @@ new_cache() {
     local name=$1
     local cache=$test_root/$name
     mkdir -p "$cache/$source_name/tests"
-    cp -- "$patch_fixture" "$cache/$source_name/crates/quickjs-oxide/tests/test262.patch"
+    cp -- "$patch_fixture" "$cache/$source_name/tests/test262.patch"
     cp -- "$config_fixture" "$cache/$source_name/test262.conf"
     printf '%s\n' "$cache"
 }
@@ -566,7 +566,7 @@ assert_failure "executable mode differs" env PATH="$test_path" \
 
 echo "[9/17] bad patch and config checksums are rejected" >&2
 patch_cache=$(copy_cache bad-patch)
-printf 'bad patch\n' >>"$patch_cache/$source_name/crates/quickjs-oxide/tests/test262.patch"
+printf 'bad patch\n' >>"$patch_cache/$source_name/tests/test262.patch"
 assert_failure "patch checksum mismatch" env PATH="$test_path" \
     QJS_ORACLE_CACHE="$patch_cache" "$program_dir/test262/prepare-test262.sh"
 config_cache=$(copy_cache bad-config)

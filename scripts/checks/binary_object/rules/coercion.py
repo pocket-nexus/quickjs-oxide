@@ -34,7 +34,7 @@ def check(ctx):
         "stage3g-object-translation-route",
         "raw11 Object lowering must remain an operand-free one-operation translation with no alias or expansion",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object/function_translate/mod.rs",
+            "src/engine/code/binary_object/function_translate/mod.rs",
             "lower_operation",
             "stage3g-object-translation-route",
         ),
@@ -62,7 +62,7 @@ def check(ctx):
         "stage3g-object-ordinary-route",
         "FunctionOp::Object must reach exactly one OrdinaryLeafOp::Object without erasure or remap",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object/ordinary_leaf.rs",
+            "src/engine/code/binary_object/ordinary_leaf.rs",
             "lower_operation",
             "stage3g-object-ordinary-route",
         ),
@@ -73,7 +73,7 @@ def check(ctx):
         "stage3g-object-publication",
         "OrdinaryLeafOp::Object must publish exactly Instruction::Object without dropping it or touching the synthetic-constant index",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object_publish.rs",
+            "src/engine/code/binary_object_publish.rs",
             "lower_ordinary_leaf_op",
             "stage3g-object-publication",
         ),
@@ -84,7 +84,7 @@ def check(ctx):
         "stage3h-to-object-translation-route",
         "raw111 ToObject lowering must remain an operand-free one-operation translation with no alias or expansion",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object/function_translate/mod.rs",
+            "src/engine/code/binary_object/function_translate/mod.rs",
             "lower_operation",
             "stage3h-to-object-translation-route",
         ),
@@ -112,7 +112,7 @@ def check(ctx):
         "stage3h-to-object-ordinary-route",
         "FunctionOp::ToObject must reach exactly one OrdinaryLeafOp::ToObject without erasure or remap",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object/ordinary_leaf.rs",
+            "src/engine/code/binary_object/ordinary_leaf.rs",
             "lower_operation",
             "stage3h-to-object-ordinary-route",
         ),
@@ -123,7 +123,7 @@ def check(ctx):
         "stage3h-to-object-publication",
         "OrdinaryLeafOp::ToObject must publish exactly Instruction::ToObject without dropping it or touching the synthetic-constant index",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object_publish.rs",
+            "src/engine/code/binary_object_publish.rs",
             "lower_ordinary_leaf_op",
             "stage3h-to-object-publication",
         ),
@@ -134,7 +134,7 @@ def check(ctx):
         "stage3i-push-this-translation-route",
         "raw8 PushThis lowering must remain an operand-free one-operation translation with no recipe or DTO alias",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object/function_translate/mod.rs",
+            "src/engine/code/binary_object/function_translate/mod.rs",
             "lower_operation",
             "stage3i-push-this-translation-route",
         ),
@@ -159,7 +159,7 @@ def check(ctx):
         )
 
     stage3i_lower_code = ctx.stage3b_function(
-        "crates/engine/src/runtime/binary_object/ordinary_leaf.rs",
+        "src/engine/code/binary_object/ordinary_leaf.rs",
         "lower_code",
         "stage3i-push-this-protocol",
     )
@@ -183,7 +183,7 @@ def check(ctx):
     )
 
     stage3i_validator = ctx.stage3b_function(
-        "crates/engine/src/runtime/binary_object/ordinary_leaf.rs",
+        "src/engine/code/binary_object/ordinary_leaf.rs",
         "validate_push_this_protocol",
         "stage3i-push-this-protocol",
     )
@@ -212,7 +212,7 @@ def check(ctx):
         "stage3i-push-this-ordinary-route",
         "FunctionOp::PushThis must reach exactly one OrdinaryLeafOp::PushThis without a direct, aliased, helper-mediated, or pre-match bypass",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object/ordinary_leaf.rs",
+            "src/engine/code/binary_object/ordinary_leaf.rs",
             "lower_operation",
             "stage3i-push-this-ordinary-route",
         ),
@@ -223,7 +223,7 @@ def check(ctx):
         "stage3i-push-this-publication",
         "OrdinaryLeafOp::PushThis must publish exactly Instruction::PushThis without dropping it or consuming a synthetic constant index",
         ctx.stage3b_function(
-            "crates/engine/src/runtime/binary_object_publish.rs",
+            "src/engine/code/binary_object_publish.rs",
             "lower_ordinary_leaf_op",
             "stage3i-push-this-publication",
         ),
@@ -231,7 +231,7 @@ def check(ctx):
     )
 
     stage3j_translate_lower = ctx.stage3b_function(
-        "crates/engine/src/runtime/binary_object/function_translate/mod.rs",
+        "src/engine/code/binary_object/function_translate/mod.rs",
         "lower_operation",
         "stage3j-to-propkey-translation-route",
     )
@@ -261,7 +261,7 @@ def check(ctx):
         )
 
     stage3j_ordinary_lower = ctx.stage3b_function(
-        "crates/engine/src/runtime/binary_object/ordinary_leaf.rs",
+        "src/engine/code/binary_object/ordinary_leaf.rs",
         "lower_operation",
         "stage3j-to-propkey-ordinary-route",
     )
@@ -274,7 +274,7 @@ def check(ctx):
     )
 
     stage3j_publisher = ctx.stage3b_function(
-        "crates/engine/src/runtime/binary_object_publish.rs",
+        "src/engine/code/binary_object_publish.rs",
         "lower_ordinary_leaf_op",
         "stage3j-to-propkey-publication",
     )
@@ -320,13 +320,13 @@ def check(ctx):
         )
 
     stage3j_host_to_propkey = ctx.stage3b_function(
-        "crates/engine/src/runtime/vm_host.rs",
+        "src/engine/vm/host_bridge.rs",
         "convert_property_key",
         "stage3j-to-propkey-host-semantics",
     )
 
     stage3j_host_to_propkey_source = ctx.stage3j_source_function(
-        "crates/engine/src/runtime/vm_host.rs",
+        "src/engine/vm/host_bridge.rs",
         "convert_property_key",
         "stage3j-to-propkey-host-semantics",
     )
@@ -361,13 +361,13 @@ def check(ctx):
         )
 
     stage3j_to_primitive = ctx.stage3b_function(
-        "crates/engine/src/runtime.rs",
+        "src/engine/heap/runtime/mod.rs",
         "to_primitive",
         "stage3j-to-propkey-primitive-semantics",
     )
 
     stage3j_to_primitive_source = ctx.stage3j_source_function(
-        "crates/engine/src/runtime.rs",
+        "src/engine/heap/runtime/mod.rs",
         "to_primitive",
         "stage3j-to-propkey-primitive-semantics",
     )
@@ -400,13 +400,13 @@ def check(ctx):
         )
 
     stage3j_ordinary_to_primitive = ctx.stage3b_function(
-        "crates/engine/src/runtime/intrinsics/object.rs",
+        "src/engine/builtins/object.rs",
         "ordinary_to_primitive",
         "stage3j-to-propkey-ordinary-fallback",
     )
 
     stage3j_ordinary_to_primitive_source = ctx.stage3j_source_function(
-        "crates/engine/src/runtime/intrinsics/object.rs",
+        "src/engine/builtins/object.rs",
         "ordinary_to_primitive",
         "stage3j-to-propkey-ordinary-fallback",
     )
@@ -463,7 +463,7 @@ def check(ctx):
             continue
         ctx.declaration_offset = ctx.declarations[0].start()
         ctx.declaration_depth = ctx.code[:ctx.declaration_offset].count("{") - ctx.code[:ctx.declaration_offset].count("}")
-        if ctx.relative == "crates/engine/src/runtime/tests.rs":
+        if ctx.relative == "src/engine/heap/runtime/tests.rs":
             ctx.direct_parent = ctx.declaration_depth == 0
         else:
             ctx.parent_bounds = ctx.stage3d_test_parent_bounds.get(ctx.relative)
@@ -497,7 +497,7 @@ def check(ctx):
 
     stage3h_test_parent_bounds = dict(ctx.stage3d_test_parent_bounds)
 
-    vm_test_code = ctx.stage3b_code("crates/engine/src/vm.rs")
+    vm_test_code = ctx.stage3b_code("src/engine/vm/mod.rs")
 
     vm_test_modules = list(re.finditer(
         r"(?P<attributes>(?:#[ \t\n]*\[[^]]*\][ \t\n]*)*)"
@@ -511,16 +511,16 @@ def check(ctx):
     ):
         ctx.fail(
             "stage3h-runtime-evidence",
-            "crates/engine/src/vm.rs must retain one direct, unconditional #[cfg(test)] tests module",
+            "src/engine/vm/mod.rs must retain one direct, unconditional #[cfg(test)] tests module",
         )
     else:
         ctx._, vm_module_start, vm_module_end = ctx.braced_item_from_match(
             vm_test_code,
             vm_test_modules[0],
             "stage3h-runtime-evidence",
-            "crates/engine/src/vm.rs direct tests module",
+            "src/engine/vm/mod.rs direct tests module",
         )
-        stage3h_test_parent_bounds["crates/engine/src/vm.rs"] = (vm_module_start, vm_module_end)
+        stage3h_test_parent_bounds["src/engine/vm/mod.rs"] = (vm_module_start, vm_module_end)
 
     stage3h_test_sources = {
         relative for relative, _, _ in stage3h_test_contracts
@@ -561,7 +561,7 @@ def check(ctx):
             continue
         ctx.declaration_offset = ctx.declarations[0].start()
         ctx.declaration_depth = ctx.code[:ctx.declaration_offset].count("{") - ctx.code[:ctx.declaration_offset].count("}")
-        if ctx.relative == "crates/engine/src/runtime/tests.rs":
+        if ctx.relative == "src/engine/heap/runtime/tests.rs":
             ctx.direct_parent = ctx.declaration_depth == 0
         else:
             ctx.parent_bounds = stage3h_test_parent_bounds.get(ctx.relative)

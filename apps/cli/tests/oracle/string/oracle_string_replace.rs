@@ -2,11 +2,10 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::eval_object;
 
-use quickjs_oxide::{CallableRef, Context, JsString, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{CallableRef, Context, JsString, Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_replace`
 // (`quickjs.c` 45781-45892), including the shared GetSubstitution helper
@@ -381,7 +380,8 @@ fn string_replace_utf16_and_substitution_match_pinned_quickjs() {
 
 #[test]
 fn string_replace_intrinsics_use_their_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let Some(replace) = eval_optional_callable(

@@ -7,9 +7,10 @@
 
 use std::ffi::OsStr;
 use std::path::PathBuf;
+
 use std::process::{Command, Output};
 
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 const EXPECTED: &str =
     include_str!("../fixtures/expected/r3ak_for_await_of.quickjs-2026-06-04.txt");
@@ -85,7 +86,8 @@ fn for_await_contextual_grammar_matches_pinned_quickjs() {
 
 #[test]
 fn pending_for_await_next_record_survives_repeated_gc() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     eval(
         &mut context,
@@ -164,7 +166,7 @@ generatorGate = null;
     }
     eval(&mut context, "release(); generatorRelease();");
     while runtime.is_job_pending() {
-        assert!(runtime.execute_pending_job().unwrap());
+        assert!(runtime.execute_pending_job().unwrap().executed());
         runtime.run_gc().unwrap();
     }
     assert_eq!(

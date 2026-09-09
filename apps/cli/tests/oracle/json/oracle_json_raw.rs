@@ -1,12 +1,11 @@
-use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
 use crate::runtime_observation::{
+    checked_value_type as value_type, primitive_value_text,
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -495,7 +494,8 @@ fn json_raw_brand_and_native_errors_cross_realms() {
     // The qjs CLI has no same-runtime multi-context bridge. Exercise the
     // runtime-wide brand directly and pin native SyntaxError allocation to the
     // intrinsic method's defining realm.
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_syntax_error = eval_object(
@@ -584,7 +584,8 @@ fn json_raw_brand_and_native_errors_cross_realms() {
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(case.source) {
         Ok(value) => format!(

@@ -7,7 +7,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 struct SuccessCase {
     description: &'static str,
@@ -322,7 +322,8 @@ fn async_generator_object_method_contextual_boundaries_match_pinned_quickjs() {
 
 #[test]
 fn suspended_method_retains_its_home_object_across_gc() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     eval(
         &mut context,

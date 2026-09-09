@@ -1,8 +1,7 @@
 use super::support::*;
 
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04's ordinary Array sort kernel and its
 // change-by-copy wrapper. Stateful probes intentionally lock rqsort comparison
@@ -443,7 +442,8 @@ fn array_sort_prototype_order_metadata_and_constructability_match_pinned_quickjs
 
 #[test]
 fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -575,7 +575,8 @@ fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() 
 
 #[test]
 fn array_sort_atom_literal_identity_survives_publication_and_context_boundaries() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     assert_eq!(
@@ -594,7 +595,7 @@ fn array_sort_atom_literal_identity_survives_publication_and_context_boundaries(
             )
             .unwrap(),
         Value::String(
-            quickjs_oxide::JsString::try_from_utf8("0|0|1|0|0|0|1|1").unwrap(),
+            quickjs_oxide::engine::api::JsString::try_from_utf8("0|0|1|0|0|0|1|1").unwrap(),
         ),
     );
     let array_prototype = defining.array_prototype().unwrap();
@@ -665,7 +666,8 @@ fn array_sort_atom_literal_identity_survives_publication_and_context_boundaries(
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

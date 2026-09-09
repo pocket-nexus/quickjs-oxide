@@ -1,12 +1,11 @@
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text_with_rust_float as primitive_text,
 };
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 // Pins QuickJS 2026-06-04's complete Proxy surface: all thirteen handler
 // traps, null/undefined forwarding, revocation, callable/constructor caching,
@@ -1131,7 +1130,8 @@ fn proxy_oracle_vectors_self_check() {
 
 #[test]
 fn proxy_forwarding_and_generic_consumers_have_rust_only_regressions() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     for (description, expected) in [
         (
@@ -1203,7 +1203,8 @@ fn proxy_reentrancy_matches_pinned_quickjs() {
 
 #[test]
 fn proxy_native_and_user_errors_use_their_exact_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_type_error = eval_object(
@@ -1310,7 +1311,8 @@ fn proxy_native_and_user_errors_use_their_exact_realms() {
 
 #[test]
 fn proxy_hidden_edges_survive_gc_and_revocation_is_safe_across_collection() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let record = eval_object(
         &mut context,
@@ -1384,7 +1386,8 @@ fn compare_groups(groups: &[&str]) {
         .filter(|(group, _)| groups.contains(group))
     {
         for &(description, source) in cases {
-            let runtime = Runtime::new();
+            let runtime =
+                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
             let mut context = runtime.new_context();
             let oxide = observe_rust(&runtime, &mut context, source, description);
             let quickjs = observe_oracle(&oracle, source, description);

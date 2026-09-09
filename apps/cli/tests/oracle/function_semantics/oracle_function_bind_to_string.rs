@@ -1,11 +1,10 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
     WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function bit(value) { return value ? 1 : 0; }
@@ -306,7 +305,8 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let function_prototype = context.function_prototype().unwrap();
         let bind = property_callable(&runtime, &mut context, &function_prototype, "bind");
@@ -567,7 +567,7 @@ fn rust_bind_metadata_observations() -> Vec<String> {
         ),
         (
             "bigint",
-            Value::BigInt(quickjs_oxide::JsBigInt::from(5_i32)),
+            Value::BigInt(quickjs_oxide::engine::api::JsBigInt::from(5_i32)),
             1,
         ),
         (
@@ -999,7 +999,8 @@ fn rust_bound_execution_observations() -> Vec<String> {
         )
         .unwrap();
 
-    let cross_runtime = Runtime::new();
+    let cross_runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut target_realm = cross_runtime.new_context();
     let mut bind_realm = cross_runtime.new_context();
     let cross_target = function(

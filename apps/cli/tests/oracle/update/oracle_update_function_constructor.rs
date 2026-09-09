@@ -1,7 +1,8 @@
+use quickjs_oxide::engine::api::{
+    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
+};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 const ORACLE_PROBE: &str = r#"
 function frames(stack, count) {
@@ -67,7 +68,8 @@ fn update_expressions_in_function_constructor_match_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let constructor = context.function_constructor().unwrap();
     let mut output = Vec::new();

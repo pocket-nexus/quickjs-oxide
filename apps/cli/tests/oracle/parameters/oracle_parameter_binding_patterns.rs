@@ -1,8 +1,8 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_text;
-use crate::runtime_oracle::error_string_property;
-use crate::runtime_oracle::value_type;
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+
+use crate::runtime_oracle::{error_string_property, value_type};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 struct Case {
     description: &'static str,
@@ -239,7 +239,8 @@ fn parameter_binding_pattern_oracle_vectors_self_check() {
 #[test]
 fn parameter_binding_pattern_rust_smoke_runs_without_an_oracle() {
     for case in CASES.iter().chain(ERROR_CASES) {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),
@@ -257,7 +258,8 @@ fn parameter_binding_patterns_match_pinned_quickjs() {
         return;
     };
     for case in CASES.iter().chain(ERROR_CASES) {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),

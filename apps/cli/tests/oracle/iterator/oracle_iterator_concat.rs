@@ -3,7 +3,7 @@ use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -656,7 +656,8 @@ const CASES: &[Case] = &[
 fn iterator_concat_matches_pinned_expectations() {
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_oxide(&mut context, case);
         if actual != case.expected {
@@ -712,7 +713,8 @@ fn iterator_concat_matches_pinned_quickjs() {
     };
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let oxide = observe_oxide(&mut context, case);
         let quickjs = observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER);
@@ -740,7 +742,8 @@ fn iterator_concat_cross_realm_graph_and_native_next_use_the_current_realm() {
     // current context rather than switching to the inner method's realm. A
     // same-runtime, two-context probe against the pinned libquickjs reports:
     // `sequence-prototype=1:0|step-prototype=1|value-identity=1|native-error=1:0`.
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 

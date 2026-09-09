@@ -1,10 +1,9 @@
-use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-
-use crate::runtime_oracle::run_cli;
-use std::ffi::OsStr;
-
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
-use quickjs_oxide::{Runtime, Value};
+use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_oracle::run_cli;
+
+use quickjs_oxide::engine::api::{Runtime, Value};
+use std::ffi::OsStr;
 
 const CATCH_CASES: &[(&str, &str)] = &[
     ("basic primitive catch", "try{throw 7}catch(e){e}"),
@@ -295,7 +294,8 @@ fn try_catch_cross_realm_regression() {
         return;
     };
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
@@ -352,7 +352,8 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     };
 
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),

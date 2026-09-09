@@ -68,7 +68,7 @@ if [[ "$source_dir" != /* ]]; then
 fi
 
 suite=$source_dir/test262
-patch=$source_dir/crates/quickjs-oxide/tests/test262.patch
+patch=$source_dir/tests/test262.patch
 config=$source_dir/test262.conf
 cache=$(CDPATH='' cd -- "$source_dir/.." && pwd)
 lock_dir=$cache/.test262-${expected_commit}.lock

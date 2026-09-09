@@ -35,35 +35,35 @@ def check(ctx):
         )
 
     if not ctx.self_test_marker_authorized:
-        cargo_source = ctx.read_source("crates/engine/Cargo.toml")
+        cargo_source = ctx.read_source("Cargo.toml")
         try:
             cargo_manifest = tomllib.loads(cargo_source)
         except tomllib.TOMLDecodeError as error:
             ctx.fail("stage3e-test-target", f"Cargo.toml must remain valid TOML: {error}")
             cargo_manifest = {}
-        if cargo_manifest.get("lib", {}) != {} or cargo_manifest.get("package", {}).get("name") != "quickjs-oxide-engine":
+        if cargo_manifest.get("lib", {}) != {} or cargo_manifest.get("package", {}).get("name") != "quickjs-oxide":
             ctx.fail(
                 "stage3e-test-target",
                 "engine Cargo.toml must retain its conventional src/lib.rs target without test/harness overrides",
             )
 
-    lib_source = ctx.read_source("crates/engine/src/lib.rs")
+    lib_source = ctx.read_source("src/lib.rs")
 
     lib_code = ctx.rust_code_only(lib_source)
 
     if not ctx.self_test_marker_authorized:
         ctx.require_normalized_code_sha256(
             "stage3e-runtime-evidence",
-            "crates/engine/src/lib.rs must retain its exact crate/test routing without macro-use, path, include, or glob-import indirection",
+            "src/lib.rs must retain its exact candidate-A module and embedding API routing",
             lib_code,
-            "9c2be08344c85d638f27b1b297a3cd7cde516d924b20a4df584bf92f6f7027ca",
+            "4de31aa48efb93b081c9948a45c22c64a9816aaa3eeed58d734f2e9c8031892b",
         )
 
     for ctx.match in re.finditer(r"\bbinary_object\b", lib_source):
         ctx.fail(
             "public-lib-boundary",
-            "crates/engine/src/lib.rs must not name binary_object; found "
-            + ctx.location("crates/engine/src/lib.rs", lib_source, ctx.match.start()),
+            "src/lib.rs must not name binary_object; found "
+            + ctx.location("src/lib.rs", lib_source, ctx.match.start()),
         )
 
     if re.search(
@@ -72,7 +72,7 @@ def check(ctx):
     ):
         ctx.fail(
             "stage3e-runtime-evidence",
-            "crates/engine/src/lib.rs must not conditionally exclude the crate or its unit-test target with an inner cfg/cfg_attr",
+            "src/lib.rs must not conditionally exclude the crate or its unit-test target with an inner cfg/cfg_attr",
         )
 
     ctx.assertion_shadow_pattern = re.compile(
@@ -85,37 +85,39 @@ def check(ctx):
     if ctx.assertion_shadow_pattern.search(lib_code):
         ctx.fail(
             "stage3e-runtime-evidence",
-            "crates/engine/src/lib.rs must not shadow or import the assertion macros used by Stage3E unit-test evidence",
+            "src/lib.rs must not shadow or import the assertion macros used by Stage3E unit-test evidence",
         )
 
-    runtime_source = ctx.read_source("crates/engine/src/runtime.rs")
+    runtime_source = ctx.read_source("src/engine/heap/runtime/mod.rs")
 
     ctx.runtime_code = ctx.rust_code_only(runtime_source)
 
-    runtime_mentions = list(re.finditer(r"\bbinary_object\b", runtime_source))
+    codec_parent = ctx.read_source("src/engine/code/mod.rs")
+    codec_parent_code = ctx.rust_code_only(codec_parent)
+    runtime_mentions = list(re.finditer(r"\bbinary_object\b", codec_parent))
 
     private_declarations = re.findall(
-        r"(?m)^[ \t]*mod[ \t]+binary_object[ \t]*;[ \t]*$", ctx.runtime_code
+        r"(?m)^[ \t]*mod[ \t]+binary_object[ \t]*;[ \t]*$", codec_parent_code
     )
 
     if len(private_declarations) != 1:
         ctx.fail(
             "runtime-private-module",
-            "crates/engine/src/runtime.rs must contain exactly one private `mod binary_object;` declaration",
+            "src/engine/code/mod.rs must contain exactly one private `mod binary_object;` declaration",
         )
 
     if len(runtime_mentions) != 1:
         details = ", ".join(
-            ctx.location("crates/engine/src/runtime.rs", runtime_source, match.start())
+            ctx.location("src/engine/heap/runtime/mod.rs", runtime_source, match.start())
             for match in runtime_mentions
         )
         ctx.fail(
             "runtime-boundary",
-            "crates/engine/src/runtime.rs may name binary_object only in its private module declaration"
+            "src/engine/code/mod.rs may name binary_object only in its private module declaration"
             + (f"; found {details}" if details else ""),
         )
 
-    ctx.binary_root_relative = "crates/engine/src/runtime/binary_object/mod.rs"
+    ctx.binary_root_relative = "src/engine/code/binary_object/mod.rs"
 
     binary_root_source = ctx.read_source(ctx.binary_root_relative)
 
@@ -243,7 +245,7 @@ def check(ctx):
             + ctx.location(ctx.binary_root_relative, binary_root_source, ctx.match.start()),
         )
 
-    ctx.image_root_relative = "crates/engine/src/runtime/binary_object/bytecode_image/mod.rs"
+    ctx.image_root_relative = "src/engine/code/binary_object/bytecode_image/mod.rs"
 
     image_root_source = ctx.read_source(ctx.image_root_relative)
 
@@ -289,10 +291,10 @@ def check(ctx):
             + ctx.location(ctx.image_root_relative, image_root_source, ctx.match.start()),
         )
 
-    binary_root = ctx.root / "crates/engine/src/runtime/binary_object"
+    binary_root = ctx.root / "src/engine/code/binary_object"
 
     if binary_root.is_symlink() or not binary_root.is_dir():
-        ctx.fail("missing-source", "crates/engine/src/runtime/binary_object must be a regular directory")
+        ctx.fail("missing-source", "src/engine/code/binary_object must be a regular directory")
         ctx.binary_sources: list[Path] = []
     else:
         ctx.binary_sources = sorted(binary_root.rglob("*.rs"))
@@ -344,7 +346,7 @@ def check(ctx):
         for path, code in ctx.binary_code_cache.items()
         if not ctx.is_test_source(path)
         and path.relative_to(ctx.root).as_posix().startswith(
-            "crates/engine/src/runtime/binary_object/bytecode_image/"
+            "src/engine/code/binary_object/bytecode_image/"
         )
         and bytecode_image_impl_header_pattern.search(code)
     }

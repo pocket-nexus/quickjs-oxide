@@ -1,11 +1,10 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
     WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function bit(value) { return value ? 1 : 0; }
@@ -149,7 +148,8 @@ fn function_prototype_prefix_matches_quickjs_oracle() {
 
 #[test]
 fn generator_callables_do_not_receive_the_ordinary_sloppy_restricted_property_exception() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let restricted = ["caller", "arguments"].map(|name| {
@@ -233,7 +233,8 @@ fn lazy_function_prototype_defines_match_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
 
@@ -578,7 +579,8 @@ fn rust_lazy_define_observations() -> Vec<String> {
 }
 
 fn rust_call_data_define(label: &str, descriptor: OrdinaryPropertyDescriptor) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let call_key = runtime.intern_property_key("call").unwrap();
@@ -616,7 +618,8 @@ fn rust_call_data_define(label: &str, descriptor: OrdinaryPropertyDescriptor) ->
 }
 
 fn rust_call_accessor_define() -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let call_key = runtime.intern_property_key("call").unwrap();
@@ -666,7 +669,8 @@ fn rust_call_accessor_define() -> String {
 }
 
 fn rust_has_instance_configurable_rejection() -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let has_instance_key =

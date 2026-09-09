@@ -1,10 +1,9 @@
 use super::support::*;
 
-use std::ffi::OsStr;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
 
 // This target pins QuickJS 2026-06-04 `Array.prototype.with` as one complete
 // change-by-copy slice. Source probes deliberately avoid later Array methods
@@ -234,7 +233,8 @@ fn array_with_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_with_result_and_native_errors_use_the_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -311,7 +311,8 @@ fn array_with_result_and_native_errors_use_the_defining_realm() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

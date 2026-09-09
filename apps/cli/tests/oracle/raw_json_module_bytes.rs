@@ -2,7 +2,7 @@ use crate::quickjs_raw_source_oracle::{
     RawModuleObservation, normalized_json_module_filename, observe_raw_json_module,
     raw_json_module_source,
 };
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     Context, JsString, ModuleImportAttributes, ModuleLoadResult, ModuleLoader, ModuleLoaderError,
     Runtime, RuntimeError, Value,
 };
@@ -283,8 +283,9 @@ struct RawJsonModuleLoader {
 }
 
 impl ModuleLoader for RawJsonModuleLoader {
-    fn load_with_attributes(
+    fn load(
         &self,
+        _context: &mut quickjs_oxide::engine::api::Context,
         normalized_name: &JsString,
         _attributes: &ModuleImportAttributes,
     ) -> Result<ModuleLoadResult, ModuleLoaderError> {
@@ -347,7 +348,8 @@ fn raw_json_module_bytes_match_pinned_quickjs() {
 }
 
 fn oxide_observation(case: &Case) -> RawModuleObservation {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let registration = runtime.set_module_loader(RawJsonModuleLoader {
         source: case.authored.to_vec(),
         grammar: case.grammar,

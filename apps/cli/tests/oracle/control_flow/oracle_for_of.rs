@@ -1,16 +1,13 @@
+use super::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
 
-use crate::runtime_oracle::error_string_property;
-use crate::runtime_oracle::run_cli;
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use crate::runtime_oracle::{error_string_property, run_cli};
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
-
-use super::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
+use std::ffi::OsStr;
+use std::process::Command;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -598,7 +595,8 @@ fn for_of_accessor_protocol_matches_pinned_quickjs() {
     };
     let oracle_setup = oracle_accessor_setup();
     for &(description, source) in ACCESSOR_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         install_accessor_fixture(&runtime, &mut context);
         assert_eq!(
@@ -646,7 +644,8 @@ fn for_of_full_strip_source_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let (source, expected) = ("for await(var value of 'a')value", "expecting '('");
     let Err(RuntimeError::Exception) = context.compile(source) else {
@@ -668,7 +667,8 @@ fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {
 
 #[test]
 fn for_of_cross_realm_regression() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let bytecode = defining
@@ -810,7 +810,8 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
         return;
     };
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),

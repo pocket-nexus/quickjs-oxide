@@ -1,8 +1,7 @@
 use crate::runtime_observation::plain_value_type as value_type;
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -267,7 +266,8 @@ fn source_for(case: &Case) -> String {
 }
 
 fn oxide_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let source = source_for(case);
     match context.eval(&source) {

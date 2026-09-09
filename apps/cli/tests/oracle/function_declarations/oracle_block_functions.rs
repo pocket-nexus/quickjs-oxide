@@ -1,10 +1,9 @@
-use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-
-use crate::runtime_oracle::run_cli;
-use std::ffi::OsStr;
-
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
-use quickjs_oxide::{JsString, Runtime, Value};
+use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_oracle::run_cli;
+
+use quickjs_oxide::engine::api::{JsString, Runtime, Value};
+use std::ffi::OsStr;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -146,7 +145,8 @@ fn block_function_values_match_pinned_quickjs() {
     };
 
     for &(description, source) in VALUE_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -164,7 +164,8 @@ fn block_function_errors_match_pinned_quickjs() {
     };
 
     for &(description, source) in ERROR_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -187,7 +188,8 @@ fn escaped_block_lexical_after_failed_initializer_matches_pinned_quickjs() {
         "(function(){{function escapedBlock(){return later}Function.savedBlock=escapedBlock;let later=missingBlockInitializer}})()",
         "Function.savedBlock()",
     ];
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let rust = sources
         .iter()
@@ -213,7 +215,8 @@ fn program_annex_then_lexical_state_matches_pinned_quickjs() {
         "typeof globalThis.orderedGlobalCollision",
         "orderedGlobalCollision",
     ];
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let rust = sources
         .iter()
@@ -256,7 +259,8 @@ fn block_function_parser_diagnostics_match_pinned_quickjs() {
 fn block_function_cross_realm_regression() {
     // Pinned with the QuickJS C API compile-in-A/execute-in-B path. The Rust
     // API exposes the same operation directly, so this remains unconditional.
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     defining.eval("globalThis.realmTag='A'").unwrap();

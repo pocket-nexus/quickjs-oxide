@@ -1,16 +1,15 @@
+use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
+use super::quickjs_program_property_oracle::observe_program_property_lines;
+
 use crate::runtime_observation::{
     plain_value_type as value_type, primitive_value_text_with_rust_float as primitive_value_text,
 };
-use crate::runtime_oracle::error_string_property;
-use crate::runtime_oracle::run_cli;
-use std::ffi::OsStr;
-
-use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
-use super::quickjs_program_property_oracle::observe_program_property_lines;
-use quickjs_oxide::{
+use crate::runtime_oracle::{error_string_property, run_cli};
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -185,7 +184,8 @@ fn program_var_values_match_pinned_quickjs() {
     };
 
     for &(description, source) in VALUE_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let rust = observe_rust_eval(&runtime, &mut context, source, description);
         let quickjs = observe_oracle_sequence(&oracle, &[source], description);
@@ -262,7 +262,8 @@ fn program_var_cross_eval_state_matches_pinned_quickjs() {
     ];
 
     for &(description, sources) in sequences {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let rust = sources
             .iter()
@@ -314,7 +315,8 @@ fn program_var_parser_diagnostics_match_pinned_quickjs() {
 }
 
 fn rust_property_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let mut output = Vec::new();
 

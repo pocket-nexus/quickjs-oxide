@@ -1,5 +1,5 @@
 use crate::runtime_observation::property_callable;
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime,
     Value,
 };

@@ -1,12 +1,10 @@
 use crate::runtime_completion_oracle::{
     compare_eval_completion_cases_with_prelude, observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CallableRef, Context, DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor,
     Runtime, RuntimeError, Value,
 };
@@ -476,7 +474,8 @@ fn string_case_recursion_is_catchable_shared_and_recovers() {
 
 #[test]
 fn string_case_defining_realms_user_throw_identity_and_caller_construct_error_are_exact() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_prototype = defining.string_prototype().unwrap();
@@ -553,7 +552,8 @@ fn string_case_defining_realms_user_throw_identity_and_caller_construct_error_ar
 
 #[test]
 fn string_case_callables_are_per_realm_distinct_and_collectable() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
         let mut first = runtime.new_context();
         let mut second = runtime.new_context();
@@ -596,7 +596,8 @@ fn string_case_callables_are_per_realm_distinct_and_collectable() {
 
 #[test]
 fn string_case_stack_overflow_uses_the_caller_realm_and_recovers() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_prototype = defining.string_prototype().unwrap();

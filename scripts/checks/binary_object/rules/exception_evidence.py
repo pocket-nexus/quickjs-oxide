@@ -18,7 +18,7 @@ def check(ctx):
     stage3d_inline_test_files = {
         relative
         for relative, _, _ in stage3d_test_contracts
-        if relative != "crates/engine/src/runtime/tests.rs"
+        if relative != "src/engine/heap/runtime/tests.rs"
     }
 
     ctx.stage3d_test_parent_bounds: dict[str, tuple[int, int]] = {}
@@ -49,7 +49,7 @@ def check(ctx):
 
     ctx.assertion_shadow = ctx.assertion_shadow_pattern
 
-    for ctx.relative in stage3d_inline_test_files | {"crates/engine/src/runtime/tests.rs"}:
+    for ctx.relative in stage3d_inline_test_files | {"src/engine/heap/runtime/tests.rs"}:
         if ctx.assertion_shadow.search(ctx.stage3b_code(ctx.relative)):
             ctx.fail(
                 "stage3d-runtime-evidence",
@@ -78,7 +78,7 @@ def check(ctx):
             ctx.code[:ctx.declaration_offset].count("{")
             - ctx.code[:ctx.declaration_offset].count("}")
         )
-        if ctx.relative == "crates/engine/src/runtime/tests.rs":
+        if ctx.relative == "src/engine/heap/runtime/tests.rs":
             ctx.direct_parent = ctx.declaration_depth == 0
         else:
             ctx.parent_bounds = ctx.stage3d_test_parent_bounds.get(ctx.relative)
@@ -129,7 +129,7 @@ def check(ctx):
             continue
         ctx.declaration_offset = ctx.declarations[0].start()
         ctx.declaration_depth = ctx.code[:ctx.declaration_offset].count("{") - ctx.code[:ctx.declaration_offset].count("}")
-        if ctx.relative == "crates/engine/src/runtime/tests.rs":
+        if ctx.relative == "src/engine/heap/runtime/tests.rs":
             ctx.direct_parent = ctx.declaration_depth == 0
         else:
             ctx.parent_bounds = ctx.stage3d_test_parent_bounds.get(ctx.relative)
@@ -180,7 +180,7 @@ def check(ctx):
             continue
         ctx.declaration_offset = ctx.declarations[0].start()
         ctx.declaration_depth = ctx.code[:ctx.declaration_offset].count("{") - ctx.code[:ctx.declaration_offset].count("}")
-        if ctx.relative == "crates/engine/src/runtime/tests.rs":
+        if ctx.relative == "src/engine/heap/runtime/tests.rs":
             ctx.direct_parent = ctx.declaration_depth == 0
         else:
             ctx.parent_bounds = ctx.stage3d_test_parent_bounds.get(ctx.relative)

@@ -1,12 +1,11 @@
-use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
 use crate::runtime_observation::{
+    checked_value_type as value_type, primitive_value_text,
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
+use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Context, ObjectRef, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -632,7 +631,8 @@ fn json_stringify_wrapper_and_native_errors_use_the_method_defining_realm() {
     // The qjs CLI has no same-runtime multi-context bridge. This regression
     // pins the C path directly: intrinsic C functions carry their defining
     // realm, which supplies the root wrapper and native TypeError objects.
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_object_prototype = defining.object_prototype().unwrap();
@@ -713,7 +713,8 @@ fn json_stringify_wrapper_and_native_errors_use_the_method_defining_realm() {
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(case.source) {
         Ok(value) => format!(

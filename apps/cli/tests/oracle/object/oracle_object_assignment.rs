@@ -1,6 +1,5 @@
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-
-use quickjs_oxide::Runtime;
+use quickjs_oxide::engine::api::Runtime;
 
 // Pins QuickJS 2026-06-04 ObjectAssignmentPattern lowering. Object binding
 // declarations are covered separately: this target keeps AssignmentExpression
@@ -573,7 +572,8 @@ fn object_assignment_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn object_assignment_smoke_runs_without_an_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         observe_rust_eval(
@@ -592,7 +592,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
         return;
     };
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),

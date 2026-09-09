@@ -1,13 +1,12 @@
-use std::io::Write as _;
-use std::process::ExitCode;
-
-use quickjs_oxide::lexer::quickjs_detect_module_bytes;
-use quickjs_oxide::value::number_to_string;
-use quickjs_oxide::{
+use quickjs_oxide::QUICKJS_COMPAT_VERSION;
+use quickjs_oxide::engine::api::{
     Context, DebugInfoMode, DescriptorField, JsString, ModuleImportAttributes,
     ModuleImportMetaProperty, ModuleLoadResult, ModuleLoader, ModuleLoaderError,
-    OrdinaryPropertyDescriptor, PromiseState, QUICKJS_COMPAT_VERSION, Runtime, RuntimeError, Value,
+    OrdinaryPropertyDescriptor, PromiseState, Runtime, RuntimeError, Value, number_to_string,
+    quickjs_detect_module_bytes,
 };
+use std::io::Write as _;
+use std::process::ExitCode;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum SourceGoal {
@@ -35,7 +34,8 @@ struct FileModuleLoader;
 impl ModuleLoader for FileModuleLoader {
     fn check_attributes(
         &self,
-        attributes: &[quickjs_oxide::ModuleImportAttribute],
+        _context: &mut quickjs_oxide::engine::api::Context,
+        attributes: &[quickjs_oxide::engine::api::ModuleImportAttribute],
     ) -> Result<(), ModuleLoaderError> {
         for attribute in attributes {
             if !attribute.key.utf16_units().eq("type".encode_utf16()) {
@@ -48,8 +48,9 @@ impl ModuleLoader for FileModuleLoader {
         Ok(())
     }
 
-    fn load_with_attributes(
+    fn load(
         &self,
+        _context: &mut quickjs_oxide::engine::api::Context,
         normalized_name: &JsString,
         attributes: &ModuleImportAttributes,
     ) -> Result<ModuleLoadResult, ModuleLoaderError> {
@@ -103,7 +104,7 @@ fn canonical_file_url(filename: &str) -> Result<String, String> {
 fn module_import_meta_properties(
     url: &str,
     is_main: bool,
-) -> Result<Vec<ModuleImportMetaProperty>, quickjs_oxide::JsStringError> {
+) -> Result<Vec<ModuleImportMetaProperty>, quickjs_oxide::engine::api::JsStringError> {
     Ok(vec![
         ModuleImportMetaProperty::new(
             JsString::try_from_utf8("url")?,
@@ -211,7 +212,8 @@ fn main() -> ExitCode {
     }
 
     if quit {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         runtime.set_debug_info_mode(debug_info);
         let _context = runtime.new_context();
         return ExitCode::SUCCESS;
@@ -283,7 +285,8 @@ fn evaluate(
     debug_info: DebugInfoMode,
     print_result: bool,
 ) -> ExitCode {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     runtime.set_debug_info_mode(debug_info);
     // Upstream qjs installs its filesystem loader for every process, including
     // Script-goal `-e`, so dynamic import has the same host boundary everywhere.
@@ -318,9 +321,12 @@ fn evaluate(
     match evaluation {
         Ok(value) => {
             loop {
-                match runtime.execute_pending_job() {
-                    Ok(true) => {}
-                    Ok(false) => break,
+                match runtime
+                    .execute_pending_job()
+                    .map_err(|error| error.into_error())
+                {
+                    Ok(outcome) if outcome.executed() => {}
+                    Ok(_) => break,
                     Err(RuntimeError::Exception) => {
                         report_exception(format_pending_exception(&runtime, &mut context));
                         return ExitCode::from(1);
@@ -415,7 +421,11 @@ fn evaluate_module(
                 return Err(EvaluationError::Rejected(snapshot.result().clone()));
             }
             PromiseState::Pending => {
-                if !runtime.execute_pending_job()? {
+                if !runtime
+                    .execute_pending_job()
+                    .map_err(|error| error.into_error())?
+                    .executed()
+                {
                     std::thread::yield_now();
                 }
             }
@@ -459,11 +469,10 @@ fn report_exception(exception: Option<Vec<u8>>) {
 
 #[cfg(test)]
 mod tests {
-    use quickjs_oxide::{
+    use super::format_exception;
+    use quickjs_oxide::engine::api::{
         AccessorValue, DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime, Value,
     };
-
-    use super::format_exception;
 
     fn data_descriptor(value: Value) -> OrdinaryPropertyDescriptor {
         OrdinaryPropertyDescriptor {
@@ -475,7 +484,9 @@ mod tests {
         }
     }
 
-    fn accessor_descriptor(getter: quickjs_oxide::CallableRef) -> OrdinaryPropertyDescriptor {
+    fn accessor_descriptor(
+        getter: quickjs_oxide::engine::api::CallableRef,
+    ) -> OrdinaryPropertyDescriptor {
         OrdinaryPropertyDescriptor {
             get: DescriptorField::Present(AccessorValue::Callable(getter)),
             set: DescriptorField::Present(AccessorValue::Undefined),
@@ -487,7 +498,8 @@ mod tests {
 
     #[test]
     fn error_dump_uses_raw_shadowing_and_never_executes_getters() {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let Value::Object(error) = context.eval("new Error(\"boom\")").unwrap() else {
             panic!("Error constructor did not return an object");
@@ -542,7 +554,8 @@ mod tests {
 
     #[test]
     fn error_dump_reads_exactly_one_raw_prototype_level() {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let Value::Object(error) = context.eval("new Error()").unwrap() else {
             panic!("Error constructor did not return an object");

@@ -63,7 +63,7 @@ run_expect_full_rewrite_rejected() {
 
     mkdir -p "$case_root"
     local tree
-    for tree in crates apps tools; do
+    for tree in src apps adapters conformance examples tests; do
         mkdir -p "$case_root/$tree"
         cp -R "$repository_root/$tree/." "$case_root/$tree"
     done

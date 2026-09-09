@@ -1,98 +1,95 @@
 # Workspace architecture
 
-The repository contains five library packages and three executable/adapter
-packages. The root Cargo manifest owns shared dependencies, lint policy, and
-build profiles. Source belongs to its package; no old source entry points are
-retained at the repository root.
+The repository implements candidate A from the [architecture report](reports/interpreter-architecture.html#rust).
+One root package, quickjs-oxide, contains the complete interpreter. Its only
+top-level Rust source file is src/lib.rs.
 
-| Package | Responsibility | Production workspace dependencies |
-| --- | --- | --- |
-| `crates/core` | Strings, atoms, source positions, numeric primitives, bytecode, function/module drafts, and representation-only validation | None |
-| `crates/compiler` | Lexing, parsing, scope analysis, name resolution, and lowering into unlinked drafts | core |
-| `crates/engine` | Heap/GC, VM, rooted values, realm state, publication, objects, builtins, module execution, and jobs | core, compiler |
-| `crates/host` | Native clock, timezone, random seed, and qjs output implementation | core |
-| `crates/quickjs-oxide` | The Rust embedding entry point and default runtime construction | engine, host |
-| `apps/cli` | qjs arguments, file loading, diagnostics, and process policy | quickjs-oxide |
-| `apps/web` | WASM exports, browser host services, and result conversion | quickjs-oxide |
-| `tools/test262` | Test262 admission, scheduling, execution, and reporting | quickjs-oxide with test262-host |
+```text
+src/
+  lib.rs
+  source/                 authored source, coordinates and Unicode text support
+  regexp/                 regex compilation, programs, matching and interruption
+  engine/
+    compiler/             lexer, parser, scopes and code generation
+    code/                 code representation, verification and publication
+    value/                values, strings, numbers and runtime conversions
+    object/               object handles, properties, shapes and internal methods
+    atom/                 interned names, symbols and property keys
+    heap/                 raw records, storage operations, roots and collection
+    vm/                   protocols, frames, calls, dispatch, unwinding and suspension
+    realm/                global bindings, prototypes and initialization
+    builtins/             language builtins and native call dispatch
+    modules/              loaders, module instances, linking and evaluation
+    jobs/                 queued computations, retained roots and cleanup
+    host/                 environment capability contracts
+    api/                  Runtime/Context and embedding operations
+```
 
-## Shared models and compilation
+Every source directory has a README describing ownership, dependencies and its
+direct files/children. Start at [src/README.md](../src/README.md).
 
-Core owns `JsString`, atoms, instructions, function descriptors, and unlinked
-function/module products. `PrimitiveValue` contains only runtime-independent
-constants. Object and symbol roots remain in the engine's `Value`. Publication
-converts between these representations explicitly; no runtime handles enter
-compiler-owned constant pools.
+## Responsibilities and storage
 
-The pure regular-expression compiler/matcher lives in core because both literal
-compilation and runtime RegExp construction consume it. The ECMAScript RegExp
-object shell remains an engine builtin. This migration retains the existing
-matcher rather than introducing a separate package or replacement engine.
+Runtime is defined in api/runtime.rs. RuntimeInner and RuntimeState belong to
+heap/runtime: they own the shared heap/atom domain and cleanup. Runtime methods
+live with their behavior: property operations in object, conversion in value,
+global bindings in realm, publication in code, execution in vm and builtin
+algorithms in builtins. This uses ordinary inherent implementations of one
+Runtime type; it does not introduce forwarding wrappers or parallel runtimes.
 
-Compiler owns its lexer and parser modules and the existing resolution and
-lowering passes. There is no new AST pipeline. Bytecode layout checks which are
-independent from allocation live in core; private-binding authentication and
-heap identity checks remain with engine storage/publication.
+Heap records describe retained raw data. The *_records modules define identities,
+payloads and state; *_storage modules maintain references and storage transitions.
+Language behavior remains in the appropriate owner, even when its raw state is
+stored by heap. Native builtin selectors now belong to builtins/native.
 
-Engine depends on compiler for `eval`, dynamic functions, and module compilation.
-Compiler has no production dependency on engine. A module attribute callback
-can stop parsing with `ModuleCompileFailure::Host`; the caller retains the exact
-thrown engine value. The parser neither stringifies the exception nor owns it.
+VM protocol, completion states, activation/suspension, frame execution, instruction
+dispatch, numeric execution and unwinding have separate files. The private
+detached test host is compiled only for unit tests. Public Value and rooted
+handles continue to have one representation.
 
-## Engine internals
+source and regexp are sibling Rust modules of engine. They currently share the
+engine's exact UTF-16 string carrier; they are not standalone Cargo packages.
+Unicode algorithms and their fixed generated tables belong to source/unicode.
+The JS RegExp object shell remains in engine/builtins/regexp.
 
-- `heap/` owns storage, allocation, reference counting, edge traversal and GC.
-- `vm.rs` owns execution frames, instructions, unwinding and suspension.
-- `object.rs`, `property.rs`, `shape.rs`, and runtime property/internal-method
-  modules own object representation and observable property semantics.
-- `runtime/intrinsics/` owns ECMAScript builtin behavior.
-- `runtime/bootstrap/` and `context/` own realm construction and operations.
-- `runtime/bytecode_publish.rs` owns draft validation and publication.
-- `runtime/module/` and `jobs.rs` own module execution and pending jobs.
-- Engine `function.rs` and `object.rs` own rooted published handles.
-- `runtime/host.rs` exposes the embedding service contract. The data-only
-  contract is defined in core so providers need no dependency on engine state.
+## Public and private boundaries
 
-These are internal module boundaries, not additional Cargo packages. They may
-share engine-private state without exporting heap mutation to an outer crate.
+src/lib.rs declares source, regexp and engine. Only engine::api is public inside
+the engine; embeddings use that boundary directly. Legacy root aliases and
+cross-owner runtime/heap reexports have been removed. The test-support feature
+provides a small explicit differential-testing surface; detached VM fixtures are
+compiled only for unit tests. API entry points do not contain a second implementation.
 
-## Host and Rust embedding
+The bytecode decoder is a private child of engine/code. Only
+code/binary_object_publish consumes its archive models. Decoder intermediate
+visibility is restricted to the actual code/binary_object ancestry. The
+ConstructorRef capability remains opaque. Splitting sibling VM and heap helpers
+uses their enclosing module visibility without making them public APIs.
 
-`quickjs-oxide::Runtime::new()` selects the native host provider. Explicit host
-services remain supported. The facade runtime owns an engine runtime and
-forwards access through `Deref`; Context, Value, and rooted handles retain a
-single engine-owned representation. `into_engine()` transfers that ownership
-when composing lower-level APIs.
+## Packages and hosts
 
-Engine-only callers construct a runtime with `Runtime::new_with_host_services`.
-The engine does not select an operating-system provider. qjs helper installation
-and value formatting remain with internal native dispatch; the host service
-receives formatted output bytes and the flush policy. Custom providers may
-capture output by implementing `HostServices::write_output`; its default is a
-sink. The native provider preserves stdout writes and ignored I/O errors.
+| Package directory | Production workspace dependencies |
+| --- | --- |
+| Repository root: quickjs-oxide | None |
+| adapters/native: quickjs-oxide-host | quickjs-oxide |
+| adapters/web: quickjs-oxide-web-host | quickjs-oxide |
+| apps/cli | quickjs-oxide, native adapter |
+| apps/web | quickjs-oxide, web adapter |
+| conformance/test262 | quickjs-oxide with test262-host, native adapter |
 
-Test262 is opt-in. Agent sessions accept a runtime factory; each worker creates
-its runtime on its own thread. The runner supplies native services. No runtime
-root crosses a thread boundary.
+Applications construct Runtime::new_with_host_services(provider), choosing the
+native or browser provider. The main package has no production adapter dependency.
+Unit tests use a native dev dependency and a test-only HostServices identity
+bridge. Applications own files, loader policy, output presentation and job driving.
 
-## Tests and tooling
+## Verification
 
-Unit tests live with their owner. Compiler execution tests use an engine dev
-dependency and narrowly gated `test-support` APIs, without introducing a
-production dependency cycle. Detached bytecode tests can use primitive values
-in core/compiler and rooted values in engine.
+Workspace tests cover module behavior and existing integration/oracle scenarios.
+The binary boundary checker follows registered physical owners and verifies their
+Rust module routes; missing or conditionally disconnected evidence fails the gate.
+Mutation fixtures follow the same ownership map. Full Test262 receipts remain
+authenticated against their historical source; a source refactor does not renew
+a conformance claim.
 
-Rust embedding integration tests live in `crates/quickjs-oxide/tests`. CLI and
-oracle integration tests live in `apps/cli/tests`, where Cargo provides the qjs
-binary. Oracle fixtures and expected outputs live with those tests. A shared
-syntax-error assertion remains in the embedding test helpers and is imported
-explicitly by the CLI test helpers.
-
-Scripts retain their checks/test262/quickjs/unicode/web responsibilities.
-Current Test262 fingerprints cover the new package trees, while historical
-receipt input lists continue to authenticate their original commits.
-
-For quick iteration, check the affected packages with `cargo check -p PACKAGE`.
-At a completed migration boundary, use `cargo check --workspace --all-targets`.
-Run focused tests for changed semantics; reserve the full oracle and mutation
-suites for a deliberate broader validation pass.
+See [the refactor record](reports/candidate-a-refactor.md) for validation results
+and the distinction between completed checks and full suites that were not rerun.

@@ -1,8 +1,7 @@
 use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
+use quickjs_oxide::engine::api::{DebugInfoMode, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{DebugInfoMode, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -452,7 +451,8 @@ fn tagged_template_rust_smoke_matches_pinned_expectation() {
 
 #[test]
 fn tagged_template_site_identity_survives_gc_in_strip_debug_mode() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
     let mut context = runtime.new_context();
     context
@@ -542,7 +542,8 @@ fn tagged_template_semantics_match_pinned_quickjs() {
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(case.source) {
         Ok(value) => format!(
@@ -586,8 +587,8 @@ fn rust_observation(case: &Case) -> String {
 
 fn error_name(
     runtime: &Runtime,
-    context: &mut quickjs_oxide::Context,
-    error: &quickjs_oxide::ObjectRef,
+    context: &mut quickjs_oxide::engine::api::Context,
+    error: &quickjs_oxide::engine::api::ObjectRef,
     case: &Case,
 ) -> String {
     let key = runtime

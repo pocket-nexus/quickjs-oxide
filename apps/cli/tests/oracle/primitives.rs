@@ -1,9 +1,9 @@
 use std::ffi::OsStr;
 use std::io::Write;
+
 use std::process::{Command, Stdio};
 
-use quickjs_oxide::value::number_to_string;
-use quickjs_oxide::{CompileOptions, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{CompileOptions, Runtime, RuntimeError, Value, number_to_string};
 
 const ORACLE_NORMALIZER: &str = r#"
 var __qjo_type = typeof __qjo_value;
@@ -1120,7 +1120,8 @@ fn future_reserved_words_match_quickjs_oracle() {
         return;
     };
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let import_options = CompileOptions::new("future-reserved-import.js");
     for &(description, source) in FUTURE_RESERVED_IMPORT_CALL_CASES {
@@ -1181,7 +1182,8 @@ fn primitive_expressions_match_quickjs_oracle() {
         return;
     };
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
     for &(description, source) in CASES {
@@ -1205,7 +1207,8 @@ fn implemented_errors_match_quickjs_oracle() {
         return;
     };
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     for &(description, source) in SHARED_ERRORS {
         assert!(
@@ -1245,7 +1248,8 @@ fn runtime_error_kind_and_message_match_quickjs_oracle() {
         return;
     };
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let name_key = runtime.intern_property_key("name").unwrap();
     let message_key = runtime.intern_property_key("message").unwrap();
@@ -1281,7 +1285,8 @@ fn compiler_call_capacity_matches_quickjs_error_classes() {
         .join(",");
     let source = format!("(function() {{}})({arguments})");
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(context.compile(&source), Err(RuntimeError::Exception));
     let rust_observation = take_rust_error_observation(&runtime, &mut context);
@@ -1380,7 +1385,10 @@ fn run_oracle_error(oracle: &OsStr, source: &str, description: &str) -> String {
         .to_owned()
 }
 
-fn take_rust_error_observation(runtime: &Runtime, context: &mut quickjs_oxide::Context) -> String {
+fn take_rust_error_observation(
+    runtime: &Runtime,
+    context: &mut quickjs_oxide::engine::api::Context,
+) -> String {
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust did not materialize a native Error object");
     };

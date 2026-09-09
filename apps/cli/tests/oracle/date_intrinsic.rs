@@ -2,12 +2,10 @@ use crate::runtime_completion_oracle::observe_read_context_eval_completion_with_
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 
 // Differential lock for the complete observable Date slice in pinned QuickJS
 // 2026-06-04. Every JavaScript vector stays inside quickjs-oxide's currently
@@ -482,7 +480,8 @@ fn date_to_primitive_and_to_json_match_pinned_quickjs() {
 
 #[test]
 fn date_cross_realm_prototypes_fallback_and_errors_use_exact_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
@@ -580,7 +579,8 @@ fn date_cross_realm_prototypes_fallback_and_errors_use_exact_realms() {
 
 #[test]
 fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (date, value_of) = {
         let mut defining = runtime.new_context();
         let date = eval_object(&mut defining, "new Date(42)", "detached Date");
@@ -631,7 +631,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     };
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_read_context_eval_completion_with_prelude(
             &runtime,

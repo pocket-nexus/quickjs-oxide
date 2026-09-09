@@ -1,10 +1,8 @@
 // Keep the Object oracle implementations in separate modules so their private
 // helpers remain isolated while Cargo builds one integration target.
 
-use crate::quickjs_array_completion_oracle;
-use crate::quickjs_oracle;
-use crate::support::quickjs_object_pattern_oracle;
-use crate::support::quickjs_object_super_oracle;
+use crate::support::{quickjs_object_pattern_oracle, quickjs_object_super_oracle};
+use crate::{quickjs_array_completion_oracle, quickjs_oracle};
 
 #[cfg(test)]
 mod quickjs_object_pattern_oracle_contract {

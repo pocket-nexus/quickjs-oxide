@@ -1,8 +1,6 @@
+use quickjs_oxide::engine::api::{JsBigInt, number_to_string};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::JsBigInt;
-use quickjs_oxide::value::number_to_string;
 
 #[test]
 fn bigint_to_number_matches_pinned_quickjs() {

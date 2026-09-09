@@ -10,9 +10,8 @@ use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
 use crate::runtime_oracle::value_type;
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_getOwnPropertyDescriptor` and
 // `js_object_getOwnPropertyDescriptors`. Proxy descriptor traps and TypedArray
@@ -364,7 +363,8 @@ fn object_descriptor_exotic_surfaces_match_pinned_quickjs() {
 
 #[test]
 fn object_descriptor_pins_quickjs_proxy_same_value_omission_without_an_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         observe_rust_eval(
@@ -401,7 +401,8 @@ fn object_descriptor_autoinit_can_be_deleted_before_materialization() {
         "Object descriptor fresh delete",
     );
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let object = global_callable(&runtime, &mut context, "Object");
     let mut values = Vec::new();
@@ -433,7 +434,8 @@ fn object_descriptor_autoinit_can_be_deleted_before_materialization() {
 
 #[test]
 fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_object = global_callable(&runtime, &mut defining, "Object");
@@ -530,7 +532,8 @@ fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
 
 #[test]
 fn object_descriptor_methods_and_results_retain_then_release_their_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (singular, plural, descriptors, nested) = {
         let mut first = runtime.new_context();
         let mut second = runtime.new_context();
@@ -600,7 +603,8 @@ fn object_descriptor_methods_and_results_retain_then_release_their_realm() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");

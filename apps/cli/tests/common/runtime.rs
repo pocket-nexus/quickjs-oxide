@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::{CallableRef, Context, ObjectRef, Runtime, Value};
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value};
 
 #[allow(dead_code)]
 pub(crate) fn value_type(runtime: &Runtime, value: &Value) -> &'static str {

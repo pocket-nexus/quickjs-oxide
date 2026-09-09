@@ -1,13 +1,12 @@
+use quickjs_oxide::engine::api::{
+    Context, ContextId, JsString, ModuleImportAttributes, ModuleLoadResult, ModuleLoader,
+    ModuleLoaderError, PromiseState, Runtime, Value,
+};
 use std::cell::{Cell, RefCell};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::rc::Rc;
-
-use quickjs_oxide::{
-    Context, ContextId, JsString, ModuleImportAttributes, ModuleLoadResult, ModuleLoader,
-    ModuleLoaderError, PromiseState, Runtime, Value,
-};
 
 const MODULE_GLOBAL_SHADOW_TRANSCRIPT: &str =
     include_str!("../fixtures/expected/module-global-shadow/quickjs-2026-06-04.txt");
@@ -55,7 +54,7 @@ impl DynamicReentryLoader {
 }
 
 impl ModuleLoader for DynamicReentryLoader {
-    fn normalize_in_context(
+    fn normalize(
         &self,
         context: &mut Context,
         base_name: &JsString,
@@ -73,7 +72,7 @@ impl ModuleLoader for DynamicReentryLoader {
         }
     }
 
-    fn load_with_attributes_in_context(
+    fn load(
         &self,
         context: &mut Context,
         normalized_name: &JsString,
@@ -101,7 +100,8 @@ impl ModuleLoader for DynamicReentryLoader {
 
 #[test]
 fn dynamic_import_accepts_reentrant_compiled_modules_from_the_initiating_context() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let depth = Rc::new(Cell::new(0));
     let events = Rc::new(RefCell::new(Vec::new()));
     let _registration = runtime.set_module_loader(DynamicReentryLoader {
@@ -130,7 +130,7 @@ fn dynamic_import_accepts_reentrant_compiled_modules_from_the_initiating_context
 
     assert!(events.borrow().is_empty(), "dynamic load ran synchronously");
     let mut executed_jobs = 0;
-    while runtime.execute_pending_job().unwrap() {
+    while runtime.execute_pending_job().unwrap().executed() {
         executed_jobs += 1;
         assert!(executed_jobs <= 8, "dynamic import jobs did not quiesce");
     }

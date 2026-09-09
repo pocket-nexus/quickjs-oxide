@@ -1,7 +1,6 @@
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
 
 // Pins the data/computed/proto/spread lowering in QuickJS 2026-06-04. Method
 // and accessor literal syntax deliberately remains a separate feature slice.
@@ -124,7 +123,8 @@ fn object_literal_observations_match_pinned_quickjs() {
 
 #[test]
 fn object_literal_duplicate_proto_is_an_early_error() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert!(matches!(
         context.compile("({__proto__:1,__proto__:2})"),
@@ -141,7 +141,8 @@ fn object_literal_duplicate_proto_is_an_early_error() {
 }
 
 fn rust_observation() -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let Value::String(value) = context
         .eval(PROBE)
@@ -192,7 +193,8 @@ fn probe_expected_shape_is_stable_without_an_oracle() {
 
 #[test]
 fn object_literal_result_uses_the_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let function = defining

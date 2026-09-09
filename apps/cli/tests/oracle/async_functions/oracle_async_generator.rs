@@ -8,7 +8,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
 
@@ -566,7 +566,8 @@ repeated().next().then(function (result) {
 
 #[test]
 fn cross_realm_settlement_resumes_in_the_job_realm_and_executes_in_the_body_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut body = runtime.new_context();
     let mut settler = runtime.new_context();
     let settler_realm = settler.realm_id();
@@ -598,14 +599,14 @@ crossRealm().next().then(undefined, function (error) {
 
     // PromiseResolve in the body realm first installs the thenable bridge.
     while runtime.is_job_pending() {
-        runtime.execute_pending_job_with_context().unwrap();
+        runtime.execute_pending_job().unwrap();
     }
     eval(&mut settler, "release(1)");
 
     let mut saw_settler_realm = false;
     while runtime.is_job_pending() {
         let job_realm = runtime
-            .execute_pending_job_with_context()
+            .execute_pending_job()
             .unwrap()
             .context()
             .expect("pending job had no realm");

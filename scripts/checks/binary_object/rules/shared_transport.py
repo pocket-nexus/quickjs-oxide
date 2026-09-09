@@ -24,7 +24,7 @@ def check(ctx):
                 )
 
     native_token_struct = re.compile(
-        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*\)[ \t\n]+struct[ \t\n]+NativeSabToken[ \t\n]*\{"
         r"[ \t\n]*native_token_bits[ \t\n]*:[ \t\n]*u64[ \t\n]*,?[ \t\n]*\}"
     )
@@ -36,7 +36,7 @@ def check(ctx):
         )
 
     if re.search(
-        r"#[ \t\n]*\[[^\]]*\][ \t\n]*pub[ \t\n]*\([^)]*runtime[^)]*\)"
+        r"#[ \t\n]*\[[^\]]*\][ \t\n]*pub[ \t\n]*\([^)]*\)"
         r"[ \t\n]+struct[ \t\n]+NativeSabToken\b",
         ctx.sab_transport_code,
     ):
@@ -94,7 +94,7 @@ def check(ctx):
         else:
             actual_impl = " ".join(ctx.code[ctx.match.start():close_offset].split())
             expected_impl = " ".join(
-                '\n            impl NativeSabToken {\n                #[must_use]\n                pub(in crate::runtime::binary_object) const fn from_test_bits(bits: u64) -> Self {\n                    Self {\n                        native_token_bits: bits,\n                    }\n                }\n            }\n            '.split()
+                '\n            impl NativeSabToken {\n                #[must_use]\n                pub(in crate::engine::code::binary_object) const fn from_test_bits(bits: u64) -> Self {\n                    Self {\n                        native_token_bits: bits,\n                    }\n                }\n            }\n            '.split()
             )
             if actual_impl != expected_impl:
                 ctx.fail(
@@ -175,7 +175,7 @@ def check(ctx):
 
     for ctx.name in entrypoint_patterns:
         ctx.pattern = re.compile(
-            rf"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+            rf"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
             rf"[ \t\n]*\)[ \t\n]+fn[ \t\n]+{re.escape(ctx.name)}\b"
         )
         if len(ctx.pattern.findall(ctx.sab_transport_code)) != 1:
@@ -196,7 +196,7 @@ def check(ctx):
         (
             ctx.image_decode_code,
             re.compile(
-                r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+                r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
                 r"[ \t\n]*::[ \t\n]*binary_object[ \t\n]*\)[ \t\n]+fn"
                 r"[ \t\n]+decode_bytecode_image_body\b"
             ),
@@ -228,7 +228,7 @@ def check(ctx):
             )
 
     cursor_struct = re.compile(
-        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*::[ \t\n]*binary_object[ \t\n]*\)[ \t\n]+struct"
         r"[ \t\n]+SabTransportCursor[ \t\n]*<[ \t\n]*'a[ \t\n]*>[ \t\n]*\{"
         r"[ \t\n]*cursor_wire[ \t\n]*:[ \t\n]*WireCursor[ \t\n]*<[ \t\n]*'a[ \t\n]*>[ \t\n]*,"
@@ -245,7 +245,7 @@ def check(ctx):
         )
 
     input_struct = re.compile(
-        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*\)[ \t\n]+struct[ \t\n]+SabTransportInput"
         r"[ \t\n]*<[ \t\n]*'a[ \t\n]*>[ \t\n]*\{"
         r"[ \t\n]*transport_wire_bytes[ \t\n]*:[ \t\n]*&[ \t\n]*'a"
@@ -294,7 +294,7 @@ def check(ctx):
         else:
             actual_impl = " ".join(ctx.sab_transport_code[ctx.match.start():close_offset].split())
             expected_impl = " ".join(
-                "\n            impl<'a> SabTransportInput<'a> {\n                #[must_use]\n                pub(in crate::runtime) const fn new(\n                    wire: &'a [u8],\n                    writer_occurrences: &'a [NativeSabToken],\n                ) -> Self {\n                    Self {\n                        transport_wire_bytes: wire,\n                        transport_writer_occurrences: writer_occurrences,\n                    }\n                }\n                fn build_cursor(\n                    self,\n                    mode: ReaderMode,\n                    wire_limits: WireLimits,\n                    graph_limits: GraphLimits,\n                ) -> Result<SabTransportCursor<'a>, SabArchiveError> {\n                    Ok(SabTransportCursor {\n                        cursor_wire: WireCursor::new(self.transport_wire_bytes, mode, wire_limits)?,\n                        cursor_writer_occurrences: self.transport_writer_occurrences,\n                        cursor_next_occurrence: 0,\n                        cursor_archive: SabArchiveState::new(graph_limits),\n                    })\n                }\n                #[cfg(test)]\n                fn into_cursor_for_test(\n                    self,\n                    mode: ReaderMode,\n                    wire_limits: WireLimits,\n                    graph_limits: GraphLimits,\n                ) -> Result<SabTransportCursor<'a>, SabArchiveError> {\n                    self.build_cursor(mode, wire_limits, graph_limits)\n                }\n            }\n            ".split()
+                "\n            impl<'a> SabTransportInput<'a> {\n                #[must_use]\n                pub(in crate::engine::code) const fn new(\n                    wire: &'a [u8],\n                    writer_occurrences: &'a [NativeSabToken],\n                ) -> Self {\n                    Self {\n                        transport_wire_bytes: wire,\n                        transport_writer_occurrences: writer_occurrences,\n                    }\n                }\n                fn build_cursor(\n                    self,\n                    mode: ReaderMode,\n                    wire_limits: WireLimits,\n                    graph_limits: GraphLimits,\n                ) -> Result<SabTransportCursor<'a>, SabArchiveError> {\n                    Ok(SabTransportCursor {\n                        cursor_wire: WireCursor::new(self.transport_wire_bytes, mode, wire_limits)?,\n                        cursor_writer_occurrences: self.transport_writer_occurrences,\n                        cursor_next_occurrence: 0,\n                        cursor_archive: SabArchiveState::new(graph_limits),\n                    })\n                }\n                #[cfg(test)]\n                fn into_cursor_for_test(\n                    self,\n                    mode: ReaderMode,\n                    wire_limits: WireLimits,\n                    graph_limits: GraphLimits,\n                ) -> Result<SabTransportCursor<'a>, SabArchiveError> {\n                    self.build_cursor(mode, wire_limits, graph_limits)\n                }\n            }\n            ".split()
             )
             if actual_impl != expected_impl:
                 ctx.fail(
@@ -441,7 +441,7 @@ def check(ctx):
         binary_object_cursor_methods = expected_cursor_methods[:13]
         for ctx.name in binary_object_cursor_methods:
             ctx.pattern = re.compile(
-                rf"(?m)^[ \t]*pub[ \t]*\([ \t]*in[ \t]+crate::runtime::binary_object"
+                rf"(?m)^[ \t]*pub[ \t]*\([ \t]*in[ \t]+crate::engine::code::binary_object"
                 rf"[ \t]*\)[ \t]+(?:const[ \t]+)?fn[ \t]+{re.escape(ctx.name)}\b"
             )
             if len(ctx.pattern.findall(cursor_impl_code)) != 1:
@@ -534,7 +534,7 @@ def check(ctx):
             )
 
     graph_archive_struct = re.compile(
-        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*\)[ \t\n]+struct[ \t\n]+ArchivedWireGraph[ \t\n]*\{"
         r"[ \t\n]*archived_graph_payload[ \t\n]*:[ \t\n]*WireGraph[ \t\n]*,"
         r"[ \t\n]*archived_graph_shared_backings[ \t\n]*:[ \t\n]*Box[ \t\n]*<"
@@ -625,7 +625,7 @@ def check(ctx):
         else:
             actual_impl = " ".join(ctx.code[ctx.match.start():close_offset].split())
             expected_impl = " ".join(
-                '\n            impl ArchivedWireGraph {\n                #[must_use]\n                pub(in crate::runtime::binary_object) const fn shared_backing_count(&self) -> usize {\n                    self.archived_graph_shared_backings.len()\n                }\n                #[cfg(test)]\n                pub(in crate::runtime::binary_object) const fn test_graph(&self) -> &WireGraph {\n                    &self.archived_graph_payload\n                }\n                #[cfg(test)]\n                pub(super) fn test_shared_backing_descriptor(\n                    &self,\n                    backing: ArchiveBackingId,\n                ) -> Option<SharedBackingDescriptor> {\n                    self.archived_graph_shared_backings\n                        .get(backing.as_usize())\n                        .copied()\n                }\n            }\n            '.split()
+                '\n            impl ArchivedWireGraph {\n                #[must_use]\n                pub(in crate::engine::code::binary_object) const fn shared_backing_count(&self) -> usize {\n                    self.archived_graph_shared_backings.len()\n                }\n                #[cfg(test)]\n                pub(in crate::engine::code::binary_object) const fn test_graph(&self) -> &WireGraph {\n                    &self.archived_graph_payload\n                }\n                #[cfg(test)]\n                pub(super) fn test_shared_backing_descriptor(\n                    &self,\n                    backing: ArchiveBackingId,\n                ) -> Option<SharedBackingDescriptor> {\n                    self.archived_graph_shared_backings\n                        .get(backing.as_usize())\n                        .copied()\n                }\n            }\n            '.split()
             )
             if actual_impl != expected_impl:
                 ctx.fail(
@@ -634,7 +634,7 @@ def check(ctx):
                 )
 
     archive_struct = re.compile(
-        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*\)[ \t\n]+struct[ \t\n]+ArchivedBytecodeImage[ \t\n]*\{"
         r"[ \t\n]*archived_image_payload[ \t\n]*:[ \t\n]*BytecodeImage[ \t\n]*,"
         r"[ \t\n]*archived_image_shared_backings[ \t\n]*:[ \t\n]*Box[ \t\n]*<"
@@ -721,7 +721,7 @@ def check(ctx):
         else:
             actual_impl = " ".join(ctx.code[ctx.match.start():close_offset].split())
             expected_impl = " ".join(
-                '\n            impl ArchivedBytecodeImage {\n                #[must_use]\n                pub(in crate::runtime::binary_object) const fn shared_backing_count(&self) -> usize {\n                    self.archived_image_shared_backings.len()\n                }\n                #[cfg(test)]\n                pub(in crate::runtime::binary_object) const fn test_image(&self) -> &BytecodeImage {\n                    &self.archived_image_payload\n                }\n                #[cfg(test)]\n                pub(in crate::runtime::binary_object) fn test_shared_backing_descriptor(\n                    &self,\n                    backing: ArchiveBackingId,\n                ) -> Option<SharedBackingDescriptor> {\n                    self.archived_image_shared_backings\n                        .get(backing.as_usize())\n                        .copied()\n                }\n            }\n            '.split()
+                '\n            impl ArchivedBytecodeImage {\n                #[must_use]\n                pub(in crate::engine::code::binary_object) const fn shared_backing_count(&self) -> usize {\n                    self.archived_image_shared_backings.len()\n                }\n                #[cfg(test)]\n                pub(in crate::engine::code::binary_object) const fn test_image(&self) -> &BytecodeImage {\n                    &self.archived_image_payload\n                }\n                #[cfg(test)]\n                pub(in crate::engine::code::binary_object) fn test_shared_backing_descriptor(\n                    &self,\n                    backing: ArchiveBackingId,\n                ) -> Option<SharedBackingDescriptor> {\n                    self.archived_image_shared_backings\n                        .get(backing.as_usize())\n                        .copied()\n                }\n            }\n            '.split()
             )
             if actual_impl != expected_impl:
                 ctx.fail(
@@ -739,18 +739,18 @@ def check(ctx):
         forbidden_patterns = (
             (
                 "forbidden-vm-dependency",
-                re.compile(r"\bcrate[ \t\n]*::[ \t\n]*(?:r#)?vm\b"),
-                "crate::vm",
+                re.compile(r"\bcrate[ \t\n]*::[ \t\n]*(?:engine[ \t\n]*::[ \t\n]*)?(?:r#)?vm\b"),
+                "crate::engine::vm",
             ),
             (
                 "forbidden-compiler-dependency",
-                re.compile(r"\bcrate[ \t\n]*::[ \t\n]*(?:r#)?compiler\b"),
-                "crate::compiler",
+                re.compile(r"\bcrate[ \t\n]*::[ \t\n]*(?:engine[ \t\n]*::[ \t\n]*)?(?:r#)?compiler\b"),
+                "crate::engine::compiler",
             ),
             (
                 "forbidden-heap-dependency",
-                re.compile(r"\bcrate[ \t\n]*::[ \t\n]*(?:r#)?heap\b"),
-                "crate::heap",
+                re.compile(r"\bcrate[ \t\n]*::[ \t\n]*(?:engine[ \t\n]*::[ \t\n]*)?(?:r#)?heap\b"),
+                "crate::engine::heap",
             ),
             (
                 "forbidden-runtime-dependency",
@@ -758,12 +758,12 @@ def check(ctx):
                     r"\buse[ \t\n]+crate[ \t\n]*::[ \t\n]*(?:r#)?runtime\b"
                     r"(?![ \t\n]*::[ \t\n]*binary_object\b)"
                 ),
-                "crate::runtime",
+                "crate::engine::heap::runtime",
             ),
             (
                 "forbidden-shared-memory-dependency",
                 re.compile(r"\bcrate[ \t\n]*::[ \t\n]*(?:r#)?shared_memory\b"),
-                "crate::shared_memory",
+                "crate::engine::heap::shared_memory",
             ),
             (
                 "forbidden-parent-dependency",
@@ -840,7 +840,7 @@ def check(ctx):
             (
                 "forbidden-crate-alias",
                 re.compile(
-                    r"\b(?:use[ \t\n]+crate[ \t\n]+as|extern[ \t\n]+crate[ \t\n]+self[ \t\n]+as)\b"
+                    r"\b(?:use[ \t\n]+crate(?:[ \t\n]*::[ \t\n]*engine)?[ \t\n]+as|extern[ \t\n]+crate[ \t\n]+self[ \t\n]+as)\b"
                 ),
                 "an alias for the crate root",
             ),
@@ -854,7 +854,7 @@ def check(ctx):
                 )
 
         grouped_import_pattern = re.compile(
-            r"\buse[ \t\n]+crate[ \t\n]*::[ \t\n]*\{(?P<body>.*?)\}[ \t\n]*;",
+            r"\buse[ \t\n]+crate[ \t\n]*::[ \t\n]*(?:engine[ \t\n]*::[ \t\n]*)?\{(?P<body>.*?)\}[ \t\n]*;",
             re.DOTALL,
         )
         for grouped in grouped_import_pattern.finditer(ctx.code):
@@ -862,31 +862,31 @@ def check(ctx):
             if re.search(r"\b(?:r#)?vm\b", ctx.body):
                 ctx.fail(
                     "forbidden-vm-dependency",
-                    "binary_object production sources must not import crate::vm through a grouped use; found "
+                    "binary_object production sources must not import crate::engine::vm through a grouped use; found "
                     + ctx.location(ctx.relative, ctx.source, grouped.start()),
                 )
             if re.search(r"\b(?:r#)?compiler\b", ctx.body):
                 ctx.fail(
                     "forbidden-compiler-dependency",
-                    "binary_object production sources must not import crate::compiler through a grouped use; found "
+                    "binary_object production sources must not import crate::engine::compiler through a grouped use; found "
                     + ctx.location(ctx.relative, ctx.source, grouped.start()),
                 )
             if re.search(r"\b(?:r#)?heap\b", ctx.body):
                 ctx.fail(
                     "forbidden-heap-dependency",
-                    "binary_object production sources must not import crate::heap through a grouped use; found "
+                    "binary_object production sources must not import crate::engine::heap through a grouped use; found "
                     + ctx.location(ctx.relative, ctx.source, grouped.start()),
                 )
             if re.search(r"\b(?:r#)?runtime\b", ctx.body):
                 ctx.fail(
                     "forbidden-runtime-dependency",
-                    "binary_object production sources must not import crate::runtime through a grouped use; found "
+                    "binary_object production sources must not import crate::engine::heap::runtime through a grouped use; found "
                     + ctx.location(ctx.relative, ctx.source, grouped.start()),
                 )
             if re.search(r"(?:^|[,{}])[ \t\n]*(?:r#)?shared_memory\b", ctx.body):
                 ctx.fail(
                     "forbidden-shared-memory-dependency",
-                    "binary_object production sources must not import crate::shared_memory through a grouped use; found "
+                    "binary_object production sources must not import crate::engine::heap::shared_memory through a grouped use; found "
                     + ctx.location(ctx.relative, ctx.source, grouped.start()),
                 )
             if re.search(r"\bself[ \t\n]+as\b", ctx.body):

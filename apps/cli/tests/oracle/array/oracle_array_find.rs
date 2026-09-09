@@ -1,8 +1,7 @@
 use super::support::*;
 
+use quickjs_oxide::engine::api::{CallableRef, Context, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{CallableRef, Context, Runtime, RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04's shared `js_array_find` kernel. Unlike
 // indexOf, every index is read and passed to the predicate, including holes.
@@ -261,7 +260,8 @@ fn array_find_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_find_native_errors_and_user_throws_use_pinned_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -362,7 +362,8 @@ fn array_find_native_errors_and_user_throws_use_pinned_realms() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

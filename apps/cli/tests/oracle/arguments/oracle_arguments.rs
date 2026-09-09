@@ -1,7 +1,7 @@
+use super::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
 use crate::runtime_completion_oracle::observe_checked_legacy_float_eval_completion as observe_rust_eval;
 
-use super::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
-use quickjs_oxide::{Runtime, Value};
+use quickjs_oxide::engine::api::{Runtime, Value};
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -145,7 +145,8 @@ fn arguments_values_match_pinned_quickjs() {
         return;
     };
     for &(description, source) in VALUE_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -157,7 +158,8 @@ fn arguments_values_match_pinned_quickjs() {
 
 #[test]
 fn arguments_rust_smoke_runs_without_an_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let value = context
         .eval("(function(a){a=41;arguments[0]++;return a})(1)")

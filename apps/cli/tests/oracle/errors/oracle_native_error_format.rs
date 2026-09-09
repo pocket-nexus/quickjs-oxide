@@ -1,9 +1,8 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 #[derive(Debug, Eq, PartialEq)]
 struct Observation {
@@ -59,7 +58,8 @@ fn native_error_format_matches_pinned_quickjs() {
 
 #[test]
 fn explicit_error_constructor_message_bypasses_the_native_throw_buffer() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let error_key = runtime.intern_property_key("Error").unwrap();
@@ -104,7 +104,8 @@ fn native_error_name_cases() -> Vec<Vec<u16>> {
 }
 
 fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let number_key = runtime.intern_property_key("Number").unwrap();

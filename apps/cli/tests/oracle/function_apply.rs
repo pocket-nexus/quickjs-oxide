@@ -1,11 +1,10 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
     Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_HELPERS: &str = r#"
 function bit(value) { return value ? 1 : 0; }
@@ -209,7 +208,8 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let function_prototype = context.function_prototype().unwrap();
         let apply_key = runtime.intern_property_key("apply").unwrap();

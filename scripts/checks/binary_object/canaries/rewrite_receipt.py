@@ -61,7 +61,7 @@ elif plan == "status-html-wrapper":
     replace_once(status_path, receipt_start, f"{field}\n\n{receipt_start}")
     replace_once(status_path, receipt_end, f"{receipt_end}\n\n</div>")
 elif plan == "focused-hardlink":
-    alias_path = root / "crates/quickjs-oxide/tests/stage3i-focused-receipt-hardlink.tsv"
+    alias_path = root / "tests/stage3i-focused-receipt-hardlink.tsv"
     if alias_path.exists():
         raise SystemExit(f"Stage3I hardlink canary alias already exists: {alias_path}")
     os.link(tsv_path, alias_path)

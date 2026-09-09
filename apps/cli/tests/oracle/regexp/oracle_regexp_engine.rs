@@ -1,8 +1,7 @@
+use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::regexp::{compile, execute};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
-
-use quickjs_oxide::JsString;
-use quickjs_oxide::regexp::{compile, execute};
 
 #[derive(Debug)]
 struct Case {

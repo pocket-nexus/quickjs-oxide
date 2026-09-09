@@ -1,10 +1,9 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor, Runtime,
     RuntimeError, Value,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 var f = (0, function(a, b) {});
@@ -83,7 +82,8 @@ fn ordinary_function_object_kernel_matches_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let Value::Object(function) = context.eval("(0, function(a, b) {})").unwrap() else {
         panic!("function expression did not produce an object");
@@ -603,7 +603,7 @@ fn rust_observations() -> Vec<String> {
     ]
 }
 
-fn eval_boolean(context: &mut quickjs_oxide::Context, source: &str) -> bool {
+fn eval_boolean(context: &mut quickjs_oxide::engine::api::Context, source: &str) -> bool {
     let Value::Bool(value) = context
         .eval(source)
         .unwrap_or_else(|error| panic!("boolean function probe failed for {source:?}: {error}"))
@@ -613,7 +613,11 @@ fn eval_boolean(context: &mut quickjs_oxide::Context, source: &str) -> bool {
     value
 }
 
-fn function_name(runtime: &Runtime, context: &mut quickjs_oxide::Context, source: &str) -> String {
+fn function_name(
+    runtime: &Runtime,
+    context: &mut quickjs_oxide::engine::api::Context,
+    source: &str,
+) -> String {
     let Value::Object(function) = context.eval(source).unwrap() else {
         panic!("function-name probe did not produce an object");
     };

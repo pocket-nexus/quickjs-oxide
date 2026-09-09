@@ -5,7 +5,7 @@ run_stage3i_receipt_escape_canaries() {
     mkdir -p "$base_root/apps/cli/tests/fixtures/inputs" "$base_root/apps/cli/tests/fixtures/expected" "$base_root/dev-support/test262/generated" \
         "$base_root/docs"
     local tree
-    for tree in crates apps tools; do
+    for tree in src apps adapters conformance examples tests; do
         mkdir -p "$base_root/$tree"
         cp -R "$repository_root/$tree/." "$base_root/$tree"
     done

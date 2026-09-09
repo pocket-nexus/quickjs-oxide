@@ -1,8 +1,7 @@
 use super::support::*;
 
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04's shared `js_array_pop` and
 // `js_array_push` kernels. It covers both magic selectors for each kernel:
@@ -491,7 +490,8 @@ fn array_mutator_prototype_order_metadata_and_constructability_match_pinned_quic
 
 #[test]
 fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -590,7 +590,8 @@ fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

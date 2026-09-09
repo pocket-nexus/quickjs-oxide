@@ -1,11 +1,9 @@
-use crate::runtime_observation::primitive_value_text;
-use crate::runtime_observation::{property_callable, string_property, take_exception_object};
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
-use crate::runtime_oracle::value_type;
+use crate::runtime_observation::{
+    primitive_value_text, property_callable, string_property, take_exception_object,
+};
+use crate::runtime_oracle::{eval_callable, eval_object, value_type};
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 
 // Differential lock for the WeakMap and WeakSet surface exposed by pinned
 // QuickJS 2026-06-04. The vectors use only primitive ASCII observations so
@@ -435,7 +433,8 @@ fn weak_map_upsert_and_weak_collection_brands_match_pinned_quickjs() {
 
 #[test]
 fn weak_collection_new_target_fallback_and_native_errors_use_exact_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
@@ -537,7 +536,8 @@ fn compare_groups(groups: &[&str]) {
     };
     let mut failures = Vec::new();
     for case in CASES.iter().filter(|case| groups.contains(&case.group)) {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = rust_observation(&runtime, &mut context, case);
         let expected = oracle_observation(&oracle, case);

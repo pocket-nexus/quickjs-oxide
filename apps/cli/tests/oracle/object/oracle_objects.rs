@@ -1,4 +1,4 @@
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value, WellKnownSymbol,
 };
@@ -93,7 +93,8 @@ fn ordinary_object_core_matches_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let mut output = Vec::new();
 
@@ -307,7 +308,7 @@ fn rust_observations() -> Vec<String> {
 fn set(
     context: &mut Context,
     runtime: &Runtime,
-    object: &quickjs_oxide::ObjectRef,
+    object: &quickjs_oxide::engine::api::ObjectRef,
     name: &str,
     value: Value,
 ) {
@@ -317,7 +318,7 @@ fn set(
 
 fn define_data(
     runtime: &Runtime,
-    object: &quickjs_oxide::ObjectRef,
+    object: &quickjs_oxide::engine::api::ObjectRef,
     key: &PropertyKey,
     value: Value,
     writable: bool,
@@ -343,7 +344,7 @@ fn define_data(
 
 fn redefine_value(
     runtime: &Runtime,
-    object: &quickjs_oxide::ObjectRef,
+    object: &quickjs_oxide::engine::api::ObjectRef,
     key: &PropertyKey,
     value: Value,
 ) -> bool {
@@ -359,7 +360,7 @@ fn redefine_value(
         .unwrap()
 }
 
-fn string_keys(runtime: &Runtime, object: &quickjs_oxide::ObjectRef) -> Vec<String> {
+fn string_keys(runtime: &Runtime, object: &quickjs_oxide::engine::api::ObjectRef) -> Vec<String> {
     runtime
         .own_property_keys(object)
         .unwrap()

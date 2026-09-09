@@ -5,6 +5,8 @@ from pathlib import Path
 import hashlib
 import re
 
+from .layout import owner_sources
+
 
 # Skip ordinary Rust text in one search; only these prefixes need lexical work.
 LEXICAL_PREFIX = re.compile(r'//|/\*|(?:br|rb|cr|rc|r)#{0,255}"|[bc]?"')
@@ -20,19 +22,25 @@ class SourceTools:
             ctx.fail("missing-source", f"{relative} must be a regular file")
             return ""
         source = path.read_text(encoding="utf-8")
-        if relative == "crates/engine/src/runtime/tests.rs":
+        if relative == "src/engine/heap/runtime/tests.rs":
             # Expand only plain, ungated child declarations. Every evidence function
             # is still checked below, including its attributes and normalized body.
             def expand_test_module(match):
-                child = f"crates/engine/src/runtime/tests/{match[1]}.rs"
+                child = f"src/engine/heap/runtime/tests/{match[1]}.rs"
                 content = ctx.read_source(child)
                 return re.sub(r"(?m)^use super::\*;\n", "", content)
             source = re.sub(r"(?m)^mod (\w+);$", expand_test_module, source)
-        elif relative == "crates/engine/src/runtime/binary_object/ordinary_leaf.rs":
+        elif relative == "src/engine/code/binary_object/ordinary_leaf.rs":
             declaration = '#[cfg(test)]\nmod tests;'
             if declaration in source:
-                child = ctx.read_source("crates/engine/src/runtime/binary_object/ordinary_leaf/tests.rs")
+                child = ctx.read_source("src/engine/code/binary_object/ordinary_leaf/tests.rs")
                 source = source.replace(declaration, '#[cfg(test)]\nmod tests {\n' + child + '\n}')
+        if relative == "src/engine/vm/mod.rs":
+            declaration = '#[cfg(test)]\nmod tests;'
+            if declaration in source:
+                child = ctx.read_source("src/engine/vm/tests.rs")
+                source = source.replace(declaration, '#[cfg(test)]\nmod tests {\n' + child + '\n}')
+        source += owner_sources(ctx, relative)
         return source
 
     def is_test_source(ctx, path: Path) -> bool:

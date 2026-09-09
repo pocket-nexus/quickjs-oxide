@@ -1,11 +1,10 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DebugInfoMode,
     DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime,
     RuntimeError, Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function hex(value) {
@@ -199,7 +198,8 @@ fn function_constructor_matches_quickjs_oracle() {
 }
 
 fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     runtime.set_debug_info_mode(mode);
     let mut context = runtime.new_context();
     let constructor = context.function_constructor().unwrap();

@@ -1,14 +1,11 @@
-use crate::runtime_observation::primitive_value_text;
 use crate::runtime_observation::{
-    property_callable_with_read_context as property_callable,
+    primitive_value_text, property_callable_with_read_context as property_callable,
     string_property_with_read_context as string_property, take_exception_object,
 };
-use crate::runtime_oracle::eval_object;
-use crate::runtime_oracle::value_type;
+use crate::runtime_oracle::{eval_object, value_type};
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 // Pins the complete QuickJS 2026-06-04 Reflect intrinsic. In particular, the
 // construct-order vectors intentionally follow `js_reflect_construct` rather
@@ -426,7 +423,8 @@ fn reflect_property_operations_match_pinned_quickjs() {
 
 #[test]
 fn reflect_exposes_all_thirteen_nonconstructable_methods() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let reflect = reflect_object(&runtime, &mut context);
     for &(name, expected_length) in METHODS {
@@ -455,7 +453,8 @@ fn reflect_exposes_all_thirteen_nonconstructable_methods() {
 
 #[test]
 fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let reflect = reflect_object(&runtime, &mut defining);
@@ -575,7 +574,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
         return;
     };
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),

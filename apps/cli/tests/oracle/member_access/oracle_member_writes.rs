@@ -1,10 +1,9 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const PROBE: &str = r#"
 function show(value) {
@@ -410,7 +409,8 @@ fn source_member_assignment_and_delete_match_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     define_global(
         &runtime,

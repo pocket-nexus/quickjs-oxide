@@ -1,7 +1,9 @@
 use crate::quickjs_raw_source_oracle::{
     RawScriptObservation, normalized_filename, observe_raw_script,
 };
-use quickjs_oxide::{CompileOptions, Context, EvalOptions, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{
+    CompileOptions, Context, EvalOptions, Runtime, RuntimeError, Value,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum Api {
@@ -295,7 +297,8 @@ fn source_for(case: &Case) -> Vec<u8> {
 }
 
 fn oxide_observation(case: &Case, source: &[u8]) -> RawScriptObservation {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let result = match case.api {
         Api::Compile => context

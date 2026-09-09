@@ -1,4 +1,4 @@
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../fixtures/inputs/is_html_dda.js");
 const QUICKJS_2026_06_04: &str =
@@ -25,7 +25,8 @@ fn text(value: Value) -> String {
 
 #[test]
 fn is_html_dda_semantics_match_pinned_quickjs_transcript() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     context
         .install_test262_host()

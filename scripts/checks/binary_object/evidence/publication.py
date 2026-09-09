@@ -1,6 +1,6 @@
 """Pinned data and expected shapes for publication."""
 
-EXPECTED_ORDINARY_VERIFIER_ENTRY = ('pub(in crate::runtime) fn verify_unlinked_ordinary_leaf( function: &UnlinkedFunction, ) -> '
+EXPECTED_ORDINARY_VERIFIER_ENTRY = ('pub(in crate::engine::code) fn verify_unlinked_ordinary_leaf( function: &UnlinkedFunction, ) -> '
  'Result<(), RuntimeError> { verify_unlinked_tree_with_root(function, '
  'RootPublication::TrustedOrdinaryLeaf) }')
 

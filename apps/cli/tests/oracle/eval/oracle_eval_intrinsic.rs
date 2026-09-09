@@ -1,7 +1,8 @@
+use quickjs_oxide::engine::api::{
+    CallableRef, Context, DebugInfoMode, JsString, Runtime, RuntimeError, Value,
+};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{CallableRef, Context, DebugInfoMode, JsString, Runtime, RuntimeError, Value};
 
 // This probe deliberately isolates the non-String shell from source execution.
 // It freezes the realm-local %eval% callable and identity semantics separately
@@ -1395,7 +1396,8 @@ fn eval_labelled_functions_keep_lexical_and_annex_b_closures_distinct() {
 
 #[test]
 fn foreign_realm_eval_callable_preserves_non_string_identity() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let eval = global_eval(&runtime, &mut defining);
@@ -1482,12 +1484,14 @@ fn syntactic_eval_replacements_take_the_complete_ordinary_call_path() {
             string_value("AB|x|7"),
         ),
     ] {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(context.eval(source).unwrap(), expected, "source: {source}");
     }
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         context
@@ -1506,7 +1510,8 @@ fn syntactic_eval_replacements_take_the_complete_ordinary_call_path() {
 
 #[test]
 fn primitive_string_eval_executes_indirect_and_direct_completion_values() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let eval = global_eval(&runtime, &mut context);
 
@@ -1610,7 +1615,8 @@ fn eval_lexicals_are_ephemeral_but_returned_closures_retain_them() {
             "#,
         ),
     ] {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             context.eval(source).unwrap(),
@@ -1627,7 +1633,8 @@ fn returned_eval_closure_retains_caller_lexical_in_every_debug_mode() {
         DebugInfoMode::StripSource,
         DebugInfoMode::StripDebug,
     ] {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         runtime.set_debug_info_mode(debug_info);
         let mut context = runtime.new_context();
         assert_eq!(
@@ -1649,7 +1656,8 @@ fn returned_eval_closure_retains_caller_lexical_in_every_debug_mode() {
 
 #[test]
 fn eval_syntax_errors_are_catchable_and_direct_eval_inherits_strictness() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
     assert_eq!(
@@ -1727,7 +1735,8 @@ fn nested_direct_eval_environment_relay_matches_pinned_quickjs() {
 
 #[test]
 fn foreign_realm_primitive_string_eval_uses_its_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     defining.eval("globalThis.evalRealmMarker = 42").unwrap();
@@ -1797,7 +1806,8 @@ fn rust_observations() -> Vec<String> {
 }
 
 fn rust_value(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let Value::String(value) = context.eval(source).unwrap() else {
         panic!("eval oracle probe did not return a String");
@@ -1845,7 +1855,7 @@ fn string_value(value: &str) -> Value {
     Value::String(JsString::try_from_utf8(value).unwrap())
 }
 
-fn eval_object(context: &mut Context, source: &str) -> quickjs_oxide::ObjectRef {
+fn eval_object(context: &mut Context, source: &str) -> quickjs_oxide::engine::api::ObjectRef {
     let Value::Object(object) = context.eval(source).unwrap() else {
         panic!("{source} did not evaluate to an object");
     };

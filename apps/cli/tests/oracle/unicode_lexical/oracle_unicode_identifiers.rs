@@ -1,9 +1,8 @@
+use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_diagnostic_observation;
+use quickjs_oxide::engine::api::testing::{Lexer, TokenKind};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_diagnostic_observation;
-use quickjs_oxide::lexer::{Lexer, TokenKind};
-use quickjs_oxide::{Runtime, RuntimeError, Value};
 
 #[test]
 fn unicode_identifier_execution_matches_pinned_quickjs() {
@@ -72,7 +71,8 @@ fn unicode_identifier_execution_matches_pinned_quickjs() {
         ),
     ];
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     for (description, source) in cases {
         assert_eq!(
@@ -379,7 +379,8 @@ fn oracle_number_observation(oracle: &OsStr, source: &str, description: &str) ->
 }
 
 fn rust_error_observation(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
@@ -414,13 +415,14 @@ fn oracle_error_observation(oracle: &OsStr, source: &str) -> String {
 }
 
 fn rust_diagnostic_observation(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object for {source:?}");
     };
-    let read = |context: &mut quickjs_oxide::Context, name: &str| {
+    let read = |context: &mut quickjs_oxide::engine::api::Context, name: &str| {
         let key = runtime.intern_property_key(name).unwrap();
         context.get_property(&error, &key).unwrap()
     };

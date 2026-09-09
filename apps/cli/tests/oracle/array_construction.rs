@@ -1,18 +1,14 @@
+use crate::quickjs_argv_completion_oracle;
 use crate::runtime_completion_oracle::observe_eval_completion_with_error_context as observe_rust_eval;
 
-use crate::quickjs_argv_completion_oracle;
-
-use crate::runtime_oracle::eval_object;
-use crate::runtime_oracle::run_cli;
+use crate::runtime_oracle::{eval_object, run_cli};
+use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
+use quickjs_oxide::engine::api::{
+    CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString, ObjectRef,
+    OrdinaryPropertyDescriptor, Runtime, Value, number_to_string,
+};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
-use quickjs_oxide::value::number_to_string;
-use quickjs_oxide::{
-    CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, Runtime, Value,
-};
 
 // This target deliberately describes the complete first Array vertical slice,
 // rather than the parser-only boundary which exists today.  Keep the cases
@@ -304,7 +300,8 @@ fn array_host_own_keys_and_descriptors_match_pinned_quickjs() {
     };
     for &(description, source) in HOST_SNAPSHOT_CASES {
         let expected = oracle_snapshot(&oracle, source, description);
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let array = eval_object(&mut context, source, description);
         assert_eq!(
@@ -322,7 +319,8 @@ fn array_constructor_graph_matches_pinned_quickjs() {
         return;
     };
     let expected = oracle_constructor_graph(&oracle);
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         rust_constructor_graph(&runtime, &mut context),
@@ -338,7 +336,8 @@ fn array_host_definitions_use_array_set_length_semantics() {
         return;
     };
     let expected = oracle_host_mutation(&oracle);
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         rust_host_mutation(&runtime, &mut context),
@@ -349,7 +348,8 @@ fn array_host_definitions_use_array_set_length_semantics() {
 
 #[test]
 fn array_literal_iterator_and_errors_use_the_bytecode_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     defining
@@ -376,7 +376,8 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     };
     for &(description, source) in cases {
         let expected = observe_oracle(&oracle, source, description);
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),

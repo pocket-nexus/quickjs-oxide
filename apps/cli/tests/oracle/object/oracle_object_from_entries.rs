@@ -4,13 +4,13 @@ use crate::object_graph_observation::{
 };
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
+
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
 use crate::runtime_oracle::value_type;
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_fromEntries`. In particular, the
 // implementation allocates a defining-realm ordinary result, acquires and
@@ -426,7 +426,8 @@ fn object_from_entries_autoinit_can_be_deleted_before_materialization() {
         "Object.fromEntries fresh delete",
     );
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let object = global_callable(&runtime, &mut context, "Object");
     let key = runtime.intern_property_key("fromEntries").unwrap();
@@ -453,7 +454,8 @@ fn object_from_entries_autoinit_can_be_deleted_before_materialization() {
 
 #[test]
 fn object_from_entries_uses_defining_realm_and_preserves_user_throws() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_object = global_callable(&runtime, &mut defining, "Object");
@@ -570,7 +572,8 @@ fn object_from_entries_uses_defining_realm_and_preserves_user_throws() {
 
 #[test]
 fn object_from_entries_method_and_result_retain_then_release_their_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (from_entries, result) = {
         let mut first = runtime.new_context();
         let mut second = runtime.new_context();
@@ -627,7 +630,8 @@ fn object_from_entries_method_and_result_retain_then_release_their_realm() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");

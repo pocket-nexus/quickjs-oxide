@@ -1,12 +1,11 @@
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, EvalOptions,
     JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
     Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const CODEC_NAMES: [&str; 6] = [
     "decodeURI",
@@ -332,7 +331,8 @@ fn global_uri_codecs_match_pinned_quickjs() {
 
 #[test]
 fn global_uri_codec_errors_use_the_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_encode = global_callable(&runtime, &mut first, "encodeURI");
@@ -426,7 +426,8 @@ fn global_uri_codec_errors_use_the_defining_realm() {
 
 #[test]
 fn global_uri_codec_keeps_its_defining_realm_alive_until_collection() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let codec = {
         let mut context = runtime.new_context();
         global_callable(&runtime, &mut context, "encodeURIComponent")
@@ -478,7 +479,8 @@ fn global_uri_codec_native_stacks_match_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let function_prototype = context.function_prototype().unwrap();
@@ -1265,7 +1267,8 @@ fn plain_value(value: Value) -> String {
 }
 
 fn rust_uncaught_error(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         context.eval_with_options(source, &EvalOptions::new("<cmdline>")),
@@ -1281,7 +1284,8 @@ fn rust_uncaught_error(source: &str) -> String {
 }
 
 fn rust_uncaught_error_with_symbol(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     define_data(

@@ -1,10 +1,9 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
 use super::quickjs_control_value_oracle::observe_normalized_value;
 use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_error_observation;
-use quickjs_oxide::value::number_to_string;
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value, number_to_string};
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_NORMALIZER: &str = r#"
 var __qjo_type = typeof __qjo_value;
@@ -241,7 +240,8 @@ fn switch_values_match_pinned_quickjs() {
     };
 
     for &(description, source) in VALUE_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let value = context
             .eval(source)
@@ -278,7 +278,8 @@ fn switch_abrupt_values_match_pinned_quickjs() {
     };
 
     for &(description, source) in THROW_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(context.eval(source), Err(RuntimeError::Exception));
         let value = context
@@ -313,7 +314,8 @@ fn oracle_throw_observation(oracle: &OsStr, source: &str, description: &str) -> 
 }
 
 fn rust_error_observation(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     take_rust_error(&runtime, &mut context)

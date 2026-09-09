@@ -1,4 +1,4 @@
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value,
 };
@@ -135,7 +135,8 @@ fn string_wrapper_exotic_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let payload = JsString::try_from_utf16([0x41, 0xd83d, 0xde00, 0xd800]).unwrap();
     let wrapper = box_string(&runtime, &mut context, payload.clone());
@@ -419,7 +420,8 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn sloppy_string_boxing_uses_the_bytecode_functions_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_boxer = eval_callable(&runtime, &mut first, "(function () { return this; })");
@@ -466,7 +468,8 @@ fn sloppy_string_boxing_uses_the_bytecode_functions_defining_realm() {
 
 #[test]
 fn rooted_string_wrapper_preserves_payload_and_final_release_collects_the_graph() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
         let mut context = runtime.new_context();
         box_string(

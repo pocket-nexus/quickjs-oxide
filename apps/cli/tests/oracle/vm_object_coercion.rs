@@ -1,11 +1,10 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::value::number_to_string;
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    number_to_string,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_HELPERS: &str = r#"
 function show(value) {
@@ -617,7 +616,8 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let context = runtime.new_context();
         let to_primitive =
             PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));

@@ -1,8 +1,7 @@
 use super::support::*;
 
+use quickjs_oxide::engine::api::{CallableRef, Context, JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{CallableRef, Context, JsString, Runtime, RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04's shared `js_array_reduce` kernel:
 // reduce and reduceRight, including their omitted-initial-value scan.
@@ -318,7 +317,8 @@ fn array_reduce_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_reduce_boxing_accumulators_and_errors_use_pinned_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -460,7 +460,8 @@ fn array_reduce_boxing_accumulators_and_errors_use_pinned_realms() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

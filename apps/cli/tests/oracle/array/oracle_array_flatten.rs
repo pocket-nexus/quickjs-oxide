@@ -1,8 +1,7 @@
 use super::support::*;
 
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04 `JS_FlattenIntoArray` and its shared
 // magic-selected `flatMap` / `flat` wrapper.
@@ -312,7 +311,8 @@ print('meta='+meta('flatMap')+'|'+meta('flat'));
 
 #[test]
 fn array_flatten_basic_rust_smoke() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let value = context
         .eval(r#"[[1,2],[3,[4]],,5].flat().join("|")"#)
@@ -326,7 +326,8 @@ fn array_flatten_basic_rust_smoke() {
 
 #[test]
 fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let value = context
         .eval(
@@ -402,7 +403,8 @@ fn array_flatten_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -478,7 +480,8 @@ fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

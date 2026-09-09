@@ -10,7 +10,7 @@ from ..evidence import source_ownership as evidence
 
 def check(ctx):
     production_sources: list[Path] = []
-    for relative in ("crates", "apps", "tools/test262"):
+    for relative in ("src", "apps", "adapters", "conformance", "examples", "tests"):
         src_root = ctx.root / relative
         if src_root.is_symlink() or not src_root.is_dir():
             if not ctx.self_test_marker_authorized:
@@ -60,16 +60,16 @@ def check(ctx):
         if ctx.path.is_symlink() or not ctx.path.is_file():
             continue
         ctx.relative = ctx.path.relative_to(ctx.root).as_posix()
-        if ctx.relative.startswith("crates/engine/src/runtime/binary_object/"):
+        if ctx.relative.startswith("src/engine/code/binary_object/"):
             continue
         ctx.source = ctx.path.read_text(encoding="utf-8")
         ctx.code = ctx.rust_code_only(ctx.source)
         binary_mentions = list(re.finditer(r"\bbinary_object\b", ctx.code))
-        if ctx.relative == "crates/engine/src/runtime.rs":
+        if ctx.relative == "src/engine/code/mod.rs":
             if len(binary_mentions) != 1:
                 ctx.fail(
                     "binary-object-consumer-set",
-                    "crates/engine/src/runtime.rs may name binary_object only in its private module declaration",
+                    "src/engine/code/mod.rs may name binary_object only in its private module declaration",
                 )
         elif ctx.relative == ctx.consumer_relative and ctx.consumer_exists:
             if len(binary_mentions) != 1:
@@ -111,7 +111,7 @@ def check(ctx):
                 + ctx.location(ctx.relative, ctx.source, ctx.match.start()),
             )
 
-    cursor_relative = "crates/engine/src/runtime/binary_object/read_cursor.rs"
+    cursor_relative = "src/engine/code/binary_object/read_cursor.rs"
 
     cursor_source = ctx.read_source(cursor_relative)
 
@@ -129,7 +129,7 @@ def check(ctx):
         )
 
     checked_trait_pattern = re.compile(
-        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*::[ \t\n]*binary_object[ \t\n]*\)[ \t\n]+trait[ \t\n]+"
         r"CheckedReadCursor[ \t\n]*<[ \t\n]*'input[ \t\n]*>[ \t\n]*:"
         r"[ \t\n]*sealed[ \t\n]*::[ \t\n]*Sealed\b"
@@ -228,15 +228,15 @@ def check(ctx):
             f"found {sealed_impl_headers}",
         )
 
-    graph_decode_relative = "crates/engine/src/runtime/binary_object/graph/decode.rs"
+    graph_decode_relative = "src/engine/code/binary_object/graph/decode.rs"
 
-    image_decode_relative = "crates/engine/src/runtime/binary_object/bytecode_image/decode/mod.rs"
+    image_decode_relative = "src/engine/code/binary_object/bytecode_image/decode/mod.rs"
 
-    ctx.sab_transport_relative = "crates/engine/src/runtime/binary_object/graph/sab_transport.rs"
+    ctx.sab_transport_relative = "src/engine/code/binary_object/graph/sab_transport.rs"
 
-    ctx.image_model_relative = "crates/engine/src/runtime/binary_object/bytecode_image/model.rs"
+    ctx.image_model_relative = "src/engine/code/binary_object/bytecode_image/model.rs"
 
-    image_atoms_relative = "crates/engine/src/runtime/binary_object/bytecode_image/atoms.rs"
+    image_atoms_relative = "src/engine/code/binary_object/bytecode_image/atoms.rs"
 
     graph_decode_source = ctx.read_source(graph_decode_relative)
 
@@ -261,7 +261,7 @@ def check(ctx):
     if (
         ctx.is_full_binary_inventory
         and ctx.normalized_code_sha256(image_model_code)
-        != "a7ddad998b12ccd6f69e57aa0c57d124a24077d3e88c44e649a0d4a131fec69e"
+        != "78c0c5f66234f50549d91ebc8bc8bf249701a514fa6465c14f77ec1f263205a5"
     ):
         ctx.fail(
             "bytecode-image-model-seal",
@@ -298,7 +298,7 @@ def check(ctx):
         )
 
     binary_object_visibility = (
-        r"pub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"pub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*::[ \t\n]*binary_object[ \t\n]*\)"
     )
 
@@ -423,7 +423,7 @@ def check(ctx):
                 "scalar admission may consume boolean atom predicates, not raw atom identities; found "
                 + ctx.location(ctx.relative, ctx.source, ctx.match.start()),
             )
-        if not ctx.relative.startswith("crates/engine/src/runtime/binary_object/bytecode_image/") or ctx.is_test_source(ctx.path):
+        if not ctx.relative.startswith("src/engine/code/binary_object/bytecode_image/") or ctx.is_test_source(ctx.path):
             continue
         for ctx.match in visible_function_pattern.finditer(ctx.code):
             visibility = " ".join(ctx.match.group("visibility").split())
@@ -448,8 +448,8 @@ def check(ctx):
     if ctx.is_full_binary_inventory:
         expected_atom_sensitive_visible_sites.append(
             (
-                "crates/engine/src/runtime/binary_object/bytecode_image/model.rs",
-                "pub(in crate::runtime::binary_object)",
+                "src/engine/code/binary_object/bytecode_image/model.rs",
+                "pub(in crate::engine::code::binary_object)",
                 "name_is_null",
             )
         )

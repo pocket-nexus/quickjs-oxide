@@ -1,10 +1,9 @@
 use crate::runtime_observation::take_exception_object;
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
-use crate::runtime_oracle::value_type;
+use crate::runtime_oracle::{eval_callable, eval_object, value_type};
+use quickjs_oxide::engine::api::{
+    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
+};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.matchAll path and `check_regexp_g_flag` (`quickjs.c` 45583-45657).
@@ -397,7 +396,8 @@ fn string_match_all_abrupt_completion_order_matches_pinned_quickjs() {
 
 #[test]
 fn string_match_all_delegation_and_fallback_preserve_cross_realm_ownership() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
@@ -568,7 +568,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     };
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);

@@ -1,12 +1,10 @@
-use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-
-use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_value_text;
-use crate::runtime_oracle::error_string_property;
-use crate::runtime_oracle::run_cli;
-use std::ffi::OsStr;
-
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
+use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_value_text;
+
+use crate::runtime_oracle::{error_string_property, run_cli};
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use std::ffi::OsStr;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -142,7 +140,8 @@ fn direct_function_body_declaration_values_match_pinned_quickjs() {
     };
 
     for &(description, source) in VALUE_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -162,7 +161,8 @@ fn direct_function_body_declaration_tdz_matches_pinned_quickjs() {
     };
 
     for &(description, source) in ERROR_OBSERVATION_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -185,7 +185,8 @@ fn failed_body_lexical_initializer_keeps_escaped_hoist_tdz_matches_pinned_quickj
         "(function(){Function.savedBodyRead=readLater;let later=missingBodyInitializer;function readLater(){return later}})()",
         "Function.savedBodyRead()",
     ];
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let rust = sources
         .iter()
@@ -233,7 +234,8 @@ fn function_body_declaration_cross_realm_regression() {
     // These expectations are pinned from the QuickJS C API's compile-in-A,
     // execute-in-B path; the Rust API exposes the same two-context operation
     // directly, so keep it in the unconditional product regression suite.
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     defining.eval("globalThis.realmTag='A'").unwrap();

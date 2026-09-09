@@ -3,7 +3,7 @@ use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text_with_rust_float as primitive_text,
 };
 use crate::runtime_oracle::error_string_property;
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -295,7 +295,8 @@ fn parameter_direct_eval_oracle_inventory_is_stable() {
 fn parameter_direct_eval_matches_pinned_expectations() {
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_rust(&runtime, &mut context, case.source, case.description);
         if actual != case.expected {
@@ -347,7 +348,8 @@ fn parameter_direct_eval_matches_pinned_quickjs() {
     };
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         let quickjs = observe_oracle(&oracle, case.source, case.description);

@@ -1,4 +1,4 @@
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     Context, DescriptorField, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
 
@@ -72,7 +72,7 @@ fn drain_jobs(runtime: &Runtime, context: &mut Context) {
         jobs += 1;
         assert!(jobs <= 64, "host GC fixture did not settle within 64 jobs");
         if let Err(error) = runtime.execute_pending_job() {
-            if error == RuntimeError::Exception {
+            if error.error() == &RuntimeError::Exception {
                 panic!("host GC fixture job threw: {:?}", context.take_exception());
             }
             panic!("host GC fixture job failed: {error}");
@@ -86,7 +86,8 @@ fn drain_jobs(runtime: &Runtime, context: &mut Context) {
 
 #[test]
 fn test262_gc_reentry_matches_pinned_quickjs_lifecycle_transcript() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     install_test262_gc(&mut context);
 

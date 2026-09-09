@@ -15,7 +15,7 @@ source_dir=$1
 tool_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 script_dir=$(CDPATH= cd -- "$tool_dir/.." && pwd)
 root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-output_file=${2:-"$root/crates/core/src/generated/unicode/unicode_property_tables.rs"}
+output_file=${2:-"$root/src/source/unicode/generated/unicode/unicode_property_tables.rs"}
 helper=$root/apps/cli/tests/fixtures/inputs/dump_unicode_properties.c
 
 sha256_file() {

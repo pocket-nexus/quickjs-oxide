@@ -1,12 +1,10 @@
 use crate::runtime_completion_oracle::{
     compare_eval_completion_cases_with_prelude, observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
@@ -573,7 +571,8 @@ fn string_includes_recursion_is_catchable_and_runtime_recovers() {
 
 #[test]
 fn string_includes_defining_realms_and_user_throw_identity_are_exact() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_prototype = defining.string_prototype().unwrap();
@@ -689,7 +688,8 @@ fn string_includes_defining_realms_and_user_throw_identity_are_exact() {
 
 #[test]
 fn string_includes_callables_are_per_realm_and_collectable() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
         let mut first = runtime.new_context();
         let mut second = runtime.new_context();

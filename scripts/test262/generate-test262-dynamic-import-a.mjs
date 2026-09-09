@@ -129,16 +129,16 @@ const noNewFiles = invalidFiles.filter((relativePath) =>
   relativePath.endsWith("-no-new-call-expression.js"),
 );
 const newTargetRoots = noNewFiles.filter((relativePath) =>
-  source(relativePath).includes("// - crates/engine/src/dynamic-import/no-new-call-expression.case\n"),
+  source(relativePath).includes("// - src/dynamic-import/no-new-call-expression.case\n"),
 );
 const sourcePhaseCanaries = noNewFiles.filter((relativePath) =>
   source(relativePath).includes(
-    "// - crates/engine/src/dynamic-import/import-source-no-new-call-expression.case\n",
+    "// - src/dynamic-import/import-source-no-new-call-expression.case\n",
   ),
 );
 const importDeferCanaries = noNewFiles.filter((relativePath) =>
   source(relativePath).includes(
-    "// - crates/engine/src/dynamic-import/import-defer-no-new-call-expression.case\n",
+    "// - src/dynamic-import/import-defer-no-new-call-expression.case\n",
   ),
 );
 const pathManifest = (paths) => `${paths.join("\n")}\n`;
@@ -304,7 +304,7 @@ const parseNegativeFamilies = [
 ].map((family) => ({
   ...family,
   paths: invalidFiles.filter((relativePath) =>
-    source(relativePath).includes(`// - crates/engine/src/dynamic-import/${family.marker}\n`),
+    source(relativePath).includes(`// - src/dynamic-import/${family.marker}\n`),
   ),
 }));
 

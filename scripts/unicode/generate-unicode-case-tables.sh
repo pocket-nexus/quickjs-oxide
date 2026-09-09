@@ -13,7 +13,7 @@ fi
 source_file=$1
 tool_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 script_dir=$(CDPATH= cd -- "$tool_dir/.." && pwd)
-output_file=${2:-"$script_dir/../crates/core/src/generated/unicode/unicode_case_tables.rs"}
+output_file=${2:-"$script_dir/../src/source/unicode/generated/unicode/unicode_case_tables.rs"}
 expected_sha256=cf782bc7a07549e976f606bd3cb8555858482b279574554dcb8d46412986006c
 if command -v sha256sum >/dev/null 2>&1; then
     actual_sha256=$(sha256sum "$source_file" | awk '{ print $1 }')

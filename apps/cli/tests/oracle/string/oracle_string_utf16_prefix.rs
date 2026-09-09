@@ -1,5 +1,5 @@
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsBigInt, JsString,
     ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
     WellKnownSymbol,
@@ -150,7 +150,8 @@ fn string_utf16_prefix_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let prototype = context.string_prototype().unwrap();
@@ -550,7 +551,8 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_prototype = first.string_prototype().unwrap();
@@ -606,7 +608,8 @@ fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
 
 #[test]
 fn string_utf16_prefix_method_retains_then_releases_its_realm_graph() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let method = {
         let mut context = runtime.new_context();
         let prototype = context.string_prototype().unwrap();

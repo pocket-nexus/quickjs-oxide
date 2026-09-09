@@ -1,5 +1,5 @@
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     Context, DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor, Runtime,
     RuntimeError, Value,
 };
@@ -147,7 +147,8 @@ fn string_rope_matches_pinned_quickjs() {
 
 #[test]
 fn string_rope_overflow_uses_vm_and_native_defining_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_string = first.string_prototype().unwrap();
@@ -193,7 +194,8 @@ fn string_rope_overflow_uses_vm_and_native_defining_realms() {
 
 #[test]
 fn string_rope_dag_does_not_keep_its_realm_graph_alive() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let rope = near_limit_rope();
     let method = {
         let mut context = runtime.new_context();
@@ -218,7 +220,8 @@ fn string_rope_dag_does_not_keep_its_realm_graph_alive() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let prototype = context.string_prototype().unwrap();

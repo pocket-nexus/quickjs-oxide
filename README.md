@@ -83,19 +83,22 @@ npm ci && npx playwright install chromium && npm run test:browser
 
 ## Workspace layout
 
-The engine is organized into `crates/core`, `crates/compiler`, and
-`crates/engine`. Native host implementations live in `crates/host`, and
-`crates/quickjs-oxide` is the Rust embedding entry point. The qjs CLI and
-browser application live in `apps/cli` and `apps/web`; the Test262 runner lives
-in `tools/test262`. See [architecture](docs/architecture.md) for ownership and
-production dependency boundaries.
+The root quickjs-oxide package has three source modules: `source/` for authored
+text and Unicode support, `regexp/` for regex programs and matching, and
+`engine/` for the interpreter's responsibility modules. `src/lib.rs` is the
+only top-level Rust source file. Each source directory documents its ownership
+in a README.
+
+Native and browser providers live in `adapters/`, applications in `apps/`,
+and the Test262 runner in `conformance/test262`. See
+[architecture](docs/architecture.md) and [source guide](src/README.md).
 
 ```sh
 cargo run -p quickjs-oxide-cli -- -e 'print(6 * 7)'
 cargo run -p quickjs-oxide --example eval -- '6 * 7'
 cargo check --workspace --all-targets
-cargo test -p quickjs-oxide-compiler --lib
+cargo test -p quickjs-oxide --lib
 ```
 
-Generated Unicode tables are checked in under `crates/core/src/generated`;
+Generated Unicode tables are checked in under `src/source/unicode/generated`;
 normal product builds do not run their generators.

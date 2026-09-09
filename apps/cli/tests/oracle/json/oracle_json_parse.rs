@@ -1,12 +1,11 @@
-use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
 use crate::runtime_observation::{
+    checked_value_type as value_type, primitive_value_text,
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -651,7 +650,8 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
     // pins the C path directly: QuickJS stores a realm on every intrinsic C
     // function (`JS_NewCFunction3`) and switches to it before `js_json_parse`
     // allocates the parse graph, reviver contexts, wrapper, or SyntaxError.
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_object_prototype = defining.object_prototype().unwrap();
@@ -764,7 +764,8 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(case.source) {
         Ok(value) => format!(
@@ -809,8 +810,8 @@ fn rust_observation(case: &Case) -> String {
 
 fn error_string_property(
     runtime: &Runtime,
-    context: &mut quickjs_oxide::Context,
-    error: &quickjs_oxide::ObjectRef,
+    context: &mut quickjs_oxide::engine::api::Context,
+    error: &quickjs_oxide::engine::api::ObjectRef,
     name: &str,
     case: &Case,
 ) -> String {

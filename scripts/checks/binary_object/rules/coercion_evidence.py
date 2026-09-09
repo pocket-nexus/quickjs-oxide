@@ -49,7 +49,7 @@ def check(ctx):
             continue
         ctx.declaration_offset = ctx.declarations[0].start()
         ctx.declaration_depth = ctx.code[:ctx.declaration_offset].count("{") - ctx.code[:ctx.declaration_offset].count("}")
-        if ctx.relative == "crates/engine/src/runtime/tests.rs":
+        if ctx.relative == "src/engine/heap/runtime/tests.rs":
             ctx.direct_parent = ctx.declaration_depth == 0
         else:
             ctx.parent_bounds = stage3i_test_parent_bounds.get(ctx.relative)
@@ -117,7 +117,7 @@ def check(ctx):
             continue
         ctx.declaration_offset = ctx.declarations[0].start()
         ctx.declaration_depth = ctx.code[:ctx.declaration_offset].count("{") - ctx.code[:ctx.declaration_offset].count("}")
-        if ctx.relative == "crates/engine/src/runtime/tests.rs":
+        if ctx.relative == "src/engine/heap/runtime/tests.rs":
             ctx.direct_parent = ctx.declaration_depth == 0
         else:
             ctx.parent_bounds = stage3j_test_parent_bounds.get(ctx.relative)

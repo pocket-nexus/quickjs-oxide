@@ -1,9 +1,8 @@
+use quickjs_oxide::engine::api::{Runtime, Value};
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::process::Command;
-
-use quickjs_oxide::{Runtime, Value};
 
 #[derive(Debug)]
 struct PowerCase {
@@ -27,7 +26,8 @@ fn bigint_power_matrix_matches_pinned_quickjs() {
     );
     let oracle_observations = run_oracle_batch(&oracle, &cases);
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     for (index, (case, oracle_observation)) in cases.iter().zip(&oracle_observations).enumerate() {
         let rust_value = context.eval(&case.source).unwrap_or_else(|error| {

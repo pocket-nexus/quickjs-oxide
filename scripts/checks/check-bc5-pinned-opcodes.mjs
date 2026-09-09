@@ -19,7 +19,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "../..");
 const manifestPath = resolve(
   root,
-  "crates/engine/src/runtime/binary_object/pinned_opcodes.rs",
+  "src/engine/code/binary_object/pinned_opcodes.rs",
 );
 const frozenManifestSha256 =
   "e2fba2aea6f6e898d21a164d9917858c7aa95537f9d36d47aadb93399614af14";

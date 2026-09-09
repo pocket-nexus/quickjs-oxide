@@ -1,15 +1,14 @@
 use crate::quickjs_argv_completion_oracle;
-
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_oracle::value_type;
-use std::ffi::OsStr;
-use std::process::Command;
-
 use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
-use quickjs_oxide::{
+
+use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime, Value,
     WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 // This target pins QuickJS 2026-06-04 `js_array_unscopables_funcs` and the
 // Symbol.unscopables-specific null-prototype `JS_DEF_OBJECT` autoinit path.
@@ -120,7 +119,8 @@ fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
         return;
     };
     for &(description, source) in VALUE_CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -145,7 +145,8 @@ fn array_unscopables_graph_matches_pinned_quickjs() {
 
 #[test]
 fn array_unscopables_are_distinct_null_prototype_objects_per_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables));
@@ -186,7 +187,8 @@ fn observe_rust_eval(
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let context = runtime.new_context();
     let prototype = context.array_prototype().unwrap();
     let iterator = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));

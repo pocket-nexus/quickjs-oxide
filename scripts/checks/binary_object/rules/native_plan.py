@@ -8,7 +8,7 @@ from ..evidence import native_plan as evidence
 
 
 def check(ctx):
-    native_plan_relative = "crates/engine/src/runtime/binary_object/bytecode_image/native_plan.rs"
+    native_plan_relative = "src/engine/code/binary_object/bytecode_image/native_plan.rs"
 
     native_plan_source = ctx.read_source(native_plan_relative)
 
@@ -41,7 +41,7 @@ def check(ctx):
         native_plan_production_code = native_plan_code
         native_plan_production_source = native_plan_source
 
-    native_plan_visibility = "pub(in crate::runtime::binary_object)"
+    native_plan_visibility = "pub(in crate::engine::code::binary_object)"
 
     native_plan_visibility_pattern = r"pub(?:[ \t\n]*\([^)]*\))?"
 
@@ -267,7 +267,7 @@ def check(ctx):
             )
 
     native_plan_runtime_dependency = re.compile(
-        r"\bcrate[ \t\n]*::[ \t\n]*(?:bytecode|vm|heap|value)\b|"
+        r"\bcrate[ \t\n]*::[ \t\n]*(?:engine[ \t\n]*::[ \t\n]*(?:code[ \t\n]*::[ \t\n]*)?)?(?:bytecode|vm|heap|value)\b|"
         r"\b(?:Instruction|JsString|Value|Vm|VmHost|Runtime|Context|RuntimeError|"
         r"RawValue|Heap|HeapObject|ObjectRef)\b"
     )
@@ -425,7 +425,7 @@ def check(ctx):
     native_operand_variants = ctx.enum_variant_names(native_operands_code)
 
     if ctx.is_full_binary_inventory:
-        ctx.pinned_opcode_relative = "crates/engine/src/runtime/binary_object/pinned_opcodes.rs"
+        ctx.pinned_opcode_relative = "src/engine/code/binary_object/pinned_opcodes.rs"
         pinned_opcode_code = ctx.binary_code_cache[ctx.root / ctx.pinned_opcode_relative]
         opcode_format_pattern = re.compile(
             rf"\b{native_plan_visibility_pattern.replace('binary_object', 'runtime')}"
@@ -482,7 +482,7 @@ def check(ctx):
                 r"\bimpl[ \t\n]*<[ \t\n]*'image[ \t\n]*>[ \t\n]+"
                 r"NativeAtomRef[ \t\n]*<[ \t\n]*'image[ \t\n]*>[ \t\n]*\{"
             ),
-            "be6f900535b456104e234a5babec4c1f1dae2d440c7fb25129724fe30dd6529a",
+            "378938040432e70209bb37dbce0c1d00ca18097b472d1e04d496a03caa03e710",
         ),
         (
             "label representation",
@@ -490,12 +490,12 @@ def check(ctx):
                 rf"\b{native_plan_visibility_pattern}[ \t\n]+struct"
                 r"[ \t\n]+NativeLabel[ \t\n]*\{"
             ),
-            "f6dfbd46ce01e82b9ac4d91be84f5027ea5da91e97d15a7d164a9a9c98f97731",
+            "17d62c502c7f9fcff5e0b83cf095c397807967bae3bc30677586c752d57ab4b9",
         ),
         (
             "label accessors",
             re.compile(r"\bimpl[ \t\n]+NativeLabel[ \t\n]*\{"),
-            "ad6e4d0ac76e7a0b242641e2adf87b8a279de581bf168b0617ac4ead7105db9b",
+            "b4a55d2c8547c8f7c270b21cb476f0424b9f16ab317def40b5d5734a57cc10f5",
         ),
         (
             "typed operand representation",
@@ -503,7 +503,7 @@ def check(ctx):
                 rf"\b{native_plan_visibility_pattern}[ \t\n]+enum"
                 r"[ \t\n]+NativeOperands[^{{;]*\{"
             ),
-            "77fb7a85d1c0210a34b668ea96fa9e7244471cbe122354de21faebc6198c1f06",
+            "6809f5cbecf4da9ea2b8f9d985386c742a9c24cce7d56326be3f56764402f601",
         ),
         (
             "instruction representation",
@@ -511,7 +511,7 @@ def check(ctx):
                 rf"\b{native_plan_visibility_pattern}[ \t\n]+struct"
                 r"[ \t\n]+NativeInstruction[^{{;]*\{"
             ),
-            "bda6ce3d26ef21cb5ca863fae40c591859ee811dbe2eb38f7c3991b8bd5f21fc",
+            "d9e19a9c4abe7d24e21e96109d32b56c7c6300f2374722bb80d75eedf67ab742",
         ),
         (
             "instruction accessors",
@@ -519,7 +519,7 @@ def check(ctx):
                 r"\bimpl[ \t\n]*<[ \t\n]*'image[ \t\n]*>[ \t\n]+"
                 r"NativeInstruction[^{{;]*\{"
             ),
-            "d2e377ac2764175ade3acae2d3b460d8cbd64a6bd7d56a29b7d009e3a91b15b1",
+            "96dda98087d105b39cda7e56b84ab9f41a36a77836777a262eaa2c644d37256b",
         ),
         (
             "code-plan representation",
@@ -527,7 +527,7 @@ def check(ctx):
                 rf"\b{native_plan_visibility_pattern}[ \t\n]+struct"
                 r"[ \t\n]+NativeCodePlan[^{{;]*\{"
             ),
-            "1b44645bb4a3b329a0e7fb19564ea0b69c52dc4694fbe208454fca3eaa0ce055",
+            "3f08b0fbe4e6e606f94f98fa20a404579c412e21577ce4fa62d0708236051909",
         ),
         (
             "code-plan accessors",
@@ -535,7 +535,7 @@ def check(ctx):
                 r"\bimpl[ \t\n]*<[ \t\n]*'image[ \t\n]*>[ \t\n]+"
                 r"NativeCodePlan[^{{;]*\{"
             ),
-            "8689b46353fc3296ca813b31a399017c398dae18d8ba226e7f5c901d72424e08",
+            "c9074e1e3e98fdb0dbd0f8ce39b18fdf23f2077ec25664e936a40852474d61fd",
         ),
         (
             "error representation",
@@ -543,12 +543,12 @@ def check(ctx):
                 rf"\b{native_plan_visibility_pattern}[ \t\n]+enum"
                 r"[ \t\n]+NativePlanError[ \t\n]*\{"
             ),
-            "9d79a33a085e1fc0f2e71bc60430fb15f870449847182d2affbd3b8fea2328e6",
+            "da2eecfb29c0b8de9d928fe488f1f2a708a2a7c896361c1b66ee6b07d87ac058",
         ),
         (
             "label-target error classification",
             re.compile(r"\bimpl[ \t\n]+NativePlanError[ \t\n]*\{"),
-            "0610bf345f915003023c37f91cff4250885bf53cff7da15ca64486ecc8c50817",
+            "26e0b3f582fe7e09123ac84a16c979b44388403901c4a0a2e36228b2db363e38",
         ),
         (
             "authenticated entrypoint",
@@ -556,7 +556,7 @@ def check(ctx):
                 rf"\b{native_plan_visibility_pattern}[ \t\n]+fn"
                 r"[ \t\n]+decode_native_code_plan[^{{;]*\{"
             ),
-            "df01f2c531c6981903a7d765fe9d9e6b5e9367d5970f17fff0938b2f907f0376",
+            "54536fe713b833a61a75e34f1126fef08ca650fcc64b3298d1f57f94c91b6d2d",
         ),
         (
             "code and relocation decoder",
@@ -691,7 +691,7 @@ def check(ctx):
                         for mention in unexpected
                     ),
                 )
-        elif ctx.relative == "crates/engine/src/runtime/binary_object/function_translate/mod.rs":
+        elif ctx.relative == "src/engine/code/binary_object/function_translate/mod.rs":
             continue
         elif mentions:
             ctx.fail(
@@ -714,7 +714,7 @@ def check(ctx):
     allowed_native_plan_symbol_files = {
         native_plan_relative,
         ctx.image_root_relative,
-        "crates/engine/src/runtime/binary_object/function_translate/mod.rs",
+        "src/engine/code/binary_object/function_translate/mod.rs",
     }
 
     for ctx.path, ctx.code in ctx.binary_code_cache.items():
@@ -739,7 +739,7 @@ def check(ctx):
 
     for ctx.path, ctx.code in ctx.binary_code_cache.items():
         ctx.relative = ctx.path.relative_to(ctx.root).as_posix()
-        if not ctx.relative.startswith("crates/engine/src/runtime/binary_object/bytecode_image/"):
+        if not ctx.relative.startswith("src/engine/code/binary_object/bytecode_image/"):
             continue
         for ctx.match in bytecode_image_alias_pattern.finditer(ctx.code):
             ctx.fail(
@@ -760,7 +760,7 @@ def check(ctx):
                 + ctx.location(ctx.relative, ctx.binary_source_cache[ctx.path], ctx.match.start()),
             )
 
-    function_translate_root = "crates/engine/src/runtime/binary_object/function_translate"
+    function_translate_root = "src/engine/code/binary_object/function_translate"
 
     ctx.function_translate_relative = f"{function_translate_root}/mod.rs"
 

@@ -2,9 +2,8 @@ use super::quickjs_typed_array_oracle::observe_string_value;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
-use quickjs_oxide::{
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{
     Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
 
@@ -231,7 +230,8 @@ fn typed_array_iterators_match_pinned_quickjs() {
 
 #[test]
 fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -345,7 +345,8 @@ fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
 }
 
 fn oxide_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(case.source) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),

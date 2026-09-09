@@ -1,17 +1,15 @@
-use crate::runtime_completion_oracle::observe_eval_completion_with_error_context as observe_rust_eval;
-
 use crate::quickjs_argv_completion_oracle;
+use crate::runtime_completion_oracle::observe_eval_completion_with_error_context as observe_rust_eval;
 
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
 };
-use std::ffi::OsStr;
-use std::process::Command;
-
 use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 // This differential pins the first Array.prototype algorithm slice after the
 // iterator surface to QuickJS 2026-06-04. Source probes avoid later Array
@@ -308,7 +306,8 @@ fn array_search_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_search_errors_use_the_native_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     defining
@@ -348,7 +347,8 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     };
     for &(description, source) in cases {
         let expected = observe_oracle(&oracle, source, description);
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -359,7 +359,8 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

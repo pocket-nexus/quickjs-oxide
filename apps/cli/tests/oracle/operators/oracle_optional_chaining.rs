@@ -1,10 +1,9 @@
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text as primitive_text,
 };
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -833,7 +832,8 @@ fn optional_chaining_matches_pinned_quickjs() {
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(case.source) {
         Ok(value) => format!(
@@ -914,7 +914,7 @@ try {
 fn error_name(
     runtime: &Runtime,
     context: &mut Context,
-    error: &quickjs_oxide::ObjectRef,
+    error: &quickjs_oxide::engine::api::ObjectRef,
     case: &Case,
 ) -> String {
     let key = runtime

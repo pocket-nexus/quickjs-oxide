@@ -1,8 +1,9 @@
 use crate::runtime_observation::property_callable;
 use std::ffi::OsStr;
+
 use std::process::{Command, Output};
 
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
     Value, WellKnownSymbol,
@@ -475,7 +476,8 @@ fn number_native_error_stacks_match_pinned_quickjs() {
 }
 
 fn rust_observations() -> Option<Vec<String>> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();

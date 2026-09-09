@@ -2,14 +2,11 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
 };
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
-
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04
 // `js_regexp_Symbol_split` (`quickjs.c` 48875-48990), including
@@ -593,7 +590,8 @@ fn regexp_split_recursion_is_catchable_and_recovers_like_pinned_quickjs() {
 
 #[test]
 fn regexp_split_intrinsics_use_defining_realms_and_foreign_species() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
@@ -744,7 +742,8 @@ fn mixed_string_and_regexp_split_recursion_guard_is_catchable_and_recovers() {
         .name("string-regexp-split-stack-proof".into())
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {
-            let runtime = Runtime::new();
+            let runtime =
+                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
             let mut context = runtime.new_context();
             context
                 .eval(

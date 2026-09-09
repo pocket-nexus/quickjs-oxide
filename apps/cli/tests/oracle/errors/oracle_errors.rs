@@ -1,10 +1,9 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function bits(d) {
@@ -42,7 +41,8 @@ fn error_intrinsic_slice_matches_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let error = global_callable(&runtime, &mut context, "Error");
     let type_error = global_callable(&runtime, &mut context, "TypeError");
@@ -222,8 +222,9 @@ fn rust_observations() -> Vec<String> {
         panic!("Error(plain object) did not return an object");
     };
     let tagged_message_input = context.new_object().unwrap();
-    let to_string_tag =
-        PropertyKey::from(runtime.well_known_symbol(quickjs_oxide::WellKnownSymbol::ToStringTag));
+    let to_string_tag = PropertyKey::from(
+        runtime.well_known_symbol(quickjs_oxide::engine::api::WellKnownSymbol::ToStringTag),
+    );
     define_data(
         &mut context,
         &tagged_message_input,
@@ -324,7 +325,7 @@ fn rust_observations() -> Vec<String> {
 
 fn global_callable(
     runtime: &Runtime,
-    context: &mut quickjs_oxide::Context,
+    context: &mut quickjs_oxide::engine::api::Context,
     name: &str,
 ) -> CallableRef {
     let key = runtime.intern_property_key(name).unwrap();
@@ -401,7 +402,7 @@ fn bits(writable: bool, enumerable: bool, configurable: bool) -> String {
 }
 
 fn define_data(
-    context: &mut quickjs_oxide::Context,
+    context: &mut quickjs_oxide::engine::api::Context,
     object: &ObjectRef,
     key: &PropertyKey,
     value: Value,
@@ -424,7 +425,7 @@ fn define_data(
 }
 
 fn call_bool(
-    context: &mut quickjs_oxide::Context,
+    context: &mut quickjs_oxide::engine::api::Context,
     callable: &CallableRef,
     arguments: &[Value],
 ) -> bool {
@@ -435,7 +436,7 @@ fn call_bool(
 }
 
 fn call_string(
-    context: &mut quickjs_oxide::Context,
+    context: &mut quickjs_oxide::engine::api::Context,
     callable: &CallableRef,
     this_value: Value,
 ) -> String {
@@ -446,7 +447,7 @@ fn call_string(
 }
 
 fn property_string(
-    context: &mut quickjs_oxide::Context,
+    context: &mut quickjs_oxide::engine::api::Context,
     object: &ObjectRef,
     key: &PropertyKey,
 ) -> String {

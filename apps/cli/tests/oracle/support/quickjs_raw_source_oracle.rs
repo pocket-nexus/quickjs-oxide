@@ -3,6 +3,7 @@ use std::fs::{OpenOptions, create_dir, remove_dir, remove_file};
 use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::process::Command;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const NORMALIZED_SCRIPT_FILENAME: &str = "<raw-script>";

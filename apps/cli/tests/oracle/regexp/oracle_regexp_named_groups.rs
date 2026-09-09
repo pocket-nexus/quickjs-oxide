@@ -2,10 +2,8 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::string_property_with_read_context as string_property;
-
-use quickjs_oxide::{CallableRef, Context, ObjectRef, Runtime, Value};
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 named RegExp captures.
 //
@@ -352,7 +350,8 @@ fn regexp_named_group_construction_and_compile_match_pinned_quickjs() {
 
 #[test]
 fn regexp_named_group_results_use_the_exec_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype =
@@ -376,7 +375,7 @@ fn regexp_named_group_results_use_the_exec_defining_realm() {
                 &exec,
                 Value::Object(regexp),
                 &[Value::String(
-                    quickjs_oxide::JsString::try_from_utf8("za").unwrap(),
+                    quickjs_oxide::engine::api::JsString::try_from_utf8("za").unwrap(),
                 )],
             )
             .expect("cross-realm named RegExp exec"),

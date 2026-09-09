@@ -1,13 +1,14 @@
-use crate::runtime_observation::property_callable_with_read_context as property_callable;
-use crate::runtime_observation::{error_string_property, primitive_value_text};
-use crate::runtime_oracle::value_type;
-use std::ffi::OsStr;
-
 use super::quickjs_array_completion_oracle::observe_array_completion;
-use quickjs_oxide::{
+use crate::runtime_observation::{
+    error_string_property, primitive_value_text,
+    property_callable_with_read_context as property_callable,
+};
+use crate::runtime_oracle::value_type;
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime,
     RuntimeError, Value,
 };
+use std::ffi::OsStr;
 
 // This differential pins the first coherent `%Object%` vertical slice to
 // QuickJS 2026-06-04. Source cases deliberately use only the selected static
@@ -504,7 +505,8 @@ fn object_descriptor_conversion_matches_pinned_quickjs() {
 
 #[test]
 fn object_define_properties_pins_quickjs_proxy_batch_order_without_an_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         observe_rust_eval(
@@ -554,7 +556,8 @@ fn object_oracle_vectors_execute_on_pinned_quickjs() {
 
 #[test]
 fn object_constructor_custom_new_target_and_cross_realm_fallback_are_pinned() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let constructor = global_callable(&runtime, &mut defining, "Object");
@@ -667,7 +670,8 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     };
     for &(description, source) in cases {
         let expected = observe_array_completion(&oracle, source, description);
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -746,7 +750,8 @@ fn array_value_text(
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let function_prototype = context.function_prototype().unwrap();

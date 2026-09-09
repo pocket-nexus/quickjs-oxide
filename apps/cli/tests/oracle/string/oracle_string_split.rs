@@ -1,7 +1,6 @@
 use crate::runtime_observation::{property_callable, string_property};
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_split`
 // (`quickjs.c` 45894-45980) and its prototype-table entry (46640).
@@ -550,7 +549,8 @@ fn string_split_recursion_is_catchable_and_runtime_recovers() {
 
 #[test]
 fn string_split_cross_realm_results_errors_and_user_throws_are_exact() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_string_prototype = defining.string_prototype().unwrap();
@@ -663,7 +663,8 @@ fn string_split_cross_realm_results_errors_and_user_throws_are_exact() {
 
 #[test]
 fn detached_string_split_and_result_retain_then_release_their_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let split = {
         let mut defining = runtime.new_context();
         let prototype = defining.string_prototype().unwrap();
@@ -714,7 +715,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     };
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
@@ -850,7 +852,7 @@ fn primitive_value_text(value: Value) -> String {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
         Value::Int(value) => value.to_string(),
-        Value::Float(value) => quickjs_oxide::value::number_to_string(value),
+        Value::Float(value) => quickjs_oxide::engine::api::number_to_string(value),
         Value::BigInt(value) => value.to_string(),
         Value::String(value) => value.to_utf8_lossy(),
         Value::Symbol(_) => "<symbol>".to_owned(),

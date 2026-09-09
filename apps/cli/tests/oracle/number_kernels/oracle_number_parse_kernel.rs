@@ -1,8 +1,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use quickjs_oxide::JsString;
-use quickjs_oxide::number_parse::{parse_float, parse_int};
+use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::engine::api::testing::{parse_float, parse_int};
 
 #[test]
 fn number_parse_kernel_matches_pinned_quickjs() {

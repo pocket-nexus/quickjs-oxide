@@ -1,16 +1,14 @@
 use crate::runtime_completion_oracle::{
     compare_eval_completion_cases_with_prelude, observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
-use std::ffi::OsStr;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
 
 // Pins QuickJS 2026-06-04 `js_string_constructor`, `js_string_fromCharCode`,
 // `js_string_fromCodePoint`, `js_string_raw`, and `js_string_funcs`. The
@@ -586,7 +584,8 @@ fn string_custom_new_target_matches_pinned_quickjs() {
 
 #[test]
 fn string_cross_realm_results_errors_and_user_throws_are_exact() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_global = defining.global_object().unwrap();
@@ -684,7 +683,8 @@ fn string_cross_realm_results_errors_and_user_throws_are_exact() {
 
 #[test]
 fn string_constructor_and_statics_are_per_realm_and_collectable() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
         let mut first = runtime.new_context();
         let mut second = runtime.new_context();
@@ -718,7 +718,8 @@ fn string_constructor_and_statics_are_per_realm_and_collectable() {
 
 #[test]
 fn string_wrapper_retains_then_releases_its_realm_graph() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
         let mut context = runtime.new_context();
         let global = context.global_object().unwrap();
@@ -746,7 +747,8 @@ fn oracle_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<String> 
 }
 
 fn rust_custom_new_target_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_global = defining.global_object().unwrap();

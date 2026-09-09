@@ -21,13 +21,13 @@ with their owner. The BC5 gates share `checks/lib/bc5-gate-primitives.mjs`; admi
 generators share `test262/test262-admission-data.mjs`. Avoid a generic shared
 utilities directory until unrelated owners actually need the same contract.
 
-Handwritten Unicode algorithms live in `crates/core/src/unicode*.rs`; generated production
-tables live in `crates/core/src/generated/unicode/`. Product builds consume those checked-in
+Handwritten Unicode algorithms live in `src/unicode*.rs`; generated production
+tables live in `src/source/unicode/generated/unicode/`. Product builds consume those checked-in
 tables without running generators or compiling the QuickJS reference. Test262
 generated evidence remains in `dev-support/test262/generated/`.
 
 Tool regression tests live beside the implementation they exercise. Engine unit
-and integration tests retain the Cargo layout documented in `crates/quickjs-oxide/tests/README.md`.
+and integration tests retain the Cargo layout documented in `tests/README.md`.
 See [the binary-object checker](checks/binary_object/README.md) for its rule,
 evidence and mutation-test layout.
 

@@ -1,7 +1,6 @@
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
-
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
 
 fn text(value: Value) -> String {
     let Value::String(value) = value else {
@@ -32,7 +31,7 @@ fn eval(context: &mut Context, source: &str) -> Value {
 fn drain(runtime: &Runtime) -> usize {
     let mut count = 0;
     while runtime.is_job_pending() {
-        assert!(runtime.execute_pending_job().unwrap());
+        assert!(runtime.execute_pending_job().unwrap().executed());
         count += 1;
     }
     count
@@ -40,7 +39,8 @@ fn drain(runtime: &Runtime) -> usize {
 
 #[test]
 fn promise_constructor_and_internal_functions_have_quickjs_shapes() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let facts = text(eval(
         &mut context,
@@ -82,7 +82,8 @@ Promise.resolve.call(CustomPromise, 1);
 
 #[test]
 fn eval_does_not_drain_and_execute_pending_job_is_fifo_one_at_a_time() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         text(eval(
@@ -101,19 +102,20 @@ order.join('|');
         ""
     );
     assert!(runtime.is_job_pending());
-    assert!(runtime.execute_pending_job().unwrap());
+    assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(text(eval(&mut context, "order.join('|')")), "A");
-    assert!(runtime.execute_pending_job().unwrap());
+    assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(text(eval(&mut context, "order.join('|')")), "A|B");
-    assert!(runtime.execute_pending_job().unwrap());
+    assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(text(eval(&mut context, "order.join('|')")), "A|B|nested");
     assert!(!runtime.is_job_pending());
-    assert!(!runtime.execute_pending_job().unwrap());
+    assert!(!runtime.execute_pending_job().unwrap().executed());
 }
 
 #[test]
 fn promise_chains_thenables_rejections_and_self_resolution() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         text(eval(
@@ -156,7 +158,8 @@ events.join('|');
 
 #[test]
 fn queued_jobs_retain_their_graph_across_gc() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     eval(
         &mut context,
@@ -174,7 +177,8 @@ var gcAnswer = 0;
 
 #[test]
 fn static_identity_catch_and_species_follow_quickjs() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         text(eval(
@@ -215,7 +219,8 @@ var catchResult = Promise.prototype.catch.call(receiver, 'reject-handler');
 
 #[test]
 fn host_rejection_tracker_reports_unhandled_then_late_handled() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let expected_context = context.realm_id();
     let events = Rc::new(RefCell::new(Vec::new()));
@@ -266,7 +271,8 @@ rejectEarly('early');
 
 #[test]
 fn pending_job_reports_its_originating_context_on_success_and_throw() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     eval(
@@ -290,7 +296,7 @@ source.then(function () { return 1; });
         "Promise.resolve().then(function () { return 42; });",
     );
 
-    let failure = runtime.execute_pending_job_with_context().unwrap_err();
+    let failure = runtime.execute_pending_job().unwrap_err();
     assert_eq!(failure.context(), Some(first.realm_id()));
     assert_eq!(failure.error(), &RuntimeError::Exception);
     assert_eq!(
@@ -299,10 +305,7 @@ source.then(function () { return 1; });
     );
 
     assert_eq!(
-        runtime
-            .execute_pending_job_with_context()
-            .unwrap()
-            .context(),
+        runtime.execute_pending_job().unwrap().context(),
         Some(second.realm_id())
     );
 }

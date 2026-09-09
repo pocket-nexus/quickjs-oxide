@@ -1,12 +1,11 @@
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::value::number_to_string;
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    number_to_string,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function numberText(value) {
@@ -88,7 +87,8 @@ fn number_call_conversion_matches_the_pinned_quickjs_probe() {
 
 #[test]
 fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_global = first.global_object().unwrap();
@@ -251,7 +251,8 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
 
 #[test]
 fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut constructor_context = runtime.new_context();
     let mut target_context = runtime.new_context();
     let global = constructor_context.global_object().unwrap();
@@ -344,7 +345,8 @@ fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() 
 
 #[test]
 fn number_constructor_and_brand_errors_use_the_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_number = global_callable(&runtime, &mut first, "Number");
@@ -451,7 +453,8 @@ fn number_constructor_and_brand_errors_use_the_defining_realm() {
 
 #[test]
 fn number_wrapper_keeps_its_realm_graph_alive_until_collection() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
         let mut context = runtime.new_context();
         let number = global_callable(&runtime, &mut context, "Number");
@@ -469,7 +472,8 @@ fn number_wrapper_keeps_its_realm_graph_alive_until_collection() {
 }
 
 fn rust_constructor_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let number = global_callable(&runtime, &mut context, "Number");

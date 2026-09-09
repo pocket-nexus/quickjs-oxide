@@ -1,10 +1,9 @@
 //! Differential coverage for classic `for` lexical environments.
 
 use crate::runtime_oracle::run_cli;
+use quickjs_oxide::engine::api::{Runtime, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Runtime, Value};
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -241,7 +240,8 @@ fn script_for_capture_survives_a_following_eval_like_pinned_quickjs() {
     let setup = "Function.saved=undefined;for(let value=0;value<1;value++){Function.saved=function(){return value};}";
     let observation = "Function.saved()+'|'+typeof value";
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     context
         .eval(setup)
@@ -305,7 +305,8 @@ fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str
 }
 
 fn rust_value_observation(source: &str, description: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let value = runtime
         .new_context()
         .eval(source)

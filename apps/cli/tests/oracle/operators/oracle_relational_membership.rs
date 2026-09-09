@@ -1,10 +1,9 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function show(value) {
@@ -404,7 +403,8 @@ fn source_relational_membership_no_in_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_type_error = intrinsic_prototype(&runtime, &mut first, "TypeError");
@@ -598,7 +598,8 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let sentinel = context.new_object().unwrap();
     define_global(
@@ -1434,7 +1435,8 @@ fn oracle_observations(oracle: &OsStr) -> Vec<String> {
 }
 
 fn rust_error_observation(source: &str) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {

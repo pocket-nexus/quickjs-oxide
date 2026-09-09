@@ -1,5 +1,5 @@
 use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
-use quickjs_oxide::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 struct Case {
     group: &'static str,
@@ -472,7 +472,8 @@ fn object_super_eval_semantics_match_pinned_quickjs() {
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(case.source) {
         Ok(value) => format!(
@@ -516,8 +517,8 @@ fn rust_observation(case: &Case) -> String {
 
 fn error_name(
     runtime: &Runtime,
-    context: &mut quickjs_oxide::Context,
-    error: &quickjs_oxide::ObjectRef,
+    context: &mut quickjs_oxide::engine::api::Context,
+    error: &quickjs_oxide::engine::api::ObjectRef,
     case: &Case,
 ) -> String {
     let key = runtime

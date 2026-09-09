@@ -2,10 +2,10 @@
 
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_oracle::value_type;
+
+use quickjs_oxide::engine::api::{JsString, Runtime, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{JsString, Runtime, Value};
 
 struct Case {
     description: &'static str,
@@ -524,7 +524,8 @@ fn with_global_reference_sees_a_const_from_an_earlier_script() {
         __qjo_with_prior_error + "|" + __qjo_with_prior_side
     "#;
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     context.eval(declaration).unwrap();
     assert_eq!(
@@ -560,7 +561,8 @@ fn with_global_reference_observes_a_lexical_declared_after_function_publication(
         __qjo_with_late_const_error + "|" + __qjo_with_late_const_side
     "#;
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     context.eval(function).unwrap();
     context.eval(declaration).unwrap();
@@ -579,7 +581,8 @@ fn with_global_reference_observes_a_lexical_declared_after_function_publication(
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let value = context.eval(case.source).unwrap_or_else(|error| {
         panic!(

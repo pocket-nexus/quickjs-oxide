@@ -1,8 +1,7 @@
 use crate::runtime_completion_oracle::observe_read_context_eval_completion_with_prelude;
+use quickjs_oxide::engine::api::Runtime;
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::Runtime;
 
 // Differential lock for the pinned QuickJS 2026-06-04 treatment of U+180E
 // MONGOLIAN VOWEL SEPARATOR. Unicode 17 classifies it as a format character,
@@ -184,7 +183,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     };
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_read_context_eval_completion_with_prelude(
             &runtime,

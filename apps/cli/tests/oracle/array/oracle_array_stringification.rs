@@ -1,8 +1,7 @@
 use super::support::*;
 
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04's `js_array_join` and
 // `js_array_toString`, including UTF-16 assembly, locale dispatch, recursive
@@ -445,7 +444,8 @@ fn array_stringification_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_stringification_boxing_errors_user_throws_and_overflow_use_pinned_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -530,7 +530,8 @@ fn array_stringification_boxing_errors_user_throws_and_overflow_use_pinned_realm
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

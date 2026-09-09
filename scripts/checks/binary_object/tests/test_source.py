@@ -57,15 +57,15 @@ class SourceTests(unittest.TestCase):
     def test_runtime_test_expansion_preserves_gated_declarations(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "crates/engine/src/runtime/tests").mkdir(parents=True)
-            (root / "crates/engine/src/runtime/tests.rs").write_text(
+            (root / "src/engine/heap/runtime/tests").mkdir(parents=True)
+            (root / "src/engine/heap/runtime/tests.rs").write_text(
                 "mod plain;\n#[cfg(feature = \"host\")] mod gated;\n", encoding="utf-8"
             )
-            (root / "crates/engine/src/runtime/tests/plain.rs").write_text(
+            (root / "src/engine/heap/runtime/tests/plain.rs").write_text(
                 "use super::*;\nfn evidence() {}\n", encoding="utf-8"
             )
             context = self.context(root)
-            expanded = context.read_source("crates/engine/src/runtime/tests.rs")
+            expanded = context.read_source("src/engine/heap/runtime/tests.rs")
             self.assertIn("fn evidence() {}", expanded)
             self.assertIn('#[cfg(feature = "host")] mod gated;', expanded)
             self.assertNotIn("use super::*", expanded)

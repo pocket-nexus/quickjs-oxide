@@ -1,12 +1,12 @@
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
-use crate::runtime_observation::{property_callable, string_property};
-use std::ffi::OsStr;
 
-use quickjs_oxide::{
+use crate::runtime_observation::{property_callable, string_property};
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime,
     RuntimeError, Value,
 };
+use std::ffi::OsStr;
 
 // Pins the QuickJS 2026-06-04 `Object.groupBy` table entry and the shared
 // `js_object_groupBy(..., is_map = 0)` iterator kernel.
@@ -354,7 +354,8 @@ fn object_group_by_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let object = global_callable(&runtime, &mut defining, "Object");
@@ -461,7 +462,8 @@ fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");

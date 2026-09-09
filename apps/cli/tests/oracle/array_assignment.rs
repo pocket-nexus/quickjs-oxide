@@ -1,14 +1,12 @@
-use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-
 use crate::quickjs_argv_completion_oracle;
-
+use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
 use std::ffi::OsStr;
+
 use std::process::{Command, Output};
 
-use quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
-use quickjs_oxide::Runtime;
-
 use crate::common::compile_syntax_error;
+use quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
+use quickjs_oxide::engine::api::Runtime;
 
 // Pins QuickJS 2026-06-04 ArrayAssignmentPattern lowering. Array binding
 // declarations are covered separately: this target keeps AssignmentExpression
@@ -628,7 +626,8 @@ fn array_assignment_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn nested_object_assignments_run_without_an_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     for source in [
         "(function(){var value;({value}={value:42});return value})()",
@@ -709,7 +708,8 @@ fn invalid_array_assignment_leaf_is_syntax_after_object_patterns() {
 
 #[test]
 fn array_assignment_smoke_runs_without_an_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         observe_rust_eval(
@@ -728,7 +728,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
         return;
     };
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),

@@ -1,4 +1,4 @@
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3o_promise_finally.js");
 const EXPECTED: &str =
@@ -18,14 +18,15 @@ fn eval(context: &mut Context, source: &str) -> Value {
 
 #[test]
 fn promise_finally_matches_pinned_quickjs() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
     eval(&mut context, FIXTURE);
     runtime.run_gc().unwrap();
     while runtime.is_job_pending() {
         runtime.run_gc().unwrap();
-        assert!(runtime.execute_pending_job().unwrap());
+        assert!(runtime.execute_pending_job().unwrap().executed());
         runtime.run_gc().unwrap();
     }
 
@@ -37,7 +38,8 @@ fn promise_finally_matches_pinned_quickjs() {
 
 #[test]
 fn promise_finally_cfunction_data_handler_uses_calling_context() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 

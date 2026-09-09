@@ -1,8 +1,7 @@
+use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
+use quickjs_oxide::engine::api::Runtime;
 use std::ffi::OsStr;
 use std::process::Command;
-
-use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
-use quickjs_oxide::Runtime;
 
 struct Case {
     group: &'static str,
@@ -489,7 +488,8 @@ fn arrow_function_semantics_match_pinned_quickjs() {
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let value = context.eval(case.source).unwrap_or_else(|error| {
         panic!(

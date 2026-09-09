@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+quickjs-oxide-web-host = { workspace = true }
 quickjs-oxide = { workspace = true, default-features = false }
 js-sys = { workspace = true }
 wasm-bindgen = { workspace = true }

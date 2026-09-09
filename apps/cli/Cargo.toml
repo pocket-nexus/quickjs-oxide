@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+quickjs-oxide-host = { workspace = true }
 quickjs-oxide = { workspace = true }
 
 [[bin]]
@@ -19,3 +20,6 @@ path = "src/main.rs"
 [features]
 default = []
 test262-host = ["quickjs-oxide/test262-host"]
+
+[dev-dependencies]
+quickjs-oxide = { workspace = true, features = ["test-support"] }

@@ -2,11 +2,10 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::eval_object;
 
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, OrdinaryPropertyDescriptor,
     Runtime, RuntimeError, Value,
 };
@@ -696,7 +695,8 @@ fn regexp_replace_standard_fast_path_matches_pinned_quickjs() {
 
 #[test]
 fn regexp_replace_standard_fast_path_accepts_cross_realm_native_targets() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let exec = eval_optional_callable(
@@ -786,7 +786,8 @@ fn regexp_replace_standard_fast_path_accepts_cross_realm_native_targets() {
 
 #[test]
 fn regexp_replace_intrinsic_uses_its_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let Some(replace) = eval_optional_callable(

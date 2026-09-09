@@ -82,6 +82,7 @@ def check(ctx):
         if consumer_macro_invocations != [
             "matches",
             "vec",
+            "vec",
             "format",
             "format",
             "format",
@@ -181,7 +182,7 @@ def check(ctx):
             )
 
         publication_bridge_pattern = re.compile(
-            r"\bpub[ \t\n]*\([ \t\n]*super[ \t\n]*\)[ \t\n]+fn"
+            r"\bpub[ \t\n]*\([ \t\n]*crate[ \t\n]*\)[ \t\n]+fn"
             r"[ \t\n]+read_trusted_scalar_script_in_realm[ \t\n]*\([^{};]*\)"
             r"[ \t\n]*->[^{;]+\{",
             re.DOTALL,
@@ -192,7 +193,7 @@ def check(ctx):
             "binary-object-consumer-publication",
             "trusted scalar publication bridge",
         )
-        expected_publication_bridge_source = '\n        pub(super) fn read_trusted_scalar_script_in_realm(\n            &self,\n            realm: ContextId,\n            bytes: &[u8],\n        ) -> Result<FunctionBytecodeRef, RuntimeError> {\n            let (value, unary_ops) = decode_trusted_scalar_script(bytes).map_err(map_read_error)?;\n            let (push, constants) = match lower_scalar_value(value)? {\n                LoweredScalar::Direct(push) => (push, Vec::new()),\n                LoweredScalar::Constant(constant) | LoweredScalar::AtomString(constant) => {\n                    (Instruction::PushConst(0), vec![constant])\n                }\n                LoweredScalar::IntegerAtomString(value) => {\n                    (Instruction::PushAtomValueIndex(value), Vec::new())\n                }\n            };\n            let instruction_capacity = unary_ops.len().checked_add(3).ok_or_else(|| {\n                RuntimeError::Engine(Error::internal(\n                    "trusted scalar instruction count overflowed",\n                ))\n            })?;\n            let mut instructions = Vec::new();\n            instructions\n                .try_reserve_exact(instruction_capacity)\n                .map_err(|_| {\n                    RuntimeError::Engine(Error::internal(\n                        "could not allocate trusted scalar instruction draft",\n                    ))\n                })?;\n            instructions.push(push);\n            for operation in unary_ops {\n                instructions.push(match operation {\n                    ScalarUnaryOp::Neg => Instruction::Neg,\n                    ScalarUnaryOp::Plus => Instruction::Plus,\n                    ScalarUnaryOp::Dec => Instruction::Dec,\n                    ScalarUnaryOp::Inc => Instruction::Inc,\n                    ScalarUnaryOp::BitNot => Instruction::BitNot,\n                    ScalarUnaryOp::LogicalNot => Instruction::Not,\n                    ScalarUnaryOp::TypeOf => Instruction::TypeOf,\n                });\n            }\n            instructions.push(Instruction::SetLocal(0));\n            instructions.push(Instruction::Return);\n            let function = UnlinkedFunction::new(\n                instructions,\n                constants,\n                FunctionMetadata {\n                    local_count: 1,\n                    max_stack: 1,\n                    strip_variable_debug: true,\n                    ..FunctionMetadata::default()\n                },\n            );\n\n            self.publish_unlinked_function(realm, function)\n        }\n    '
+        expected_publication_bridge_source = '\n        pub(crate) fn read_trusted_scalar_script_in_realm(\n            &self,\n            realm: ContextId,\n            bytes: &[u8],\n        ) -> Result<FunctionBytecodeRef, RuntimeError> {\n            let (value, unary_ops) = decode_trusted_scalar_script(bytes).map_err(map_read_error)?;\n            let (push, constants) = match lower_scalar_value(value)? {\n                LoweredScalar::Direct(push) => (push, Vec::new()),\n                LoweredScalar::Constant(constant) | LoweredScalar::AtomString(constant) => {\n                    (Instruction::PushConst(0), vec![constant])\n                }\n                LoweredScalar::IntegerAtomString(value) => {\n                    (Instruction::PushAtomValueIndex(value), Vec::new())\n                }\n            };\n            let instruction_capacity = unary_ops.len().checked_add(3).ok_or_else(|| {\n                RuntimeError::Engine(Error::internal(\n                    "trusted scalar instruction count overflowed",\n                ))\n            })?;\n            let mut instructions = Vec::new();\n            instructions\n                .try_reserve_exact(instruction_capacity)\n                .map_err(|_| {\n                    RuntimeError::Engine(Error::internal(\n                        "could not allocate trusted scalar instruction draft",\n                    ))\n                })?;\n            instructions.push(push);\n            for operation in unary_ops {\n                instructions.push(match operation {\n                    ScalarUnaryOp::Neg => Instruction::Neg,\n                    ScalarUnaryOp::Plus => Instruction::Plus,\n                    ScalarUnaryOp::Dec => Instruction::Dec,\n                    ScalarUnaryOp::Inc => Instruction::Inc,\n                    ScalarUnaryOp::BitNot => Instruction::BitNot,\n                    ScalarUnaryOp::LogicalNot => Instruction::Not,\n                    ScalarUnaryOp::TypeOf => Instruction::TypeOf,\n                });\n            }\n            instructions.push(Instruction::SetLocal(0));\n            instructions.push(Instruction::Return);\n            let function = UnlinkedFunction::new(\n                instructions,\n                constants,\n                FunctionMetadata {\n                    local_count: 1,\n                    max_stack: 1,\n                    strip_variable_debug: true,\n                    ..FunctionMetadata::default()\n                },\n                Vec::new(),\n                vec![crate::engine::code::function::UnlinkedVariableDefinition::ordinary(None)],\n                Vec::new(),\n            );\n\n            self.publish_unlinked_function(realm, function)\n        }\n    '
         if (
             " ".join(publication_bridge_code.split())
             != " ".join(ctx.rust_code_only(expected_publication_bridge_source).split())
@@ -205,7 +206,7 @@ def check(ctx):
         ordinary_publication_bridge_code, ctx._, ctx._ = ctx.unique_braced_item(
             consumer_production_code,
             re.compile(
-                r"\bpub[ \t\n]*\([ \t\n]*super[ \t\n]*\)[ \t\n]+fn"
+                r"\bpub[ \t\n]*\([ \t\n]*crate[ \t\n]*\)[ \t\n]+fn"
                 r"[ \t\n]+read_trusted_ordinary_function_in_realm\b[^{};]*\{"
             ),
             "ordinary-leaf-consumer-publication",
@@ -700,7 +701,7 @@ def check(ctx):
                     + ctx.location(ctx.consumer_relative, ctx.consumer_source, ctx.match.start()),
                 )
 
-    ctx.bytecode_publish_relative = "crates/engine/src/runtime/bytecode_publish.rs"
+    ctx.bytecode_publish_relative = "src/engine/code/bytecode_publish.rs"
 
     bytecode_publish_source = ctx.read_source(ctx.bytecode_publish_relative)
 
@@ -725,7 +726,7 @@ def check(ctx):
         bytecode_publish_code,
         re.compile(
             r"(?m)^[ \t]*pub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::"
-            r"[ \t\n]*runtime[ \t\n]*\)[ \t\n]+fn[ \t\n]+"
+            r"[ \t\n]*engine[ \t\n]*::[ \t\n]*code[ \t\n]*\)[ \t\n]+fn[ \t\n]+"
             r"verify_unlinked_ordinary_leaf\b[^{};]*\{"
         ),
         "ordinary-leaf-verifier-entrypoint",
@@ -773,7 +774,7 @@ def check(ctx):
             f"found {len(ordinary_verifier_arms)} role arms",
         )
 
-    function_relative = "crates/core/src/function.rs"
+    function_relative = "src/engine/code/function.rs"
 
     function_source = ctx.read_source(function_relative)
 
@@ -815,7 +816,7 @@ def check(ctx):
             "ordinary-leaf verification may admit only the exact empty atom String beside plain primitives",
         )
 
-    context_relative = "crates/engine/src/runtime/context/bytecode.rs"
+    context_relative = "src/engine/api/context/bytecode.rs"
 
     context_source = ctx.read_source(context_relative)
 
@@ -858,23 +859,23 @@ def check(ctx):
             "trusted bytecode reads must convert only JavaScript-visible errors into pending exceptions and preserve Unsupported/Internal directly",
         )
 
-    bytecode_source = ctx.read_source("crates/core/src/bytecode.rs")
+    bytecode_source = ctx.read_source("src/engine/code/bytecode.rs")
 
     ctx.bytecode_code = ctx.rust_code_only(bytecode_source)
 
     bytecode_production_code = ctx.bytecode_code.split('#[cfg(test)]\nmod tests', 1)[0]
 
-    ctx.vm_code = ctx.rust_code_only(ctx.read_source("crates/engine/src/vm.rs"))
+    ctx.vm_code = ctx.rust_code_only(ctx.read_source("src/engine/vm/mod.rs"))
 
-    value_code = ctx.rust_code_only(ctx.read_source("crates/core/src/value.rs"))
+    value_code = ctx.rust_code_only(ctx.read_source("src/engine/value/primitive.rs"))
 
-    atom_code = ctx.rust_code_only(ctx.read_source("crates/core/src/atom.rs"))
+    atom_code = ctx.rust_code_only(ctx.read_source("src/engine/atom/mod.rs"))
 
     engine_string_fragments = (
         (ctx.bytecode_code, "PushAtomValueIndex(u32),"),
         (ctx.bytecode_code, "Self::PushI32(_) | Self::PushAtomValueIndex(_) | Self::PushConst(_)"),
-        (ctx.bytecode_code, "Instruction::PushAtomValueIndex(index) if *index > crate::atom::ATOM_MAX_INT"),
-        (ctx.vm_code, "Instruction::PushAtomValueIndex(value) => self.stack.push(Value::String( crate::value::JsString::from_fresh_decimal_u32(*value), ))"),
+        (ctx.bytecode_code, "Instruction::PushAtomValueIndex(index) if *index > crate::engine::atom::ATOM_MAX_INT"),
+        (ctx.vm_code, "Instruction::PushAtomValueIndex(value) => self.stack.push(Value::String( crate::engine::value::JsString::from_fresh_decimal_u32(*value), ))"),
         (atom_code, "AtomSpelling::Integer(value) => Ok(JsString::from_fresh_decimal_u32(value))"),
         (value_code, "pub fn from_fresh_decimal_u32(mut value: u32) -> Self"),
         (value_code, "digits[start] = b'0' + (value % 10) as u8;"),

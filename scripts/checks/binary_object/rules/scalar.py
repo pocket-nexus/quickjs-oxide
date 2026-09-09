@@ -291,7 +291,7 @@ def check(ctx):
             "invalid translated labels must remain an ordinary scalar-cohort rejection",
         )
 
-    ctx.consumer_relative = "crates/engine/src/runtime/binary_object_publish.rs"
+    ctx.consumer_relative = "src/engine/code/binary_object_publish.rs"
 
     consumer_path = ctx.root / ctx.consumer_relative
 
@@ -299,13 +299,13 @@ def check(ctx):
 
     consumer_module_declarations = re.findall(
         r"(?m)^[ \t]*mod[ \t]+binary_object_publish[ \t]*;[ \t]*$",
-        ctx.runtime_code,
+        ctx.rust_code_only(ctx.read_source("src/engine/code/mod.rs")),
     )
 
     consumer_public_module_declarations = re.findall(
         r"(?m)^[ \t]*pub(?:[ \t\n]*\([^)]*\))?[ \t\n]+mod"
         r"[ \t\n]+binary_object_publish[ \t\n]*;",
-        ctx.runtime_code,
+        ctx.rust_code_only(ctx.read_source("src/engine/code/mod.rs")),
     )
 
     if consumer_public_module_declarations:

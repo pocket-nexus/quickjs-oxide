@@ -7,7 +7,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 struct SuccessCase {
     description: &'static str,
@@ -320,7 +320,8 @@ fn private_async_generator_class_method_semantics_match_pinned_quickjs() {
 
 #[test]
 fn suspended_private_class_methods_retain_home_objects_and_brands_across_gc() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     eval(
         &mut context,

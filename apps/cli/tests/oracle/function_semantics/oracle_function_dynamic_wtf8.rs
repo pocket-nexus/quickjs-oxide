@@ -2,7 +2,7 @@
 
 use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 use crate::runtime_completion_oracle::observe_eval_completion as observe_oxide;
-use quickjs_oxide::Runtime;
+use quickjs_oxide::engine::api::Runtime;
 
 struct DynamicKind {
     label: &'static str,
@@ -218,7 +218,8 @@ fn case(kind: &DynamicKind, detail: &str, body: &str, expected: &str) -> Case {
 
 #[test]
 fn dynamic_function_wtf8_source_matches_expected_semantics() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let mut failures = Vec::new();
     for case in cases() {
@@ -247,7 +248,8 @@ fn dynamic_function_wtf8_source_matches_pinned_quickjs() {
         return;
     };
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let mut failures = Vec::new();
     for case in cases() {

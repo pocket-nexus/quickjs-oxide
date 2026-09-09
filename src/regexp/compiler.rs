@@ -1,0 +1,3777 @@
+//! Typed RegExp parser/compiler foundation.
+//!
+//! This is a safe Rust port of the front-end structure in pinned QuickJS
+//! `libregexp.c` (`re_parse_disjunction` through `lre_compile`, lines
+//! 1848-2612). It deliberately emits typed instructions instead of the C
+//! engine's packed byte buffer while preserving QuickJS's parse and execution
+//! semantics.
+
+use super::RegExpFlags;
+use super::flags::{FlagParseErrorKind, parse_flags};
+use super::group_name::{self, CaptureSummary};
+use super::opcode::{CharacterRange, Instruction};
+use crate::engine::value::JsString;
+use std::collections::BTreeSet;
+
+const INFINITE_REPETITION: u32 = i32::MAX as u32;
+const MAX_CODE_POINT: u32 = 0x10_ffff;
+const MAX_GROUP_NESTING: usize = 256;
+
+/// One runtime-independent compiled regular-expression program.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompiledRegExp {
+    flags: RegExpFlags,
+    capture_count: u8,
+    register_count: u8,
+    instructions: Box<[Instruction]>,
+    /// Capture names aligned to captures 1..N. Capture zero is deliberately
+    /// absent. `None` for the whole field means the pattern has no named
+    /// captures and matches QuickJS's absent group-name trailer.
+    group_names: Option<Box<[Option<JsString>]>>,
+}
+
+impl CompiledRegExp {
+    #[cfg(test)]
+    pub(super) fn from_parts(
+        flags: RegExpFlags,
+        capture_count: u8,
+        register_count: u8,
+        instructions: Vec<Instruction>,
+    ) -> Self {
+        Self {
+            flags,
+            capture_count,
+            register_count,
+            instructions: instructions.into_boxed_slice(),
+            group_names: None,
+        }
+    }
+
+    fn from_compiled_parts(
+        flags: RegExpFlags,
+        capture_count: u8,
+        register_count: u8,
+        instructions: Vec<Instruction>,
+        group_names: Option<Box<[Option<JsString>]>>,
+    ) -> Self {
+        debug_assert!(group_names.as_ref().is_none_or(|names| {
+            names.len() == usize::from(capture_count).saturating_sub(1)
+                && names.iter().any(Option::is_some)
+        }));
+        Self {
+            flags,
+            capture_count,
+            register_count,
+            instructions: instructions.into_boxed_slice(),
+            group_names,
+        }
+    }
+
+    #[must_use]
+    pub const fn flags(&self) -> RegExpFlags {
+        self.flags
+    }
+
+    /// Capture zero is the complete match, matching QuickJS's bytecode header.
+    #[must_use]
+    pub const fn capture_count(&self) -> u8 {
+        self.capture_count
+    }
+
+    #[must_use]
+    pub const fn register_count(&self) -> u8 {
+        self.register_count
+    }
+
+    #[must_use]
+    pub fn instructions(&self) -> &[Instruction] {
+        &self.instructions
+    }
+
+    /// Names aligned to captures 1..N, or `None` when this program has no
+    /// named captures. Capture `i` corresponds to `names[i - 1]`.
+    #[must_use]
+    pub fn group_names(&self) -> Option<&[Option<JsString>]> {
+        self.group_names.as_deref()
+    }
+
+    #[must_use]
+    pub const fn has_named_captures(&self) -> bool {
+        self.group_names.is_some()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompileErrorSource {
+    Pattern,
+    Flags,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CompileErrorKind {
+    Syntax,
+    TooManyCaptures,
+    TooManyRegisters,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompileError {
+    kind: CompileErrorKind,
+    source: CompileErrorSource,
+    position: usize,
+    message: String,
+}
+
+impl CompileError {
+    #[must_use]
+    pub const fn kind(&self) -> &CompileErrorKind {
+        &self.kind
+    }
+
+    #[must_use]
+    pub const fn source(&self) -> CompileErrorSource {
+        self.source
+    }
+
+    /// UTF-16 code-unit offset in the pattern or flags source.
+    #[must_use]
+    pub const fn position(&self) -> usize {
+        self.position
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    fn syntax(position: usize, message: impl Into<String>) -> Self {
+        Self {
+            kind: CompileErrorKind::Syntax,
+            source: CompileErrorSource::Pattern,
+            position,
+            message: message.into(),
+        }
+    }
+
+    fn too_many_captures(position: usize) -> Self {
+        Self {
+            kind: CompileErrorKind::TooManyCaptures,
+            source: CompileErrorSource::Pattern,
+            position,
+            message: "too many captures".to_owned(),
+        }
+    }
+
+    fn too_many_registers(position: usize) -> Self {
+        Self {
+            kind: CompileErrorKind::TooManyRegisters,
+            source: CompileErrorSource::Pattern,
+            position,
+            message: "too many imbricated quantifiers".to_owned(),
+        }
+    }
+
+    fn invalid_flags(position: usize, kind: FlagParseErrorKind) -> Self {
+        let detail = match kind {
+            FlagParseErrorKind::Invalid => "unknown flag",
+            FlagParseErrorKind::Duplicate => "duplicate flag",
+            FlagParseErrorKind::UnicodeConflict => "the 'u' and 'v' flags are mutually exclusive",
+        };
+        Self {
+            kind: CompileErrorKind::Syntax,
+            source: CompileErrorSource::Flags,
+            position,
+            message: format!("invalid regular expression flags: {detail}"),
+        }
+    }
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} at {:?} UTF-16 offset {}",
+            self.message, self.source, self.position
+        )
+    }
+}
+
+impl std::error::Error for CompileError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Expression {
+    alternatives: Vec<Sequence>,
+}
+
+type Sequence = Vec<Term>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Term {
+    atom: Atom,
+    quantifier: Option<Quantifier>,
+    position: usize,
+}
+
+const MODIFIER_IGNORE_CASE: u8 = 1 << 0;
+const MODIFIER_MULTILINE: u8 = 1 << 1;
+const MODIFIER_DOT_ALL: u8 = 1 << 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ModifierState {
+    ignore_case: bool,
+    multiline: bool,
+    dot_all: bool,
+}
+
+impl ModifierState {
+    fn from_flags(flags: RegExpFlags) -> Self {
+        Self {
+            ignore_case: flags.contains(RegExpFlags::IGNORE_CASE),
+            multiline: flags.contains(RegExpFlags::MULTILINE),
+            dot_all: flags.contains(RegExpFlags::DOT_ALL),
+        }
+    }
+
+    fn updated(self, add_mask: u8, remove_mask: u8) -> Self {
+        Self {
+            ignore_case: update_modifier(
+                self.ignore_case,
+                add_mask,
+                remove_mask,
+                MODIFIER_IGNORE_CASE,
+            ),
+            multiline: update_modifier(self.multiline, add_mask, remove_mask, MODIFIER_MULTILINE),
+            dot_all: update_modifier(self.dot_all, add_mask, remove_mask, MODIFIER_DOT_ALL),
+        }
+    }
+}
+
+fn update_modifier(mut value: bool, add_mask: u8, remove_mask: u8, modifier: u8) -> bool {
+    if add_mask & modifier != 0 {
+        value = true;
+    }
+    if remove_mask & modifier != 0 {
+        value = false;
+    }
+    value
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Atom {
+    Literal(u32),
+    Dot,
+    LineStart,
+    LineEnd,
+    WordBoundary {
+        inverted: bool,
+    },
+    Space {
+        inverted: bool,
+    },
+    Class(CharacterClass),
+    BackReference {
+        captures: Box<[u8]>,
+    },
+    LookAround {
+        negative: bool,
+        backward: bool,
+        quantifiable: bool,
+        expression: Expression,
+    },
+    Group {
+        capture: Option<u8>,
+        modifiers: Option<ModifierState>,
+        expression: Expression,
+    },
+}
+
+impl Atom {
+    fn is_quantifiable(&self) -> bool {
+        matches!(
+            self,
+            Self::Literal(_)
+                | Self::Dot
+                | Self::Space { .. }
+                | Self::Class(_)
+                | Self::BackReference { .. }
+                | Self::Group { .. }
+        ) || matches!(
+            self,
+            Self::LookAround {
+                quantifiable: true,
+                ..
+            }
+        )
+    }
+
+    fn can_match_empty(&self) -> bool {
+        match self {
+            Self::LineStart | Self::LineEnd | Self::WordBoundary { .. } => true,
+            Self::BackReference { .. } => true,
+            Self::LookAround { .. } => true,
+            Self::Group { expression, .. } => expression.can_match_empty(),
+            Self::Class(class) => class.strings.iter().any(|string| string.is_empty()),
+            Self::Literal(_) | Self::Dot | Self::Space { .. } => false,
+        }
+    }
+
+    fn capture_range(&self) -> Option<(u8, u8)> {
+        match self {
+            Self::Group {
+                capture,
+                expression,
+                ..
+            } => match (*capture, expression.capture_range()) {
+                (Some(capture), Some((_, end))) => Some((capture, end)),
+                (Some(capture), None) => Some((capture, capture)),
+                (None, range) => range,
+            },
+            Self::LookAround { expression, .. } => expression.capture_range(),
+            Self::Literal(_)
+            | Self::Dot
+            | Self::LineStart
+            | Self::LineEnd
+            | Self::WordBoundary { .. }
+            | Self::Space { .. }
+            | Self::Class(_)
+            | Self::BackReference { .. } => None,
+        }
+    }
+}
+
+impl Expression {
+    fn can_match_empty(&self) -> bool {
+        self.alternatives.iter().any(|sequence| {
+            sequence.iter().all(|term| {
+                term.quantifier
+                    .is_some_and(|quantifier| quantifier.minimum == 0)
+                    || term.atom.can_match_empty()
+            })
+        })
+    }
+
+    fn capture_range(&self) -> Option<(u8, u8)> {
+        self.alternatives
+            .iter()
+            .flatten()
+            .filter_map(|term| term.atom.capture_range())
+            .fold(None, |range, (start, end)| {
+                Some(match range {
+                    Some((old_start, old_end)) => (old_start.min(start), old_end.max(end)),
+                    None => (start, end),
+                })
+            })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Quantifier {
+    minimum: u32,
+    maximum: Option<u32>,
+    greedy: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CharacterClass {
+    ranges: Vec<CharacterRange>,
+    /// Multi-code-point and empty members of a Unicode Sets class. One-code-
+    /// point members are canonicalized into `ranges`, matching QuickJS's
+    /// `REStringList` representation and keeping the executor's fast range
+    /// path intact.
+    strings: Vec<Box<[u32]>>,
+    inverted: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct UnicodeSet {
+    ranges: Vec<CharacterRange>,
+    strings: BTreeSet<Vec<u32>>,
+}
+
+enum ClassAtom {
+    Single(u32),
+    Set(Vec<CharacterRange>),
+    ComplementSet(Vec<CharacterRange>),
+    PreparedSet(Vec<CharacterRange>),
+    UnicodeSet(UnicodeSet),
+}
+
+struct Parser<'a> {
+    units: &'a [u16],
+    position: usize,
+    flags: RegExpFlags,
+    modifiers: ModifierState,
+    next_capture: u16,
+    total_capture_count: u32,
+    has_named_captures: bool,
+    capture_names: Vec<Option<JsString>>,
+    parsed_group_names: Vec<(JsString, u8, u8)>,
+    group_name_scope: u8,
+    group_depth: usize,
+}
+
+struct ParsedPattern {
+    expression: Expression,
+    capture_count: u8,
+    group_names: Option<Box<[Option<JsString>]>>,
+}
+
+impl<'a> Parser<'a> {
+    fn new(units: &'a [u16], flags: RegExpFlags) -> Self {
+        let CaptureSummary {
+            capture_count,
+            has_named_captures,
+        } = group_name::capture_summary(units);
+        Self {
+            units,
+            position: 0,
+            flags,
+            modifiers: ModifierState::from_flags(flags),
+            next_capture: 1,
+            total_capture_count: capture_count,
+            has_named_captures,
+            capture_names: Vec::new(),
+            parsed_group_names: Vec::new(),
+            group_name_scope: 0,
+            group_depth: 0,
+        }
+    }
+
+    fn parse(mut self) -> Result<ParsedPattern, CompileError> {
+        let expression = self.parse_disjunction(false)?;
+        if self.position != self.units.len() {
+            return Err(CompileError::syntax(
+                self.position,
+                "unexpected closing parenthesis",
+            ));
+        }
+        let capture_count = u8::try_from(self.next_capture)
+            .map_err(|_| CompileError::too_many_captures(self.position))?;
+        debug_assert_eq!(
+            self.capture_names.len(),
+            usize::from(capture_count).saturating_sub(1)
+        );
+        let group_names = self
+            .capture_names
+            .iter()
+            .any(Option::is_some)
+            .then(|| self.capture_names.into_boxed_slice());
+        Ok(ParsedPattern {
+            expression,
+            capture_count,
+            group_names,
+        })
+    }
+
+    fn parse_disjunction(&mut self, in_group: bool) -> Result<Expression, CompileError> {
+        let mut alternatives = Vec::new();
+        loop {
+            alternatives.push(self.parse_sequence(in_group)?);
+            if self.peek() == Some(u16::from(b'|')) {
+                self.position += 1;
+                self.group_name_scope = self.group_name_scope.wrapping_add(1);
+                continue;
+            }
+            break;
+        }
+        Ok(Expression { alternatives })
+    }
+
+    fn parse_sequence(&mut self, in_group: bool) -> Result<Sequence, CompileError> {
+        let mut sequence = Vec::new();
+        while let Some(unit) = self.peek() {
+            if unit == u16::from(b'|') || (in_group && unit == u16::from(b')')) {
+                break;
+            }
+            if matches!(unit, 0x2a | 0x2b | 0x3f) {
+                return Err(CompileError::syntax(self.position, "nothing to repeat"));
+            }
+            if unit == u16::from(b'{')
+                && !self.flags.is_unicode()
+                && self.brace_quantifier_follows()
+            {
+                return Err(CompileError::syntax(self.position, "nothing to repeat"));
+            }
+            let position = self.position;
+            let atom = self.parse_atom()?;
+            // QuickJS clears last_atom_start for assertions. A following
+            // brace is therefore parsed as the next term (and becomes a
+            // unicode syntax error), while *, + and ? still reach the common
+            // "nothing to repeat" path.
+            let quantifier = if !atom.is_quantifiable() && self.peek() == Some(u16::from(b'{')) {
+                None
+            } else {
+                self.parse_quantifier()?
+            };
+            if quantifier.is_some() && !atom.is_quantifiable() {
+                return Err(CompileError::syntax(position, "invalid quantifier target"));
+            }
+            sequence.push(Term {
+                atom,
+                quantifier,
+                position,
+            });
+        }
+        Ok(sequence)
+    }
+
+    fn parse_atom(&mut self) -> Result<Atom, CompileError> {
+        let position = self.position;
+        let unit = self
+            .take()
+            .ok_or_else(|| CompileError::syntax(position, "unexpected end of pattern"))?;
+        match unit {
+            0x2e => Ok(Atom::Dot),
+            0x5e => Ok(Atom::LineStart),
+            0x24 => Ok(Atom::LineEnd),
+            0x28 => self.parse_group(position),
+            0x5b => self.parse_character_class(position).map(Atom::Class),
+            0x5c => self.parse_escape(false),
+            0x29 => Err(CompileError::syntax(
+                position,
+                "unexpected closing parenthesis",
+            )),
+            0x5d | 0x7d if self.flags.is_unicode() => Err(CompileError::syntax(
+                position,
+                "regular expression syntax error",
+            )),
+            0x7b if self.flags.is_unicode() => Err(CompileError::syntax(
+                position,
+                "regular expression syntax error",
+            )),
+            first => Ok(Atom::Literal(self.finish_code_point(first))),
+        }
+    }
+
+    fn parse_group(&mut self, position: usize) -> Result<Atom, CompileError> {
+        if self.group_depth >= MAX_GROUP_NESTING {
+            return Err(CompileError::syntax(position, "stack overflow"));
+        }
+        self.group_depth += 1;
+        let result = self.parse_group_inner(position);
+        self.group_depth -= 1;
+        result
+    }
+
+    fn parse_group_inner(&mut self, position: usize) -> Result<Atom, CompileError> {
+        let (capture, modifiers) = if self.peek() == Some(u16::from(b'?')) {
+            self.position += 1;
+            match self.peek() {
+                Some(0x3a) => {
+                    self.position += 1;
+                    (None, None)
+                }
+                Some(marker @ (0x3d | 0x21)) => {
+                    self.position += 1;
+                    let expression = self.parse_disjunction(true)?;
+                    if self.take() != Some(u16::from(b')')) {
+                        return Err(CompileError::syntax(position, "unterminated group"));
+                    }
+                    return Ok(Atom::LookAround {
+                        negative: marker == u16::from(b'!'),
+                        backward: false,
+                        quantifiable: !self.flags.is_unicode(),
+                        expression,
+                    });
+                }
+                Some(0x3c) => {
+                    if let Some(marker @ (0x3d | 0x21)) = self.peek_n(1) {
+                        self.position += 2;
+                        let expression = self.parse_disjunction(true)?;
+                        if self.take() != Some(u16::from(b')')) {
+                            return Err(CompileError::syntax(position, "unterminated group"));
+                        }
+                        return Ok(Atom::LookAround {
+                            negative: marker == u16::from(b'!'),
+                            backward: true,
+                            quantifiable: false,
+                            expression,
+                        });
+                    }
+                    self.position += 1;
+                    let Some((name, after_name)) = group_name::parse(self.units, self.position)
+                    else {
+                        return Err(CompileError::syntax(position, "invalid group name"));
+                    };
+                    if self.parsed_group_names.iter().any(|(existing, scope, _)| {
+                        *scope == self.group_name_scope && *existing == name
+                    }) {
+                        return Err(CompileError::syntax(position, "duplicate group name"));
+                    }
+                    self.position = after_name;
+                    let capture = self.allocate_capture(position, Some(name.clone()))?;
+                    self.parsed_group_names
+                        .push((name, self.group_name_scope, capture));
+                    (Some(capture), None)
+                }
+                Some(0x69 | 0x6d | 0x73 | 0x2d) => {
+                    let add_mask = self.parse_modifiers()?;
+                    let remove_mask = if self.peek() == Some(u16::from(b'-')) {
+                        self.position += 1;
+                        self.parse_modifiers()?
+                    } else {
+                        0
+                    };
+                    if (add_mask == 0 && remove_mask == 0) || add_mask & remove_mask != 0 {
+                        return Err(CompileError::syntax(position, "invalid modifiers"));
+                    }
+                    if self.peek() != Some(u16::from(b':')) {
+                        return Err(CompileError::syntax(self.position, "expecting ':'"));
+                    }
+                    self.position += 1;
+                    (None, Some(self.modifiers.updated(add_mask, remove_mask)))
+                }
+                Some(_) | None => {
+                    return Err(CompileError::syntax(position, "invalid group specifier"));
+                }
+            }
+        } else {
+            let capture = self.allocate_capture(position, None)?;
+            (Some(capture), None)
+        };
+
+        let saved_modifiers = self.modifiers;
+        if let Some(modifiers) = modifiers {
+            self.modifiers = modifiers;
+        }
+        let result = (|| {
+            let expression = self.parse_disjunction(true)?;
+            if self.take() != Some(u16::from(b')')) {
+                return Err(CompileError::syntax(position, "unterminated group"));
+            }
+            Ok(Atom::Group {
+                capture,
+                modifiers,
+                expression,
+            })
+        })();
+        self.modifiers = saved_modifiers;
+        result
+    }
+
+    fn allocate_capture(
+        &mut self,
+        position: usize,
+        name: Option<JsString>,
+    ) -> Result<u8, CompileError> {
+        if self.next_capture >= u16::from(u8::MAX) {
+            return Err(CompileError::too_many_captures(position));
+        }
+        let capture = u8::try_from(self.next_capture)
+            .map_err(|_| CompileError::too_many_captures(position))?;
+        debug_assert_eq!(self.capture_names.len(), usize::from(capture) - 1);
+        self.next_capture += 1;
+        self.capture_names.push(name);
+        Ok(capture)
+    }
+
+    fn parse_modifiers(&mut self) -> Result<u8, CompileError> {
+        let mut mask = 0;
+        loop {
+            let modifier = match self.peek() {
+                Some(0x69) => MODIFIER_IGNORE_CASE,
+                Some(0x6d) => MODIFIER_MULTILINE,
+                Some(0x73) => MODIFIER_DOT_ALL,
+                _ => break,
+            };
+            if mask & modifier != 0 {
+                let duplicate = char::from_u32(u32::from(
+                    self.peek().expect("modifier disappeared after matching"),
+                ))
+                .expect("RegExp modifiers are ASCII");
+                return Err(CompileError::syntax(
+                    self.position,
+                    format!("duplicate modifier: '{duplicate}'"),
+                ));
+            }
+            mask |= modifier;
+            self.position += 1;
+        }
+        Ok(mask)
+    }
+
+    fn parse_escape(&mut self, in_class: bool) -> Result<Atom, CompileError> {
+        let escape_position = self.position.saturating_sub(1);
+        let unit = self
+            .take()
+            .ok_or_else(|| CompileError::syntax(escape_position, "trailing backslash"))?;
+        match unit {
+            0x62 if !in_class => Ok(Atom::WordBoundary { inverted: false }),
+            0x42 if !in_class => Ok(Atom::WordBoundary { inverted: true }),
+            0x64 => Ok(Atom::Class(
+                self.make_character_class(digit_ranges(), false),
+            )),
+            0x44 => Ok(Atom::Class(self.make_character_class(digit_ranges(), true))),
+            0x73 => Ok(Atom::Space { inverted: false }),
+            0x53 => Ok(Atom::Space { inverted: true }),
+            0x77 => Ok(Atom::Class(self.make_character_class(word_ranges(), false))),
+            0x57 => Ok(Atom::Class(self.make_character_class(word_ranges(), true))),
+            property @ (0x70 | 0x50) if self.flags.is_unicode() => self
+                .parse_unicode_property_escape(escape_position, property == u16::from(b'P'))
+                .map(|set| {
+                    Atom::Class(CharacterClass {
+                        ranges: set.ranges,
+                        strings: set.strings.into_iter().map(Vec::into_boxed_slice).collect(),
+                        inverted: false,
+                    })
+                }),
+            property @ (0x70 | 0x50) => Ok(Atom::Literal(self.finish_code_point(property))),
+            0x6b if !in_class => self.parse_named_backreference(escape_position),
+            0x31..=0x39 if in_class => Err(CompileError::syntax(
+                escape_position,
+                "invalid identity escape",
+            )),
+            0x31..=0x39 => self.parse_decimal_escape(escape_position, unit),
+            0x30 => {
+                if self.flags.is_unicode() && self.peek().is_some_and(is_ascii_digit) {
+                    Err(CompileError::syntax(
+                        escape_position,
+                        "invalid decimal escape in regular expression",
+                    ))
+                } else if !self.flags.is_unicode() {
+                    Ok(Atom::Literal(self.parse_legacy_octal(unit)))
+                } else {
+                    Ok(Atom::Literal(0))
+                }
+            }
+            0x66 => Ok(Atom::Literal(0x0c)),
+            0x6e => Ok(Atom::Literal(0x0a)),
+            0x72 => Ok(Atom::Literal(0x0d)),
+            0x74 => Ok(Atom::Literal(0x09)),
+            0x76 => Ok(Atom::Literal(0x0b)),
+            0x62 if in_class => Ok(Atom::Literal(0x08)),
+            0x63 => self
+                .parse_control_escape(escape_position, in_class)
+                .map(Atom::Literal),
+            0x78 => self
+                .parse_fixed_hex_escape(escape_position, 2)
+                .map(Atom::Literal),
+            0x75 => self
+                .parse_unicode_escape(escape_position)
+                .map(Atom::Literal),
+            escaped if is_syntax_character(escaped) || escaped == u16::from(b'/') => {
+                Ok(Atom::Literal(u32::from(escaped)))
+            }
+            _ if self.flags.is_unicode() => Err(CompileError::syntax(
+                escape_position,
+                "invalid identity escape",
+            )),
+            escaped => Ok(Atom::Literal(self.finish_code_point(escaped))),
+        }
+    }
+
+    fn parse_named_backreference(&mut self, position: usize) -> Result<Atom, CompileError> {
+        let syntax_required = self.flags.is_unicode() || self.has_named_captures;
+        if self.peek() != Some(u16::from(b'<')) {
+            return if syntax_required {
+                Err(CompileError::syntax(position, "expecting group name"))
+            } else {
+                Ok(Atom::Literal(u32::from(b'k')))
+            };
+        }
+
+        let Some((name, after_name)) = group_name::parse(self.units, self.position + 1) else {
+            return if syntax_required {
+                Err(CompileError::syntax(position, "invalid group name"))
+            } else {
+                Ok(Atom::Literal(u32::from(b'k')))
+            };
+        };
+
+        let mut captures = self
+            .parsed_group_names
+            .iter()
+            .filter_map(|(existing, _, capture)| (existing == &name).then_some(*capture))
+            .collect::<Vec<_>>();
+        if captures.is_empty() {
+            captures = group_name::matching_capture_indices(self.units, &name);
+        }
+        if captures.is_empty() {
+            return if syntax_required {
+                Err(CompileError::syntax(position, "group name not defined"))
+            } else {
+                Ok(Atom::Literal(u32::from(b'k')))
+            };
+        }
+
+        self.position = after_name;
+        Ok(Atom::BackReference {
+            captures: captures.into_boxed_slice(),
+        })
+    }
+
+    fn parse_decimal_escape(&mut self, position: usize, first: u16) -> Result<Atom, CompileError> {
+        let (reference, digit_end) = self.scan_decimal_escape(first);
+        if reference
+            .filter(|reference| *reference < self.total_capture_count)
+            .is_some()
+        {
+            self.position = digit_end;
+            let capture = u8::try_from(reference.expect("checked decimal reference range"))
+                .expect("capture prepass caps valid decimal references below u8::MAX");
+            return Ok(Atom::BackReference {
+                captures: Box::new([capture]),
+            });
+        }
+        if self.flags.is_unicode() {
+            return Err(CompileError::syntax(
+                position,
+                "back reference out of range in regular expression",
+            ));
+        }
+        if is_ascii_octal_digit(first) {
+            Ok(Atom::Literal(self.parse_legacy_octal(first)))
+        } else {
+            Ok(Atom::Literal(u32::from(first)))
+        }
+    }
+
+    fn parse_unicode_property_escape(
+        &mut self,
+        position: usize,
+        inverted: bool,
+    ) -> Result<UnicodeSet, CompileError> {
+        if self.take() != Some(u16::from(b'{')) {
+            return Err(CompileError::syntax(position, "expecting '{' after \\p"));
+        }
+        let name = self.parse_unicode_property_word(position, "unknown unicode property name")?;
+        let value = if self.peek() == Some(u16::from(b'=')) {
+            self.position += 1;
+            self.parse_unicode_property_word(position, "unknown unicode property value")?
+        } else {
+            String::new()
+        };
+        if self.take() != Some(u16::from(b'}')) {
+            return Err(CompileError::syntax(position, "expecting '}'"));
+        }
+
+        let endpoints = match name.as_str() {
+            "Script" | "sc" => Some(
+                crate::source::unicode::property::script(&value, false)
+                    .ok_or_else(|| CompileError::syntax(position, "unknown unicode script"))?,
+            ),
+            "Script_Extensions" | "scx" => Some(
+                crate::source::unicode::property::script(&value, true)
+                    .ok_or_else(|| CompileError::syntax(position, "unknown unicode script"))?,
+            ),
+            "General_Category" | "gc" => Some(
+                crate::source::unicode::property::general_category(&value).ok_or_else(|| {
+                    CompileError::syntax(position, "unknown unicode general category")
+                })?,
+            ),
+            _ if value.is_empty() => crate::source::unicode::property::general_category(&name)
+                .or_else(|| crate::source::unicode::property::binary_property(&name)),
+            _ => None,
+        };
+
+        let mut set = if let Some(endpoints) = endpoints {
+            UnicodeSet {
+                ranges: endpoints
+                    .chunks_exact(2)
+                    .map(|pair| CharacterRange::new(pair[0], pair[1] - 1))
+                    .collect(),
+                strings: BTreeSet::new(),
+            }
+        } else if value.is_empty() && !inverted && self.flags.contains(RegExpFlags::UNICODE_SETS) {
+            let sequences = crate::source::unicode::property::sequence_property(&name)
+                .ok_or_else(|| CompileError::syntax(position, "unknown unicode property name"))?;
+            let mut set = UnicodeSet::default();
+            for sequence in sequences {
+                add_unicode_set_sequence(&mut set, sequence);
+            }
+            set
+        } else {
+            return Err(CompileError::syntax(
+                position,
+                "unknown unicode property name",
+            ));
+        };
+
+        // Pinned QuickJS intentionally changes this ordering in Unicode Sets
+        // mode: canonicalize before complement for `iv`, while legacy `iu`
+        // keeps its historical complement-before-canonicalize behavior.
+        if self.modifiers.ignore_case && self.flags.contains(RegExpFlags::UNICODE_SETS) {
+            canonicalize_unicode_set(&mut set, true);
+        }
+        if inverted {
+            debug_assert!(set.strings.is_empty());
+            set.ranges = complement_ranges(&set.ranges, MAX_CODE_POINT);
+        }
+        if self.modifiers.ignore_case && !self.flags.contains(RegExpFlags::UNICODE_SETS) {
+            canonicalize_unicode_set(&mut set, true);
+        } else {
+            set.ranges = normalize_ranges(set.ranges);
+        }
+        Ok(set)
+    }
+
+    fn parse_unicode_property_word(
+        &mut self,
+        position: usize,
+        overflow_message: &'static str,
+    ) -> Result<String, CompileError> {
+        let start = self.position;
+        while self.peek().is_some_and(is_unicode_property_character) {
+            if self.position - start >= 63 {
+                return Err(CompileError::syntax(position, overflow_message));
+            }
+            self.position += 1;
+        }
+        Ok(self.units[start..self.position]
+            .iter()
+            .map(|unit| char::from_u32(u32::from(*unit)).expect("property names are ASCII"))
+            .collect())
+    }
+
+    /// Scan all decimal digits without committing the parser cursor. QuickJS
+    /// must first decide whether the complete number names a capture before it
+    /// can reinterpret the same source as an Annex B legacy escape.
+    fn scan_decimal_escape(&self, first: u16) -> (Option<u32>, usize) {
+        let mut value = Some(u32::from(first - u16::from(b'0')));
+        let mut position = self.position;
+        while let Some(unit) = self
+            .units
+            .get(position)
+            .copied()
+            .filter(|unit| is_ascii_digit(*unit))
+        {
+            value = value
+                .and_then(|value| value.checked_mul(10))
+                .and_then(|value| value.checked_add(u32::from(unit - u16::from(b'0'))))
+                .filter(|value| *value < i32::MAX as u32);
+            position += 1;
+        }
+        (value, position)
+    }
+
+    /// Annex B legacy octal parsing from pinned QuickJS `lre_parse_escape`.
+    /// The first digit was already consumed; at most two additional octal
+    /// digits belong to this escape.
+    fn parse_legacy_octal(&mut self, first: u16) -> u32 {
+        let mut value = u32::from(first - u16::from(b'0'));
+        let Some(second) = self.peek().filter(|unit| is_ascii_octal_digit(*unit)) else {
+            return value;
+        };
+        value = (value << 3) | u32::from(second - u16::from(b'0'));
+        self.position += 1;
+        if value >= 32 {
+            return value;
+        }
+        let Some(third) = self.peek().filter(|unit| is_ascii_octal_digit(*unit)) else {
+            return value;
+        };
+        self.position += 1;
+        (value << 3) | u32::from(third - u16::from(b'0'))
+    }
+
+    /// Parse pinned QuickJS's `\c` CharacterEscape, including Annex B.1.4.
+    ///
+    /// ASCII letters are accepted everywhere. Decimal digits and `_` are
+    /// additional control letters only inside a non-Unicode character class.
+    /// Every other non-Unicode form is not a partial `\c` escape: QuickJS
+    /// rewinds to the `c` and emits the original backslash as a literal so the
+    /// remaining source is parsed normally.
+    fn parse_control_escape(
+        &mut self,
+        position: usize,
+        in_class: bool,
+    ) -> Result<u32, CompileError> {
+        match self.peek() {
+            Some(unit)
+                if is_ascii_letter(unit)
+                    || (in_class
+                        && !self.flags.is_unicode()
+                        && (is_ascii_digit(unit) || unit == u16::from(b'_'))) =>
+            {
+                self.position += 1;
+                Ok(u32::from(unit & 0x1f))
+            }
+            _ if self.flags.is_unicode() => {
+                Err(CompileError::syntax(position, "invalid control escape"))
+            }
+            _ => {
+                self.position = position + 1;
+                Ok(u32::from(b'\\'))
+            }
+        }
+    }
+
+    fn parse_fixed_hex_escape(
+        &mut self,
+        position: usize,
+        digits: usize,
+    ) -> Result<u32, CompileError> {
+        let start = self.position;
+        let mut value = 0_u32;
+        for _ in 0..digits {
+            let Some(unit) = self.take() else {
+                self.position = start;
+                return self.invalid_hex_escape(position, u32::from(b'x'));
+            };
+            let Some(digit) = hex_value(unit) else {
+                self.position = start;
+                return self.invalid_hex_escape(position, u32::from(b'x'));
+            };
+            value = value * 16 + digit;
+        }
+        Ok(value)
+    }
+
+    fn invalid_hex_escape(&self, position: usize, identity: u32) -> Result<u32, CompileError> {
+        if self.flags.is_unicode() {
+            Err(CompileError::syntax(position, "invalid hexadecimal escape"))
+        } else {
+            Ok(identity)
+        }
+    }
+
+    fn parse_unicode_escape(&mut self, position: usize) -> Result<u32, CompileError> {
+        if self.flags.is_unicode() && self.peek() == Some(u16::from(b'{')) {
+            self.position += 1;
+            let digit_start = self.position;
+            let mut value = 0_u32;
+            while let Some(unit) = self.peek() {
+                if unit == u16::from(b'}') {
+                    break;
+                }
+                let Some(digit) = hex_value(unit) else {
+                    return Err(CompileError::syntax(position, "invalid Unicode escape"));
+                };
+                value = value
+                    .checked_mul(16)
+                    .and_then(|value| value.checked_add(digit))
+                    .filter(|value| *value <= MAX_CODE_POINT)
+                    .ok_or_else(|| CompileError::syntax(position, "invalid Unicode escape"))?;
+                self.position += 1;
+            }
+            if self.position == digit_start || self.take() != Some(u16::from(b'}')) {
+                return Err(CompileError::syntax(position, "invalid Unicode escape"));
+            }
+            return Ok(value);
+        }
+
+        let start = self.position;
+        let mut value = 0_u32;
+        for _ in 0..4 {
+            let Some(unit) = self.take() else {
+                self.position = start;
+                return self.invalid_unicode_escape(position);
+            };
+            let Some(digit) = hex_value(unit) else {
+                self.position = start;
+                return self.invalid_unicode_escape(position);
+            };
+            value = value * 16 + digit;
+        }
+        if self.flags.is_unicode() && is_high_surrogate(value) {
+            let pair_start = self.position;
+            if self.take() == Some(u16::from(b'\\')) && self.take() == Some(u16::from(b'u')) {
+                let low_start = self.position;
+                let mut low = 0_u32;
+                let mut valid = true;
+                for _ in 0..4 {
+                    let Some(unit) = self.take() else {
+                        valid = false;
+                        break;
+                    };
+                    let Some(digit) = hex_value(unit) else {
+                        valid = false;
+                        break;
+                    };
+                    low = low * 16 + digit;
+                }
+                if valid && is_low_surrogate(low) {
+                    return Ok(combine_surrogates(value, low));
+                }
+                self.position = low_start;
+            }
+            self.position = pair_start;
+        }
+        Ok(value)
+    }
+
+    fn invalid_unicode_escape(&self, position: usize) -> Result<u32, CompileError> {
+        if self.flags.is_unicode() {
+            Err(CompileError::syntax(position, "invalid Unicode escape"))
+        } else {
+            Ok(u32::from(b'u'))
+        }
+    }
+
+    fn parse_character_class(&mut self, position: usize) -> Result<CharacterClass, CompileError> {
+        if self.flags.contains(RegExpFlags::UNICODE_SETS) {
+            return self.parse_unicode_set_class(position);
+        }
+        self.parse_legacy_character_class(position)
+    }
+
+    fn parse_legacy_character_class(
+        &mut self,
+        position: usize,
+    ) -> Result<CharacterClass, CompileError> {
+        let inverted = if self.peek() == Some(u16::from(b'^')) {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
+        let mut ranges = Vec::new();
+        loop {
+            let Some(unit) = self.peek() else {
+                return Err(CompileError::syntax(
+                    position,
+                    "unterminated character class",
+                ));
+            };
+            if unit == u16::from(b']') {
+                self.position += 1;
+                break;
+            }
+            let first_position = self.position;
+            let first = self.parse_class_atom()?;
+            if self.peek() == Some(u16::from(b'-')) && self.peek_n(1) != Some(u16::from(b']')) {
+                if self.flags.is_unicode() && !matches!(&first, ClassAtom::Single(_)) {
+                    return Err(CompileError::syntax(first_position, "invalid class range"));
+                }
+                self.position += 1;
+                let second = self.parse_class_atom()?;
+                match (first, second) {
+                    (ClassAtom::Single(start), ClassAtom::Single(end)) => {
+                        if start > end {
+                            return Err(CompileError::syntax(
+                                first_position,
+                                "invalid class range",
+                            ));
+                        }
+                        add_class_atom(
+                            &mut ranges,
+                            ClassAtom::Set(vec![CharacterRange::new(start, end)]),
+                            self.class_max_code_point(),
+                            self.modifiers.ignore_case,
+                            self.flags.is_unicode(),
+                        );
+                    }
+                    _ if self.flags.is_unicode() => {
+                        return Err(CompileError::syntax(first_position, "invalid class range"));
+                    }
+                    (first, second) => {
+                        // Annex B permits a legacy CharacterClassEscape at
+                        // either range endpoint. QuickJS reinterprets the
+                        // would-be range as the first atom, a literal '-', and
+                        // the second atom instead of rejecting it.
+                        for atom in [first, ClassAtom::Single(u32::from(b'-')), second] {
+                            add_class_atom(
+                                &mut ranges,
+                                atom,
+                                self.class_max_code_point(),
+                                self.modifiers.ignore_case,
+                                false,
+                            );
+                        }
+                    }
+                }
+            } else {
+                add_class_atom(
+                    &mut ranges,
+                    first,
+                    self.class_max_code_point(),
+                    self.modifiers.ignore_case,
+                    self.flags.is_unicode(),
+                );
+            }
+        }
+        Ok(CharacterClass {
+            ranges: normalize_ranges(ranges),
+            strings: Vec::new(),
+            inverted,
+        })
+    }
+
+    fn parse_class_atom(&mut self) -> Result<ClassAtom, CompileError> {
+        let position = self.position;
+        let unit = self
+            .take()
+            .ok_or_else(|| CompileError::syntax(position, "unterminated character class"))?;
+        if unit != u16::from(b'\\') {
+            return Ok(ClassAtom::Single(self.finish_code_point(unit)));
+        }
+        let escaped_position = self.position.saturating_sub(1);
+        let escaped = self
+            .take()
+            .ok_or_else(|| CompileError::syntax(escaped_position, "trailing backslash"))?;
+        match escaped {
+            0x64 => Ok(ClassAtom::Set(digit_ranges())),
+            0x44 => Ok(ClassAtom::ComplementSet(digit_ranges())),
+            0x73 => Ok(ClassAtom::Set(space_ranges())),
+            0x53 => Ok(ClassAtom::ComplementSet(space_ranges())),
+            0x77 => Ok(ClassAtom::Set(word_ranges())),
+            0x57 => Ok(ClassAtom::ComplementSet(word_ranges())),
+            property @ (0x70 | 0x50) if self.flags.is_unicode() => self
+                .parse_unicode_property_escape(escaped_position, property == u16::from(b'P'))
+                .map(|set| ClassAtom::PreparedSet(set.ranges)),
+            property @ (0x70 | 0x50) => Ok(ClassAtom::Single(self.finish_code_point(property))),
+            0x62 => Ok(ClassAtom::Single(0x08)),
+            0x66 => Ok(ClassAtom::Single(0x0c)),
+            0x6e => Ok(ClassAtom::Single(0x0a)),
+            0x72 => Ok(ClassAtom::Single(0x0d)),
+            0x74 => Ok(ClassAtom::Single(0x09)),
+            0x76 => Ok(ClassAtom::Single(0x0b)),
+            0x63 => self
+                .parse_control_escape(escaped_position, true)
+                .map(ClassAtom::Single),
+            0x78 => self
+                .parse_fixed_hex_escape(escaped_position, 2)
+                .map(ClassAtom::Single),
+            0x75 => self
+                .parse_unicode_escape(escaped_position)
+                .map(ClassAtom::Single),
+            0x30 => {
+                if self.flags.is_unicode() && self.peek().is_some_and(is_ascii_digit) {
+                    Err(CompileError::syntax(
+                        escaped_position,
+                        "invalid identity escape",
+                    ))
+                } else if !self.flags.is_unicode() {
+                    Ok(ClassAtom::Single(self.parse_legacy_octal(escaped)))
+                } else {
+                    Ok(ClassAtom::Single(0))
+                }
+            }
+            0x31..=0x37 if self.flags.is_unicode() => Err(CompileError::syntax(
+                escaped_position,
+                "invalid identity escape",
+            )),
+            0x31..=0x37 => Ok(ClassAtom::Single(self.parse_legacy_octal(escaped))),
+            0x38..=0x39 if self.flags.is_unicode() => Err(CompileError::syntax(
+                escaped_position,
+                "invalid identity escape",
+            )),
+            0x38..=0x39 => Ok(ClassAtom::Single(u32::from(escaped))),
+            0x6b if self.flags.is_unicode() => Err(CompileError::syntax(
+                escaped_position,
+                "invalid identity escape",
+            )),
+            0x6b => Ok(ClassAtom::Single(u32::from(b'k'))),
+            unit if is_syntax_character(unit)
+                || unit == u16::from(b'/')
+                || unit == u16::from(b'-') =>
+            {
+                Ok(ClassAtom::Single(u32::from(unit)))
+            }
+            _ if self.flags.is_unicode() => Err(CompileError::syntax(
+                escaped_position,
+                "invalid identity escape",
+            )),
+            unit => Ok(ClassAtom::Single(self.finish_code_point(unit))),
+        }
+    }
+
+    /// Parse one complete Unicode Sets class after its opening `[` has been
+    /// consumed. This follows pinned QuickJS `re_parse_nested_class`: plain
+    /// adjacency is union, while intersection and subtraction are homogeneous
+    /// operator chains whose operands may themselves be nested classes.
+    fn parse_unicode_set_class(&mut self, position: usize) -> Result<CharacterClass, CompileError> {
+        if self.group_depth >= MAX_GROUP_NESTING {
+            return Err(CompileError::syntax(position, "stack overflow"));
+        }
+        self.group_depth += 1;
+        let result = self.parse_unicode_set_class_inner(position);
+        self.group_depth -= 1;
+        result
+    }
+
+    fn parse_unicode_set_class_inner(
+        &mut self,
+        position: usize,
+    ) -> Result<CharacterClass, CompileError> {
+        let inverted = if self.peek() == Some(u16::from(b'^')) {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
+        let mut set = UnicodeSet::default();
+        let mut first = true;
+
+        loop {
+            let Some(unit) = self.peek() else {
+                return Err(CompileError::syntax(
+                    position,
+                    "unterminated character class",
+                ));
+            };
+            if unit == u16::from(b']') {
+                self.position += 1;
+                break;
+            }
+
+            let atom_position = self.position;
+            let nested = unit == u16::from(b'[');
+            let (atom, scalar) = if nested {
+                self.position += 1;
+                let class = self.parse_unicode_set_class(self.position - 1)?;
+                (
+                    UnicodeSet {
+                        ranges: class.ranges,
+                        strings: class
+                            .strings
+                            .into_iter()
+                            .map(|string| string.into_vec())
+                            .collect(),
+                    },
+                    None,
+                )
+            } else {
+                let atom = self.parse_unicode_set_atom(true, true)?;
+                let scalar = match &atom {
+                    ClassAtom::Single(value) => Some(*value),
+                    ClassAtom::Set(_)
+                    | ClassAtom::ComplementSet(_)
+                    | ClassAtom::PreparedSet(_)
+                    | ClassAtom::UnicodeSet(_) => None,
+                };
+                (
+                    unicode_set_from_class_atom(
+                        atom,
+                        self.modifiers.ignore_case,
+                        self.flags.is_unicode(),
+                    ),
+                    scalar,
+                )
+            };
+
+            let subtraction_starts =
+                self.peek() == Some(u16::from(b'-')) && self.peek_n(1) == Some(u16::from(b'-'));
+            let range_follows = !nested
+                && self.peek() == Some(u16::from(b'-'))
+                && self.peek_n(1) != Some(u16::from(b']'))
+                && !(subtraction_starts && first);
+            if range_follows {
+                let Some(start) = scalar else {
+                    return Err(CompileError::syntax(atom_position, "invalid class range"));
+                };
+                self.position += 1;
+                let end_atom = self.parse_unicode_set_atom(true, true)?;
+                let ClassAtom::Single(end) = end_atom else {
+                    return Err(CompileError::syntax(atom_position, "invalid class range"));
+                };
+                if start > end {
+                    return Err(CompileError::syntax(atom_position, "invalid class range"));
+                }
+                let ranges = if self.modifiers.ignore_case {
+                    canonicalize_ranges(&[CharacterRange::new(start, end)], true)
+                } else {
+                    vec![CharacterRange::new(start, end)]
+                };
+                unicode_set_union(
+                    &mut set,
+                    UnicodeSet {
+                        ranges,
+                        strings: BTreeSet::new(),
+                    },
+                );
+                // QuickJS treats a range as an already-established union, so
+                // a following set operator must be nested explicitly.
+                first = false;
+            } else {
+                unicode_set_union(&mut set, atom);
+            }
+
+            if first
+                && self.peek() == Some(u16::from(b'&'))
+                && self.peek_n(1) == Some(u16::from(b'&'))
+                && self.peek_n(2) != Some(u16::from(b'&'))
+            {
+                loop {
+                    if self.peek() == Some(u16::from(b']')) {
+                        break;
+                    }
+                    if self.peek() != Some(u16::from(b'&'))
+                        || self.peek_n(1) != Some(u16::from(b'&'))
+                        || self.peek_n(2) == Some(u16::from(b'&'))
+                    {
+                        return Err(CompileError::syntax(
+                            self.position,
+                            "invalid operation in regular expression",
+                        ));
+                    }
+                    self.position += 2;
+                    let operand = self.parse_unicode_set_operand()?;
+                    unicode_set_intersection(&mut set, &operand);
+                }
+            } else if first && subtraction_starts {
+                loop {
+                    if self.peek() == Some(u16::from(b']')) {
+                        break;
+                    }
+                    if self.peek() != Some(u16::from(b'-'))
+                        || self.peek_n(1) != Some(u16::from(b'-'))
+                    {
+                        return Err(CompileError::syntax(
+                            self.position,
+                            "invalid operation in regular expression",
+                        ));
+                    }
+                    self.position += 2;
+                    let operand = self.parse_unicode_set_operand()?;
+                    unicode_set_subtraction(&mut set, &operand);
+                }
+            }
+            first = false;
+        }
+
+        if inverted {
+            if !set.strings.is_empty() {
+                return Err(CompileError::syntax(
+                    position,
+                    // QuickJS stores RegExp diagnostics in a 64-byte buffer;
+                    // this observable message is therefore truncated.
+                    "negated character class with strings in regular expression debu",
+                ));
+            }
+            set.ranges = complement_ranges(&set.ranges, MAX_CODE_POINT);
+        } else {
+            set.ranges = normalize_ranges(set.ranges);
+        }
+        Ok(CharacterClass {
+            ranges: set.ranges,
+            strings: set.strings.into_iter().map(Vec::into_boxed_slice).collect(),
+            inverted: false,
+        })
+    }
+
+    fn parse_unicode_set_operand(&mut self) -> Result<UnicodeSet, CompileError> {
+        if self.peek() == Some(u16::from(b'[')) {
+            let position = self.position;
+            self.position += 1;
+            let class = self.parse_unicode_set_class(position)?;
+            return Ok(UnicodeSet {
+                ranges: class.ranges,
+                strings: class
+                    .strings
+                    .into_iter()
+                    .map(|string| string.into_vec())
+                    .collect(),
+            });
+        }
+        let atom = self.parse_unicode_set_atom(true, true)?;
+        Ok(unicode_set_from_class_atom(
+            atom,
+            self.modifiers.ignore_case,
+            true,
+        ))
+    }
+
+    fn parse_unicode_set_atom(
+        &mut self,
+        in_class: bool,
+        allow_sets: bool,
+    ) -> Result<ClassAtom, CompileError> {
+        let position = self.position;
+        let unit = self
+            .take()
+            .ok_or_else(|| CompileError::syntax(position, "unterminated character class"))?;
+        if unit != u16::from(b'\\') {
+            if is_unicode_set_double_punctuator(unit) && self.peek() == Some(unit) {
+                return Err(CompileError::syntax(
+                    position,
+                    "invalid class set operation in regular expression",
+                ));
+            }
+            if is_unicode_set_reserved_punctuator(unit) {
+                return Err(CompileError::syntax(
+                    position,
+                    "invalid character in class in regular expression",
+                ));
+            }
+            return Ok(ClassAtom::Single(self.finish_code_point(unit)));
+        }
+
+        let escaped_position = self.position.saturating_sub(1);
+        let escaped = self
+            .take()
+            .ok_or_else(|| CompileError::syntax(escaped_position, "trailing backslash"))?;
+        match escaped {
+            0x64 if allow_sets => Ok(ClassAtom::Set(digit_ranges())),
+            0x44 if allow_sets => Ok(ClassAtom::ComplementSet(digit_ranges())),
+            0x73 if allow_sets => Ok(ClassAtom::Set(space_ranges())),
+            0x53 if allow_sets => Ok(ClassAtom::ComplementSet(space_ranges())),
+            0x77 if allow_sets => Ok(ClassAtom::Set(word_ranges())),
+            0x57 if allow_sets => Ok(ClassAtom::ComplementSet(word_ranges())),
+            property @ (0x70 | 0x50) if allow_sets => self
+                .parse_unicode_property_escape(escaped_position, property == u16::from(b'P'))
+                .map(ClassAtom::UnicodeSet),
+            0x71 if allow_sets && in_class => self
+                .parse_unicode_set_string_disjunction(escaped_position)
+                .map(ClassAtom::UnicodeSet),
+            0x62 => Ok(ClassAtom::Single(0x08)),
+            0x66 => Ok(ClassAtom::Single(0x0c)),
+            0x6e => Ok(ClassAtom::Single(0x0a)),
+            0x72 => Ok(ClassAtom::Single(0x0d)),
+            0x74 => Ok(ClassAtom::Single(0x09)),
+            0x76 => Ok(ClassAtom::Single(0x0b)),
+            0x63 => self
+                .parse_control_escape(escaped_position, in_class)
+                .map(ClassAtom::Single),
+            0x78 => self
+                .parse_fixed_hex_escape(escaped_position, 2)
+                .map(ClassAtom::Single),
+            0x75 => self
+                .parse_unicode_escape(escaped_position)
+                .map(ClassAtom::Single),
+            0x30 if !self.peek().is_some_and(is_ascii_digit) => Ok(ClassAtom::Single(0)),
+            0x2d if in_class => Ok(ClassAtom::Single(u32::from(b'-'))),
+            escaped if is_syntax_character(escaped) || escaped == u16::from(b'/') => {
+                Ok(ClassAtom::Single(u32::from(escaped)))
+            }
+            _ => Err(CompileError::syntax(
+                escaped_position,
+                "invalid identity escape",
+            )),
+        }
+    }
+
+    fn parse_unicode_set_string_disjunction(
+        &mut self,
+        position: usize,
+    ) -> Result<UnicodeSet, CompileError> {
+        if self.take() != Some(u16::from(b'{')) {
+            return Err(CompileError::syntax(position, "expecting '{' after \\q"));
+        }
+        let mut set = UnicodeSet::default();
+        loop {
+            let mut sequence = Vec::new();
+            while !matches!(self.peek(), Some(0x7d | 0x7c)) {
+                if self.peek().is_none() {
+                    return Err(CompileError::syntax(position, "expecting '}'"));
+                }
+                let atom = self.parse_unicode_set_atom(false, false)?;
+                let ClassAtom::Single(character) = atom else {
+                    return Err(CompileError::syntax(
+                        self.position,
+                        "invalid identity escape",
+                    ));
+                };
+                sequence.push(character);
+            }
+            if self.modifiers.ignore_case {
+                for character in &mut sequence {
+                    *character =
+                        crate::source::unicode::case::regexp_canonicalize(*character, true);
+                }
+            }
+            add_unicode_set_sequence(&mut set, &sequence);
+            match self.take() {
+                Some(0x7d) => break,
+                Some(0x7c) => {}
+                _ => return Err(CompileError::syntax(position, "expecting '}'")),
+            }
+        }
+        Ok(set)
+    }
+
+    fn parse_quantifier(&mut self) -> Result<Option<Quantifier>, CompileError> {
+        let start = self.position;
+        let (minimum, maximum) = match self.peek() {
+            Some(0x2a) => {
+                self.position += 1;
+                (0, None)
+            }
+            Some(0x2b) => {
+                self.position += 1;
+                (1, None)
+            }
+            Some(0x3f) => {
+                self.position += 1;
+                (0, Some(1))
+            }
+            Some(0x7b) => {
+                if !self.peek_n(1).is_some_and(is_ascii_digit) {
+                    if self.flags.is_unicode() {
+                        return Err(CompileError::syntax(start, "invalid repetition count"));
+                    }
+                    return Ok(None);
+                }
+                self.position += 1;
+                let minimum = self.parse_decimal_clamped();
+                let maximum = if self.peek() == Some(u16::from(b',')) {
+                    self.position += 1;
+                    if self.peek().is_some_and(is_ascii_digit) {
+                        Some(self.parse_decimal_clamped())
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(minimum)
+                };
+                if self.peek() != Some(u16::from(b'}')) {
+                    if self.flags.is_unicode() {
+                        return Err(CompileError::syntax(start, "expecting '}'"));
+                    }
+                    self.position = start;
+                    return Ok(None);
+                }
+                self.position += 1;
+                if maximum.is_some_and(|maximum| maximum < minimum) {
+                    return Err(CompileError::syntax(start, "invalid repetition count"));
+                }
+                (minimum, maximum)
+            }
+            Some(_) | None => return Ok(None),
+        };
+        let greedy = if self.peek() == Some(u16::from(b'?')) {
+            self.position += 1;
+            false
+        } else {
+            true
+        };
+        Ok(Some(Quantifier {
+            minimum,
+            maximum,
+            greedy,
+        }))
+    }
+
+    fn parse_decimal_clamped(&mut self) -> u32 {
+        let mut value = 0_u32;
+        while let Some(unit) = self.peek().filter(|unit| is_ascii_digit(*unit)) {
+            value = value
+                .saturating_mul(10)
+                .saturating_add(u32::from(unit - u16::from(b'0')))
+                .min(INFINITE_REPETITION);
+            self.position += 1;
+        }
+        value
+    }
+
+    fn finish_code_point(&mut self, first: u16) -> u32 {
+        if self.flags.is_unicode()
+            && is_high_surrogate(u32::from(first))
+            && self
+                .peek()
+                .is_some_and(|unit| is_low_surrogate(u32::from(unit)))
+        {
+            let low = self.take().expect("peeked low surrogate disappeared");
+            combine_surrogates(u32::from(first), u32::from(low))
+        } else {
+            u32::from(first)
+        }
+    }
+
+    fn class_max_code_point(&self) -> u32 {
+        if self.flags.is_unicode() {
+            MAX_CODE_POINT
+        } else {
+            u32::from(u16::MAX)
+        }
+    }
+
+    fn make_character_class(&self, ranges: Vec<CharacterRange>, inverted: bool) -> CharacterClass {
+        let ranges = if self.modifiers.ignore_case {
+            canonicalize_ranges(&ranges, self.flags.is_unicode())
+        } else {
+            normalize_ranges(ranges)
+        };
+        CharacterClass {
+            ranges,
+            strings: Vec::new(),
+            inverted,
+        }
+    }
+
+    fn brace_quantifier_follows(&self) -> bool {
+        let mut position = self.position + 1;
+        if !self
+            .units
+            .get(position)
+            .copied()
+            .is_some_and(is_ascii_digit)
+        {
+            return false;
+        }
+        while self
+            .units
+            .get(position)
+            .copied()
+            .is_some_and(is_ascii_digit)
+        {
+            position += 1;
+        }
+        if self.units.get(position) == Some(&u16::from(b',')) {
+            position += 1;
+            while self
+                .units
+                .get(position)
+                .copied()
+                .is_some_and(is_ascii_digit)
+            {
+                position += 1;
+            }
+        }
+        self.units.get(position) == Some(&u16::from(b'}'))
+    }
+
+    fn peek(&self) -> Option<u16> {
+        self.peek_n(0)
+    }
+
+    fn peek_n(&self, offset: usize) -> Option<u16> {
+        self.units.get(self.position + offset).copied()
+    }
+
+    fn take(&mut self) -> Option<u16> {
+        let unit = self.peek()?;
+        self.position += 1;
+        Some(unit)
+    }
+}
+
+struct CodeBuilder {
+    instructions: Vec<Instruction>,
+    register_depth: u16,
+    max_registers: u16,
+    ignore_case: bool,
+    unicode: bool,
+    multiline: bool,
+    dot_all: bool,
+}
+
+impl CodeBuilder {
+    fn new(flags: RegExpFlags) -> Self {
+        Self {
+            instructions: Vec::new(),
+            register_depth: 0,
+            max_registers: 0,
+            ignore_case: flags.contains(RegExpFlags::IGNORE_CASE),
+            unicode: flags.is_unicode(),
+            multiline: flags.contains(RegExpFlags::MULTILINE),
+            dot_all: flags.contains(RegExpFlags::DOT_ALL),
+        }
+    }
+
+    fn compile(mut self, expression: &Expression) -> Result<(Vec<Instruction>, u8), CompileError> {
+        self.emit(Instruction::SaveStart { capture: 0 });
+        self.compile_expression(expression, false)?;
+        self.emit(Instruction::SaveEnd { capture: 0 });
+        self.emit(Instruction::Match);
+        let register_count =
+            u8::try_from(self.max_registers).map_err(|_| CompileError::too_many_registers(0))?;
+        Ok((self.instructions, register_count))
+    }
+
+    fn compile_expression(
+        &mut self,
+        expression: &Expression,
+        backward: bool,
+    ) -> Result<(), CompileError> {
+        let mut end_jumps = Vec::new();
+        for (index, sequence) in expression.alternatives.iter().enumerate() {
+            if index + 1 == expression.alternatives.len() {
+                self.compile_sequence(sequence, backward)?;
+                break;
+            }
+            let split = self.emit(Instruction::Split {
+                first: usize::MAX,
+                second: usize::MAX,
+            });
+            let first = self.instructions.len();
+            self.compile_sequence(sequence, backward)?;
+            let jump = self.emit(Instruction::Jump { target: usize::MAX });
+            let second = self.instructions.len();
+            self.patch_split(split, first, second);
+            end_jumps.push(jump);
+        }
+        let end = self.instructions.len();
+        for jump in end_jumps {
+            self.patch_jump(jump, end);
+        }
+        Ok(())
+    }
+
+    fn compile_sequence(
+        &mut self,
+        sequence: &Sequence,
+        backward: bool,
+    ) -> Result<(), CompileError> {
+        if backward {
+            for term in sequence.iter().rev() {
+                self.compile_term(term, true)?;
+            }
+        } else {
+            for term in sequence {
+                self.compile_term(term, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_term(&mut self, term: &Term, backward: bool) -> Result<(), CompileError> {
+        match term.quantifier {
+            Some(quantifier) => {
+                self.compile_quantified(&term.atom, quantifier, term.position, backward)
+            }
+            None => self.compile_atom(&term.atom, backward),
+        }
+    }
+
+    fn compile_atom(&mut self, atom: &Atom, backward: bool) -> Result<(), CompileError> {
+        match atom {
+            Atom::Literal(value) => {
+                let value = if self.ignore_case {
+                    crate::source::unicode::case::regexp_canonicalize(*value, self.unicode)
+                } else {
+                    *value
+                };
+                self.emit_backward_character_guard(backward);
+                self.emit(Instruction::Char {
+                    value,
+                    ignore_case: self.ignore_case,
+                });
+                self.emit_backward_character_guard(backward);
+            }
+            Atom::Dot => {
+                let instruction = if self.dot_all {
+                    Instruction::Any
+                } else {
+                    Instruction::Dot
+                };
+                self.emit_backward_character_guard(backward);
+                self.emit(instruction);
+                self.emit_backward_character_guard(backward);
+            }
+            Atom::LineStart => {
+                self.emit(Instruction::LineStart {
+                    multiline: self.multiline,
+                });
+            }
+            Atom::LineEnd => {
+                self.emit(Instruction::LineEnd {
+                    multiline: self.multiline,
+                });
+            }
+            Atom::WordBoundary { inverted } => {
+                self.emit(Instruction::WordBoundary {
+                    inverted: *inverted,
+                    ignore_case: self.ignore_case,
+                });
+            }
+            Atom::Space { inverted } => {
+                self.emit_backward_character_guard(backward);
+                self.emit(Instruction::Space {
+                    inverted: *inverted,
+                });
+                self.emit_backward_character_guard(backward);
+            }
+            Atom::Class(class) => {
+                self.compile_character_class(class, backward);
+            }
+            Atom::BackReference { captures } => {
+                if backward {
+                    self.emit(Instruction::BackwardBackReference {
+                        captures: captures.clone(),
+                        ignore_case: self.ignore_case,
+                    });
+                } else {
+                    self.emit(Instruction::BackReference {
+                        captures: captures.clone(),
+                        ignore_case: self.ignore_case,
+                    });
+                }
+            }
+            Atom::LookAround {
+                negative,
+                backward,
+                expression,
+                ..
+            } => {
+                let start = self.emit(Instruction::LookAhead {
+                    negative: *negative,
+                    target: usize::MAX,
+                });
+                self.compile_expression(expression, *backward)?;
+                self.emit(Instruction::LookAheadEnd {
+                    negative: *negative,
+                });
+                let target = self.instructions.len();
+                self.instructions[start] = Instruction::LookAhead {
+                    negative: *negative,
+                    target,
+                };
+            }
+            Atom::Group {
+                capture,
+                modifiers,
+                expression,
+            } => {
+                if let Some(capture) = capture {
+                    self.emit(if backward {
+                        Instruction::SaveEnd { capture: *capture }
+                    } else {
+                        Instruction::SaveStart { capture: *capture }
+                    });
+                }
+                let saved_modifiers = ModifierState {
+                    ignore_case: self.ignore_case,
+                    multiline: self.multiline,
+                    dot_all: self.dot_all,
+                };
+                if let Some(modifiers) = modifiers {
+                    self.ignore_case = modifiers.ignore_case;
+                    self.multiline = modifiers.multiline;
+                    self.dot_all = modifiers.dot_all;
+                }
+                let result = self.compile_expression(expression, backward);
+                self.ignore_case = saved_modifiers.ignore_case;
+                self.multiline = saved_modifiers.multiline;
+                self.dot_all = saved_modifiers.dot_all;
+                result?;
+                if let Some(capture) = capture {
+                    self.emit(if backward {
+                        Instruction::SaveStart { capture: *capture }
+                    } else {
+                        Instruction::SaveEnd { capture: *capture }
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Emit a character class with the same alternative ordering as pinned
+    /// QuickJS `re_emit_string_list`: longest strings first, then the scalar
+    /// range, with an empty string (when present) as the final fallback.
+    fn compile_character_class(&mut self, class: &CharacterClass, backward: bool) {
+        // QuickJS wraps the complete class in one pair of `prev` operations,
+        // including classes whose Unicode Sets members are strings. Keeping
+        // that placement preserves its observable multi-code-point
+        // lookbehind behavior rather than silently improving the oracle.
+        self.emit_backward_character_guard(backward);
+        let mut strings = class
+            .strings
+            .iter()
+            .filter(|string| !string.is_empty())
+            .map(Box::as_ref)
+            .collect::<Vec<_>>();
+        strings.sort_unstable_by(|left, right| {
+            right.len().cmp(&left.len()).then_with(|| left.cmp(right))
+        });
+
+        let has_empty_string = class.strings.iter().any(|string| string.is_empty());
+        let has_range = class.inverted || !class.ranges.is_empty() || class.strings.is_empty();
+        let alternative_count =
+            strings.len() + usize::from(has_range) + usize::from(has_empty_string);
+        debug_assert!(alternative_count > 0);
+
+        let mut end_jumps = Vec::with_capacity(alternative_count.saturating_sub(1));
+        let mut alternative_index = 0;
+        for string in strings {
+            let split = self.begin_class_alternative(alternative_index, alternative_count);
+            for character in string {
+                self.emit_class_character(*character);
+            }
+            self.end_class_alternative(split, &mut end_jumps);
+            alternative_index += 1;
+        }
+
+        if has_range {
+            let split = self.begin_class_alternative(alternative_index, alternative_count);
+            self.emit(Instruction::Range {
+                ranges: class.ranges.clone().into_boxed_slice(),
+                inverted: class.inverted,
+                ignore_case: self.ignore_case,
+            });
+            self.end_class_alternative(split, &mut end_jumps);
+            alternative_index += 1;
+        }
+
+        if has_empty_string {
+            let split = self.begin_class_alternative(alternative_index, alternative_count);
+            debug_assert!(split.is_none(), "empty string must be the last alternative");
+        }
+
+        let end = self.instructions.len();
+        for jump in end_jumps {
+            self.patch_jump(jump, end);
+        }
+        self.emit_backward_character_guard(backward);
+    }
+
+    fn emit_class_character(&mut self, value: u32) {
+        self.emit(Instruction::Char {
+            value,
+            ignore_case: self.ignore_case,
+        });
+    }
+
+    fn begin_class_alternative(
+        &mut self,
+        alternative_index: usize,
+        alternative_count: usize,
+    ) -> Option<usize> {
+        (alternative_index + 1 < alternative_count).then(|| {
+            self.emit(Instruction::Split {
+                first: usize::MAX,
+                second: usize::MAX,
+            })
+        })
+    }
+
+    fn end_class_alternative(&mut self, split: Option<usize>, end_jumps: &mut Vec<usize>) {
+        let Some(split) = split else {
+            return;
+        };
+        let body = split + 1;
+        let jump = self.emit(Instruction::Jump { target: usize::MAX });
+        let next = self.instructions.len();
+        self.patch_split(split, body, next);
+        end_jumps.push(jump);
+    }
+
+    fn compile_quantified(
+        &mut self,
+        atom: &Atom,
+        quantifier: Quantifier,
+        position: usize,
+        backward: bool,
+    ) -> Result<(), CompileError> {
+        let capture_range = atom.capture_range();
+        if quantifier.maximum == Some(0) {
+            self.emit_capture_reset(capture_range);
+            return Ok(());
+        }
+
+        self.compile_required_repetitions(
+            atom,
+            quantifier.minimum,
+            capture_range,
+            position,
+            backward,
+        )?;
+        match quantifier.maximum {
+            Some(maximum) if maximum == quantifier.minimum => {}
+            Some(maximum) => {
+                self.compile_optional_repetitions(
+                    atom,
+                    maximum - quantifier.minimum,
+                    quantifier.greedy,
+                    capture_range,
+                    position,
+                    backward,
+                )?;
+            }
+            None => {
+                self.compile_unbounded_repetition(
+                    atom,
+                    quantifier.greedy,
+                    capture_range,
+                    position,
+                    backward,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_required_repetitions(
+        &mut self,
+        atom: &Atom,
+        count: u32,
+        capture_range: Option<(u8, u8)>,
+        position: usize,
+        backward: bool,
+    ) -> Result<(), CompileError> {
+        match count {
+            0 => {
+                self.emit_capture_reset(capture_range);
+            }
+            1 => self.compile_iteration(atom, capture_range, backward)?,
+            count => {
+                let register = self.allocate_register(position)?;
+                self.emit(Instruction::SetRegister {
+                    register,
+                    value: count,
+                });
+                let start = self.instructions.len();
+                self.compile_iteration(atom, capture_range, backward)?;
+                self.emit(Instruction::Loop {
+                    register,
+                    target: start,
+                });
+                self.release_register(register);
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_optional_repetitions(
+        &mut self,
+        atom: &Atom,
+        count: u32,
+        greedy: bool,
+        capture_range: Option<(u8, u8)>,
+        position: usize,
+        backward: bool,
+    ) -> Result<(), CompileError> {
+        if count == 0 {
+            return Ok(());
+        }
+        let register = if count > 1 {
+            let register = self.allocate_register(position)?;
+            self.emit(Instruction::SetRegister {
+                register,
+                value: count,
+            });
+            Some(register)
+        } else {
+            None
+        };
+        let decision = self.emit(Instruction::Split {
+            first: usize::MAX,
+            second: usize::MAX,
+        });
+        let body = self.instructions.len();
+        let advance_register = if atom.can_match_empty() {
+            let register = self.allocate_register(position)?;
+            self.emit(Instruction::SavePosition { register });
+            Some(register)
+        } else {
+            None
+        };
+        self.compile_iteration(atom, capture_range, backward)?;
+        if let Some(register) = advance_register {
+            self.emit(Instruction::CheckAdvance { register });
+        }
+        if let Some(register) = register {
+            self.emit(Instruction::Loop {
+                register,
+                target: decision,
+            });
+        }
+        let after = self.instructions.len();
+        self.patch_preferred_split(decision, body, after, greedy);
+        if let Some(register) = advance_register {
+            self.release_register(register);
+        }
+        if let Some(register) = register {
+            self.release_register(register);
+        }
+        Ok(())
+    }
+
+    fn compile_unbounded_repetition(
+        &mut self,
+        atom: &Atom,
+        greedy: bool,
+        capture_range: Option<(u8, u8)>,
+        position: usize,
+        backward: bool,
+    ) -> Result<(), CompileError> {
+        let decision = self.emit(Instruction::Split {
+            first: usize::MAX,
+            second: usize::MAX,
+        });
+        let body = self.instructions.len();
+        let advance_register = if atom.can_match_empty() {
+            let register = self.allocate_register(position)?;
+            self.emit(Instruction::SavePosition { register });
+            Some(register)
+        } else {
+            None
+        };
+        self.compile_iteration(atom, capture_range, backward)?;
+        if let Some(register) = advance_register {
+            self.emit(Instruction::CheckAdvance { register });
+        }
+        self.emit(Instruction::Jump { target: decision });
+        let after = self.instructions.len();
+        self.patch_preferred_split(decision, body, after, greedy);
+        if let Some(register) = advance_register {
+            self.release_register(register);
+        }
+        Ok(())
+    }
+
+    fn compile_iteration(
+        &mut self,
+        atom: &Atom,
+        capture_range: Option<(u8, u8)>,
+        backward: bool,
+    ) -> Result<(), CompileError> {
+        self.emit_capture_reset(capture_range);
+        self.compile_atom(atom, backward)
+    }
+
+    fn emit_backward_character_guard(&mut self, backward: bool) {
+        if backward {
+            self.emit(Instruction::Prev);
+        }
+    }
+
+    fn emit_capture_reset(&mut self, capture_range: Option<(u8, u8)>) {
+        if let Some((from, to)) = capture_range {
+            self.emit(Instruction::ResetCaptures { from, to });
+        }
+    }
+
+    fn allocate_register(&mut self, position: usize) -> Result<u8, CompileError> {
+        if self.register_depth >= u16::from(u8::MAX) {
+            return Err(CompileError::too_many_registers(position));
+        }
+        let register = self.register_depth as u8;
+        self.register_depth += 1;
+        self.max_registers = self.max_registers.max(self.register_depth);
+        Ok(register)
+    }
+
+    fn release_register(&mut self, register: u8) {
+        debug_assert_eq!(self.register_depth, u16::from(register) + 1);
+        self.register_depth -= 1;
+    }
+
+    fn emit(&mut self, instruction: Instruction) -> usize {
+        let index = self.instructions.len();
+        self.instructions.push(instruction);
+        index
+    }
+
+    fn patch_jump(&mut self, index: usize, target: usize) {
+        self.instructions[index] = Instruction::Jump { target };
+    }
+
+    fn patch_split(&mut self, index: usize, first: usize, second: usize) {
+        self.instructions[index] = Instruction::Split { first, second };
+    }
+
+    fn patch_preferred_split(&mut self, index: usize, body: usize, after: usize, greedy: bool) {
+        if greedy {
+            self.patch_split(index, body, after);
+        } else {
+            self.patch_split(index, after, body);
+        }
+    }
+}
+
+pub(super) fn compile_units(
+    pattern: &[u16],
+    flag_units: &[u16],
+) -> Result<CompiledRegExp, CompileError> {
+    let mut flags = parse_flags(flag_units)
+        .map_err(|error| CompileError::invalid_flags(error.position, error.kind))?;
+    let ParsedPattern {
+        expression,
+        capture_count,
+        group_names,
+    } = Parser::new(pattern, flags).parse()?;
+    if group_names.is_some() {
+        flags.insert(RegExpFlags::NAMED_GROUPS);
+    }
+    let (instructions, register_count) = CodeBuilder::new(flags).compile(&expression)?;
+    Ok(CompiledRegExp::from_compiled_parts(
+        flags,
+        capture_count,
+        register_count,
+        instructions,
+        group_names,
+    ))
+}
+
+fn digit_ranges() -> Vec<CharacterRange> {
+    vec![CharacterRange::new(u32::from(b'0'), u32::from(b'9'))]
+}
+
+fn word_ranges() -> Vec<CharacterRange> {
+    vec![
+        CharacterRange::new(u32::from(b'0'), u32::from(b'9')),
+        CharacterRange::new(u32::from(b'A'), u32::from(b'Z')),
+        CharacterRange::new(u32::from(b'_'), u32::from(b'_')),
+        CharacterRange::new(u32::from(b'a'), u32::from(b'z')),
+    ]
+}
+
+fn space_ranges() -> Vec<CharacterRange> {
+    vec![
+        CharacterRange::new(0x0009, 0x000d),
+        CharacterRange::new(0x0020, 0x0020),
+        CharacterRange::new(0x00a0, 0x00a0),
+        CharacterRange::new(0x1680, 0x1680),
+        CharacterRange::new(0x2000, 0x200a),
+        CharacterRange::new(0x2028, 0x2029),
+        CharacterRange::new(0x202f, 0x202f),
+        CharacterRange::new(0x205f, 0x205f),
+        CharacterRange::new(0x3000, 0x3000),
+        CharacterRange::new(0xfeff, 0xfeff),
+    ]
+}
+
+fn add_class_atom(
+    ranges: &mut Vec<CharacterRange>,
+    atom: ClassAtom,
+    max: u32,
+    ignore_case: bool,
+    unicode: bool,
+) {
+    let (mut atom_ranges, complement, prepared) = match atom {
+        ClassAtom::Single(value) => (vec![CharacterRange::new(value, value)], false, false),
+        ClassAtom::Set(set) => (set, false, false),
+        ClassAtom::ComplementSet(set) => (set, true, false),
+        ClassAtom::PreparedSet(set) => (set, false, true),
+        ClassAtom::UnicodeSet(set) => {
+            debug_assert!(set.strings.is_empty());
+            (set.ranges, false, true)
+        }
+    };
+    atom_ranges = atom_ranges
+        .into_iter()
+        .filter(|range| range.start <= max)
+        .map(|range| CharacterRange::new(range.start, range.end.min(max)))
+        .collect();
+    if prepared {
+        atom_ranges = normalize_ranges(atom_ranges);
+    } else if ignore_case {
+        atom_ranges = canonicalize_ranges(&atom_ranges, unicode);
+    } else {
+        atom_ranges = normalize_ranges(atom_ranges);
+    }
+    if complement {
+        atom_ranges = complement_ranges(&atom_ranges, max);
+    }
+    ranges.extend(atom_ranges);
+}
+
+fn add_unicode_set_sequence(set: &mut UnicodeSet, sequence: &[u32]) {
+    if let [character] = sequence {
+        set.ranges.push(CharacterRange::new(*character, *character));
+    } else {
+        set.strings.insert(sequence.to_vec());
+    }
+}
+
+fn unicode_set_from_class_atom(atom: ClassAtom, ignore_case: bool, unicode: bool) -> UnicodeSet {
+    match atom {
+        ClassAtom::UnicodeSet(mut set) => {
+            set.ranges = normalize_ranges(set.ranges);
+            set
+        }
+        ClassAtom::Single(mut value) => {
+            if ignore_case {
+                value = crate::source::unicode::case::regexp_canonicalize(value, unicode);
+            }
+            UnicodeSet {
+                ranges: vec![CharacterRange::new(value, value)],
+                strings: BTreeSet::new(),
+            }
+        }
+        ClassAtom::Set(ranges) => UnicodeSet {
+            ranges: if ignore_case {
+                canonicalize_ranges(&ranges, unicode)
+            } else {
+                normalize_ranges(ranges)
+            },
+            strings: BTreeSet::new(),
+        },
+        ClassAtom::ComplementSet(ranges) => {
+            let ranges = if ignore_case {
+                canonicalize_ranges(&ranges, unicode)
+            } else {
+                normalize_ranges(ranges)
+            };
+            UnicodeSet {
+                ranges: complement_ranges(&ranges, MAX_CODE_POINT),
+                strings: BTreeSet::new(),
+            }
+        }
+        ClassAtom::PreparedSet(ranges) => UnicodeSet {
+            ranges: normalize_ranges(ranges),
+            strings: BTreeSet::new(),
+        },
+    }
+}
+
+fn canonicalize_unicode_set(set: &mut UnicodeSet, unicode: bool) {
+    set.ranges = canonicalize_ranges(&set.ranges, unicode);
+    if set.strings.is_empty() {
+        return;
+    }
+    let strings = std::mem::take(&mut set.strings);
+    for mut string in strings {
+        for character in &mut string {
+            *character = crate::source::unicode::case::regexp_canonicalize(*character, unicode);
+        }
+        add_unicode_set_sequence(set, &string);
+    }
+    set.ranges = normalize_ranges(std::mem::take(&mut set.ranges));
+}
+
+fn unicode_set_union(target: &mut UnicodeSet, mut operand: UnicodeSet) {
+    target.ranges.append(&mut operand.ranges);
+    target.ranges = normalize_ranges(std::mem::take(&mut target.ranges));
+    target.strings.append(&mut operand.strings);
+}
+
+fn unicode_set_intersection(target: &mut UnicodeSet, operand: &UnicodeSet) {
+    target.ranges = intersect_ranges(&target.ranges, &operand.ranges);
+    target
+        .strings
+        .retain(|string| operand.strings.contains(string));
+}
+
+fn unicode_set_subtraction(target: &mut UnicodeSet, operand: &UnicodeSet) {
+    target.ranges = subtract_ranges(&target.ranges, &operand.ranges);
+    target
+        .strings
+        .retain(|string| !operand.strings.contains(string));
+}
+
+fn intersect_ranges(left: &[CharacterRange], right: &[CharacterRange]) -> Vec<CharacterRange> {
+    let left = normalize_ranges(left.to_vec());
+    let right = normalize_ranges(right.to_vec());
+    let mut intersection = Vec::new();
+    let (mut left_index, mut right_index) = (0, 0);
+    while let (Some(left), Some(right)) = (left.get(left_index), right.get(right_index)) {
+        let start = left.start.max(right.start);
+        let end = left.end.min(right.end);
+        if start <= end {
+            intersection.push(CharacterRange::new(start, end));
+        }
+        if left.end < right.end {
+            left_index += 1;
+        } else {
+            right_index += 1;
+        }
+    }
+    intersection
+}
+
+fn subtract_ranges(left: &[CharacterRange], right: &[CharacterRange]) -> Vec<CharacterRange> {
+    let left = normalize_ranges(left.to_vec());
+    let right = normalize_ranges(right.to_vec());
+    let mut difference = Vec::new();
+    let mut right_index = 0;
+    for left in left {
+        let mut start = left.start;
+        while right_index < right.len() && right[right_index].end < start {
+            right_index += 1;
+        }
+        let mut index = right_index;
+        while index < right.len() && right[index].start <= left.end {
+            let removed = right[index];
+            if removed.start > start {
+                difference.push(CharacterRange::new(start, removed.start - 1));
+            }
+            if removed.end >= left.end {
+                start = left.end.saturating_add(1);
+                break;
+            }
+            start = start.max(removed.end.saturating_add(1));
+            index += 1;
+        }
+        if start <= left.end {
+            difference.push(CharacterRange::new(start, left.end));
+        }
+    }
+    difference
+}
+
+fn canonicalize_ranges(ranges: &[CharacterRange], unicode: bool) -> Vec<CharacterRange> {
+    crate::source::unicode::case::regexp_canonicalize_range_pairs(
+        &ranges
+            .iter()
+            .map(|range| (range.start, range.end))
+            .collect::<Vec<_>>(),
+        unicode,
+    )
+    .into_iter()
+    .map(|(start, end)| CharacterRange::new(start, end))
+    .collect()
+}
+
+fn normalize_ranges(mut ranges: Vec<CharacterRange>) -> Vec<CharacterRange> {
+    ranges.sort_unstable_by_key(|range| (range.start, range.end));
+    let mut normalized: Vec<CharacterRange> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if let Some(previous) = normalized.last_mut()
+            && range.start <= previous.end.saturating_add(1)
+        {
+            previous.end = previous.end.max(range.end);
+        } else {
+            normalized.push(range);
+        }
+    }
+    normalized
+}
+
+fn complement_ranges(ranges: &[CharacterRange], max: u32) -> Vec<CharacterRange> {
+    let ranges = normalize_ranges(ranges.to_vec());
+    let mut complement = Vec::new();
+    let mut start = 0_u32;
+    for range in ranges {
+        if range.start > start {
+            complement.push(CharacterRange::new(start, range.start - 1));
+        }
+        if range.end >= max {
+            return complement;
+        }
+        start = range.end + 1;
+    }
+    if start <= max {
+        complement.push(CharacterRange::new(start, max));
+    }
+    complement
+}
+
+fn is_ascii_digit(unit: u16) -> bool {
+    (u16::from(b'0')..=u16::from(b'9')).contains(&unit)
+}
+
+fn is_ascii_octal_digit(unit: u16) -> bool {
+    (u16::from(b'0')..=u16::from(b'7')).contains(&unit)
+}
+
+fn is_ascii_letter(unit: u16) -> bool {
+    (u16::from(b'a')..=u16::from(b'z')).contains(&unit)
+        || (u16::from(b'A')..=u16::from(b'Z')).contains(&unit)
+}
+
+fn is_unicode_property_character(unit: u16) -> bool {
+    is_ascii_digit(unit) || is_ascii_letter(unit) || unit == u16::from(b'_')
+}
+
+fn is_syntax_character(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x5e | 0x24
+            | 0x5c
+            | 0x2e
+            | 0x2a
+            | 0x2b
+            | 0x3f
+            | 0x28
+            | 0x29
+            | 0x5b
+            | 0x5d
+            | 0x7b
+            | 0x7d
+            | 0x7c
+    )
+}
+
+fn is_unicode_set_double_punctuator(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x26 | 0x21
+            | 0x23
+            | 0x24
+            | 0x25
+            | 0x2a
+            | 0x2b
+            | 0x2c
+            | 0x2e
+            | 0x3a
+            | 0x3b
+            | 0x3c
+            | 0x3d
+            | 0x3e
+            | 0x3f
+            | 0x40
+            | 0x5e
+            | 0x60
+            | 0x7e
+    )
+}
+
+fn is_unicode_set_reserved_punctuator(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x28 | 0x29 | 0x5b | 0x5d | 0x7b | 0x7d | 0x2f | 0x2d | 0x7c
+    )
+}
+
+fn hex_value(unit: u16) -> Option<u32> {
+    match unit {
+        0x30..=0x39 => Some(u32::from(unit - 0x30)),
+        0x41..=0x46 => Some(u32::from(unit - 0x41 + 10)),
+        0x61..=0x66 => Some(u32::from(unit - 0x61 + 10)),
+        _ => None,
+    }
+}
+
+fn is_high_surrogate(value: u32) -> bool {
+    (0xd800..=0xdbff).contains(&value)
+}
+
+fn is_low_surrogate(value: u32) -> bool {
+    (0xdc00..=0xdfff).contains(&value)
+}
+
+fn combine_surrogates(high: u32, low: u32) -> u32 {
+    0x10000 + ((high - 0xd800) << 10) + (low - 0xdc00)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compile_ascii(pattern: &str, flags: &str) -> Result<CompiledRegExp, CompileError> {
+        compile_units(
+            &pattern.encode_utf16().collect::<Vec<_>>(),
+            &flags.encode_utf16().collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn flags_match_pinned_bits_and_reject_duplicate_unknown_and_u_v() {
+        let compiled = compile_ascii("", "dgimsuy").unwrap();
+        assert_eq!(compiled.flags().bits(), 0x7f);
+        assert_eq!(compiled.flags().canonical_string(), "dgimsuy");
+        assert_eq!(parse_flags(&[u16::from(b'v')]).unwrap().bits(), 1 << 8);
+        let unicode_sets = compile_ascii("", "v").unwrap();
+        assert_eq!(unicode_sets.flags().bits(), 1 << 8);
+        assert_eq!(unicode_sets.flags().canonical_string(), "v");
+        for flags in ["gg", "z", "uv", "vu"] {
+            let error = compile_ascii("", flags).unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{flags}");
+            assert_eq!(error.source(), CompileErrorSource::Flags, "{flags}");
+        }
+    }
+
+    #[test]
+    fn unicode_sets_flag_supports_ordinary_regexp_syntax_and_class_escapes() {
+        for pattern in [
+            r"\d",
+            r"^\d+$",
+            r"\D\s\S\w\W",
+            r"[\d]",
+            r"[^\D]",
+            r"[\d\s\w]+",
+            r"^[\D\S\W]{2,4}$",
+        ] {
+            for flags in ["v", "iv"] {
+                let compiled = compile_ascii(pattern, flags)
+                    .unwrap_or_else(|error| panic!("{pattern:?}/{flags} should compile: {error}"));
+                assert!(compiled.flags().contains(RegExpFlags::UNICODE_SETS));
+            }
+        }
+
+        for pattern in [r"\d", r"[\D\s\W]"] {
+            assert!(compile_ascii(pattern, "").is_ok(), "{pattern}/legacy");
+            assert!(compile_ascii(pattern, "u").is_ok(), "{pattern}/u");
+            assert!(compile_ascii(pattern, "v").is_ok(), "{pattern}/v");
+        }
+    }
+
+    #[test]
+    fn unicode_sets_compile_ordinary_atoms_nested_algebra_and_strings() {
+        for pattern in [
+            "",
+            "^$",
+            "a",
+            ".",
+            r"(\d)",
+            r"\d|\w",
+            r"\b",
+            r"\p{ASCII}",
+            r"[\p{ASCII}]",
+            r"[\q{ab}]",
+            r"[[\d]]",
+            r"[\d&&\w]",
+            r"[\d--\w]",
+            r"[a]",
+            r"[a-z]",
+        ] {
+            let compiled = compile_ascii(pattern, "v")
+                .unwrap_or_else(|error| panic!("{pattern:?}/v should compile: {error}"));
+            assert!(compiled.flags().contains(RegExpFlags::UNICODE_SETS));
+        }
+
+        // The same ordinary atoms remain available in legacy and `u` mode.
+        for pattern in ["a", ".", r"(\d)", r"[a]", r"[a-z]"] {
+            assert!(compile_ascii(pattern, "").is_ok(), "{pattern}/legacy");
+            assert!(compile_ascii(pattern, "u").is_ok(), "{pattern}/u");
+        }
+    }
+
+    #[test]
+    fn unicode_sets_malformed_syntax_remains_a_syntax_error() {
+        for pattern in [
+            "\\", r"[\d", "[\\", r"*\d", r"\d{2,1}", r"\d{1", r"\d{a}", r"\d{1,a}", r"\d++",
+            r"[\d-]", r"[\d-\w]",
+        ] {
+            assert_eq!(
+                compile_ascii(pattern, "v").unwrap_err().kind(),
+                &CompileErrorKind::Syntax,
+                "{pattern}",
+            );
+        }
+    }
+
+    #[test]
+    fn empty_literal_and_unicode_utf16_compile_to_typed_characters() {
+        let empty = compile_ascii("", "").unwrap();
+        assert_eq!(
+            empty.instructions(),
+            &[
+                Instruction::SaveStart { capture: 0 },
+                Instruction::SaveEnd { capture: 0 },
+                Instruction::Match,
+            ],
+        );
+
+        let source = [0x61, 0xd83d, 0xde00, 0xd800];
+        let ordinary = compile_units(&source, &[]).unwrap();
+        assert!(ordinary.instructions().contains(&Instruction::Char {
+            value: 0xd83d,
+            ignore_case: false,
+        }));
+        let unicode = compile_units(&source, &[u16::from(b'u')]).unwrap();
+        assert!(unicode.instructions().contains(&Instruction::Char {
+            value: 0x1f600,
+            ignore_case: false,
+        }));
+        assert!(unicode.instructions().contains(&Instruction::Char {
+            value: 0xd800,
+            ignore_case: false,
+        }));
+    }
+
+    #[test]
+    fn dot_anchors_alternation_and_groups_preserve_metadata_and_priority() {
+        let compiled = compile_ascii("^(a|(?:b.))$", "ms").unwrap();
+        assert_eq!(compiled.capture_count(), 2);
+        assert!(
+            compiled
+                .instructions()
+                .contains(&Instruction::LineStart { multiline: true })
+        );
+        assert!(
+            compiled
+                .instructions()
+                .contains(&Instruction::LineEnd { multiline: true })
+        );
+        assert!(compiled.instructions().contains(&Instruction::Any));
+        assert!(compiled
+            .instructions()
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::Split { first, second } if first < second)));
+    }
+
+    #[test]
+    fn greedy_lazy_and_bounded_quantifiers_use_splits_loops_and_guards() {
+        let compiled = compile_ascii("a*b+?c{2}d{1,4}e{3,}", "").unwrap();
+        assert_eq!(compiled.register_count(), 1);
+        assert!(
+            compiled
+                .instructions()
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::Split { .. }))
+        );
+        assert!(
+            compiled
+                .instructions()
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::Loop { .. }))
+        );
+
+        let nullable = compile_ascii("(?:a?)*", "").unwrap();
+        assert!(
+            nullable
+                .instructions()
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::SavePosition { .. }))
+        );
+        assert!(
+            nullable
+                .instructions()
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::CheckAdvance { .. }))
+        );
+    }
+
+    #[test]
+    fn classes_ranges_inversion_shorthands_and_simple_escapes_compile() {
+        let compiled =
+            compile_ascii(r"[a-cx\d][^\s]\D\S\w\W\b\B\f\n\r\t\v\x41\u0042", "i").unwrap();
+        assert!(compiled.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Range { ranges, inverted: false, ignore_case: true }
+                if ranges.contains(&CharacterRange::new(u32::from(b'A'), u32::from(b'C'))))
+        }));
+        assert!(
+            compiled
+                .instructions()
+                .contains(&Instruction::Space { inverted: true })
+        );
+        assert!(compiled.instructions().contains(&Instruction::Char {
+            value: u32::from(b'A'),
+            ignore_case: true,
+        }));
+        assert!(compiled.instructions().contains(&Instruction::Char {
+            value: u32::from(b'B'),
+            ignore_case: true,
+        }));
+
+        let nul_class = compile_ascii(r"[\0]", "").unwrap();
+        assert!(nul_class.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Range { ranges, inverted: false, .. }
+                if ranges.as_ref() == [CharacterRange::new(0, 0)])
+        }));
+
+        for pattern in [r"[\d-a]", r"[a-\d]", r"[\d-\w]"] {
+            let legacy = compile_ascii(pattern, "").unwrap();
+            assert!(legacy.instructions().iter().any(|instruction| {
+                matches!(instruction, Instruction::Range { ranges, inverted: false, .. }
+                    if ranges.contains(&CharacterRange::new(u32::from(b'-'), u32::from(b'-'))))
+            }));
+            assert!(compile_ascii(pattern, "u").is_err());
+        }
+    }
+
+    #[test]
+    fn ignore_case_literals_and_classes_are_canonicalized_in_the_ir() {
+        let legacy_literal = compile_ascii("a", "i").unwrap();
+        assert!(legacy_literal.instructions().contains(&Instruction::Char {
+            value: u32::from(b'A'),
+            ignore_case: true,
+        }));
+
+        let unicode_literal = compile_ascii("A", "iu").unwrap();
+        assert!(unicode_literal.instructions().contains(&Instruction::Char {
+            value: u32::from(b'a'),
+            ignore_case: true,
+        }));
+
+        let legacy_class = compile_ascii("[^a]", "i").unwrap();
+        assert!(legacy_class.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Range { ranges, inverted: true, ignore_case: true }
+                if ranges.as_ref() == [CharacterRange::new(u32::from(b'A'), u32::from(b'A'))])
+        }));
+
+        let unicode_class = compile_ascii("[A-Z]", "iu").unwrap();
+        assert!(unicode_class.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Range { ranges, inverted: false, ignore_case: true }
+                if ranges.as_ref() == [CharacterRange::new(u32::from(b'a'), u32::from(b'z'))])
+        }));
+    }
+
+    #[test]
+    fn unicode_property_escapes_compile_to_quickjs_range_sets() {
+        for pattern in [
+            r"\p{General_Category=Uppercase_Letter}",
+            r"\p{gc=Lu}",
+            r"\p{Letter}",
+            r"\p{Script=Latin}",
+            r"\p{scx=Hira}",
+            r"\p{ASCII}",
+            r"\p{EPres}",
+            r"\p{ASCII=}",
+            r"\p{Letter=}",
+        ] {
+            assert!(compile_ascii(pattern, "u").is_ok(), "{pattern}");
+        }
+
+        let inverted = compile_ascii(r"\P{Lowercase_Letter}", "iu").unwrap();
+        assert!(inverted.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Range { ranges, inverted: false, ignore_case: true }
+                if ranges.iter().any(|range| range.start <= u32::from(b'a')
+                    && range.end >= u32::from(b'a')))
+        }));
+
+        let no_character = compile_ascii(r"\P{Any}", "u").unwrap();
+        assert!(no_character.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Range { ranges, inverted: false, .. }
+                if ranges.is_empty())
+        }));
+
+        let legacy = compile_ascii(r"\p{ASCII}", "").unwrap();
+        assert!(legacy.instructions().contains(&Instruction::Char {
+            value: u32::from(b'p'),
+            ignore_case: false,
+        }));
+    }
+
+    #[test]
+    fn unicode_property_errors_and_class_range_priority_match_quickjs() {
+        for (pattern, message) in [
+            (r"\p", "expecting '{' after \\p"),
+            (r"\p{}", "unknown unicode property name"),
+            (r"\p{letter}", "unknown unicode property name"),
+            (r"\p{General-Category=Letter}", "expecting '}'"),
+            (r"\p{General_Category=}", "unknown unicode general category"),
+            (r"\p{Script=}", "unknown unicode script"),
+            (r"\p{ASCII=Yes}", "unknown unicode property name"),
+            (r"\p{Unknown=}", "unknown unicode property name"),
+            (r"\p{ASCII", "expecting '}'"),
+            (r"\p{Script=Nope!}", "expecting '}'"),
+            (r"[\p{ASCII}-z]", "invalid class range"),
+            (r"[a-\p{ASCII}]", "invalid class range"),
+            (r"[\p{ASCII}-\p{Unknown}]", "invalid class range"),
+            (r"[\p{ASCII}-\xZZ]", "invalid class range"),
+            (r"[\p{ASCII}-", "invalid class range"),
+            (r"[a-\p{Unknown}]", "unknown unicode property name"),
+        ] {
+            let error = compile_ascii(pattern, "u").unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(error.message(), message, "{pattern}");
+        }
+
+        let long_name = format!(r"\p{{{}}}", "A".repeat(64));
+        assert_eq!(
+            compile_ascii(&long_name, "u").unwrap_err().message(),
+            "unknown unicode property name",
+        );
+        let long_value = format!(r"\p{{Script={}}}", "A".repeat(64));
+        assert_eq!(
+            compile_ascii(&long_value, "u").unwrap_err().message(),
+            "unknown unicode property value",
+        );
+    }
+
+    #[test]
+    fn scoped_modifier_grammar_matches_quickjs_error_priority() {
+        for pattern in [
+            "(?i:a)",
+            "(?-i:a)",
+            "(?i-:a)",
+            "(?ims-:a)",
+            "(?-ims:a)",
+            "(?im-s:a)",
+        ] {
+            assert!(compile_ascii(pattern, "").is_ok(), "{pattern}");
+        }
+
+        for (pattern, message) in [
+            ("(?ii:a)", "duplicate modifier: 'i'"),
+            ("(?i-mm:a)", "duplicate modifier: 'm'"),
+            ("(?i-i:a)", "invalid modifiers"),
+            ("(?ims-m:a)", "invalid modifiers"),
+            ("(?-:a)", "invalid modifiers"),
+            // QuickJS validates duplicate/overlapping/empty modifier sets
+            // before requiring the colon.
+            ("(?ii)", "duplicate modifier: 'i'"),
+            ("(?i-i)", "invalid modifiers"),
+            ("(?-)", "invalid modifiers"),
+            ("(?i)", "expecting ':'"),
+            ("(?i-x:a)", "expecting ':'"),
+            ("(?d:a)", "invalid group specifier"),
+        ] {
+            let error = compile_ascii(pattern, "").unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(error.message(), message, "{pattern}");
+        }
+    }
+
+    #[test]
+    fn scoped_ignore_case_applies_to_literals_classes_and_word_boundaries() {
+        let compiled = compile_ascii(r"(?i:a[a]\b)(?-i:b[b]\B)c", "").unwrap();
+        assert_eq!(compiled.flags(), RegExpFlags::EMPTY);
+        assert_eq!(compiled.flags().canonical_string(), "");
+
+        let characters = compiled
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Char { value, ignore_case } => Some((*value, *ignore_case)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            characters,
+            vec![
+                (u32::from(b'A'), true),
+                (u32::from(b'b'), false),
+                (u32::from(b'c'), false),
+            ],
+        );
+
+        let classes = compiled
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Range {
+                    ranges,
+                    inverted: false,
+                    ignore_case,
+                } => Some((ranges.to_vec(), *ignore_case)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            classes,
+            vec![
+                (
+                    vec![CharacterRange::new(u32::from(b'A'), u32::from(b'A'))],
+                    true
+                ),
+                (
+                    vec![CharacterRange::new(u32::from(b'b'), u32::from(b'b'))],
+                    false
+                ),
+            ],
+        );
+
+        let boundaries = compiled
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::WordBoundary {
+                    inverted,
+                    ignore_case,
+                } => Some((*inverted, *ignore_case)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(boundaries, vec![(false, true), (true, false)]);
+    }
+
+    #[test]
+    fn nested_scoped_modifiers_restore_the_enclosing_and_global_state() {
+        let nested = compile_ascii("(?i:a(?-i:b(?i:c)d)e)f", "").unwrap();
+        let characters = nested
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Char { value, ignore_case } => Some((*value, *ignore_case)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            characters,
+            vec![
+                (u32::from(b'A'), true),
+                (u32::from(b'b'), false),
+                (u32::from(b'C'), true),
+                (u32::from(b'd'), false),
+                (u32::from(b'E'), true),
+                (u32::from(b'f'), false),
+            ],
+        );
+
+        let global = compile_ascii("(?-i:a)b", "i").unwrap();
+        assert_eq!(global.flags().canonical_string(), "i");
+        let characters = global
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Char { value, ignore_case } => Some((*value, *ignore_case)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            characters,
+            vec![(u32::from(b'a'), false), (u32::from(b'B'), true)],
+        );
+    }
+
+    #[test]
+    fn scoped_modifier_parser_restores_state_after_nested_parse_errors() {
+        for pattern in ["(?i:a", "(?i:(?x:a))", "(?i:[a"] {
+            let units = pattern.encode_utf16().collect::<Vec<_>>();
+            let mut parser = Parser::new(&units, RegExpFlags::EMPTY);
+            assert!(parser.parse_atom().is_err(), "{pattern}");
+            assert_eq!(
+                parser.modifiers,
+                ModifierState::from_flags(RegExpFlags::EMPTY),
+                "{pattern}",
+            );
+            assert_eq!(parser.group_depth, 0, "{pattern}");
+        }
+
+        let units = "(?-ims:(?x:a))".encode_utf16().collect::<Vec<_>>();
+        let flags = parse_flags(&[u16::from(b'i'), u16::from(b'm'), u16::from(b's')]).unwrap();
+        let mut parser = Parser::new(&units, flags);
+        assert!(parser.parse_atom().is_err());
+        assert_eq!(parser.modifiers, ModifierState::from_flags(flags));
+        assert_eq!(parser.group_depth, 0);
+    }
+
+    #[test]
+    fn scoped_multiline_and_dot_all_apply_only_inside_their_group() {
+        let compiled = compile_ascii("^(?ms:^.$)(?-ms:^.$)^.$", "").unwrap();
+        assert_eq!(compiled.flags(), RegExpFlags::EMPTY);
+
+        let starts = compiled
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::LineStart { multiline } => Some(*multiline),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(starts, vec![false, true, false, false]);
+
+        let ends = compiled
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::LineEnd { multiline } => Some(*multiline),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ends, vec![true, false, false]);
+
+        let dots = compiled
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Any => Some(true),
+                Instruction::Dot => Some(false),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(dots, vec![true, false, false]);
+
+        let global = compile_ascii("(?-ms:^.$)^.$", "ms").unwrap();
+        assert_eq!(global.flags().canonical_string(), "ms");
+        let dots = global
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Any => Some(true),
+                Instruction::Dot => Some(false),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(dots, vec![false, true]);
+    }
+
+    #[test]
+    fn malformed_core_syntax_is_rejected_at_compile_time() {
+        for pattern in ["(", "[a", "*a", "{1}", "a{1}{2}", "a{3,2}", "a**", "(?x:a)"] {
+            let error = compile_ascii(pattern, "").unwrap_err();
+            assert_eq!(error.source(), CompileErrorSource::Pattern, "{pattern}");
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax);
+        }
+        assert!(compile_ascii("a{not-a-quantifier}", "").is_ok());
+        assert!(compile_ascii("a{not-a-quantifier}", "u").is_err());
+        for pattern in [r"\!", r"[\!]", r"\-"] {
+            assert!(matches!(
+                compile_ascii(pattern, "u").unwrap_err().kind(),
+                CompileErrorKind::Syntax
+            ));
+        }
+        for pattern in ["^{", "^{1}", r"\b{1}"] {
+            assert_eq!(
+                compile_ascii(pattern, "u").unwrap_err().message(),
+                "regular expression syntax error",
+                "{pattern}",
+            );
+        }
+        for pattern in ["a{1", "a{1,", "a{1,x}", "a{1,2"] {
+            assert_eq!(
+                compile_ascii(pattern, "u").unwrap_err().message(),
+                "expecting '}'",
+                "{pattern}",
+            );
+        }
+    }
+
+    #[test]
+    fn unicode_sets_intersection_can_compile_to_an_empty_scalar_range() {
+        let compiled = compile_ascii("[a&&b]", "v").unwrap();
+        assert!(compiled.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Range { ranges, inverted: false, .. } if ranges.is_empty())
+        }));
+    }
+
+    #[test]
+    fn annex_b_control_escape_accepts_class_extensions_and_rewinds_other_forms() {
+        for (pattern, literal) in [
+            (r"[\c0]", 0x10),
+            (r"[\c9]", 0x19),
+            (r"[\c_]", 0x1f),
+            (r"\cA", 0x01),
+            (r"[\cz]", 0x1a),
+        ] {
+            let compiled = compile_ascii(pattern, "").unwrap();
+            assert!(
+                compiled.instructions().iter().any(
+                    |instruction| matches!(instruction, Instruction::Char { value, .. } if *value == literal)
+                        || matches!(instruction, Instruction::Range { ranges, .. } if ranges.iter().any(|range| range.start == literal && range.end == literal))
+                ),
+                "{pattern}",
+            );
+        }
+
+        for (pattern, expected) in [
+            (r"\c", vec![u32::from(b'\\'), u32::from(b'c')]),
+            (
+                r"\c0",
+                vec![u32::from(b'\\'), u32::from(b'c'), u32::from(b'0')],
+            ),
+            (
+                r"\c_",
+                vec![u32::from(b'\\'), u32::from(b'c'), u32::from(b'_')],
+            ),
+            (
+                r"\c@",
+                vec![u32::from(b'\\'), u32::from(b'c'), u32::from(b'@')],
+            ),
+        ] {
+            let actual = compile_ascii(pattern, "")
+                .unwrap()
+                .instructions()
+                .iter()
+                .filter_map(|instruction| match instruction {
+                    Instruction::Char { value, .. } => Some(*value),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{pattern}");
+        }
+        let class = compile_ascii(r"[\c?]", "").unwrap();
+        assert!(class.instructions().iter().any(|instruction| {
+            matches!(
+                instruction,
+                Instruction::Range { ranges, inverted: false, .. }
+                    if ranges.as_ref()
+                        == [
+                            CharacterRange::new(u32::from(b'?'), u32::from(b'?')),
+                            CharacterRange::new(u32::from(b'\\'), u32::from(b'\\')),
+                            CharacterRange::new(u32::from(b'c'), u32::from(b'c')),
+                        ]
+            )
+        }));
+
+        let range_error = compile_ascii(r"[\c0001d-G]", "").unwrap_err();
+        assert_eq!(range_error.kind(), &CompileErrorKind::Syntax);
+        assert_eq!(range_error.message(), "invalid class range");
+
+        for pattern in [r"\c", r"\c0", r"\c_", r"\c@", r"[\c]", r"[\c0]", r"[\c_]"] {
+            assert_eq!(
+                compile_ascii(pattern, "u").unwrap_err().kind(),
+                &CompileErrorKind::Syntax,
+                "{pattern}",
+            );
+        }
+        for pattern in [r"\cA", r"[\cz]"] {
+            assert!(compile_ascii(pattern, "u").is_ok(), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn named_capture_metadata_is_normalized_aligned_and_runtime_independent() {
+        let compiled = compile_ascii(r"(?<plain>a)(b)(?<π>c)(?<$\u{104A4}>d)", "u").unwrap();
+        assert_eq!(compiled.capture_count(), 5);
+        assert!(compiled.has_named_captures());
+        assert!(compiled.flags().contains(RegExpFlags::NAMED_GROUPS));
+        assert_eq!(compiled.flags().bits(), (1 << 4) | (1 << 7));
+        assert_eq!(compiled.flags().canonical_string(), "u");
+
+        let names = compiled.group_names().unwrap();
+        assert_eq!(names.len(), usize::from(compiled.capture_count()) - 1);
+        assert_eq!(
+            names
+                .iter()
+                .map(|name| name.as_ref().map(JsString::to_utf8_lossy))
+                .collect::<Vec<_>>(),
+            vec![
+                Some("plain".to_owned()),
+                None,
+                Some("π".to_owned()),
+                Some("$𐒤".to_owned()),
+            ],
+        );
+
+        let unnamed = compile_ascii("(a)(b)", "u").unwrap();
+        assert!(!unnamed.has_named_captures());
+        assert_eq!(unnamed.group_names(), None);
+        assert!(!unnamed.flags().contains(RegExpFlags::NAMED_GROUPS));
+    }
+
+    #[test]
+    fn named_group_parser_matches_quickjs_identifier_and_buffer_boundaries() {
+        for pattern in [
+            r"(?<$>a)",
+            r"(?<_\u200C\u200D>a)",
+            r"(?<\u0061>a)",
+            r"(?<a\uD801\uDCA4>a)",
+            r"(?<a\u{104A4}>a)",
+            "(?<ಠ_ಠ>a)",
+        ] {
+            assert!(compile_ascii(pattern, "").is_ok(), "{pattern}");
+            assert!(compile_ascii(pattern, "u").is_ok(), "{pattern}/u");
+        }
+
+        for pattern in [
+            r"(?<>a)",
+            r"(?<0>a)",
+            r"(?<🦊>a)",
+            r"(?<\x61>a)",
+            r"(?<\u{}>a)",
+            r"(?<\u{110000}>a)",
+            r"(?<\uD800>a)",
+            r"(?<a->a)",
+        ] {
+            let error = compile_ascii(pattern, "u").unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(error.message(), "invalid group name", "{pattern}");
+        }
+
+        let accepted = format!("(?<{}>a)", "x".repeat(122));
+        assert!(compile_ascii(&accepted, "u").is_ok());
+        let rejected = format!("(?<{}>a)", "x".repeat(123));
+        assert_eq!(
+            compile_ascii(&rejected, "u").unwrap_err().message(),
+            "invalid group name",
+        );
+
+        let lone_surrogate = [
+            u16::from(b'('),
+            u16::from(b'?'),
+            u16::from(b'<'),
+            0xd800,
+            u16::from(b'>'),
+            u16::from(b'a'),
+            u16::from(b')'),
+        ];
+        assert_eq!(
+            compile_units(&lone_surrogate, &[u16::from(b'u')])
+                .unwrap_err()
+                .message(),
+            "invalid group name",
+        );
+    }
+
+    #[test]
+    fn named_backreferences_cover_forward_self_reverse_and_annex_b_paths() {
+        for pattern in [r"\k<a>(?<a>x)", r"(?<a>\k<a>x)"] {
+            let compiled = compile_ascii(pattern, "u").unwrap();
+            assert!(compiled.instructions().iter().any(|instruction| {
+                matches!(instruction, Instruction::BackReference { captures, .. }
+                    if captures.as_ref() == [1])
+            }));
+        }
+
+        let reverse = compile_ascii(r"(?<=(?<a>x)\k<a>)y", "u").unwrap();
+        assert!(reverse.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::BackwardBackReference { captures, .. }
+                if captures.as_ref() == [1])
+        }));
+
+        for pattern in [r"\k<x>(?<x>a)|(?<x>b)", r"(?<x>a)|(?<x>b)\k<x>"] {
+            let compiled = compile_ascii(pattern, "u").unwrap();
+            assert!(compiled.instructions().iter().any(|instruction| {
+                matches!(instruction, Instruction::BackReference { captures, .. }
+                    if captures.as_ref() == [1, 2])
+            }));
+        }
+
+        let annex_b = compile_ascii(r"\k<x>", "").unwrap();
+        assert!(!annex_b.has_named_captures());
+        let characters = annex_b
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Char { value, .. } => Some(*value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            characters,
+            b"k<x>".iter().copied().map(u32::from).collect::<Vec<_>>()
+        );
+        assert!(compile_ascii(r"\k<->", "").is_ok());
+        assert!(compile_ascii(r"[\k]", "").is_ok());
+        assert_eq!(
+            compile_ascii(r"[\k]", "u").unwrap_err().message(),
+            "invalid identity escape",
+        );
+        assert_eq!(
+            compile_ascii(r"\k", "u").unwrap_err().message(),
+            "expecting group name",
+        );
+        assert_eq!(
+            compile_ascii(r"\k<y>(?<x>a)", "").unwrap_err().message(),
+            "group name not defined",
+        );
+        assert_eq!(
+            compile_ascii(r"\k<->(?<x>a)", "").unwrap_err().message(),
+            "invalid group name",
+        );
+    }
+
+    #[test]
+    fn forward_named_reference_scan_preserves_quickjs_cursor_quirk() {
+        assert_eq!(
+            compile_ascii(r"\k<y>(?<x>(?<y>a))", "u")
+                .unwrap_err()
+                .message(),
+            "group name not defined",
+        );
+        for pattern in [r"\k<y>((?<y>a))", r"\k<y>(?<x>a(?<y>b))"] {
+            assert!(compile_ascii(pattern, "u").is_ok(), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn duplicate_group_names_use_quickjs_wrapping_alternative_scope() {
+        for pattern in [r"(?<x>a)(?<x>b)", r"(?<x>a)(?<\u0078>b)"] {
+            assert_eq!(
+                compile_ascii(pattern, "u").unwrap_err().message(),
+                "duplicate group name",
+                "{pattern}",
+            );
+        }
+
+        for pattern in [r"(?<x>a)|(?<x>b)", r"(?<x>a)(?:b|c)(?<x>d)"] {
+            let compiled = compile_ascii(pattern, "u").unwrap();
+            assert_eq!(
+                compiled
+                    .group_names()
+                    .unwrap()
+                    .iter()
+                    .filter(|name| name
+                        .as_ref()
+                        .is_some_and(|name| name.to_utf8_lossy() == "x"))
+                    .count(),
+                2,
+                "{pattern}",
+            );
+        }
+
+        for (bars, accepted) in [(255, true), (256, false), (257, true)] {
+            let pattern = format!("(?<x>a){}(?<x>b)", "|".repeat(bars));
+            let result = compile_ascii(&pattern, "u");
+            assert_eq!(result.is_ok(), accepted, "{bars} alternatives");
+            if !accepted {
+                assert_eq!(result.unwrap_err().message(), "duplicate group name");
+            }
+        }
+    }
+
+    #[test]
+    fn forward_lookahead_compiles_to_paired_assertion_instructions() {
+        let positive = compile_ascii(r"(?=(a|b))\1", "u").unwrap();
+        assert_eq!(positive.capture_count(), 2);
+        let start = positive
+            .instructions()
+            .iter()
+            .position(|instruction| {
+                matches!(
+                    instruction,
+                    Instruction::LookAhead {
+                        negative: false,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let end = positive
+            .instructions()
+            .iter()
+            .position(|instruction| {
+                matches!(instruction, Instruction::LookAheadEnd { negative: false })
+            })
+            .unwrap();
+        assert!(matches!(
+            positive.instructions()[start],
+            Instruction::LookAhead {
+                negative: false,
+                target
+            } if target == end + 1
+        ));
+        assert!(
+            positive.instructions()[start + 1..end]
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::Split { .. }))
+        );
+        assert!(
+            positive.instructions()[end + 1..]
+                .iter()
+                .any(|instruction| {
+                    matches!(
+                        instruction,
+                        Instruction::BackReference { captures, .. } if captures.as_ref() == [1]
+                    )
+                })
+        );
+
+        let negative = compile_ascii(r"(?!a)b", "u").unwrap();
+        assert!(negative.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::LookAhead { negative: true, .. })
+        }));
+        assert!(negative.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::LookAheadEnd { negative: true })
+        }));
+    }
+
+    #[test]
+    fn lookbehind_compiles_quickjs_reverse_instructions() {
+        let positive = compile_ascii(r"(?<=(a)b)\1", "u").unwrap();
+        assert_eq!(positive.capture_count(), 2);
+        let start = positive
+            .instructions()
+            .iter()
+            .position(|instruction| {
+                matches!(
+                    instruction,
+                    Instruction::LookAhead {
+                        negative: false,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let end = positive
+            .instructions()
+            .iter()
+            .position(|instruction| {
+                matches!(instruction, Instruction::LookAheadEnd { negative: false })
+            })
+            .unwrap();
+        assert!(matches!(
+            positive.instructions()[start],
+            Instruction::LookAhead {
+                negative: false,
+                target
+            } if target == end + 1
+        ));
+        assert_eq!(
+            &positive.instructions()[start + 1..end],
+            &[
+                Instruction::Prev,
+                Instruction::Char {
+                    value: u32::from(b'b'),
+                    ignore_case: false,
+                },
+                Instruction::Prev,
+                Instruction::SaveEnd { capture: 1 },
+                Instruction::Prev,
+                Instruction::Char {
+                    value: u32::from(b'a'),
+                    ignore_case: false,
+                },
+                Instruction::Prev,
+                Instruction::SaveStart { capture: 1 },
+            ],
+        );
+        assert!(
+            positive.instructions()[end + 1..]
+                .iter()
+                .any(|instruction| matches!(
+                    instruction,
+                    Instruction::BackReference { captures, .. } if captures.as_ref() == [1]
+                ))
+        );
+
+        let backward_reference = compile_ascii(r"(?<=(a)\1)b", "u").unwrap();
+        assert!(
+            backward_reference
+                .instructions()
+                .iter()
+                .any(|instruction| matches!(
+                    instruction,
+                    Instruction::BackwardBackReference { captures, .. }
+                        if captures.as_ref() == [1]
+                ))
+        );
+
+        let negative = compile_ascii(r"(?<!a)b", "u").unwrap();
+        assert!(negative.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::LookAhead { negative: true, .. })
+        }));
+        assert!(negative.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::LookAheadEnd { negative: true })
+        }));
+    }
+
+    #[test]
+    fn lookbehind_is_never_quantifiable() {
+        for flags in ["", "u"] {
+            for pattern in [r"(?<=a)*", r"(?<!a)+", r"(?<=a)?"] {
+                let error = compile_ascii(pattern, flags).unwrap_err();
+                assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}/{flags}");
+                assert_eq!(
+                    error.message(),
+                    "invalid quantifier target",
+                    "{pattern}/{flags}"
+                );
+            }
+        }
+
+        for pattern in [r"(?<=a){1}", r"(?<!a){0,2}"] {
+            let legacy = compile_ascii(pattern, "").unwrap_err();
+            assert_eq!(legacy.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(legacy.message(), "nothing to repeat", "{pattern}");
+
+            let unicode = compile_ascii(pattern, "u").unwrap_err();
+            assert_eq!(unicode.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(
+                unicode.message(),
+                "regular expression syntax error",
+                "{pattern}"
+            );
+        }
+    }
+
+    #[test]
+    fn annex_b_alone_allows_quantified_forward_lookahead() {
+        for pattern in [
+            r"(?=a)*",
+            r"(?=a)+",
+            r"(?=a)?",
+            r"(?=a){0}",
+            r"(?=a){1,2}",
+            r"(?!a)*?",
+        ] {
+            assert!(compile_ascii(pattern, "").is_ok(), "{pattern}");
+        }
+
+        for pattern in [r"(?=a)*", r"(?=a)+", r"(?=a)?", r"(?!a)*?"] {
+            let error = compile_ascii(pattern, "u").unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(error.message(), "invalid quantifier target", "{pattern}");
+        }
+        for pattern in [r"(?=a){0}", r"(?=a){1,2}", r"(?!a){2}?"] {
+            let error = compile_ascii(pattern, "u").unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(
+                error.message(),
+                "regular expression syntax error",
+                "{pattern}"
+            );
+        }
+    }
+
+    #[test]
+    fn decimal_backreferences_use_the_complete_number_and_total_capture_count() {
+        for pattern in [r"\1", r"\2", r"(a)\2", r"(?:a)\1", r"\10"] {
+            let error = compile_ascii(pattern, "u").unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(
+                error.message(),
+                "back reference out of range in regular expression",
+                "{pattern}",
+            );
+        }
+        for pattern in [r"[\1]", r"[\2]"] {
+            let error = compile_ascii(pattern, "u").unwrap_err();
+            assert_eq!(error.kind(), &CompileErrorKind::Syntax, "{pattern}");
+            assert_eq!(error.message(), "invalid identity escape", "{pattern}");
+        }
+
+        for (pattern, captures) in [
+            (r"(a)\1", &[1_u8][..]),
+            (r"\1(a)", &[1]),
+            (r"\2(a)(b)", &[2]),
+        ] {
+            let compiled = compile_ascii(pattern, "u").unwrap();
+            assert!(compiled.instructions().iter().any(|instruction| {
+                matches!(instruction, Instruction::BackReference { captures: found, .. }
+                    if found.as_ref() == captures)
+            }));
+        }
+
+        let named = compile_ascii(r"\1(?<x>a)", "u").unwrap();
+        assert_eq!(named.capture_count(), 2);
+        assert_eq!(
+            named.group_names().unwrap()[0]
+                .as_ref()
+                .unwrap()
+                .to_utf8_lossy(),
+            "x",
+        );
+        assert!(compile_ascii(r"[](a)\1", "u").is_ok());
+
+        let ten_captures = format!("{}\\10", "(a)".repeat(10));
+        let compiled = compile_ascii(&ten_captures, "u").unwrap();
+        assert!(compiled.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::BackReference { captures, .. }
+                if captures.as_ref() == [10])
+        }));
+        assert!(!compiled.instructions().iter().any(|instruction| {
+            matches!(instruction, Instruction::Char { value, .. } if *value == u32::from(b'0'))
+        }));
+
+        let scoped = compile_ascii(r"(a)(?i:\1)(?-i:\1)", "").unwrap();
+        let ignore_case = scoped
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::BackReference { ignore_case, .. } => Some(*ignore_case),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ignore_case, vec![true, false]);
+
+        let nullable = compile_ascii(r"(a)?\1*", "").unwrap();
+        assert!(
+            nullable
+                .instructions()
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::CheckAdvance { .. }))
+        );
+
+        let capture_limit = format!(r"\255{}", "(a)".repeat(255));
+        let error = compile_ascii(&capture_limit, "u").unwrap_err();
+        assert_eq!(error.kind(), &CompileErrorKind::Syntax);
+        assert_eq!(
+            error.message(),
+            "back reference out of range in regular expression",
+        );
+
+        let too_many_capture_priority = format!("{}((?=a))", "(a)".repeat(254));
+        let error = compile_ascii(&too_many_capture_priority, "u").unwrap_err();
+        assert_eq!(error.kind(), &CompileErrorKind::TooManyCaptures);
+        assert_eq!(error.message(), "too many captures");
+    }
+
+    #[test]
+    fn annex_b_decimal_fallback_matches_quickjs_legacy_escape_width() {
+        let compiled = compile_ascii(r"\1\7\8\9\10\18\377\400\1234\08", "").unwrap();
+        let characters = compiled
+            .instructions()
+            .iter()
+            .filter_map(|instruction| match instruction {
+                Instruction::Char { value, .. } => Some(*value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            characters,
+            vec![
+                0x01,
+                0x07,
+                u32::from(b'8'),
+                u32::from(b'9'),
+                0x08,
+                0x01,
+                u32::from(b'8'),
+                0xff,
+                0x20,
+                u32::from(b'0'),
+                u32::from(b'S'),
+                u32::from(b'4'),
+                0x00,
+                u32::from(b'8'),
+            ],
+        );
+
+        for (pattern, value) in [(r"[\1]", 0x01), (r"[\07]", 0x07), (r"[\377]", 0xff)] {
+            let compiled = compile_ascii(pattern, "").unwrap();
+            assert!(compiled.instructions().iter().any(|instruction| {
+                matches!(instruction, Instruction::Range { ranges, .. }
+                    if ranges.as_ref() == [CharacterRange::new(value, value)])
+            }));
+        }
+    }
+
+    #[test]
+    fn nesting_is_bounded_and_sequential_quantifiers_reuse_registers() {
+        let depth = MAX_GROUP_NESTING + 1;
+        let pattern = format!("{}a{}", "(?:".repeat(depth), ")".repeat(depth));
+        let error = compile_ascii(&pattern, "").unwrap_err();
+        assert_eq!(error.kind(), &CompileErrorKind::Syntax);
+        assert_eq!(error.message(), "stack overflow");
+
+        let lookahead = format!("{}a{}", "(?=".repeat(depth), ")".repeat(depth));
+        let error = compile_ascii(&lookahead, "").unwrap_err();
+        assert_eq!(error.kind(), &CompileErrorKind::Syntax);
+        assert_eq!(error.message(), "stack overflow");
+
+        let sequential = "a{2}".repeat(300);
+        let compiled = compile_ascii(&sequential, "").unwrap();
+        assert_eq!(compiled.register_count(), 1);
+
+        let nested = compile_ascii("(?:(?:a{2}){2}){2}", "").unwrap();
+        assert_eq!(nested.register_count(), 3);
+    }
+}

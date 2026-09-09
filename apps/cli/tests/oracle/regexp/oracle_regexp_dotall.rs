@@ -2,12 +2,9 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
-
 use crate::runtime_observation::take_exception_object;
-use crate::runtime_oracle::eval_callable;
-use crate::runtime_oracle::eval_object;
-
-use quickjs_oxide::{Runtime, RuntimeError, Value};
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 RegExp dotAll semantics.
 // QuickJS carries `s` through `LRE_FLAG_DOTALL`: `libregexp.c` selects
@@ -224,7 +221,8 @@ fn regexp_dotall_species_flags_match_pinned_quickjs() {
 
 #[test]
 fn regexp_dotall_getter_cross_realm_brand_and_errors_use_exact_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 

@@ -35,7 +35,7 @@ fi
 
 rust_host_pattern='js_sys::(eval|Function)|Function::new'
 browser_host_pattern='(^|[^.$[:alnum:]_])eval[[:space:]]*[(]|(globalThis|window|self)[.]eval[[:space:]]*[(]|new[[:space:]]+Function[[:space:]]*[(]|(^|[^.$[:alnum:]_])Function[[:space:]]*[(]'
-if rg -n "${rust_host_pattern}" apps/web \
+if rg -n "${rust_host_pattern}" apps/web adapters/web \
   || rg -n --glob '!pkg/**' "${browser_host_pattern}" apps/web/site; then
   echo "playground source must not delegate evaluation to the browser host" >&2
   exit 1

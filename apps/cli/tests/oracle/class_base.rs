@@ -1,9 +1,7 @@
+use crate::common::compile_syntax_error;
+use quickjs_oxide::engine::api::{Runtime, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Runtime, Value};
-
-use crate::common::compile_syntax_error;
 
 // Pins the base-class portion of QuickJS 2026-06-04 `js_parse_class` and
 // `OP_define_class`. Heritage is covered by the derived-class oracle and gate;
@@ -199,7 +197,8 @@ fn base_class_observation_matches_pinned_quickjs() {
 #[test]
 fn public_async_generator_class_method_smoke_is_admitted() {
     let source = "class C { async *method() {} }";
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     context
         .compile(source)
@@ -232,7 +231,8 @@ fn base_class_early_errors_are_rejected_during_compilation() {
 
 #[test]
 fn class_expression_restores_outer_lexing_and_asi_trivia() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let Value::String(name) = context
         .eval("var AsiClass = class AsiClass {}\nAsiClass.name")
@@ -244,7 +244,8 @@ fn class_expression_restores_outer_lexing_and_asi_trivia() {
 }
 
 fn rust_observation() -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let diagnostic_probe = [
         "try { ",

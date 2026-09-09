@@ -1,4 +1,4 @@
-use quickjs_oxide::{CallableRef, Context, ObjectRef, Runtime, Value};
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value};
 
 /// Classify a value for completion-vector output while retaining the explicit
 /// callable-inspection assertion used by the older oracle helpers.
@@ -46,7 +46,7 @@ pub(crate) fn primitive_value_text(value: Value) -> String {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
         Value::Int(value) => value.to_string(),
-        Value::Float(value) => quickjs_oxide::value::number_to_string(value),
+        Value::Float(value) => quickjs_oxide::engine::api::number_to_string(value),
         Value::BigInt(value) => value.to_string(),
         Value::String(value) => value.to_utf8_lossy(),
         Value::Object(_) => "<object>".to_owned(),

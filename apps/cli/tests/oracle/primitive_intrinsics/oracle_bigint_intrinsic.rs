@@ -1,12 +1,11 @@
 use crate::runtime_observation::property_callable;
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
     Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 // The pinned probe deliberately uses Object/Reflect/Symbol to inspect QuickJS.
 // quickjs-oxide does not publish those source globals yet, so the Rust side
@@ -320,7 +319,8 @@ fn bigint_intrinsic_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
@@ -1120,7 +1120,8 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_global = first.global_object().unwrap();
@@ -1315,7 +1316,8 @@ fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_re
 
 #[test]
 fn bigint_wrapper_keeps_its_realm_graph_alive_until_collection() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
         let mut context = runtime.new_context();
         let object_prototype = context.object_prototype().unwrap();

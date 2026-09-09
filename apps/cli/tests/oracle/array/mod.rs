@@ -4,16 +4,14 @@
 use crate::quickjs_oracle;
 
 mod support {
-    use std::ffi::OsStr;
-
     pub(super) use crate::runtime_observation::{
         error_string_property, primitive_value_text,
         property_callable_with_read_context as property_callable, take_exception_object,
     };
-
-    use quickjs_oxide::{
+    use quickjs_oxide::engine::api::{
         CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, Runtime, RuntimeError, Value,
     };
+    use std::ffi::OsStr;
 
     pub(super) fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
         let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
@@ -22,7 +20,8 @@ mod support {
         };
         for &(description, source) in cases {
             let expected = observe_oracle(&oracle, source, description);
-            let runtime = Runtime::new();
+            let runtime =
+                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
             let mut context = runtime.new_context();
             assert_eq!(
                 observe_rust_eval(&runtime, &mut context, source, description),

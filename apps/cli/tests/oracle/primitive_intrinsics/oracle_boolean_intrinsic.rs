@@ -1,12 +1,11 @@
 use crate::runtime_observation::property_callable;
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
     Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 // Deliberate current-slice boundary: the oracle can use Object/Reflect and
 // literals to describe the result compactly, while the Rust side constructs
@@ -201,7 +200,8 @@ fn boolean_intrinsic_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();

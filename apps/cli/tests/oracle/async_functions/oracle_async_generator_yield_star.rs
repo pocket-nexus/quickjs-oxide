@@ -8,7 +8,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 struct SuccessCase {
     description: &'static str,
@@ -900,7 +900,8 @@ fn async_generator_yield_star_semantics_match_pinned_quickjs() {
 
 #[test]
 fn suspended_delegation_retains_async_and_sync_iterators_across_gc() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     eval(
         &mut context,

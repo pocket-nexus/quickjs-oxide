@@ -1,5 +1,4 @@
-use quickjs_oxide::heap::{NativeCProto, NativeFunctionId};
-use quickjs_oxide::{Context, PendingJobOutcome, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, PendingJobOutcome, Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../fixtures/inputs/create_realm_host.js");
 const QUICKJS_2026_06_04: &str =
@@ -25,21 +24,9 @@ fn text(value: Value) -> String {
 }
 
 #[test]
-fn test262_realm_helpers_are_defining_realm_generic_functions() {
-    for target in [
-        NativeFunctionId::Test262EvalScript,
-        NativeFunctionId::Test262CreateRealm,
-        NativeFunctionId::Test262IsHtmlDda,
-    ] {
-        assert_eq!(target.descriptor().cproto, NativeCProto::Generic);
-        assert!(!target.descriptor().cproto.default_is_constructor());
-        assert!(!target.uses_calling_realm());
-    }
-}
-
-#[test]
 fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let installed = context
         .install_test262_host()
@@ -56,7 +43,7 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
         "evalScript must not drain a child realm's Promise jobs"
     );
     let first = runtime
-        .execute_pending_job_with_context()
+        .execute_pending_job()
         .expect("execute child realm Promise job");
     let PendingJobOutcome::Executed {
         context: Some(job_realm),
@@ -73,7 +60,7 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
             "child realm Promise jobs did not settle within 64 executions"
         );
         runtime
-            .execute_pending_job_with_context()
+            .execute_pending_job()
             .expect("drain remaining child realm Promise jobs");
     }
     assert_eq!(
@@ -84,7 +71,8 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
 
 #[test]
 fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let parent_262 = context
         .install_test262_host()
@@ -128,7 +116,7 @@ fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
                 &eval_script,
                 Value::Undefined,
                 &[Value::String(
-                    quickjs_oxide::JsString::try_from_utf8("40 + 2")
+                    quickjs_oxide::engine::api::JsString::try_from_utf8("40 + 2")
                         .expect("build evalScript source"),
                 )],
             )

@@ -4,13 +4,13 @@ use crate::object_graph_observation::{
 };
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
+
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
 use crate::runtime_oracle::value_type;
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{JsString, Runtime, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_assign` and `JS_CopyDataProperties`.
 // Ordinary sources use QuickJS's enumerable-at-snapshot optimization; Proxy
@@ -422,7 +422,8 @@ fn object_assign_autoinit_can_be_deleted_before_materialization() {
     };
     let expected = oracle_lines(&oracle, FRESH_DELETE_ORACLE, "Object.assign fresh delete");
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let object = global_callable(&runtime, &mut context, "Object");
     let key = runtime.intern_property_key("assign").unwrap();
@@ -449,7 +450,8 @@ fn object_assign_autoinit_can_be_deleted_before_materialization() {
 
 #[test]
 fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_object = global_callable(&runtime, &mut defining, "Object");
@@ -577,7 +579,8 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
 
 #[test]
 fn object_assign_method_and_boxed_result_retain_then_release_their_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (assign, boxed) = {
         let mut first = runtime.new_context();
         let mut second = runtime.new_context();
@@ -623,7 +626,8 @@ fn object_assign_method_and_boxed_result_retain_then_release_their_realm() {
 
 #[test]
 fn object_assign_exotic_source_families_are_published() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         context
@@ -635,7 +639,8 @@ fn object_assign_exotic_source_families_are_published() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");

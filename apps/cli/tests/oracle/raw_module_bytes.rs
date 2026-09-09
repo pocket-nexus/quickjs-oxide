@@ -1,7 +1,7 @@
 use crate::quickjs_raw_source_oracle::{
     RawModuleObservation, normalized_module_filename, observe_raw_module,
 };
-use quickjs_oxide::{CompileOptions, Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{CompileOptions, Context, Runtime, RuntimeError, Value};
 
 #[derive(Clone, Copy, Debug)]
 enum Api {
@@ -298,7 +298,8 @@ fn source_for(case: &Case) -> Vec<u8> {
 }
 
 fn oxide_observation(case: &Case, source: &[u8]) -> RawModuleObservation {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let compilation = match case.api {
         Api::Compile => context.compile_module_bytes(source),

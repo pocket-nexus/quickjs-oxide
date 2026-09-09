@@ -1,7 +1,6 @@
+use quickjs_oxide::engine::api::{Runtime, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Runtime, Value};
 
 // Pins the derived-class portion of QuickJS 2026-06-04 `js_parse_class`,
 // `OP_define_class`, `OP_init_ctor`, and the derived-constructor return
@@ -205,7 +204,8 @@ fn derived_class_observation_matches_pinned_quickjs() {
 }
 
 fn rust_observation() -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let diagnostic_probe = [
         "try { ",

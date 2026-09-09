@@ -1,4 +1,4 @@
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3n_promise_static.js");
 const EXPECTED: &str =
@@ -18,13 +18,14 @@ fn eval(context: &mut Context, source: &str) -> Value {
 
 #[test]
 fn promise_try_with_resolvers_and_race_match_pinned_quickjs() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
     eval(&mut context, FIXTURE);
     runtime.run_gc().unwrap();
     while runtime.is_job_pending() {
-        assert!(runtime.execute_pending_job().unwrap());
+        assert!(runtime.execute_pending_job().unwrap().executed());
         runtime.run_gc().unwrap();
     }
 

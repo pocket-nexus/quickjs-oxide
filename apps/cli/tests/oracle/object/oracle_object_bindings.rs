@@ -1,6 +1,5 @@
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-
-use quickjs_oxide::Runtime;
+use quickjs_oxide::engine::api::Runtime;
 
 // This target pins the object-binding declaration path shared by direct
 // declarations, classic for heads, and for-in/of heads in QuickJS 2026-06-04.
@@ -419,7 +418,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
         return;
     };
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),

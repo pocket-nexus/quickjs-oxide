@@ -93,6 +93,7 @@ jobs:
           ./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --check
           ./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --runner-provenance
           node scripts/test262/current-test262-metrics.mjs --check-docs
+          python3 scripts/checks/check-source-layout.py
           ./scripts/checks/check-rust-only.sh
 
       - name: Run fast engine tests
@@ -433,7 +434,7 @@ jobs:
             "--root", root,
             "--worktree",
             "--files", required(spec, "engine_semantics_files"),
-            "--trees", "apps,crates,tools/test262",
+            "--trees", "adapters,apps,conformance,examples,src,tests",
           ], {
             encoding: "utf8",
             stdio: ["ignore", "pipe", "inherit"],

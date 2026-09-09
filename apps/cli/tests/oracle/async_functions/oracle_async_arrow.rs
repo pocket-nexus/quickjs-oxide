@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 fn eval(context: &mut Context, source: &str) -> Value {
     context.eval(source).unwrap_or_else(|error| {
@@ -32,7 +32,7 @@ fn integer(value: Value) -> i32 {
 fn drain(runtime: &Runtime) -> usize {
     let mut count = 0;
     while runtime.is_job_pending() {
-        assert!(runtime.execute_pending_job().unwrap());
+        assert!(runtime.execute_pending_job().unwrap().executed());
         count += 1;
     }
     count
@@ -40,7 +40,8 @@ fn drain(runtime: &Runtime) -> usize {
 
 #[test]
 fn async_arrow_shape_source_and_await_match_pinned_quickjs() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         text(eval(
@@ -96,7 +97,8 @@ try {
 
 #[test]
 fn async_arrow_keeps_lexical_this_arguments_and_new_target_across_await() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     eval(
         &mut context,
@@ -132,7 +134,8 @@ new Outer(1).then(function (value) {
 
 #[test]
 fn async_arrow_keeps_lexical_super_and_receiver_across_await() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     eval(
         &mut context,
@@ -166,7 +169,8 @@ new Derived().read().then(function (value) {
 
 #[test]
 fn async_arrow_parameter_abrupt_becomes_a_rejected_promise() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         text(eval(

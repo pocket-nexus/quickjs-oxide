@@ -2,10 +2,9 @@ use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
+use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-use quickjs_oxide::{Context, ObjectRef, Runtime, RuntimeError, Value};
 
 // These vectors freeze the complete Uint8Array base64/hex codec surface in
 // QuickJS 2026-06-04. In particular, they preserve the upstream decoder's
@@ -564,7 +563,8 @@ fn uint8array_codecs_match_pinned_quickjs() {
 
 #[test]
 fn uint8array_codec_results_and_errors_use_the_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
@@ -705,7 +705,8 @@ fn observed_source(source: &str) -> String {
 }
 
 fn oxide_observation(case: &Case) -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     match context.eval(&observed_source(case.source)) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),

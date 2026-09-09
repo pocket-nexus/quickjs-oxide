@@ -1,11 +1,10 @@
-use std::ffi::OsStr;
-use std::process::Command;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
     SymbolRef, Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
+use std::process::Command;
 
 // The pinned probe uses Object and Reflect to inspect QuickJS. quickjs-oxide
 // intentionally exposes the same graph through its public host API while the
@@ -327,7 +326,8 @@ fn symbol_intrinsic_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
@@ -1210,7 +1210,8 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
     let first_global = first.global_object().unwrap();
@@ -1486,7 +1487,8 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
 
 #[test]
 fn symbol_primitives_do_not_retain_realms_but_wrappers_do_and_atoms_survive() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let primitive = {
         let mut context = runtime.new_context();
         let global = context.global_object().unwrap();

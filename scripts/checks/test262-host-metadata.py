@@ -11,18 +11,34 @@ metadata = json.loads(Path(sys.argv[1]).read_text())
 packages = {package["name"]: package for package in metadata["packages"]}
 
 expected_packages = {
-    "quickjs-oxide-core", "quickjs-oxide-compiler", "quickjs-oxide-engine",
-    "quickjs-oxide-host", "quickjs-oxide", "quickjs-oxide-cli",
+    "quickjs-oxide", "quickjs-oxide-web-host",
+    "quickjs-oxide-host", "quickjs-oxide-cli",
     "quickjs-oxide-web", "quickjs-oxide-test262",
 }
 if set(packages) != expected_packages:
     fail("workspace package set drifted from the reviewed engine/app split")
-engine = packages["quickjs-oxide-engine"]
-facade = packages["quickjs-oxide"]
-if engine["features"].get("default") != [] or facade["features"].get("default") != []:
+# Candidate A: providers depend on the complete engine, never the reverse.
+expected_dependencies = {
+    "quickjs-oxide": set(),
+    "quickjs-oxide-host": {"quickjs-oxide"},
+    "quickjs-oxide-web-host": {"quickjs-oxide"},
+    "quickjs-oxide-cli": {"quickjs-oxide", "quickjs-oxide-host"},
+    "quickjs-oxide-web": {"quickjs-oxide", "quickjs-oxide-web-host"},
+    "quickjs-oxide-test262": {"quickjs-oxide", "quickjs-oxide-host"},
+}
+for name, expected in expected_dependencies.items():
+    actual = {
+        dependency["name"] for dependency in packages[name]["dependencies"]
+        if dependency.get("kind") != "dev" and dependency.get("path") is not None
+    }
+    if actual != expected:
+        fail(f"{name} production dependencies violate candidate A: {sorted(actual)}")
+
+engine = packages["quickjs-oxide"]
+if engine["features"].get("default") != []:
     fail("engine and embedding defaults must exclude Test262")
-if engine["features"].get("test262-host") != ["quickjs-oxide-core/test262-host"]:
-    fail("engine Test262 feature must forward to its shared string support")
+if engine["features"].get("test262-host") != []:
+    fail("engine Test262 feature must be an opt-in internal capability")
 runner_package = packages["quickjs-oxide-test262"]
 runner = [target for target in runner_package["targets"] if target["name"] == "run-test262"]
 if len(runner) != 1:
@@ -77,85 +93,18 @@ def require_gated(path: str, declarations: tuple[str, ...]) -> None:
             fail(f"{path} must gate {declaration.strip()} with test262-host")
 
 
-require_gated(
-    "apps/cli/tests/oracle/main.rs",
-    (
-        "mod test262_create_realm;",
-        "mod test262_host_gc;",
-        "mod test262_is_html_dda;",
-    ),
-)
-require_gated(
-    "crates/engine/src/runtime.rs",
-    (
-        "mod test262_agent;",
-        "mod test262_host;",
-        "pub use self::test262_agent::{Test262AgentError, Test262AgentSession};",
-        "use crate::heap::Test262AgentKind;",
-        "    fn call_test262_gc(&self, invocation: NativeInvocation) -> Result<Completion, RuntimeError> {",
-        "    fn set_object_is_html_dda(&self, object: &ObjectRef) -> Result<(), RuntimeError> {",
-    ),
-)
-require_gated(
-    "crates/engine/src/runtime/context/test262.rs",
-    (
-        "    pub fn new_code_point_range_function(&mut self) -> Result<CallableRef, RuntimeError> {",
-        "    pub fn new_test262_gc_function(&mut self) -> Result<CallableRef, RuntimeError> {",
-    ),
-)
-require_gated(
-    "crates/engine/src/lib.rs",
-    ("pub use runtime::{Test262AgentError, Test262AgentSession};",),
-)
-require_gated(
-    "crates/engine/src/heap/native.rs",
-    (
-        "pub enum Test262AgentKind {",
-        "    StringCodePointRange,",
-        "    Test262DetachArrayBuffer,",
-        "    Test262EvalScript,",
-        "    Test262CreateRealm,",
-        "    Test262IsHtmlDda,",
-        "    Test262Gc,",
-        "    Test262Agent(Test262AgentKind),",
-    ),
-)
-require_gated(
-    "crates/engine/src/heap.rs",
-    (
-        "pub use native::Test262AgentKind;",
-        "    pub(crate) fn set_object_is_html_dda(&mut self, id: ObjectId) -> Result<(), HeapError> {",
-    ),
-)
-require_gated(
-    "crates/engine/src/runtime/native_dispatch.rs",
-    (
-        "            NativeFunctionId::StringCodePointRange => {",
-        "            NativeFunctionId::Test262DetachArrayBuffer => {",
-        "            NativeFunctionId::Test262EvalScript => {",
-        "            NativeFunctionId::Test262CreateRealm => self.call_test262_create_realm(invocation),",
-        "            NativeFunctionId::Test262IsHtmlDda => self.call_test262_is_html_dda(invocation),",
-        "            NativeFunctionId::Test262Gc => self.call_test262_gc(invocation),",
-        "            NativeFunctionId::Test262Agent(kind) => {",
-    ),
-)
-require_gated(
-    "crates/engine/src/runtime/intrinsics/array_buffer.rs",
-    (
-        "    pub(in crate::runtime) fn call_test262_detach_array_buffer(",
-        "    pub fn new_detach_array_buffer_function(&mut self) -> Result<CallableRef, RuntimeError> {",
-    ),
-)
-require_gated(
-    "crates/engine/src/runtime/intrinsics/string.rs",
-    ("    pub(in crate::runtime) fn call_string_code_point_range(",),
-)
-require_gated(
-    "crates/core/src/value.rs",
-    (
-        "    pub fn try_with_exact_capacity(capacity: usize) -> Result<Self, JsStringError> {",
-    ),
-)
+require_gated('apps/cli/tests/oracle/main.rs', ('mod test262_create_realm;', 'mod test262_host_gc;', 'mod test262_is_html_dda;'))
+require_gated('src/engine/api/mod.rs', ('pub(crate) mod test262_agent;', 'pub(crate) mod test262_host;'))
+require_gated('src/engine/heap/runtime_gc.rs', ('    pub(crate) fn call_test262_gc(',))
+require_gated('src/engine/object/storage.rs', ('    pub(crate) fn set_object_is_html_dda(&self, object: &ObjectRef) -> Result<(), RuntimeError> {',))
+require_gated('src/engine/api/context/test262.rs', ('    pub fn new_code_point_range_function(&mut self) -> Result<CallableRef, RuntimeError> {', '    pub fn new_test262_gc_function(&mut self) -> Result<CallableRef, RuntimeError> {'))
+require_gated('src/engine/api/mod.rs', ('pub use crate::engine::api::test262_agent::{Test262AgentError, Test262AgentSession};',))
+require_gated('src/engine/builtins/native.rs', ('pub enum Test262AgentKind {', '    StringCodePointRange,', '    Test262DetachArrayBuffer,', '    Test262EvalScript,', '    Test262CreateRealm,', '    Test262IsHtmlDda,', '    Test262Gc,', '    Test262Agent(Test262AgentKind),'))
+require_gated('src/engine/heap/object_storage.rs', ('    pub(crate) fn set_object_is_html_dda(&mut self, id: ObjectId) -> Result<(), HeapError> {',))
+require_gated('src/engine/builtins/dispatch.rs', ('            NativeFunctionId::StringCodePointRange => {', '            NativeFunctionId::Test262DetachArrayBuffer => {', '            NativeFunctionId::Test262EvalScript => {', '            NativeFunctionId::Test262CreateRealm => self.call_test262_create_realm(invocation),', '            NativeFunctionId::Test262IsHtmlDda => self.call_test262_is_html_dda(invocation),', '            NativeFunctionId::Test262Gc => self.call_test262_gc(invocation),', '            NativeFunctionId::Test262Agent(kind) => {'))
+require_gated('src/engine/builtins/array_buffer.rs', ('    pub(crate) fn call_test262_detach_array_buffer(', '    pub fn new_detach_array_buffer_function(&mut self) -> Result<CallableRef, RuntimeError> {'))
+require_gated('src/engine/builtins/string.rs', ('    pub(crate) fn call_string_code_point_range(',))
+require_gated('src/engine/value/primitive.rs', ('    pub fn try_with_exact_capacity(capacity: usize) -> Result<Self, JsStringError> {',))
 
 gate = Path("scripts/test262/test-test262.sh").read_text()
 if "-p quickjs-oxide-test262 --bin run-test262" not in gate:

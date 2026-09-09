@@ -1,8 +1,10 @@
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_oracle::value_type;
-use std::ffi::OsStr;
 
-use quickjs_oxide::{CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{
+    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
+};
+use std::ffi::OsStr;
 
 // Differential lock for pinned QuickJS 2026-06-04 RegExp match indices.
 //
@@ -235,7 +237,8 @@ fn regexp_match_indices_replace_callbacks_match_pinned_quickjs() {
 
 #[test]
 fn regexp_match_indices_nested_arrays_use_the_exec_defining_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype =
@@ -320,7 +323,8 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     };
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);

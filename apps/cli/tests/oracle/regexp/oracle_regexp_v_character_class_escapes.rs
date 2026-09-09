@@ -1,8 +1,7 @@
+use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
-
-use quickjs_oxide::JsString;
-use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 
 // Differential lock for pinned QuickJS 2026-06-04 Unicode Sets parsing,
 // string/range algebra, and execution ordering.

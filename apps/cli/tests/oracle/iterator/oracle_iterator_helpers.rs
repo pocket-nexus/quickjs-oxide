@@ -1,5 +1,5 @@
 use super::quickjs_string_result_oracle::observe_string_result;
-use quickjs_oxide::{Context, Runtime, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, Value};
 
 struct Case {
     group: &'static str,
@@ -330,7 +330,8 @@ const CASES: &[Case] = &[
 fn iterator_helpers_match_pinned_expectations() {
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let actual = observe_oxide(&mut context, case);
         if actual != case.expected {
@@ -380,7 +381,8 @@ fn iterator_helpers_match_pinned_quickjs() {
     };
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let oxide = observe_oxide(&mut context, case);
         let quickjs = observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER);

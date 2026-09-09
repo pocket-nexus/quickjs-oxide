@@ -1,10 +1,9 @@
-use quickjs_oxide::{Context, ObjectRef, Runtime, RuntimeError, Value};
-
 use crate::runtime_observation::{
     checked_value_type, error_string_property, plain_value_type, primitive_value_text,
     primitive_value_text_with_rust_float, string_property, string_property_with_read_context,
 };
 use crate::runtime_oracle::{error_string_property as runtime_error_string_property, value_type};
+use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 
 #[derive(Clone, Copy)]
 enum ErrorPropertyStyle {
@@ -240,7 +239,8 @@ pub(crate) fn assert_runtime_completion_helper_contracts() {
         "-0"
     );
 
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let callable = context.eval("(function(){})").unwrap();
     let ordinary = context.eval("({})").unwrap();
@@ -299,7 +299,8 @@ pub(crate) fn compare_eval_completion_cases(group: &str, cases: &[(&str, &str)])
         return;
     };
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         assert_eq!(
             observe_eval_completion(&runtime, &mut context, source, description),
@@ -320,7 +321,8 @@ pub(crate) fn compare_eval_completion_cases_with_prelude(
         return;
     };
     for &(description, source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let source = source_with_prelude(prelude, source);
         assert_eq!(
@@ -349,7 +351,8 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
     };
     let mut failures = Vec::new();
     for &(description, original_source) in cases {
-        let runtime = Runtime::new();
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let mut context = runtime.new_context();
         let source = source_with_prelude(prelude, original_source);
         let actual = observe_eval_completion_with(

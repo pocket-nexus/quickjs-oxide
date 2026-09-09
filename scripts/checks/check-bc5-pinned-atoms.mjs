@@ -19,7 +19,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(scriptDirectory, "../..");
 const manifestPath = resolve(
   root,
-  "crates/engine/src/runtime/binary_object/pinned_atoms.rs",
+  "src/engine/code/binary_object/pinned_atoms.rs",
 );
 const frozenManifestSha256 =
   "22fa629fc3204d3cb4d6cce5b73d3a3c813f46d5be32d64f92c348a9dfca1f20";

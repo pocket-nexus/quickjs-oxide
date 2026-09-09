@@ -1,14 +1,14 @@
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
+
 use crate::runtime_observation::{
     property_callable, string_property, take_error_object as take_exception_object,
 };
-use std::ffi::OsStr;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
+use std::ffi::OsStr;
 
 // Pins the adjacent `indexOf`/`lastIndexOf` String.prototype slice to QuickJS
 // 2026-06-04. The complete constructor table is now published, while these
@@ -295,7 +295,8 @@ fn string_index_search_auto_init_can_be_deleted_before_first_get() {
 
 #[test]
 fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_string = defining.string_prototype().unwrap();
@@ -384,7 +385,8 @@ fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
 
 #[test]
 fn string_index_search_methods_are_per_realm_and_retain_then_release_their_realm() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (index_of, last_index_of) = {
         let mut first = runtime.new_context();
         let mut second = runtime.new_context();
@@ -433,7 +435,8 @@ fn string_index_search_methods_are_per_realm_and_retain_then_release_their_realm
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let prototype = context.string_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
@@ -555,7 +558,8 @@ fn oracle_script_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<S
 }
 
 fn rust_fresh_delete_observation() -> String {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let prototype = context.string_prototype().unwrap();
     let key = runtime.intern_property_key("indexOf").unwrap();

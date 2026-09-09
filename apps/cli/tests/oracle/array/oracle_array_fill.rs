@@ -1,10 +1,9 @@
 use super::support::*;
 
-use std::ffi::OsStr;
-
-use quickjs_oxide::{
+use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, Runtime, RuntimeError, Value,
 };
+use std::ffi::OsStr;
 
 // This target pins QuickJS 2026-06-04 `Array.prototype.fill` as one complete
 // generic mutation slice. The probes emphasize QuickJS's exact conversion and
@@ -270,7 +269,8 @@ fn array_fill_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_fill_boxing_native_errors_and_user_throws_use_pinned_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -360,7 +360,8 @@ fn array_fill_boxing_native_errors_and_user_throws_use_pinned_realms() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

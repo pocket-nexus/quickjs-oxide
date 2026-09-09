@@ -1,8 +1,7 @@
 use super::support::*;
 
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-use quickjs_oxide::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04 `js_array_slice`, its magic-selected
 // mutating `splice` branch, and the adjacent dense `js_array_toSpliced` path.
@@ -527,7 +526,8 @@ print('meta='+metadata('toSpliced'));
 
 #[test]
 fn array_slice_splice_basic_rust_smoke() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         context
@@ -546,7 +546,8 @@ fn array_slice_splice_basic_rust_smoke() {
 
 #[test]
 fn array_slice_recursive_getter_stack_overflow_is_catchable_without_oracle() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     assert_eq!(
         context
@@ -632,7 +633,8 @@ fn array_slice_splice_prototype_order_metadata_and_constructability_match_pinned
 
 #[test]
 fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -798,7 +800,8 @@ fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() 
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime = Runtime::new();
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

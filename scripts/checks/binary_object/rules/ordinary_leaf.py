@@ -20,7 +20,7 @@ def check(ctx):
             f"found {translate_atom_classes}",
         )
 
-    ordinary_leaf_relative = "crates/engine/src/runtime/binary_object/ordinary_leaf.rs"
+    ordinary_leaf_relative = "src/engine/code/binary_object/ordinary_leaf.rs"
 
     ordinary_leaf_source = ctx.read_source(ordinary_leaf_relative)
 
@@ -31,7 +31,7 @@ def check(ctx):
     ordinary_leaf_production_source = ordinary_leaf_source.split("#[cfg(test)]", 1)[0]
 
     ordinary_visibility = (
-        r"pub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"pub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*\)"
     )
 
@@ -52,7 +52,7 @@ def check(ctx):
     ]
 
     expected_ordinary_visible_items = [
-        ("pub(in crate::runtime)", kind, name)
+        ("pub(in crate::engine::code)", kind, name)
         for kind, name in (
             entry.split(":", 1)
             for entry in '\n        struct:RootFunctionConstantSelector fn:from_zero_based fn:zero_based\n        struct:OrdinaryLeafMetadataDraft fn:argument_count fn:defined_argument_count\n        fn:local_count fn:max_stack fn:is_strict fn:has_simple_parameter_list\n        fn:has_prototype fn:allows_new_target fn:allows_arguments fn:strip_variable_debug\n        enum:DetachedPrimitive struct:DetachedAtomName fn:into_units\n        enum:OrdinaryLeafOp enum:OrdinaryLeafApplyKind enum:OrdinaryLeafStackOp\n        enum:OrdinaryLeafUnaryOp enum:OrdinaryLeafBinaryOp enum:OrdinaryLeafPredicateOp\n        struct:OrdinaryLeafDraft fn:metadata fn:constants fn:code fn:into_parts\n        enum:OrdinaryLeafReadError\n        fn:decode_trusted_ordinary_leaf\n        '.split()
@@ -335,14 +335,14 @@ def check(ctx):
             ),
         )
 
-    ctx.scalar_script_relative = "crates/engine/src/runtime/binary_object/scalar_script.rs"
+    ctx.scalar_script_relative = "src/engine/code/binary_object/scalar_script.rs"
 
     ctx.scalar_script_source = ctx.read_source(ctx.scalar_script_relative)
 
     ctx.scalar_script_code = ctx.rust_code_only(ctx.scalar_script_source)
 
     scalar_visibility = (
-        r"pub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+        r"pub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
         r"[ \t\n]*\)"
     )
 

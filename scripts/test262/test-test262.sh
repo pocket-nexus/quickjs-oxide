@@ -454,7 +454,7 @@ baseline_engine_semantics_sha256=$(node "$engine_fingerprint_tool" --root "$root
 workspace_engine_fingerprint() {
     node "$engine_fingerprint_tool" --root "$root" \
         --worktree --files "Cargo.lock,Cargo.toml,compat/test262-oxide.conf,compat/upstream.toml,scripts/test262/prepare-test262.sh,scripts/test262/test-test262.sh,scripts/test262/verify-report.cjs" \
-        --trees "apps,crates,tools/test262"
+        --trees "adapters,apps,conformance,examples,src,tests"
 }
 workspace_engine_semantics_sha256=$(workspace_engine_fingerprint)
 

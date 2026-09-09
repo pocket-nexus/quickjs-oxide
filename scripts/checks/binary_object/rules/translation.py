@@ -146,7 +146,7 @@ def check(ctx):
     dto_apply_kind_code, ctx._, ctx._ = ctx.unique_braced_item(
         dto_production_code,
         re.compile(
-            r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+            r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
             r"[ \t\n]*::[ \t\n]*binary_object[ \t\n]*\)[ \t\n]+enum"
             r"[ \t\n]+FunctionApplyKind[ \t\n]*\{"
         ),
@@ -161,7 +161,7 @@ def check(ctx):
             f"found {ctx.enum_variant_names(dto_apply_kind_code)}",
         )
 
-    ctx.pinned_opcode_relative = "crates/engine/src/runtime/binary_object/pinned_opcodes.rs"
+    ctx.pinned_opcode_relative = "src/engine/code/binary_object/pinned_opcodes.rs"
 
     pinned_opcode_source = ctx.read_source(ctx.pinned_opcode_relative)
 
@@ -659,7 +659,7 @@ def check(ctx):
     dto_blocker_code, ctx._, ctx._ = ctx.unique_braced_item(
         dto_production_code,
         re.compile(
-            r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*runtime"
+            r"\bpub[ \t\n]*\([ \t\n]*in[ \t\n]+crate[ \t\n]*::[ \t\n]*engine[ \t\n]*::[ \t\n]*code"
             r"[ \t\n]*::[ \t\n]*binary_object[ \t\n]*\)[ \t\n]+enum"
             r"[ \t\n]+TranslationBlocker[ \t\n]*\{"
         ),
