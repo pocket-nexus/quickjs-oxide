@@ -7,6 +7,7 @@ are off by default. This is an observability baseline, not a CPU/call-stack
 sampler or a claim of feature/performance parity with QuickJS.
 
 Measured remote results and validation evidence: [PocketLab baseline](reports/profiler-baseline.md).
+CPU sampling and targeted counters: [CPU hotspot investigation](reports/cpu-hotspots.md).
 
 ## Build and run
 
