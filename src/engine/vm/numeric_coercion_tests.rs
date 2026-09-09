@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::heap::Runtime;
+use crate::engine::api::Runtime;
 
 #[test]
 fn primitive_preparation_bypasses_host_and_preserves_representation() {
