@@ -10,16 +10,17 @@
 - S09：模块表专用索引和共享只读绑定槽已实现；1912 项库测试及 19 项模块 CLI/oracle 测试通过，48 个正式样本通过。整程序仍有超线性成本，见[模块测量报告](reports/module-indexes.md)。
 - S10：作用域名称索引已实现，保留最后声明优先及晚插入函数名顺序；1913 项库测试及完整 CLI 测试（943 通过、1 ignored，包含固定 oracle）通过。72 个正式样本通过输出校验；大作用域改善，大模块单步退化约 18%，尚未性能验收，见[作用域报告](reports/compiler-scope-index.md)。新 focused/full 验证待完成。
 - S11：字符串常量索引已实现；1914 项库测试及完整 CLI/oracle 回归通过，72 个正式样本通过。大常量案例约 3 倍改善，见[常量报告](reports/compiler-constant-index.md)。新 focused/full 验证待完成。
-- S12：进行中，新模块 profile 显示平坦字符串使用通用 rope 遍历仍是热点，直接切片比较/哈希已实现，72 个样本通过；模块和长键改善，常量案例单步退化，见[平坦字符串报告](reports/flat-strings.md)。每索引固定上限的弱字符串哈希缓存已接通，正在验证；整体性能验收待完成。
+- S12：进行中，新模块 profile 显示平坦字符串使用通用 rope 遍历仍是热点，直接切片比较/哈希已实现，72 个样本通过；模块和长键改善，常量案例单步退化，见[平坦字符串报告](reports/flat-strings.md)。每索引固定上限的弱字符串哈希缓存已接通，1922 项库测试和完整 CLI/oracle 通过；86 个正式样本通过，见[哈希缓存报告](reports/string-hash-memo.md)。整体性能验收待完成。
 - S07：稀疏截断批量布局提交已实现，1916 项库测试和完整 CLI/oracle 通过；24 个正式样本通过，固定工作量曲线近似持平。整数/固定键路径仍待完成。
 - S10a（新增证据）：调试位置生成每次从源码开头扫描，CPU 采样中占主要热点；source 层每 256 字节检查点索引已实现，1917 项库测试和完整 CLI/oracle 通过；72 个正式样本通过，见[源码位置报告](reports/source-coordinate-index.md)。
 - S04：统一 CollectionRecords 已实现，递增 ID 与物理存储分离；活游标不阻止回收。1921 项库测试、完整 CLI/oracle 回归及 228 个正式样本通过，容量测试通过。保留顺序树的 O(log n) 代价，常规操作有约 4%–13% 退化，见[回收报告](reports/collection-records.md)。新 focused/full 验证待完成。
-- S06、S08、S13–S19：未开始。
+- S06：dictionary 实现已接通；紧凑物理槽 + 独立插入顺序，共享 shape 首次分离。1926 项库测试通过；CLI/oracle 和性能验证进行中。
+- S08、S13–S19：未开始。
 
-阶段集成验证：`e5c49a1` 的引擎语义 fingerprint
-`4897d03770b4e3e8c6e15dc39162b98e5be5ec9318fbadd40fbc9f6c63102f65`
+阶段集成验证：`383a2e1` 的引擎语义 fingerprint
+`88c01546f974f8b2eae8b7cad7ad7649df6de36a08438c693f7fab8e4f706a99`
 独立重放 6844 个 focused Test262 变体全部通过，结果行与冻结基线一致。
-该证据覆盖上述已提交改动；后续改动需再次验证，全量套件仍待完成。
+该证据覆盖截至长字符串哈希缓存的已提交引擎改动（含集合回收）；dictionary 及后续改动需再次验证，全量套件仍待完成。
 
 读者：参与 quickjs-oxide 维护的人和 agent。读完后应能选择一个依赖已满足的步骤，找到职责所属模块，理解不变量，完成实现、验证和交接，无需查阅之前的聊天记录。
 
@@ -90,7 +91,7 @@ Issue #16 中 TypedArray、平坦字符串、Arguments/RegExp 批量构建、VM�
 
 shape 负责属性元数据、顺序和查找；对象槽负责当前值。相同 flags 的已有属性写入应通过已有单槽替换事务完成，不触发布局复制。禁止调用方绕开 retain/release 直接赋值。
 
-动态对象的反复增删由 object/heap 拥有的 dictionary 模式处理：稳定槽加属性索引，保留可观察属性顺序，按阈值回收空槽。shared shape 仍用于稳定对象。转换入口集中，不能让每个 builtin 自己判断或迁移表示。PropertySlot 的 VarRef、AutoInit、accessor 等语义继续由原有层拥有。
+动态对象的反复增删由 object/heap 拥有的 dictionary 模式处理：紧凑物理槽加属性索引，独立链接保留可观察插入顺序；删除 swap-remove，只修复移动项的索引和邻接链接，容量按几何阈值收缩。物理槽编号不对外暴露，不跨对象修改缓存；无需保留墓碑。shared shape 仍用于稳定对象。转换入口集中，不能让每个 builtin 自己判断或迁移表示。PropertySlot 的 VarRef、AutoInit、accessor 等语义继续由原有层拥有。
 
 dictionary 和 Map/Set 不共享 JS 键语义：对象键是 Atom，集合键是任意 Value；两者的顺序、描述符与 GC 契约不同。最多复用已经证明相同的低层工具，不强行合成万能 OrderedStore。
 

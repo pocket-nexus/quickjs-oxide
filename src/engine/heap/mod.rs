@@ -391,6 +391,7 @@ pub(crate) mod profiling;
 
 mod realm_storage;
 
+mod dictionary_storage;
 mod object_storage;
 
 mod binding_storage;

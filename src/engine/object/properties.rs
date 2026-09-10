@@ -1579,6 +1579,29 @@ impl Runtime {
         }
         let mut state = self.0.state.borrow_mut();
         let object_id = object.object_id();
+        let dictionary_eligible = {
+            let data = state.heap.object(object_id)?;
+            let shape = state.heap.shape(data.shape)?;
+            data.kind == crate::engine::heap::ObjectKind::Ordinary
+                && matches!(data.payload, ObjectPayload::Ordinary)
+                && (shape.is_dictionary()
+                    || shape.entries().len() >= MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
+        };
+        if dictionary_eligible {
+            let shape = state.heap.shape(state.heap.object(object_id)?.shape)?;
+            let Some(index) = shape.find(key.atom()) else {
+                return Ok(true);
+            };
+            if !shape.entries()[index as usize].flags.configurable {
+                return Ok(false);
+            }
+            state.ensure_dictionary_layout(object_id)?;
+            let cleanup = state
+                .heap
+                .delete_dictionary_property(object_id, key.atom())?;
+            state.apply_cleanup(cleanup)?;
+            return Ok(true);
+        }
         let (prototype, entries, mut slots, index, configurable) = {
             let object_data = state.heap.object(object_id)?;
             let shape = state.heap.shape(object_data.shape)?;

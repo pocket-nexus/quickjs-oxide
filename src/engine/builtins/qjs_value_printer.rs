@@ -709,7 +709,9 @@ impl QjsValuePrinter<'_, '_> {
             ObjectPayload::Arguments { fast_len, .. } => *fast_len,
             _ => None,
         };
-        for (entry, slot) in shape.entries().iter().zip(&object_data.slots) {
+        for index in shape.ordered_indices() {
+            let entry = &shape.entries()[index];
+            let slot = &object_data.slots[index];
             if !entry.flags.enumerable {
                 continue;
             }

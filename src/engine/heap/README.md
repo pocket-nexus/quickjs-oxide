@@ -6,6 +6,8 @@
 
 ## 文件与子目录
 
+- [dictionary_storage.rs](dictionary_storage.rs)：普通对象 dictionary 的单属性删除/替换事务；移动槽转移所有权，释放仅作用于被移除项。
+
 - [collection_records.rs](collection_records.rs)：Map/Set 存活记录、键索引和递增记录 ID 的统一拥有者；删除回收记录，游标不依赖物理槽。
 
 - [allocation.rs](allocation.rs)：分配及初始化。

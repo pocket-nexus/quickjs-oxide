@@ -4,7 +4,16 @@
 
 通过 heap 保存原始记录与引用边；调用和用户代码执行交给 VM 协调；内置方法归 builtins。
 
+Dictionary 模式只用于普通对象。共享 shape 在首次动态删除时分离，独占 shape
+原地转换并脱离 weak cache。物理槽用 swap-remove，插入顺序由独立双向链接维护；
+`Shape::entries()` 只表示槽顺序，可观察遍历必须使用 `ordered_indices()` 或
+`ordered_own_keys()`。不允许跨可能修改对象的调用缓存槽编号。没有永久墓碑，
+容量按几何阈值收缩。prototype 等整布局替换必须经过统一入口恢复语义顺序。
+
 ## 文件与子目录
+
+- [dictionary.rs](dictionary.rs)：dictionary 转换、共享布局分离和整布局替换的顺序恢复。
+- [dictionary_order.rs](dictionary_order.rs)：紧凑槽的插入顺序链接和 swap-remove 修复。
 
 - [array_storage.rs](array_storage.rs)：真正 Array 的稀疏索引批量截断；不执行 JS，描述符和 length 回滚由 properties 负责，引用事务复用布局发布入口。
 

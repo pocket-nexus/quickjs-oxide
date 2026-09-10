@@ -606,6 +606,16 @@ impl Heap {
         let new_edges = property_slot_edges(&replacement);
         self.retain_edges_transactionally(&new_edges)?;
 
+        self.replace_retained_object_slot(id, slot_index, replacement)
+    }
+
+    /// Commit a validated replacement after its edges have been retained.
+    pub(super) fn replace_retained_object_slot(
+        &mut self,
+        id: ObjectId,
+        slot_index: usize,
+        replacement: PropertySlot,
+    ) -> Result<HeapCleanup, HeapError> {
         let previous = {
             let object = self.object_mut(id)?;
             let slot = object
@@ -1026,6 +1036,14 @@ impl Heap {
         &self,
         object: &ObjectData,
     ) -> Result<(), HeapError> {
+        let shape = self.shape(object.shape)?;
+        if !shape.dictionary_layout_is_valid()
+            || (shape.is_dictionary()
+                && (object.kind != ObjectKind::Ordinary
+                    || !matches!(object.payload, ObjectPayload::Ordinary)))
+        {
+            return Err(HeapError::Invariant("invalid dictionary object layout"));
+        }
         if !matches!(
             (object.kind, &object.payload),
             (
