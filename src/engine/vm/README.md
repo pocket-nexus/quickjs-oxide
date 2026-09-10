@@ -38,3 +38,9 @@ RuntimeVmHost 持有 code 模块的完整只读执行快照，而非独立常量
 避免扩大普通递归栈帧。恢复状态由 `decode_vm_activation` 验证后封装为字段
 私有的 `RootedVmActivation`，只通过其 run 消费；动态恢复检查不能由发布验证
 替代。合成 host fixture 不能进入生产 published 执行入口。
+
+普通 local/VarRef 的访问模式由发布验证保证；生产读取直接定位动态槽，
+checked 读取仍在每次访问时检查 TDZ，只在构造异常时查询名字等静态元数据。
+参数与局部变量共享 `read_frame_binding`/`write_frame_binding`，Captured 仍走
+实际 VarRef 的读写。无 root 的合成测试保留原内部错误检查，不作为生产入口。
+新增绑定指令时必须同步发布验证、动态状态测试与外部字节码反例。
