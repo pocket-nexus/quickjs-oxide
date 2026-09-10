@@ -2911,6 +2911,7 @@ fn find_or_create_private_function_name_binding(
         ));
     }
     function.scopes[root.0].bindings.insert(insertion, binding);
+    function.rebuild_scope_name_index(root);
     Ok(Some(ResolvedBinding {
         storage: BindingStorage::Local(index),
         kind,

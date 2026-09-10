@@ -1480,6 +1480,7 @@ mod tests {
                 kind: ScopeKind::With,
                 is_parameter_initializer: false,
                 bindings: Vec::new(),
+                bindings_by_name: Default::default(),
             });
             function.locals.push(WITH_OBJECT_LOCAL_NAME.to_owned());
             function.add_binding(
