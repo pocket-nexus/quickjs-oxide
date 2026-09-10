@@ -1693,6 +1693,9 @@ impl RuntimeVmHost {
             };
         }
 
+        if let Some(key) = self.runtime.immediate_numeric_property_key(&value) {
+            return Ok(VmPropertyKeyConversion::Key(key));
+        }
         let key = match value {
             Value::Symbol(symbol) => {
                 if !symbol.belongs_to(&self.runtime) {
@@ -1720,6 +1723,9 @@ impl RuntimeVmHost {
     /// Convert the authenticated output of `ToPropKey` without invoking any
     /// user-observable coercion a second time.
     fn canonical_property_key_from_value(&self, value: &Value) -> Result<PropertyKey, Error> {
+        if let Some(key) = self.runtime.immediate_numeric_property_key(value) {
+            return Ok(key);
+        }
         match value {
             Value::Symbol(symbol) => {
                 if !symbol.belongs_to(&self.runtime) {

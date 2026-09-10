@@ -831,24 +831,21 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<ArrayOwnKey, RuntimeError> {
-        {
-            let state = self.0.state.borrow();
-            let object_data = state.heap.object(object.object_id())?;
-            if !matches!(object_data.payload, ObjectPayload::Array { .. }) {
-                return Ok(ArrayOwnKey::Other);
-            }
+        let state = self.0.state.borrow();
+        let object_data = state.heap.object(object.object_id())?;
+        if !matches!(object_data.payload, ObjectPayload::Array { .. }) {
+            return Ok(ArrayOwnKey::Other);
         }
-        let length = self.intern_property_key("length")?;
-        if key == &length {
+        if let Some(index) = state.atoms.array_index(key.atom())? {
+            return Ok(ArrayOwnKey::Index(index));
+        }
+        let info = state.atoms.resolve(key.atom())?;
+        if info.kind == crate::engine::atom::AtomKind::String
+            && matches!(info.spelling, crate::engine::atom::AtomSpelling::Text(text) if text.utf16_units().eq("length".encode_utf16()))
+        {
             return Ok(ArrayOwnKey::Length);
         }
-        Ok(self
-            .0
-            .state
-            .borrow()
-            .atoms
-            .array_index(key.atom())?
-            .map_or(ArrayOwnKey::Other, ArrayOwnKey::Index))
+        Ok(ArrayOwnKey::Other)
     }
 
     /// Return QuickJS's representation state for a genuine Array. `Some(n)`
@@ -900,7 +897,7 @@ impl Runtime {
         for index in 0..dense_len {
             let index = u32::try_from(index)
                 .map_err(|_| RuntimeError::Invariant("fast Array count exceeded Uint32"))?;
-            let key = self.intern_property_key(&index.to_string())?;
+            let key = self.property_key_for_index(index as u64)?;
             entries.push(ShapeEntry {
                 atom: key.atom(),
                 flags: PropertyFlags::data(true, true, true),
@@ -1708,17 +1705,17 @@ impl Runtime {
                 RuntimeError::Invariant("String wrapper length exceeded QuickJS index space")
             })?;
             for index in 0..length {
-                keys.push(self.intern_property_key(&index.to_string())?);
+                keys.push(self.property_key_for_index(index as u64)?);
             }
         }
         if let Some(length) = typed_array_length {
             for index in 0..length {
-                keys.push(self.intern_property_key(&index.to_string())?);
+                keys.push(self.property_key_for_index(index as u64)?);
             }
         }
         if let Some(length) = dense_array_len {
             for index in 0..length {
-                keys.push(self.intern_property_key(&index.to_string())?);
+                keys.push(self.property_key_for_index(index as u64)?);
             }
         }
         for atom in atoms {
