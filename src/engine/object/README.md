@@ -6,6 +6,8 @@
 
 ## 文件与子目录
 
+- [array_storage.rs](array_storage.rs)：真正 Array 的稀疏索引批量截断；不执行 JS，描述符和 length 回滚由 properties 负责，引用事务复用布局发布入口。
+
 - [access.rs](access.rs)：access 的类型和操作实现。
 - [allocation.rs](allocation.rs)：分配及初始化。
 - [arguments.rs](arguments.rs)：QuickJS-compatible mapped and unmapped Arguments exotic objects.。

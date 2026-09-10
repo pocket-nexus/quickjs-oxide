@@ -1224,12 +1224,7 @@ impl Runtime {
             state.apply_cleanup(cleanup)?;
         }
 
-        for index in self.array_indices_at_or_above(object, new_length)? {
-            let index_key = self.intern_property_key(&index.to_string())?;
-            if self.delete_property(object, &index_key)? {
-                continue;
-            }
-
+        if let Some(index) = self.truncate_sparse_array_indices(object, new_length)? {
             // ArraySetLength keeps already deleted higher indices, restores
             // length to the first undeletable index plus one, and still
             // applies a requested writable:false transition.
@@ -1269,31 +1264,6 @@ impl Runtime {
             }
         }
         Ok(PropertyDefineOutcome::Defined(true))
-    }
-
-    fn array_indices_at_or_above(
-        &self,
-        object: &ObjectRef,
-        minimum: u32,
-    ) -> Result<Vec<u32>, RuntimeError> {
-        let state = self.0.state.borrow();
-        let object_data = state.heap.object(object.object_id())?;
-        if !matches!(object_data.payload, ObjectPayload::Array { .. }) {
-            return Err(RuntimeError::Invariant(
-                "Array index scan reached a non-Array object",
-            ));
-        }
-        let shape = state.heap.shape(object_data.shape)?;
-        let mut indices = shape
-            .entries()
-            .iter()
-            .filter_map(|entry| state.atoms.array_index(entry.atom).transpose())
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .filter(|index| *index >= minimum)
-            .collect::<Vec<_>>();
-        indices.sort_unstable_by(|left, right| right.cmp(left));
-        Ok(indices)
     }
 
     pub(crate) fn to_array_length(
