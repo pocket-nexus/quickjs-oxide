@@ -19,12 +19,13 @@
 - S14/S15：Arguments 完整布局一次发布，RegExp 命名捕获与结果属性批量发布；共享边界只处理所有权和失败回滚。
 - S16：0/1/2 条边的无 HashMap 事务已实现，重复边及后续边失败不发布测试通过。
 - S07/S13–S16 合并版本：1930 项库测试、943 项 CLI/oracle（1 ignored）、108 个正式 A/B 样本通过；新 focused/full 待完成。
-- S08、S17–S19：待实施；带洞数组对照仍显示随宽度增长，需继续修复。
+- S08：转入慢表示的 Array 复用 dictionary 存储，保留 QuickJS 的表示敏感行为；库测试、2 项针对性测试和完整 CLI/oracle 通过，72 个样本通过，churn 宽度曲线近似持平。见[带洞数组报告](reports/holey-array-dictionary.md)及其中表示方案细化理由。
+- S17–S19：待完成；正在重采样 VM/调用路径。
 
-阶段集成验证：`383a2e1` 的引擎语义 fingerprint
-`88c01546f974f8b2eae8b7cad7ad7649df6de36a08438c693f7fab8e4f706a99`
+阶段集成验证：`596c788` 的引擎语义 fingerprint
+`f75c3be9b62379c442e0e059d57a24a4df7e8dbe8275d88f8ca31e0f2583f573`
 独立重放 6844 个 focused Test262 变体全部通过，结果行与冻结基线一致。
-该证据覆盖截至长字符串哈希缓存的已提交引擎改动（含集合回收）；dictionary 及后续改动需再次验证，全量套件仍待完成。
+该证据覆盖截至小引用事务的已提交引擎改动（含普通对象 dictionary、整数键、Arguments/RegExp 批量构建）；带洞 Array 及后续改动需再次验证，全量套件仍待完成。
 
 读者：参与 quickjs-oxide 维护的人和 agent。读完后应能选择一个依赖已满足的步骤，找到职责所属模块，理解不变量，完成实现、验证和交接，无需查阅之前的聊天记录。
 
