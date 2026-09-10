@@ -56,9 +56,7 @@ pub(crate) fn hash<H: Hasher>(key: &RawValue, state: &mut H) {
             value.len().hash(state);
             // Hash actual content with the index's randomized hasher, not the
             // existing unseeded 32-bit content fingerprint.
-            for unit in value.utf16_units() {
-                state.write_u16(unit);
-            }
+            value.hash_code_units(state);
         }
         RawValue::BigInt(value) => {
             state.write_u8(5);
