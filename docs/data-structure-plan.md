@@ -236,3 +236,21 @@ S01 之后可分别推进集合、属性、模块和编译器工作线。共享�
 - 模块职责与共享抽象经过真实调用者验证，现有 API、语言差异与安全约束没有被暗中放宽。
 - 新维护者能根据步骤说明和模块文档重现证据、修改一个操作并找到相应测试。
 - 没有把计划、静态推导或历史测试报告写成当前实现的验证结果。
+
+## 8. 实现后的维护入口
+
+| 修改目标 | 首先阅读的拥有者 | 修改时必须保留的契约 |
+| --- | --- | --- |
+| Map/Set 键定位 | [collection_key.rs](../src/engine/value/collection_key.rs)、[collection_index.rs](../src/engine/heap/collection_index.rs) | SameValueZero 与哈希一致；索引不拥有额外 GC 边；完整字符串比较仍处理碰撞 |
+| 集合增删和迭代 | [collection_records.rs](../src/engine/heap/collection_records.rs)、[collections.rs](../src/engine/heap/collections.rs) | ID 不复用，clear 保留时钟；暂停游标不要求保留墓碑；引用事务先验证后发布 |
+| 对象/慢 Array 布局 | [dictionary.rs](../src/engine/object/dictionary.rs)、[dictionary_order.rs](../src/engine/object/dictionary_order.rs)、[dictionary_storage.rs](../src/engine/heap/dictionary_storage.rs) | 物理槽与语义顺序不同；共享 shape 首次分离；跨用户代码调用不能缓存槽号 |
+| 新对象批量发布 | [layout.rs](../src/engine/heap/runtime/layout.rs) | 调用者保留输入 roots；共享入口只负责 shape/slot 所有权与回滚，不接管 Arguments/RegExp 语义 |
+| 数字属性键 | [atom/runtime.rs](../src/engine/atom/runtime.rs) | 精确整数索引与一般 JS Number 转字符串分开；字符串 "-0" 不能当数字 -0 |
+| 调用参数窗口 | [frame_execution.rs](../src/engine/vm/frame_execution.rs)、[host_bridge.rs](../src/engine/vm/host_bridge.rs) | caller 借出参数，callee 仍拥有帧；所有完成/错误路径清理后缀并保留下层操作数 |
+
+常用定位命令：`cargo test --lib collection`、`cargo test --lib dictionary`、
+`cargo test --lib sparse_truncation`、`cargo test --lib borrowed_call_window`。
+这些是修改时的快速反馈入口，不替代上文的完整兼容性验收。
+行为测试放在当前拥有者模块；被冻结的历史测试文件保持原样。
+调用协议的语义测试和 `scripts/checks/binary_object` 的反例模板需要一起维护：
+更新实现指纹时，必须确认错误变体仍能命中实际执行入口并被拒绝。
