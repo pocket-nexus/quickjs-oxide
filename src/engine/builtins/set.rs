@@ -564,27 +564,21 @@ impl Runtime {
         set: &ObjectRef,
         index: &mut usize,
     ) -> Result<Option<(usize, Value)>, RuntimeError> {
-        loop {
-            let record_index = *index;
-            let record = self
-                .0
-                .state
-                .borrow()
-                .heap
-                .set_records(set.object_id())?
-                .get(*index)
-                .map(|record| record.key.clone());
-            let Some(key) = record else {
-                return Ok(None);
-            };
-            *index = index
-                .checked_add(1)
-                .ok_or(RuntimeError::Invariant("Set record index overflowed"))?;
-            let Some(key) = key else {
-                continue;
-            };
-            return Ok(Some((record_index, self.root_raw_value(&key)?)));
-        }
+        let record = self
+            .0
+            .state
+            .borrow()
+            .heap
+            .set_records(set.object_id())?
+            .next_at_or_after(*index)
+            .map(|(id, record)| (id, record.key.clone()));
+        let Some((record_index, key)) = record else {
+            return Ok(None);
+        };
+        *index = record_index
+            .checked_add(1)
+            .ok_or(RuntimeError::Invariant("Set record index overflowed"))?;
+        Ok(Some((record_index, self.root_raw_value(&key)?)))
     }
 
     fn next_live_set_value(
@@ -841,50 +835,44 @@ impl Runtime {
                 done: true,
             });
         };
-        loop {
-            let record_index = index;
-            let record = self
-                .0
-                .state
-                .borrow()
-                .heap
-                .set_records(set_id)?
-                .get(index)
-                .map(|record| record.key.clone());
-            let Some(key) = record else {
-                let mut state = self.0.state.borrow_mut();
-                let cleanup = state.heap.finish_set_iterator(iterator.object_id())?;
-                state.apply_cleanup(cleanup)?;
-                return Ok(NativeInvokeOutcome::IteratorNextRaw {
-                    value: Value::Undefined,
-                    done: true,
-                });
-            };
-            index = index.checked_add(1).ok_or(RuntimeError::Invariant(
-                "Set Iterator record index overflowed",
-            ))?;
-            self.0
-                .state
-                .borrow_mut()
-                .heap
-                .set_set_iterator_index(iterator.object_id(), index)?;
-            let Some(key) = key else {
-                continue;
-            };
-            self.0
-                .state
-                .borrow_mut()
-                .heap
-                .set_set_iterator_current(iterator.object_id(), record_index)?;
-            let value = self.root_raw_value(&key)?;
-            let value = match kind {
-                SetIteratorKind::Value => value,
-                SetIteratorKind::KeyAndValue => {
-                    Value::Object(self.new_array_from_values(realm, vec![value.clone(), value])?)
-                }
-            };
-            return Ok(NativeInvokeOutcome::IteratorNextRaw { value, done: false });
-        }
+        let record = self
+            .0
+            .state
+            .borrow()
+            .heap
+            .set_records(set_id)?
+            .next_at_or_after(index)
+            .map(|(id, record)| (id, record.key.clone()));
+        let Some((record_index, key)) = record else {
+            let mut state = self.0.state.borrow_mut();
+            let cleanup = state.heap.finish_set_iterator(iterator.object_id())?;
+            state.apply_cleanup(cleanup)?;
+            return Ok(NativeInvokeOutcome::IteratorNextRaw {
+                value: Value::Undefined,
+                done: true,
+            });
+        };
+        index = record_index.checked_add(1).ok_or(RuntimeError::Invariant(
+            "Set Iterator record index overflowed",
+        ))?;
+        self.0
+            .state
+            .borrow_mut()
+            .heap
+            .set_set_iterator_index(iterator.object_id(), index)?;
+        self.0
+            .state
+            .borrow_mut()
+            .heap
+            .set_set_iterator_current(iterator.object_id(), record_index)?;
+        let value = self.root_raw_value(&key)?;
+        let value = match kind {
+            SetIteratorKind::Value => value,
+            SetIteratorKind::KeyAndValue => {
+                Value::Object(self.new_array_from_values(realm, vec![value.clone(), value])?)
+            }
+        };
+        Ok(NativeInvokeOutcome::IteratorNextRaw { value, done: false })
     }
 
     fn get_set_like_record(

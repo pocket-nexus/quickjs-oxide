@@ -1,14 +1,13 @@
 //! Non-owning key lookup for insertion-ordered strong collections.
 //!
-//! Records own keys and GC edges; this index owns only hashes and record positions.
+//! Records own keys and GC edges; this index owns only hashes and record IDs.
 //! The collection storage boundary maintains both together. Lookups borrow records
-//! without rooting every candidate or invoking JavaScript. Tombstones and public
-//! iterator cursors remain the responsibility of ordered record storage.
+//! without rooting every candidate or invoking JavaScript. Public iterator cursors remain the responsibility of ordered record storage.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 
-use super::{HeapError, MapRecord, RawValue};
+use super::{CollectionRecords, HeapError, RawValue};
 use crate::engine::value::collection_key;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -23,16 +22,16 @@ impl CollectionIndex {
         hasher.finish()
     }
 
-    pub(super) fn find(&self, records: &[MapRecord], key: &RawValue) -> Option<usize> {
+    pub(super) fn find(&self, records: &CollectionRecords, key: &RawValue) -> Option<usize> {
         self.buckets
             .get(&self.hash(key))?
             .iter()
             .copied()
             .find(|&index| {
-                records[index]
-                    .key
-                    .as_ref()
-                    .is_some_and(|candidate| collection_key::same_value_zero(candidate, key))
+                collection_key::same_value_zero(
+                    &records.get(index).expect("indexed record exists").key,
+                    key,
+                )
             })
     }
 
@@ -53,27 +52,43 @@ impl CollectionIndex {
         bucket.swap_remove(position);
         if bucket.is_empty() {
             self.buckets.remove(&hash);
+        } else if bucket.capacity() > bucket.len().saturating_mul(4).saturating_add(64) {
+            bucket.shrink_to(bucket.len().saturating_mul(2).saturating_add(32));
+        }
+        if self.buckets.capacity() > self.buckets.len().saturating_mul(4).saturating_add(64) {
+            self.buckets
+                .shrink_to(self.buckets.len().saturating_mul(2).saturating_add(32));
         }
     }
 
     pub(super) fn clear(&mut self) {
         self.buckets.clear();
+        self.buckets.shrink_to_fit();
+    }
+
+    #[cfg(test)]
+    pub(super) fn retained_capacities(&self) -> (usize, usize) {
+        (
+            self.buckets.capacity(),
+            self.buckets.values().map(Vec::capacity).sum(),
+        )
     }
 
     /// Publication validation; never run this full scan on an ordinary lookup.
-    pub(super) fn validate(&self, records: &[MapRecord]) -> Result<(), HeapError> {
+    pub(super) fn validate(&self, records: &CollectionRecords) -> Result<(), HeapError> {
         let mut seen = std::collections::HashSet::new();
         for (&hash, indices) in &self.buckets {
             if indices.is_empty() {
                 return Err(HeapError::Invariant("collection index has an empty bucket"));
             }
             for &index in indices {
-                let key = records
-                    .get(index)
-                    .and_then(|record| record.key.as_ref())
-                    .ok_or(HeapError::Invariant(
-                        "collection index points outside live records",
-                    ))?;
+                let key =
+                    records
+                        .get(index)
+                        .map(|record| &record.key)
+                        .ok_or(HeapError::Invariant(
+                            "collection index points outside live records",
+                        ))?;
                 if !seen.insert(index) || self.hash(key) != hash {
                     return Err(HeapError::Invariant(
                         "collection index does not match its records",
@@ -81,7 +96,7 @@ impl CollectionIndex {
                 }
             }
         }
-        if seen.len() != records.iter().filter(|record| record.key.is_some()).count() {
+        if seen.len() != records.len() {
             return Err(HeapError::Invariant(
                 "collection index is missing live records",
             ));
@@ -93,6 +108,15 @@ impl CollectionIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::heap::MapRecord;
+
+    fn record_store(values: Vec<MapRecord>) -> CollectionRecords {
+        let mut records = CollectionRecords::default();
+        for record in values {
+            records.insert(record);
+        }
+        records
+    }
     use crate::engine::value::{JsString, bigint::JsBigInt};
 
     #[test]
@@ -135,16 +159,16 @@ mod tests {
     #[test]
     fn collision_candidates_are_compared_and_removal_preserves_the_others() {
         let mut index = CollectionIndex::default();
-        let records = vec![
+        let records = record_store(vec![
             MapRecord {
-                key: Some(RawValue::Int(1)),
+                key: RawValue::Int(1),
                 value: RawValue::Undefined,
             },
             MapRecord {
-                key: Some(RawValue::Int(2)),
+                key: RawValue::Int(2),
                 value: RawValue::Undefined,
             },
-        ];
+        ]);
         // Force a collision to exercise the bucket path deterministically,
         // without relying on the randomized hasher finding one naturally.
         let hash = index.hash(&RawValue::Int(2));
@@ -158,15 +182,14 @@ mod tests {
     #[test]
     fn publication_rejects_missing_or_stale_index_entries() {
         let mut index = CollectionIndex::default();
-        let mut records = vec![MapRecord {
-            key: Some(RawValue::Int(1)),
+        let mut records = record_store(vec![MapRecord {
+            key: RawValue::Int(1),
             value: RawValue::Undefined,
-        }];
+        }]);
         assert!(index.validate(&records).is_err());
         index.insert(&RawValue::Int(1), 0);
         assert!(index.validate(&records).is_ok());
-        records[0].key = None;
+        records.get_mut(0).unwrap().key = RawValue::Int(2);
         assert!(index.validate(&records).is_err());
     }
 }
-

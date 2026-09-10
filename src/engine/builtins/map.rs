@@ -502,7 +502,12 @@ impl Runtime {
         let Some(index) = heap.map_find_record(map.object_id(), &raw_key)? else {
             return Ok(None);
         };
-        let value = heap.map_records(map.object_id())?[index].value.clone();
+        let value = heap
+            .map_records(map.object_id())?
+            .get(index)
+            .expect("indexed Map record exists")
+            .value
+            .clone();
         Ok(Some((index, value)))
     }
 
@@ -774,24 +779,20 @@ impl Runtime {
             .unwrap_or(Value::Undefined);
         let mut index = 0_usize;
         loop {
-            let record_index = index;
             let record = self
                 .0
                 .state
                 .borrow()
                 .heap
                 .map_records(map.object_id())?
-                .get(index)
-                .map(|record| (record.key.clone(), record.value.clone()));
-            let Some((key, value)) = record else {
+                .next_at_or_after(index)
+                .map(|(id, record)| (id, record.key.clone(), record.value.clone()));
+            let Some((record_index, key, value)) = record else {
                 break;
             };
-            index = index.checked_add(1).ok_or(RuntimeError::Invariant(
+            index = record_index.checked_add(1).ok_or(RuntimeError::Invariant(
                 "Map forEach record index overflowed",
             ))?;
-            let Some(key) = key else {
-                continue;
-            };
             let key = self.root_raw_value(&key)?;
             let value = self.root_raw_value(&value)?;
             let active_record = self.push_active_collection_record(ActiveCollectionRecord::Map {
@@ -914,51 +915,45 @@ impl Runtime {
                 done: true,
             });
         };
-        loop {
-            let record_index = index;
-            let record = self
-                .0
-                .state
-                .borrow()
-                .heap
-                .map_records(map_id)?
-                .get(index)
-                .map(|record| (record.key.clone(), record.value.clone()));
-            let Some((key, value)) = record else {
-                let mut state = self.0.state.borrow_mut();
-                let cleanup = state.heap.finish_map_iterator(iterator.object_id())?;
-                state.apply_cleanup(cleanup)?;
-                return Ok(NativeInvokeOutcome::IteratorNextRaw {
-                    value: Value::Undefined,
-                    done: true,
-                });
-            };
-            index = index.checked_add(1).ok_or(RuntimeError::Invariant(
-                "Map Iterator record index overflowed",
-            ))?;
-            self.0
-                .state
-                .borrow_mut()
-                .heap
-                .set_map_iterator_index(iterator.object_id(), index)?;
-            let Some(key) = key else {
-                continue;
-            };
-            self.0
-                .state
-                .borrow_mut()
-                .heap
-                .set_map_iterator_current(iterator.object_id(), record_index)?;
-            let key = self.root_raw_value(&key)?;
-            let value = match kind {
-                MapIteratorKind::Key => key,
-                MapIteratorKind::Value => self.root_raw_value(&value)?,
-                MapIteratorKind::KeyAndValue => Value::Object(
-                    self.new_array_from_values(realm, vec![key, self.root_raw_value(&value)?])?,
-                ),
-            };
-            return Ok(NativeInvokeOutcome::IteratorNextRaw { value, done: false });
-        }
+        let record = self
+            .0
+            .state
+            .borrow()
+            .heap
+            .map_records(map_id)?
+            .next_at_or_after(index)
+            .map(|(id, record)| (id, record.key.clone(), record.value.clone()));
+        let Some((record_index, key, value)) = record else {
+            let mut state = self.0.state.borrow_mut();
+            let cleanup = state.heap.finish_map_iterator(iterator.object_id())?;
+            state.apply_cleanup(cleanup)?;
+            return Ok(NativeInvokeOutcome::IteratorNextRaw {
+                value: Value::Undefined,
+                done: true,
+            });
+        };
+        index = record_index.checked_add(1).ok_or(RuntimeError::Invariant(
+            "Map Iterator record index overflowed",
+        ))?;
+        self.0
+            .state
+            .borrow_mut()
+            .heap
+            .set_map_iterator_index(iterator.object_id(), index)?;
+        self.0
+            .state
+            .borrow_mut()
+            .heap
+            .set_map_iterator_current(iterator.object_id(), record_index)?;
+        let key = self.root_raw_value(&key)?;
+        let value = match kind {
+            MapIteratorKind::Key => key,
+            MapIteratorKind::Value => self.root_raw_value(&value)?,
+            MapIteratorKind::KeyAndValue => Value::Object(
+                self.new_array_from_values(realm, vec![key, self.root_raw_value(&value)?])?,
+            ),
+        };
+        Ok(NativeInvokeOutcome::IteratorNextRaw { value, done: false })
     }
 
     fn call_map_group_by(

@@ -1794,47 +1794,15 @@ impl Heap {
                 ));
             }
         }
-        if let ObjectPayload::Map {
-            records,
-            key_index,
-            live_indices,
-            size,
-        } = &object.payload
-        {
-            let mut live = 0usize;
-            let mut expected_indices = BTreeSet::new();
-            for (index, record) in records.iter().enumerate() {
-                match &record.key {
-                    Some(key) => {
-                        if !is_map_storable_value(key) || !is_map_storable_value(&record.value) {
-                            return Err(HeapError::Invariant(
-                                "Map record contains an internal value sentinel",
-                            ));
-                        }
-                        live = live.checked_add(1).ok_or(HeapError::Overflow {
-                            operation: "validating Map size",
-                        })?;
-                        expected_indices.insert(index);
-                    }
-                    None if !matches!(record.value, RawValue::Undefined) => {
-                        return Err(HeapError::Invariant(
-                            "Map tombstone retains a value payload",
-                        ));
-                    }
-                    None => {}
+        if let ObjectPayload::Map { records } = &object.payload {
+            for record in records.iter() {
+                if !is_map_storable_value(&record.key) || !is_map_storable_value(&record.value) {
+                    return Err(HeapError::Invariant(
+                        "Map record contains an internal value sentinel",
+                    ));
                 }
             }
-            if live != *size {
-                return Err(HeapError::Invariant(
-                    "Map live record count does not match its payload",
-                ));
-            }
-            if *live_indices != expected_indices {
-                return Err(HeapError::Invariant(
-                    "Map live index does not match its record layout",
-                ));
-            }
-            key_index.validate(records)?;
+            records.validate()?;
         }
         if let ObjectPayload::MapIterator {
             object: source,
@@ -1850,7 +1818,9 @@ impl Heap {
                             "Map Iterator source does not have the Map class",
                         ));
                     };
-                    if current.is_some_and(|index| index >= *next_index || index >= records.len()) {
+                    if current
+                        .is_some_and(|index| index >= *next_index || index >= records.next_id())
+                    {
                         return Err(HeapError::Invariant(
                             "Map Iterator current record is outside its stable cursor",
                         ));
@@ -1864,44 +1834,20 @@ impl Heap {
                 }
             }
         }
-        if let ObjectPayload::Set {
-            records,
-            key_index,
-            live_indices,
-            size,
-        } = &object.payload
-        {
-            let mut live = 0usize;
-            let mut expected_indices = BTreeSet::new();
-            for (index, record) in records.iter().enumerate() {
+        if let ObjectPayload::Set { records } = &object.payload {
+            for record in records.iter() {
                 if !matches!(record.value, RawValue::Undefined) {
                     return Err(HeapError::Invariant(
                         "Set record value slot is not undefined",
                     ));
                 }
-                if let Some(key) = &record.key {
-                    if !is_map_storable_value(key) {
-                        return Err(HeapError::Invariant(
-                            "Set record contains an internal value sentinel",
-                        ));
-                    }
-                    live = live.checked_add(1).ok_or(HeapError::Overflow {
-                        operation: "validating Set size",
-                    })?;
-                    expected_indices.insert(index);
+                if !is_map_storable_value(&record.key) {
+                    return Err(HeapError::Invariant(
+                        "Set record contains an internal value sentinel",
+                    ));
                 }
             }
-            if live != *size {
-                return Err(HeapError::Invariant(
-                    "Set live record count does not match its payload",
-                ));
-            }
-            if *live_indices != expected_indices {
-                return Err(HeapError::Invariant(
-                    "Set live index does not match its record layout",
-                ));
-            }
-            key_index.validate(records)?;
+            records.validate()?;
         }
         if let ObjectPayload::SetIterator {
             object: source,
@@ -1917,7 +1863,9 @@ impl Heap {
                             "Set Iterator source does not have the Set class",
                         ));
                     };
-                    if current.is_some_and(|index| index >= *next_index || index >= records.len()) {
+                    if current
+                        .is_some_and(|index| index >= *next_index || index >= records.next_id())
+                    {
                         return Err(HeapError::Invariant(
                             "Set Iterator current record is outside its stable cursor",
                         ));

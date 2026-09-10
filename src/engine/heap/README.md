@@ -6,6 +6,8 @@
 
 ## 文件与子目录
 
+- [collection_records.rs](collection_records.rs)：Map/Set 存活记录、键索引和递增记录 ID 的统一拥有者；删除回收记录，游标不依赖物理槽。
+
 - [allocation.rs](allocation.rs)：分配及初始化。
 - [arena.rs](arena.rs)：槽位、发布状态、计数与节点访问。
 - [binding_records.rs](binding_records.rs)：binding 的原始堆记录、载荷与校验。
@@ -43,3 +45,13 @@
 - [tests.rs](tests.rs)：模块回归测试。
 
 - [profiling.rs](profiling.rs)：可选 arena backing storage 跟踪和资源拥有者的内存统计。
+
+Map/Set 的 `CollectionRecords` 独占存活记录、键索引、存活 ID 顺序和递增 ID
+时钟。删除不复用 ID；clear 释放存储但保留时钟。游标只保存 ID，因此活迭代器
+不要求保留墓碑。打印器将已删除的 current ID 合成为空项，不能把它当成存活记录。
+记录 key 在发布后不可修改，value 替换通过专用入口，GC 边事务仍由 heap 拥有。
+
+顺序暂用标准库 BTreeSet：键/记录定位平均 O(1)，增删与寻找下一项 O(log n)，
+整表遍历 O(n)。这是为了在支持任意暂停游标时立即回收历史记录，避免引入游标
+注册表或自定义链接回收协议；不声称全部操作 O(1)。哈希表按几何阈值收缩，容量
+随存活规模变化；测试覆盖暂停游标、重插、clear、ID 耗尽与参考模型随机序列。
