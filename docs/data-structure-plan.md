@@ -14,7 +14,7 @@
 - S07：稀疏截断批量布局提交已实现，1916 项库测试和完整 CLI/oracle 通过；24 个正式样本通过，固定工作量曲线近似持平。整数/固定键路径仍待完成。
 - S10a（新增证据）：调试位置生成每次从源码开头扫描，CPU 采样中占主要热点；source 层每 256 字节检查点索引已实现，1917 项库测试和完整 CLI/oracle 通过；72 个正式样本通过，见[源码位置报告](reports/source-coordinate-index.md)。
 - S04：统一 CollectionRecords 已实现，递增 ID 与物理存储分离；活游标不阻止回收。1921 项库测试、完整 CLI/oracle 回归及 228 个正式样本通过，容量测试通过。保留顺序树的 O(log n) 代价，常规操作有约 4%–13% 退化，见[回收报告](reports/collection-records.md)。新 focused/full 验证待完成。
-- S06：dictionary 实现已接通；紧凑物理槽 + 独立插入顺序，共享 shape 首次分离。1926 项库测试通过；CLI/oracle 和性能验证进行中。
+- S06：dictionary 实现已接通；紧凑物理槽 + 独立插入顺序，共享 shape 首次分离。1926 项库测试、943 项 CLI/oracle（1 ignored）以及 48 个正式样本通过；删除宽度曲线近似持平，见[dictionary 报告](reports/dictionary-objects.md)。新 focused/full 验证待完成。
 - S08、S13–S19：未开始。
 
 阶段集成验证：`383a2e1` 的引擎语义 fingerprint
