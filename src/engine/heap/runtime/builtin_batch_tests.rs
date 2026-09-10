@@ -208,3 +208,103 @@ fn builtin_batch_date_keeps_aliases_descriptors_and_realm_functions() {
         Value::Bool(true)
     );
 }
+
+#[test]
+fn builtin_batch_keeps_context_functions_separate_on_a_shared_shape() {
+    let runtime = Runtime::new();
+    let mut first = runtime.new_context();
+    let mut second = runtime.new_context();
+    let a = runtime.new_object(None).unwrap();
+    let b = runtime.new_object(None).unwrap();
+    runtime
+        .define_native_builtin_auto_init_batch(&a, first.realm, [method("batch_realm")])
+        .unwrap();
+    runtime
+        .define_native_builtin_auto_init_batch(&b, second.realm, [method("batch_realm")])
+        .unwrap();
+    assert_eq!(layout(&runtime, &a).0, layout(&runtime, &b).0);
+    let key = runtime.intern_property_key("batch_realm").unwrap();
+    let a_function = first.get_property(&a, &key).unwrap();
+    let b_function = second.get_property(&b, &key).unwrap();
+    assert_ne!(a_function, b_function);
+    assert_eq!(a_function, second.get_property(&a, &key).unwrap());
+    assert_eq!(b_function, first.get_property(&b, &key).unwrap());
+    let Value::Object(a_function) = a_function else {
+        unreachable!()
+    };
+    let Value::Object(b_function) = b_function else {
+        unreachable!()
+    };
+    let Value::Object(first_prototype) = first.eval("Function.prototype").unwrap() else {
+        unreachable!()
+    };
+    let Value::Object(second_prototype) = second.eval("Function.prototype").unwrap() else {
+        unreachable!()
+    };
+    let state = runtime.0.state.borrow();
+    for (function, prototype) in [
+        (&a_function, &first_prototype),
+        (&b_function, &second_prototype),
+    ] {
+        let shape = state.heap.object(function.object_id()).unwrap().shape;
+        assert_eq!(
+            state.heap.shape(shape).unwrap().prototype(),
+            Some(prototype.object_id())
+        );
+    }
+}
+
+#[test]
+fn builtin_batch_rejects_exotic_receivers_without_observable_traps() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    for source in [
+        "new Date(0)",
+        "new Uint8Array(2)",
+        "new Proxy({}, {defineProperty() { throw 42; }})",
+    ] {
+        let Value::Object(object) = context.eval(source).unwrap() else {
+            unreachable!()
+        };
+        let original = layout(&runtime, &object);
+        let atoms = runtime.test_atom_count();
+        assert!(
+            runtime
+                .define_native_builtin_auto_init_batch(
+                    &object,
+                    context.realm,
+                    [method("batch_exotic")]
+                )
+                .is_err()
+        );
+        assert_eq!(layout(&runtime, &object), original);
+        assert_eq!(runtime.test_atom_count(), atoms);
+    }
+}
+
+#[test]
+fn builtin_batch_array_and_typed_array_keep_order_aliases_and_calls() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    assert_eq!(
+        context
+            .eval(
+                r#"(() => {
+        const p = Array.prototype;
+        const t = Object.getPrototypeOf(Uint8Array.prototype);
+        const keys = Object.getOwnPropertyNames(t);
+        const d = Object.getOwnPropertyDescriptor(t, 'set');
+        return p.values === p[Symbol.iterator] && t.values === t[Symbol.iterator]
+            && t.toString === p.toString && Array.from.length === 1
+            && Object.getPrototypeOf(Uint8Array).from.length === 1
+            && keys.slice(0, 7).join(',') === 'length,at,with,buffer,byteLength,byteOffset,set'
+            && d.writable && !d.enumerable && d.configurable && d.value.length === 1
+            && [3, 1, 2].toSorted().join() === '1,2,3'
+            && new Uint8Array([3, 1, 2]).toSorted().join() === '1,2,3'
+            && Uint8Array.fromHex('0aff').toHex() === '0aff';
+    })()"#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+}

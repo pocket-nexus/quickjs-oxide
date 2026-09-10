@@ -90,6 +90,7 @@ impl Runtime {
 
         // The UTC/GMT alias has already been materialized. The following
         // table has no intermediate reads and can publish one final layout.
+        // The toUTCString read and toGMTString alias above are a publication boundary.
         let mut methods = Vec::new();
         for (kind, name) in [
             (
@@ -244,7 +245,6 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
-    use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 
     #[derive(Debug)]
     struct FixedHostServices {
