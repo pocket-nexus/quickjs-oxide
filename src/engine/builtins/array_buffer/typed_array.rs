@@ -853,7 +853,7 @@ impl Runtime {
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
         for index in 0..length {
-            let key = self.property_key_for_index(index as u64)?;
+            let key = self.property_key_for_index(index)?;
             let value = match self.get_property_in_realm(realm, source, &key)? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => return Ok(Completion::Throw(value)),
@@ -1076,7 +1076,7 @@ impl Runtime {
                 NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
             };
         for index in 0..length {
-            let key = self.property_key_for_index(index as u64)?;
+            let key = self.property_key_for_index(index)?;
             let mut value = match self.get_property_in_realm(realm, &source, &key)? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => return Ok(Completion::Throw(value)),
@@ -1290,7 +1290,7 @@ impl Runtime {
             )?));
         }
         for index in 0..length {
-            let key = self.property_key_for_index(index as u64)?;
+            let key = self.property_key_for_index(index)?;
             let value = match self.get_property_in_realm(realm, &source, &key)? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => return Ok(Completion::Throw(value)),

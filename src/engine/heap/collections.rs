@@ -707,8 +707,7 @@ impl Heap {
             let record = records.remove(index).ok_or(HeapError::Invariant(
                 "Set deletion requires a live record index",
             ))?;
-            let key = record.key;
-            key
+            record.key
         };
 
         let mut cleanup = HeapCleanup::default();
