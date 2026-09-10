@@ -980,6 +980,24 @@ impl Heap {
         &mut self,
         edges: &[RawId],
     ) -> Result<(), HeapError> {
+        // Property updates usually carry zero, one or two edges. Preflight
+        // this bounded list directly, including the accessor get == set case.
+        if edges.len() <= 2 {
+            if let Some(&first) = edges.first() {
+                let duplicate = edges.get(1) == Some(&first);
+                self.preflight_edge_retain(first, if duplicate { 2 } else { 1 })?;
+                if let Some(&second) = edges.get(1) {
+                    if !duplicate {
+                        self.preflight_edge_retain(second, 1)?;
+                    }
+                }
+                for &edge in edges {
+                    self.retain_raw(edge, 1)
+                        .expect("preflighted small edge retain failed before publication");
+                }
+            }
+            return Ok(());
+        }
         let mut counts = HashMap::<RawId, u32>::new();
         for &edge in edges {
             let count = counts.entry(edge).or_default();
@@ -991,15 +1009,22 @@ impl Heap {
         // A complete preflight makes the following increments infallible and
         // avoids a rollback path that could itself need to report atom cleanup.
         for (&edge, &additional) in &counts {
-            let strong = self.live_node(edge)?.strong;
-            strong.checked_add(additional).ok_or(HeapError::Overflow {
-                operation: "retaining outgoing heap edges",
-            })?;
+            self.preflight_edge_retain(edge, additional)?;
         }
         for (edge, additional) in counts {
             self.retain_raw(edge, additional)
                 .expect("preflighted heap edge retain failed before publication");
         }
+        Ok(())
+    }
+
+    fn preflight_edge_retain(&self, edge: RawId, additional: u32) -> Result<(), HeapError> {
+        self.live_node(edge)?
+            .strong
+            .checked_add(additional)
+            .ok_or(HeapError::Overflow {
+                operation: "retaining outgoing heap edges",
+            })?;
         Ok(())
     }
 
