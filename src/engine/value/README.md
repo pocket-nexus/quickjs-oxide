@@ -7,6 +7,7 @@
 ## 文件与子目录
 
 - [bigint.rs](bigint.rs)：`QuickJS`-compatible arbitrary-precision integer values.。
+- [collection_key.rs](collection_key.rs)：已验证 raw key 的 SameValueZero 与哈希；不访问堆、不执行转换或 JS，调用方负责 Runtime 域和内部哨兵检查。
 - [conversion.rs](conversion.rs)：ECMAScript 值转换。
 - [mod.rs](mod.rs)：模块入口、共享接口与子模块声明。
 - [number.rs](number.rs)：Exact numeric formatting primitives for the pinned QuickJS release.。

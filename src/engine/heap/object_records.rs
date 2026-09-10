@@ -269,6 +269,7 @@ pub enum ObjectPayload {
     /// the Map is live, preserving mutation-sensitive iterator semantics.
     Map {
         records: Vec<MapRecord>,
+        key_index: CollectionIndex,
         /// Ordered stable indices of live records. Historical tombstones stay
         /// in `records` for iterators, but bounded diagnostic traversal does
         /// not need to rescan them.
@@ -764,7 +765,7 @@ impl ObjectData {
     /// [`Heap::map_insert_record`] after key equality has been resolved by the
     /// runtime's SameValueZero logic.
     #[must_use]
-    pub const fn map(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn map(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
             slots,
@@ -776,6 +777,7 @@ impl ObjectData {
             kind: ObjectKind::Map,
             payload: ObjectPayload::Map {
                 records: Vec::new(),
+                key_index: CollectionIndex::default(),
                 live_indices: BTreeSet::new(),
                 size: 0,
             },

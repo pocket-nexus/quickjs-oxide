@@ -1796,6 +1796,7 @@ impl Heap {
         }
         if let ObjectPayload::Map {
             records,
+            key_index,
             live_indices,
             size,
         } = &object.payload
@@ -1833,6 +1834,7 @@ impl Heap {
                     "Map live index does not match its record layout",
                 ));
             }
+            key_index.validate(records)?;
         }
         if let ObjectPayload::MapIterator {
             object: source,

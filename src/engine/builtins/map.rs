@@ -496,28 +496,14 @@ impl Runtime {
         map: &ObjectRef,
         key: &Value,
     ) -> Result<Option<(usize, RawValue)>, RuntimeError> {
-        let records = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .map_records(map.object_id())?
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| {
-                record
-                    .key
-                    .as_ref()
-                    .map(|key| (index, key.clone(), record.value.clone()))
-            })
-            .collect::<Vec<_>>();
-        for (index, candidate, value) in records {
-            let candidate = self.root_raw_value(&candidate)?;
-            if candidate.same_value_zero(key) {
-                return Ok(Some((index, value)));
-            }
-        }
-        Ok(None)
+        let raw_key = self.raw_property_value(key)?;
+        let state = self.0.state.borrow();
+        let heap = &state.heap;
+        let Some(index) = heap.map_find_record(map.object_id(), &raw_key)? else {
+            return Ok(None);
+        };
+        let value = heap.map_records(map.object_id())?[index].value.clone();
+        Ok(Some((index, value)))
     }
 
     fn set_map_record(

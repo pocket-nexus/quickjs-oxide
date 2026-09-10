@@ -313,6 +313,27 @@ impl<V> WeakCollectionRecords<V> {
 }
 
 impl Heap {
+    /// Resolve a validated key without snapshots or per-candidate root handles.
+    pub(crate) fn map_find_record(
+        &self,
+        id: ObjectId,
+        key: &RawValue,
+    ) -> Result<Option<usize>, HeapError> {
+        if !is_map_storable_value(key) {
+            return Err(HeapError::Invariant(
+                "Map lookup contains an internal value sentinel",
+            ));
+        }
+        match &self.object(id)?.payload {
+            ObjectPayload::Map {
+                records, key_index, ..
+            } => Ok(key_index.find(records, key)),
+            _ => Err(HeapError::Invariant(
+                "Map lookup reached an object with the wrong class",
+            )),
+        }
+    }
+
     /// Borrow the stable insertion-order record array of one genuine Map.
     /// Tombstones remain present with a `None` key and `undefined` value.
     pub fn map_records(&self, id: ObjectId) -> Result<&[MapRecord], HeapError> {
@@ -366,6 +387,7 @@ impl Heap {
 
         let ObjectPayload::Map {
             records,
+            key_index,
             live_indices,
             size,
         } = &mut self.object_mut(id)?.payload
@@ -373,6 +395,7 @@ impl Heap {
             unreachable!("Map payload was validated before retaining record edges")
         };
         let record_index = records.len();
+        key_index.insert(&key, record_index);
         records.push(MapRecord {
             key: Some(key),
             value,
@@ -444,6 +467,7 @@ impl Heap {
         let (key, value) = {
             let ObjectPayload::Map {
                 records,
+                key_index,
                 live_indices,
                 size,
             } = &mut self.object_mut(id)?.payload
@@ -468,6 +492,7 @@ impl Heap {
             let key = record.key.take().ok_or(HeapError::Invariant(
                 "Map deletion requires a live record index",
             ))?;
+            key_index.remove(&key, index);
             let value = std::mem::replace(&mut record.value, RawValue::Undefined);
             *size -= 1;
             (key, value)
@@ -493,6 +518,7 @@ impl Heap {
         let removed = {
             let ObjectPayload::Map {
                 records,
+                key_index,
                 live_indices,
                 size,
             } = &mut self.object_mut(id)?.payload
@@ -508,6 +534,7 @@ impl Heap {
                     removed.push((key, value));
                 }
             }
+            key_index.clear();
             live_indices.clear();
             *size = 0;
             removed

@@ -42,6 +42,7 @@ use gc::{
     raw_module_record_edges, raw_value_atom, raw_value_edges, raw_value_matches_weak_key,
     shape_edges, var_ref_edges,
 };
+mod collection_index;
 mod collections;
 use crate::engine::code::bytecode_validation;
 use bytecode_validation::{
@@ -50,6 +51,7 @@ use bytecode_validation::{
     validate_eval_environment_phase_layout, validate_parameter_bytecode_layout,
     validate_parameter_initializer_scope_layout, validate_pattern_parameter_bytecode_layout,
 };
+pub use collection_index::CollectionIndex;
 pub(crate) use collections::CollectionIteratorCurrentIndices;
 pub use collections::{MapRecord, WeakCollectionKey, WeakCollectionRecords};
 mod private_validation;

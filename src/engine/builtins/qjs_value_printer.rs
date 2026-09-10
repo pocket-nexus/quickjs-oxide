@@ -802,6 +802,7 @@ impl QjsValuePrinter<'_, '_> {
                 ("RegExp String Iterator", PrintableBody::Ordinary)
             }
             ObjectPayload::Map {
+                key_index: _,
                 records: source,
                 live_indices,
                 size,

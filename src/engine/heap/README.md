@@ -14,6 +14,7 @@
 - [buffers.rs](buffers.rs)：Borrow-contained ArrayBuffer storage operations and SharedArrayBuffer backing handles.。
 - [code_records.rs](code_records.rs)：code 的原始堆记录、载荷与校验。
 - [collections.rs](collections.rs)：Insertion-ordered Map/Set storage, weak collection records, and collection iterator state.。
+- [collection_index.rs](collection_index.rs)：强集合的非拥有型键索引；只保存哈希和稳定记录位置，由集合存储同步增删。查找不执行 JS；完整一致性扫描仅用于发布校验。
 - [deferred.rs](deferred.rs)：延迟操作队列、待处理状态和清理重入守卫。
 - [gc.rs](gc.rs)：Heap reference ownership, ordered weak-reference processing, and cycle collection.。
 - [identity.rs](identity.rs)：identity 的类型和操作实现。

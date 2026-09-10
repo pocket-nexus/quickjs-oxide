@@ -3,6 +3,37 @@ use crate::engine::heap::native::{MapNativeKind, NativeCProto, SetNativeKind};
 use super::*;
 
 #[test]
+fn map_index_matches_numeric_keys_and_survives_delete_and_clear() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let map = heap
+        .allocate_object(ObjectData::map(shape, Vec::new()))
+        .unwrap();
+    heap.map_insert_record(map, RawValue::Int(1), RawValue::Int(7))
+        .unwrap();
+    heap.map_insert_record(map, RawValue::Float(f64::NAN), RawValue::Int(8))
+        .unwrap();
+    assert_eq!(
+        heap.map_find_record(map, &RawValue::Float(1.0)),
+        Ok(Some(0))
+    );
+    assert_eq!(
+        heap.map_find_record(map, &RawValue::Float(-f64::NAN)),
+        Ok(Some(1))
+    );
+    heap.map_delete_record(map, 0).unwrap();
+    assert_eq!(heap.map_find_record(map, &RawValue::Int(1)), Ok(None));
+    heap.map_insert_record(map, RawValue::Int(1), RawValue::Int(9))
+        .unwrap();
+    assert_eq!(heap.map_find_record(map, &RawValue::Int(1)), Ok(Some(2)));
+    heap.map_clear(map).unwrap();
+    assert_eq!(
+        heap.map_find_record(map, &RawValue::Float(f64::NAN)),
+        Ok(None)
+    );
+}
+
+#[test]
 fn map_records_retain_gc_edges_and_delete_releases_them() {
     let mut heap = Heap::new();
     let shape = empty_shape(&mut heap);
