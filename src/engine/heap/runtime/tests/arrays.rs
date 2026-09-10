@@ -1,6 +1,79 @@
 use super::*;
 
 #[test]
+fn holey_dictionary_keeps_prototype_setters_and_partial_length_failure() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    assert_eq!(
+        context
+            .eval(
+                r#"(() => {
+        const a = [], symbol = Symbol();
+        for (let i=0;i<64;i++) a.push(i);
+        a.tag = 1; a[symbol] = 2; delete a[7];
+        let seen = 0;
+        const prototype = Object.create(Array.prototype);
+        Object.defineProperty(prototype, '7', {set(value) {seen=value;}, get() {return 99;}});
+        Object.setPrototypeOf(a, prototype);
+        a[7] = 42;
+        if (seen !== 42 || a[7] !== 99 || Object.hasOwn(a, '7')) return false;
+        Object.defineProperty(a, '7', {value:7,writable:true,enumerable:true,configurable:true});
+        Object.defineProperty(a, '30', {configurable:false});
+        let threw = false;
+        try { Object.defineProperty(a, 'length', {value:8,writable:false}); }
+        catch (error) { threw = error instanceof TypeError; }
+        return threw && a.length === 31 && a[30] === 30 && !Object.hasOwn(a, '31')
+            && !Object.getOwnPropertyDescriptor(a, 'length').writable
+            && a.tag === 1 && a[symbol] === 2;
+    })()"#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn holey_array_churn_reuses_the_layout_after_its_initial_conversion() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let Value::Object(array) = context
+        .eval("(() => { const a=[]; for(let i=0;i<32;i++) a.push(i); delete a[7]; return a; })()")
+        .unwrap()
+    else {
+        panic!("array fixture");
+    };
+    let shape = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .object(array.object_id())
+        .unwrap()
+        .shape;
+    let key = runtime.property_key_for_index(9).unwrap();
+    assert!(runtime.delete_property(&array, &key).unwrap());
+    assert_eq!(
+        runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object(array.object_id())
+            .unwrap()
+            .shape,
+        shape,
+        "a second interior deletion must not rebuild the entire Array layout"
+    );
+    context.set_property(&array, &key, Value::Int(99)).unwrap();
+    assert_eq!(context.get_property(&array, &key).unwrap(), Value::Int(99));
+    assert_eq!(
+        runtime.array_fast_len(&array).unwrap(),
+        None,
+        "QuickJS representation-sensitive algorithms still observe slow form"
+    );
+}
+
+#[test]
 fn sparse_truncation_preserves_highest_blocker_named_order_and_accessor_silence() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();

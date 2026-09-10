@@ -480,6 +480,17 @@ pub struct ObjectData {
 }
 
 impl ObjectData {
+    /// Classes whose ordinary property slots may use a mutable dictionary.
+    /// Slow Arrays retain their separate ArraySetLength/index semantics; only
+    /// their shape/slot storage is shared with ordinary dynamic objects.
+    pub(crate) fn supports_dictionary_layout(&self) -> bool {
+        matches!(
+            (self.kind, &self.payload),
+            (ObjectKind::Ordinary, ObjectPayload::Ordinary)
+                | (ObjectKind::Array, ObjectPayload::Array { dense: None })
+        )
+    }
+
     /// Construct an ordinary extensible object with a mutable prototype.
     #[must_use]
     pub const fn ordinary(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {

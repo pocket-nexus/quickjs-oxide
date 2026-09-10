@@ -410,7 +410,10 @@ impl RuntimeState {
         };
         let shape_cleanup = self.heap.release_shape(shape)?;
         self.apply_cleanup(layout_cleanup)?;
-        self.apply_cleanup(shape_cleanup)
+        self.apply_cleanup(shape_cleanup)?;
+        // Preserve QuickJS's slow-form flag, but do not keep rebuilding every
+        // property after a middle deletion or a non-default descriptor.
+        self.ensure_dictionary_layout(object)
     }
 
     pub(crate) fn apply_cleanup(&mut self, cleanup: HeapCleanup) -> Result<(), RuntimeError> {

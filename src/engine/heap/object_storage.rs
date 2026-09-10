@@ -1038,9 +1038,7 @@ impl Heap {
     ) -> Result<(), HeapError> {
         let shape = self.shape(object.shape)?;
         if !shape.dictionary_layout_is_valid()
-            || (shape.is_dictionary()
-                && (object.kind != ObjectKind::Ordinary
-                    || !matches!(object.payload, ObjectPayload::Ordinary)))
+            || (shape.is_dictionary() && !object.supports_dictionary_layout())
         {
             return Err(HeapError::Invariant("invalid dictionary object layout"));
         }

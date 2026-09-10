@@ -1579,8 +1579,7 @@ impl Runtime {
         let dictionary_eligible = {
             let data = state.heap.object(object_id)?;
             let shape = state.heap.shape(data.shape)?;
-            data.kind == crate::engine::heap::ObjectKind::Ordinary
-                && matches!(data.payload, ObjectPayload::Ordinary)
+            data.supports_dictionary_layout()
                 && (shape.is_dictionary()
                     || shape.entries().len() >= MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
         };

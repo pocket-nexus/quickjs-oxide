@@ -1,21 +1,20 @@
-//! Exclusive ordinary-object layout mutations. All fallible validation and
+//! Exclusive dictionary property-layout mutations. All fallible validation and
 //! retains precede publication; moved slots transfer ownership without cloning.
 
 use super::*;
 
 impl Heap {
     pub(crate) fn enable_object_dictionary(&mut self, id: ObjectId) -> Result<(), HeapError> {
-        let shape = self.exclusive_ordinary_shape(id)?;
+        let shape = self.exclusive_dictionary_shape(id)?;
         self.shape_mut(shape)?.enable_dictionary();
         Ok(())
     }
 
-    fn exclusive_ordinary_shape(&self, id: ObjectId) -> Result<ShapeId, HeapError> {
+    fn exclusive_dictionary_shape(&self, id: ObjectId) -> Result<ShapeId, HeapError> {
         let object = self.object(id)?;
-        if object.kind != ObjectKind::Ordinary || !matches!(object.payload, ObjectPayload::Ordinary)
-        {
+        if !object.supports_dictionary_layout() {
             return Err(HeapError::Invariant(
-                "dictionary mutation requires an ordinary object",
+                "dictionary mutation requires an ordinary object or slow Array",
             ));
         }
         let shape = self.shape(object.shape)?;
@@ -34,7 +33,7 @@ impl Heap {
         id: ObjectId,
         atom: Atom,
     ) -> Result<HeapCleanup, HeapError> {
-        let shape_id = self.exclusive_ordinary_shape(id)?;
+        let shape_id = self.exclusive_dictionary_shape(id)?;
         let shape = self.shape(shape_id)?;
         let index = shape.find(atom).ok_or(HeapError::Invariant(
             "dictionary deletion requires an existing property",
@@ -70,7 +69,7 @@ impl Heap {
         flags: PropertyFlags,
         replacement: PropertySlot,
     ) -> Result<HeapCleanup, HeapError> {
-        let shape_id = self.exclusive_ordinary_shape(id)?;
+        let shape_id = self.exclusive_dictionary_shape(id)?;
         let shape = self.shape(shape_id)?;
         if !shape.is_dictionary() || index >= shape.entries().len() {
             return Err(HeapError::Invariant(
