@@ -554,7 +554,7 @@ def check(ctx):
             "read_trusted_ordinary_function_in_realm",
             "stage3e-read-only-publication",
         ),
-        "7bce6b697724b3bf4e6cd3b4747887d7e3a4a3376bf940907650d44ad7261f4e",
+        "6528a8aefe09efba3d732e33a6de6a6d8daae0de67cb62fe3d5f68b97fe9d745",
     )
 
     if normalized_stack_effect.count("| Self::Throw => (1, 0),") != 1:

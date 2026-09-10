@@ -35,16 +35,16 @@ impl Runtime {
         realm: ContextId,
         function: UnlinkedFunction,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        bytecode_publish::verify_unlinked_tree(&function)?;
+        let function = bytecode_publish::VerifiedFunction::script(function)?;
         self.publish_verified_unlinked_function(realm, function)
     }
 
     pub(crate) fn publish_verified_unlinked_function(
         &self,
         realm: ContextId,
-        function: UnlinkedFunction,
+        function: bytecode_publish::VerifiedFunction,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        let flat_functions = bytecode_publish::flatten_unlinked_tree(function)?;
+        let flat_functions = bytecode_publish::flatten_unlinked_tree(function.into_function())?;
         #[cfg(feature = "test262-host")]
         if !self.0.dynamic_import_bytecode_allowed.get()
             && flat_functions.iter().any(|function| {

@@ -20,6 +20,9 @@ cp -- "$repository_root/src/engine/value/primitive.rs" "$fixture/src/engine/valu
 cp -R -- "$repository_root/src/engine/api/context" "$fixture/src/engine/api/context"
 cp -- "$repository_root/src/engine/code/bytecode_publish.rs" \
     "$fixture/src/engine/code/bytecode_publish.rs"
+mkdir -p -- "$fixture/src/engine/code/bytecode_publish"
+cp -- "$repository_root/src/engine/code/bytecode_publish/verified.rs" \
+    "$fixture/src/engine/code/bytecode_publish/verified.rs"
 printf '%s\n' \
     'mod atoms;' \
     'mod code;' \

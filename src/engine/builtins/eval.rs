@@ -15,18 +15,7 @@ impl Runtime {
         function: UnlinkedFunction,
         expected: &EvalCompileContext,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        bytecode_publish::verify_unlinked_eval_tree_with_profile_and_arguments(
-            &function,
-            expected.kind,
-            expected.caller_strict,
-            &expected.bindings,
-            &expected.caller_profile,
-            bytecode_publish::EvalPublicationCapabilities {
-                super_call_allowed: expected.super_call_allowed,
-                super_allowed: expected.super_allowed,
-                arguments_forbidden: expected.arguments_forbidden,
-            },
-        )?;
+        let function = bytecode_publish::VerifiedFunction::eval(function, expected)?;
         self.publish_verified_unlinked_function(realm, function)
     }
 
