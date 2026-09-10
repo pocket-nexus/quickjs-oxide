@@ -28,6 +28,7 @@ The scaling dimensions differ intentionally:
 | --- | --- | --- |
 | map-int, map-string, set | Entries per collection | Total inserts and membership checks |
 | map-churn, set-churn | Prior delete/reinsert history, one live entry | Subsequent membership checks; setup grows with history |
+| map-iterate-churn, set-iterate-churn | Prior delete/reinsert history with a paused iterator | New iterators over one live entry; also validate the paused cursor |
 | set-intersection | Entries per pair | Total entries across pairs; includes construction |
 | prop-write | Object width | Writes to the same existing property |
 | prop-delete, array-truncate | Object/array width | Total constructed entries; includes construction and validation |

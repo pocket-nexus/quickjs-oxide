@@ -9,7 +9,8 @@ from run import digest
 
 CASES = ("map-int", "map-string", "set", "map-churn", "set-churn",
          "set-intersection", "prop-write", "prop-delete", "array-truncate",
-         "scope", "constants", "module", "module-imports", "long-key")
+         "scope", "constants", "module", "module-imports", "long-key",
+         "map-iterate-churn", "set-iterate-churn")
 
 
 def prepare(directory, case, size, operations):
@@ -41,6 +42,22 @@ for (let i = 0; i < size; i++) {{ {insert}; c.delete(0); }}
 {insert};
 for (let i = 0; i < operations; i++) sum += c.has(0) ? 1 : 0;
 sum += c.size;"""
+        expected = operations + 1
+    elif case in ("map-iterate-churn", "set-iterate-churn"):
+        constructor = "Set" if case.startswith("set") else "Map"
+        insert = "c.add(i)" if constructor == "Set" else "c.set(i, i)"
+        first = "c.add(-1)" if constructor == "Set" else "c.set(-1, -1)"
+        last = "c.add(1)" if constructor == "Set" else "c.set(1, 1)"
+        body = f"""const c = new {constructor}();
+{first};
+const paused = c.keys();
+paused.next();
+c.delete(-1);
+for (let i = 0; i < size; i++) {{ {insert}; c.delete(i); }}
+{last};
+sum = paused.next().value;
+for (let i = 0; i < operations; i++) sum += c.keys().next().value;
+if (!paused.next().done) throw Error('paused cursor did not finish');"""
         expected = operations + 1
     elif case == "set-intersection":
         body = """for (let batch = 0; batch < operations / size; batch++) {
