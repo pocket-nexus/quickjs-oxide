@@ -11,4 +11,4 @@ stage3c-vm-evidence-not-cfg-excluded|stage3c-runtime-evidence|src/engine/vm/mod.
 stage3c-translate-evidence-not-cfg-ignored|stage3c-runtime-evidence|src/engine/code/binary_object/function_translate/mod.rs|    #[test]\n    fn tail_invocation_lowering_preserves_the_npop_operand_and_kind() {|    #[cfg_attr(test, ignore)]\n    #[test]\n    fn tail_invocation_lowering_preserves_the_npop_operand_and_kind() {
 borrowed-call-keeps-lower-stack|stage3c-tail-vm|src/engine/vm/mod.rs|        self.stack.truncate(base);|        self.stack.clear();
 borrowed-call-cleans-errors|stage3c-tail-vm|src/engine/vm/mod.rs|        self.stack.truncate(base);|        if result.is_ok() { self.stack.truncate(base); }
-borrowed-call-exact-arguments|stage3c-tail-vm|src/engine/vm/mod.rs|            &self.stack[arguments_start..],|            &self.stack[arguments_start + 1..],
+borrowed-call-exact-arguments|stage3c-tail-vm|src/engine/vm/mod.rs|&self.stack[arguments_start..]);|&self.stack[arguments_start + 1..]);
