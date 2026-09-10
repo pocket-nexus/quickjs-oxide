@@ -24,10 +24,14 @@
 - S18：普通 Call/CallMethod 借用调用者参数窗口，callee 保留拥有型帧；未引入帧池。调用实测基本持平，仅确认减少临时分配。1933 项库测试及完整 CLI/oracle 通过，见 [VM 报告](reports/vm-stack-and-call.md)。
 - S19：进行中；最终全量兼容性、CI 门禁和综合性能复测待完成。
 
-阶段集成验证：`596c788` 的引擎语义 fingerprint
-`f75c3be9b62379c442e0e059d57a24a4df7e8dbe8275d88f8ca31e0f2583f573`
-独立重放 6844 个 focused Test262 变体全部通过，结果行与冻结基线一致。
-该证据覆盖截至小引用事务的已提交引擎改动（含普通对象 dictionary、整数键、Arguments/RegExp 批量构建）；带洞 Array 及后续改动需再次验证，全量套件仍待完成。
+最终源码兼容性验证（引擎改动截至 `95013e9`；后续提交仅调整测试门禁/报告）：
+引擎 fingerprint `b61a54ac6ff4469d1223fba670782e8a49ac9a3b612a810037748ff70c46e568`。
+6844 个 focused 变体全部通过。完整 102037 变体中，80032 可运行、79982 通过、
+50 个已知失败；完整 TSV/JSONL 均仅 fingerprint 与冻结基线不同，规范化后 SHA-256
+逐字节一致。没有新增结果差异，也没有修改或推广冻结 receipts。
+工作区测试、profiling/test262-host 组合、CI 固定 Rust 1.88 的全部 lint、原生 release
+及 Node/WASM 验收通过。完整架构反例门禁和综合性能复测仍在完成中。
+详见[验证证据](reports/data-structure-validation.json)。
 
 读者：参与 quickjs-oxide 维护的人和 agent。读完后应能选择一个依赖已满足的步骤，找到职责所属模块，理解不变量，完成实现、验证和交接，无需查阅之前的聊天记录。
 
