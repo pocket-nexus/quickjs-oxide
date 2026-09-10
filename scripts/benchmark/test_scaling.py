@@ -30,6 +30,11 @@ class Admission(unittest.TestCase):
 
 
 class Workloads(unittest.TestCase):
+    def test_import_reexport_workload_checks_the_exported_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workload = scaling.prepare(Path(directory), "module-imports", 4, 16)
+            self.assertEqual(workload["expected"], "6\n")
+
     @unittest.skipUnless(shutil.which("node"), "Node is required for independent workload smoke checks")
     def test_every_workload_has_the_expected_observable_result(self):
         for case in scaling.CASES:

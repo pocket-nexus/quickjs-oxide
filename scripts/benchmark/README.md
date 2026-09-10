@@ -31,7 +31,7 @@ The scaling dimensions differ intentionally:
 | set-intersection | Entries per pair | Total entries across pairs; includes construction |
 | prop-write | Object width | Writes to the same existing property |
 | prop-delete, array-truncate | Object/array width | Total constructed entries; includes construction and validation |
-| scope, constants, module | Declarations, names or exports | Unused; each generated program executes once |
+| scope, constants, module, module-imports | Declarations, names, exports or import/reexport bindings | Unused; each generated program executes once |
 | long-key | String length | Repeated lookup of one separately constructed equal key |
 
 This initial runner measures time, not allocation counts or memory reclamation.

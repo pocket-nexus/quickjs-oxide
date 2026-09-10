@@ -9,7 +9,7 @@ from run import digest
 
 CASES = ("map-int", "map-string", "set", "map-churn", "set-churn",
          "set-intersection", "prop-write", "prop-delete", "array-truncate",
-         "scope", "constants", "module", "long-key")
+         "scope", "constants", "module", "module-imports", "long-key")
 
 
 def prepare(directory, case, size, operations):
@@ -83,11 +83,18 @@ sum = o.p0 + Object.keys(o).length;"""
         terms = "\n".join(f"sum += typeof global_{i} === 'undefined' ? 1 : 0;" for i in range(size))
         body = f"function f() {{\n{terms}\n}}\nf();"
         expected = size
-    elif case == "module":
+    elif case in ("module", "module-imports"):
         dependency = directory / "exports.mjs"
         dependency.write_text("".join(f"export const v{i} = {i};\n" for i in range(size)))
         files.append(dependency)
-        body = "import * as ns from './exports.mjs';\nfor (const key of Object.keys(ns)) sum += ns[key];"
+        entry = "exports.mjs"
+        if case == "module-imports":
+            entry = "imports.mjs"
+            names = ", ".join(f"v{i}" for i in range(size))
+            reexport = directory / entry
+            reexport.write_text(f"import {{ {names} }} from './exports.mjs';\nexport {{ {names} }};\n")
+            files.append(reexport)
+        body = f"import * as ns from './{entry}';\nfor (const key of Object.keys(ns)) sum += ns[key];"
         expected = size * (size - 1) // 2
     else:  # long-key: repeated content lookup; the two strings are built separately.
         body = """const a = 'x'.repeat(size) + '!', b = 'x'.repeat(size) + '!';
