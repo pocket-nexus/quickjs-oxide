@@ -4123,8 +4123,17 @@ impl VmHost for RuntimeVmHost {
         this_value: Value,
         arguments: Vec<Value>,
     ) -> Result<Completion, Error> {
+        self.call_with_borrowed_arguments(function, this_value, &arguments)
+    }
+
+    fn call_with_borrowed_arguments(
+        &mut self,
+        function: Value,
+        this_value: Value,
+        arguments: &[Value],
+    ) -> Result<Completion, Error> {
         self.runtime
-            .call_value_internal(self.current_realm, function, this_value, &arguments)
+            .call_value_internal(self.current_realm, function, this_value, arguments)
             .map_err(runtime_error_to_vm_error)
     }
 
