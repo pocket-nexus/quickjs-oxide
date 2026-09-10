@@ -30,7 +30,7 @@
 50 个已知失败；完整 TSV/JSONL 均仅 fingerprint 与冻结基线不同，规范化后 SHA-256
 逐字节一致。没有新增结果差异，也没有修改或推广冻结 receipts。
 工作区测试、profiling/test262-host 组合、CI 固定 Rust 1.88 的全部 lint、原生 release
-及 Node/WASM 验收通过。完整架构反例门禁和综合性能复测仍在完成中。
+及 Node/WASM 验收通过。完整架构反例门禁通过（694 个错误变体全部拒绝）；综合性能复测进行中。
 详见[验证证据](reports/data-structure-validation.json)。
 
 读者：参与 quickjs-oxide 维护的人和 agent。读完后应能选择一个依赖已满足的步骤，找到职责所属模块，理解不变量，完成实现、验证和交接，无需查阅之前的聊天记录。
