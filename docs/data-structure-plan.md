@@ -1,28 +1,21 @@
 # 数据结构与复杂度改进计划
 
-状态：实施中，集中在 stacked PR #17（base 为 #15 的分支）。未列为已验证的步骤仍待完成；局部测试不表示全计划或全量 Test262 已通过。
+状态：计划内实现与验证已完成，集中在 stacked PR #17（base 为 #15 的 `perf/batch-builtin-initialization` 分支），待 PR 评审。S08、S17、S18 按新证据细化了表示/优化范围，具体边界见下文及报告。
 
 当前进展（2026-09-11）：
 
-- S01：已加入 22 类固定工作量生成器、结果校验和失败保留；12 项 Python 测试及 Oxide 26 项小规模 smoke 通过。完整规模基线、内存实验与正式 A/B 仍待收集。首次集合探索测量与编译短暂重叠，不用作正式验收。
-- S02/S03：Map/Set 共用键规则和非拥有型索引已接通。1911 项库测试、16 项 map 过滤及 10 项 set 过滤 CLI/oracle 测试、源码布局检查通过；当前源码独立重放的 6844 个 focused Test262 变体全部通过且结果行与冻结基线一致。正式集合 A/B 的 168 个样本全部通过，容量曲线基本持平，详见[集合测量报告](reports/indexed-collections.md)。冻结基线未改写，全量 Test262 尚未重跑。
-- S05：同 flags 属性更新提前返回已实现；1911 项库测试、11 项 property 过滤 CLI/oracle 测试及 release 构建通过。24 个 A/B 样本通过，写入宽度曲线基本持平，详见[属性槽测量报告](reports/property-slot-update.md)。该提交的新 focused/full Test262 验证待完成。
-- S09：模块表专用索引和共享只读绑定槽已实现；1912 项库测试及 19 项模块 CLI/oracle 测试通过，48 个正式样本通过。整程序仍有超线性成本，见[模块测量报告](reports/module-indexes.md)。
-- S10：作用域名称索引已实现，保留最后声明优先及晚插入函数名顺序；1913 项库测试及完整 CLI 测试（943 通过、1 ignored，包含固定 oracle）通过。72 个正式样本通过输出校验；大作用域改善，大模块单步退化约 18%，尚未性能验收，见[作用域报告](reports/compiler-scope-index.md)。新 focused/full 验证待完成。
-- S11：字符串常量索引已实现；1914 项库测试及完整 CLI/oracle 回归通过，72 个正式样本通过。大常量案例约 3 倍改善，见[常量报告](reports/compiler-constant-index.md)。新 focused/full 验证待完成。
-- S12：进行中，新模块 profile 显示平坦字符串使用通用 rope 遍历仍是热点，直接切片比较/哈希已实现，72 个样本通过；模块和长键改善，常量案例单步退化，见[平坦字符串报告](reports/flat-strings.md)。每索引固定上限的弱字符串哈希缓存已接通，1922 项库测试和完整 CLI/oracle 通过；86 个正式样本通过，见[哈希缓存报告](reports/string-hash-memo.md)。整体性能验收待完成。
-- S07：稀疏截断批量布局提交已实现，1916 项库测试和完整 CLI/oracle 通过；24 个正式样本通过，固定工作量曲线近似持平。整数/固定键路径也已接通，避免数字→字符串→atom 往返，见[整数键与批量构建报告](reports/integer-keys-builtin-batches.md)。
-- S10a（新增证据）：调试位置生成每次从源码开头扫描，CPU 采样中占主要热点；source 层每 256 字节检查点索引已实现，1917 项库测试和完整 CLI/oracle 通过；72 个正式样本通过，见[源码位置报告](reports/source-coordinate-index.md)。
-- S04：统一 CollectionRecords 已实现，递增 ID 与物理存储分离；活游标不阻止回收。1921 项库测试、完整 CLI/oracle 回归及 228 个正式样本通过，容量测试通过。保留顺序树的 O(log n) 代价，常规操作有约 4%–13% 退化，见[回收报告](reports/collection-records.md)。新 focused/full 验证待完成。
-- S06：dictionary 实现已接通；紧凑物理槽 + 独立插入顺序，共享 shape 首次分离。1926 项库测试、943 项 CLI/oracle（1 ignored）以及 48 个正式样本通过；删除宽度曲线近似持平，见[dictionary 报告](reports/dictionary-objects.md)。新 focused/full 验证待完成。
-- S13：TypedArray immediate integer atom 直接分类，数值 -0 与字符串 "-0"、非规范字符串和跨 runtime 测试通过。
-- S14/S15：Arguments 完整布局一次发布，RegExp 命名捕获与结果属性批量发布；共享边界只处理所有权和失败回滚。
-- S16：0/1/2 条边的无 HashMap 事务已实现，重复边及后续边失败不发布测试通过。
-- S07/S13–S16 合并版本：1930 项库测试、943 项 CLI/oracle（1 ignored）、108 个正式 A/B 样本通过；新 focused/full 待完成。
-- S08：转入慢表示的 Array 复用 dictionary 存储，保留 QuickJS 的表示敏感行为；库测试、2 项针对性测试和完整 CLI/oracle 通过，72 个样本通过，churn 宽度曲线近似持平。见[带洞数组报告](reports/holey-array-dictionary.md)及其中表示方案细化理由。
-- S17：依据新 profile 实现数值栈原位更新，保留 locals/TDZ/验证检查；固定循环及调用工作量改善约 7%–9%。
-- S18：普通 Call/CallMethod 借用调用者参数窗口，callee 保留拥有型帧；未引入帧池。调用实测基本持平，仅确认减少临时分配。1933 项库测试及完整 CLI/oracle 通过，见 [VM 报告](reports/vm-stack-and-call.md)。
-- S19：进行中；最终全量兼容性、CI 门禁和综合性能复测待完成。
+- S01：22 类固定工作量生成器、独立输出校验、失败样本保留和 12 项工具测试已完成。
+- S02–S04：Map/Set 共用 SameValueZero 键索引；存活记录即时回收，暂停游标不保留历史墓碑。见[键查找](reports/indexed-collections.md)和[记录回收](reports/collection-records.md)。键定位平均 O(1)，顺序维护仍为 O(log n)，不宣称所有操作 O(1)。
+- S05/S06：同 flags 写入只替换单槽；dictionary 采用紧凑槽与独立插入顺序，避免逐次复制布局。见[槽更新](reports/property-slot-update.md)和[dictionary](reports/dictionary-objects.md)。
+- S07/S08：整数键直达、稀疏截断批处理、慢/带洞 Array 复用 dictionary，保留 QuickJS 的表示敏感语义。见[截断](reports/sparse-array-truncation.md)和[带洞数组](reports/holey-array-dictionary.md)。
+- S09–S11：模块名称/绑定槽、作用域名称和字符串常量建立专用索引，并共享只读模块槽。源码坐标索引作为实测后的补充步骤完成。见[模块](reports/module-indexes.md)、[作用域](reports/compiler-scope-index.md)、[常量](reports/compiler-constant-index.md)及[源码坐标](reports/source-coordinate-index.md)。
+- S12：平坦字符串操作避免反复构造表示；长键使用有界弱身份 hash memo，短键不分配缓存。见[平坦字符串](reports/flat-strings.md)和[哈希缓存](reports/string-hash-memo.md)。
+- S13–S16：TypedArray 数字索引、Arguments/RegExp 批量发布、0/1/2 条引用边事务完成。见[累计测量](reports/integer-keys-builtin-batches.md)，不把该累计收益归给单个提交。
+- S17：依据新 profile 实现 Number 栈原位更新，保留 locals/TDZ/字节码验证检查；局部 A/B 改善约 7%–9%。
+- S18：普通 Call/CallMethod 借用 caller 参数窗口，callee 仍拥有帧；未引入帧池。局部调用实测基本持平，只确认减少临时分配。S17/S18 的范围细化与证据见 [VM 报告](reports/vm-stack-and-call.md)。
+- S19：正确性、构建和架构门禁已完成；[396 个规模样本](reports/data-structure-scaling-final.md)及[522 个固定 microbench/V8 样本](reports/data-structure-fixed-final.md)全部通过。[原始自校准 harness](reports/data-structure-adaptive-final.md)、[36 个硬件计数样本和 6 份最终 profile](reports/data-structure-hardware-final.md)已保留。原始合并 V8 的两版 Oxide 均触及 90 秒上限，不产生可比较分数；固定八项均通过。
+
+最终源码验证覆盖上述所有引擎改动。各步骤报告保留当时的提交、局部验证和中间退化记录；其中的历史“待验证”状态不表示当前仍缺少对应兼容性验收。
 
 最终源码兼容性验证（引擎改动截至 `95013e9`；后续提交仅调整测试门禁/报告）：
 引擎 fingerprint `b61a54ac6ff4469d1223fba670782e8a49ac9a3b612a810037748ff70c46e568`。
@@ -30,8 +23,13 @@
 50 个已知失败；完整 TSV/JSONL 均仅 fingerprint 与冻结基线不同，规范化后 SHA-256
 逐字节一致。没有新增结果差异，也没有修改或推广冻结 receipts。
 工作区测试、profiling/test262-host 组合、CI 固定 Rust 1.88 的全部 lint、原生 release
-及 Node/WASM 验收通过。完整架构反例门禁通过（694 个错误变体全部拒绝）；综合性能复测进行中。
+及 Node/WASM 验收通过。完整架构反例门禁通过（694 个错误变体全部拒绝）；综合性能复测完成。
 详见[验证证据](reports/data-structure-validation.json)。
+
+最终处置：没有留下计划内未完成的实现项。没有加入帧池、没有移除 locals/TDZ/发布验证，
+也没有新增另一套带洞数组存储；这些是实测后的范围细化，不是已实现功能。
+空间结论来自存活记录、capacity、游标及 GC 回收验证，不宣称整应用 RSS 下降。
+各步骤的中间退化和无明显收益结果继续保留，未通过筛选工作负载或改写基线消除。
 
 读者：参与 quickjs-oxide 维护的人和 agent。读完后应能选择一个依赖已满足的步骤，找到职责所属模块，理解不变量，完成实现、验证和交接，无需查阅之前的聊天记录。
 
