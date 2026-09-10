@@ -4,19 +4,101 @@
 //! The collection storage boundary maintains both together. Lookups borrow records
 //! without rooting every candidate or invoking JavaScript. Public iterator cursors remain the responsibility of ordered record storage.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 
 use super::{CollectionRecords, HeapError, RawValue};
-use crate::engine::value::collection_key;
+use crate::engine::value::{JsString, WeakJsString, collection_key};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Default)]
 pub struct CollectionIndex {
     buckets: HashMap<u64, Vec<usize>>,
+    // Allocate the cache header only for long string keys. It is scoped to
+    // this index's hasher seed and keeps no String payload alive.
+    string_hashes: RefCell<Option<Box<StringHashCache>>>,
+    #[cfg(test)]
+    hash_computations: std::cell::Cell<usize>,
+}
+
+const MIN_CACHED_STRING_UNITS: usize = 256;
+const STRING_HASH_CACHE_SIZE: usize = 8;
+
+#[derive(Clone)]
+struct CachedStringHash {
+    string: WeakJsString,
+    hash: u64,
+}
+
+#[derive(Clone, Default)]
+struct StringHashCache {
+    entries: VecDeque<CachedStringHash>,
+}
+
+impl StringHashCache {
+    fn find(&self, string: &JsString) -> Option<u64> {
+        self.entries
+            .iter()
+            .find(|entry| entry.string.same_representation(string))
+            .map(|entry| entry.hash)
+    }
+
+    fn remember(&mut self, string: &JsString, hash: u64) {
+        if self.entries.len() == STRING_HASH_CACHE_SIZE {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(CachedStringHash {
+            string: string.downgrade(),
+            hash,
+        });
+    }
+}
+
+// Cache history is observationally irrelevant and is intentionally excluded
+// from metadata equality/debug output. Clone preserves both seed and cache.
+impl PartialEq for CollectionIndex {
+    fn eq(&self, other: &Self) -> bool {
+        self.buckets == other.buckets
+    }
+}
+
+impl fmt::Debug for CollectionIndex {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CollectionIndex")
+            .field("buckets", &self.buckets)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CollectionIndex {
     fn hash(&self, key: &RawValue) -> u64 {
+        let RawValue::String(string) = key else {
+            return self.hash_uncached(key);
+        };
+        if string.len() < MIN_CACHED_STRING_UNITS {
+            return self.hash_uncached(key);
+        }
+        if let Some(hash) = self
+            .string_hashes
+            .borrow()
+            .as_ref()
+            .and_then(|cache| cache.find(string))
+        {
+            return hash;
+        }
+        let hash = self.hash_uncached(key);
+        self.string_hashes
+            .borrow_mut()
+            .get_or_insert_with(Box::default)
+            .remember(string, hash);
+        hash
+    }
+
+    fn hash_uncached(&self, key: &RawValue) -> u64 {
+        #[cfg(test)]
+        self.hash_computations.set(self.hash_computations.get() + 1);
         let mut hasher = self.buckets.hasher().build_hasher();
         collection_key::hash(key, &mut hasher);
         hasher.finish()
@@ -64,6 +146,7 @@ impl CollectionIndex {
     pub(super) fn clear(&mut self) {
         self.buckets.clear();
         self.buckets.shrink_to_fit();
+        *self.string_hashes.borrow_mut() = None;
     }
 
     #[cfg(test)]
@@ -89,7 +172,7 @@ impl CollectionIndex {
                         .ok_or(HeapError::Invariant(
                             "collection index points outside live records",
                         ))?;
-                if !seen.insert(index) || self.hash(key) != hash {
+                if !seen.insert(index) || self.hash_uncached(key) != hash {
                     return Err(HeapError::Invariant(
                         "collection index does not match its records",
                     ));
@@ -118,6 +201,37 @@ mod tests {
         records
     }
     use crate::engine::value::{JsString, bigint::JsBigInt};
+
+    #[test]
+    fn long_string_hash_memo_is_bounded_and_does_not_own_keys() {
+        let index = CollectionIndex::default();
+        let key = JsString::try_from_utf8(&"x".repeat(1024)).unwrap();
+        let weak = key.downgrade();
+        let expected = index.hash(&RawValue::String(key.clone()));
+        for _ in 0..32 {
+            assert_eq!(index.hash(&RawValue::String(key.clone())), expected);
+        }
+        assert_eq!(index.hash_computations.get(), 1);
+        let cloned = index.clone();
+        assert_eq!(cloned.hash(&RawValue::String(key.clone())), expected);
+        let independent = CollectionIndex::default();
+        assert_eq!(
+            independent.hash(&RawValue::String(key.clone())),
+            independent.hash_uncached(&RawValue::String(key.clone()))
+        );
+        drop(key);
+        assert!(
+            weak.upgrade().is_none(),
+            "hash memo must not retain a String payload"
+        );
+        for suffix in 0..32 {
+            let key = JsString::try_from_utf8(&("x".repeat(1024) + &suffix.to_string())).unwrap();
+            index.hash(&RawValue::String(key));
+        }
+        assert!(
+            index.string_hashes.borrow().as_ref().unwrap().entries.len() <= STRING_HASH_CACHE_SIZE
+        );
+    }
 
     #[test]
     fn equal_keys_share_hash_across_number_and_string_representations() {
