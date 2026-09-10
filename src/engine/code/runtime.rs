@@ -490,12 +490,6 @@ pub(crate) enum Compilation {
     Throw(Value),
 }
 
-/// Immutable VM inputs detached from the runtime `RefCell` borrow.
-///
-/// `constants` contains raw heap identities, so the owning bytecode root is
-/// part of the snapshot. The raw constant pool therefore cannot outlive the GC
-/// node whose edges keep those identities valid.
-
 pub(crate) enum FlatConstant {
     Value(RawValue),
     AtomString(JsString),

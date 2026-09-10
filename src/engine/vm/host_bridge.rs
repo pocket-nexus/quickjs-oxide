@@ -2873,9 +2873,9 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn set_function_name(&mut self, value: &Value, name_index: u32) -> Result<(), Error> {
-        let constant = usize::try_from(name_index)
-            .ok()
-            .and_then(|index| self.executable.constants.get(index))
+        let constant = self
+            .executable
+            .constant(name_index)
             .ok_or_else(|| Error::internal("function-name constant index is out of bounds"))?;
         let BytecodeConstant::Value(RawValue::String(name)) = constant else {
             return Err(Error::internal(
@@ -3301,10 +3301,7 @@ impl VmHost for RuntimeVmHost {
         name: u32,
         has_heritage: bool,
     ) -> Result<DefineClassOutcome, Error> {
-        let name = match usize::try_from(name)
-            .ok()
-            .and_then(|index| self.executable.constants.get(index))
-        {
+        let name = match self.executable.constant(name) {
             Some(BytecodeConstant::Value(RawValue::String(name))) => name.clone(),
             Some(
                 BytecodeConstant::Value(_)

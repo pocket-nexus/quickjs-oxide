@@ -52,43 +52,53 @@ def main():
             parser.error('engines must be unique name=path entries')
         engines[name] = Path(path).resolve()
     workloads = load_workloads(args.manifest, args.workload_dir, args.case)
-    metadata = dict(machine=machine_metadata(), runner_sha256=digest(__file__),
-                    manifest_sha256=digest(args.manifest), workloads=workloads,
-                    engines={name: binary_metadata(path) for name, path in engines.items()},
-                    repeat=args.repeat, timeout_seconds=args.timeout, cpu=args.cpu,
-                    metric='whole-process wall nanoseconds; not adaptive scores')
+    metadata = dict(
+        machine=machine_metadata(),
+        runner_sha256=digest(__file__),
+        manifest_sha256=digest(args.manifest),
+        workloads=workloads,
+        engines={name: binary_metadata(path) for name, path in engines.items()},
+        repeat=args.repeat,
+        timeout_seconds=args.timeout,
+        cpu=args.cpu,
+        metric='whole-process wall nanoseconds; not adaptive scores',
+    )
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    (output/'raw').mkdir()
-    (output/'metadata.json').write_text(json.dumps(metadata, indent=2)+'\n')
-    samples=[]
-    with (output/'samples.jsonl').open('w') as journal:
+    (output / 'raw').mkdir()
+    (output / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    samples = []
+    with (output / 'samples.jsonl').open('w') as journal:
         for workload in workloads:
             for repetition in range(args.repeat):
-                names=list(engines)
-                offset=repetition % len(names)
-                for name in names[offset:]+names[:offset]:
+                names = list(engines)
+                offset = repetition % len(names)
+                for name in names[offset:] + names[:offset]:
                     if digest(workload['path']) != workload['sha256']:
                         raise ValueError('workload changed during measurement')
                     if digest(engines[name]) != metadata['engines'][name]['sha256']:
                         raise ValueError('binary changed during measurement')
-                    prefix=output/'raw'/f"{workload['case']}-{name}-{repetition}"
-                    cmd=[str(engines[name]),workload['path']]
+                    prefix = output / 'raw' / f"{workload['case']}-{name}-{repetition}"
+                    cmd = [str(engines[name]), workload['path']]
                     if args.cpu is not None:
-                        cmd=['taskset','-c',str(args.cpu),*cmd]
-                    sample=run_sample(cmd,output,prefix,args.timeout)
-                    status=admit(sample,workload['expected'].encode())
-                    if status=='ok' and Path(sample['stderr']).read_bytes():
-                        status='unexpected-stderr'
-                    sample.update(case=workload['case'],size=workload['size'],engine=name,
-                                  repetition=repetition,status=status)
+                        cmd = ['taskset', '-c', str(args.cpu), *cmd]
+                    sample = run_sample(cmd, output, prefix, args.timeout)
+                    status = admit(sample, workload['expected'].encode())
+                    if status == 'ok' and Path(sample['stderr']).read_bytes():
+                        status = 'unexpected-stderr'
+                    sample.update(
+                        case=workload['case'], size=workload['size'], engine=name,
+                        repetition=repetition, status=status,
+                    )
                     samples.append(sample)
-                    journal.write(json.dumps(sample)+'\n');journal.flush()
-                    print(f'{prefix.name}: {status}',flush=True)
-    summary=summarize(samples)
-    (output/'results.json').write_text(json.dumps(dict(metadata=metadata,summary=summary,samples=samples),indent=2)+'\n')
+                    journal.write(json.dumps(sample) + '\n')
+                    journal.flush()
+                    print(f'{prefix.name}: {status}', flush=True)
+    summary = summarize(samples)
+    result = dict(metadata=metadata, summary=summary, samples=samples)
+    (output / 'results.json').write_text(json.dumps(result, indent=2) + '\n')
     return 0 if all(row['eligible'] for row in summary) else 1
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     raise SystemExit(main())

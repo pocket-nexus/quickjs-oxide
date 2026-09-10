@@ -157,8 +157,8 @@ expect_full_rewrite_rejected stage3c-call-dispatch-alias-bypass \
     $'    ) -> Result<Option<Completion>, Error> {\n        use Instruction as I;\n        let completion = match instruction {\n            I::TailCall(argument_count) if *argument_count == 0 => {\n                let _ = self.pop()?;\n                return host.call(Value::Undefined, Value::Null, Vec::new()).map(Some);\n            }\n            Instruction::Import => {'
 expect_full_rewrite_rejected stage3c-execute-inner-tail-intercept \
     stage3c-tail-vm src/engine/vm/mod.rs \
-    $'            if matches!(\n                instruction,\n                Instruction::Import\n                    | Instruction::Call(_)' \
-    $'            use Instruction as I;\n            if matches!(instruction, I::TailCall(_) | I::TailCallMethod(_)) {\n                return Ok(InterpreterExit::Complete(Completion::Return(Value::Undefined)));\n            }\n\n            if matches!(\n                instruction,\n                Instruction::Import\n                    | Instruction::Call(_)'
+    $'            let completion = match instruction {\n                Instruction::InitialYield => {' \
+    $'            use Instruction as I;\n            if matches!(instruction, I::TailCall(_) | I::TailCallMethod(_)) {\n                return Ok(InterpreterExit::Complete(Completion::Return(Value::Undefined)));\n            }\n\n            let completion = match instruction {\n                Instruction::InitialYield => {'
 expect_full_rewrite_rejected stage3c-execute-alias-return-bypass \
     stage3c-tail-completion src/engine/vm/mod.rs \
     $'    ) -> Result<Completion, Error> {\n        loop {\n            let raised = match self.execute_inner(code, host) {' \
