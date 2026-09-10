@@ -74,3 +74,33 @@ impl Runtime {
         Ok(blocker)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::value::{JsString, Value};
+    #[test]
+    fn sparse_truncation_preserves_highest_blocker_named_order_and_accessor_silence() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context.eval(r#"(() => {
+        const a = [];
+        a.first = 1;
+        a[200] = 200;
+        Object.defineProperty(a, '120', { get() { throw Error('getter called'); }, configurable: true });
+        Object.defineProperty(a, '90', { value: 90, configurable: false });
+        Object.defineProperty(a, '40', { value: 40, configurable: false });
+        a[10] = 10;
+        a.last = 2;
+        const ok = Reflect.defineProperty(a, 'length', { value: 5, writable: false });
+        return [ok, a.length, Object.getOwnPropertyDescriptor(a, 'length').writable,
+            Reflect.ownKeys(a).join(','), a[90], a[40]].join('|');
+    })()"#).unwrap();
+        assert_eq!(
+            result,
+            Value::String(JsString::from_static(
+                "false|91|false|10,40,90,length,first,last|90|40"
+            ))
+        );
+    }
+}

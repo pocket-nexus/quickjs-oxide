@@ -158,7 +158,7 @@ impl Runtime {
 }
 
 #[cfg(test)]
-mod tests {
+mod integer_key_tests {
     use super::*;
 
     #[test]
