@@ -306,8 +306,8 @@ expect_full_rewrite_rejected stage3d-execute-hot-entry-throw-return \
     $'    ) -> Result<Option<Completion>, Error> {\n        if matches!(instruction, Instruction::Throw) {\n            return self.pop().map(|value| Some(Completion::Return(value)));\n        }\n        match instruction {\n            Instruction::Nop => {}'
 expect_full_rewrite_rejected stage3d-execute-published-throw-return \
     stage3d-throw-critical-route src/engine/vm/mod.rs \
-    $'        )\n        .execute(code, host)\n    }' \
-    $'        )\n        .execute(code, host)\n        .map(|completion| match completion {\n            Completion::Throw(value) => Completion::Return(value),\n            completion => completion,\n        })\n    }'
+    $'        activation.execute(&code, host)\n    }' \
+    $'        activation.execute(&code, host)\n        .map(|completion| match completion {\n            Completion::Throw(value) => Completion::Return(value),\n            completion => completion,\n        })\n    }'
 expect_full_rewrite_rejected stage3d-bytecode-normal-bridge-throw-return \
     stage3d-throw-critical-route src/engine/vm/host_bridge.rs \
     $'        let result = Vm::new().execute_published(input, &mut host);\n        active_frame.finish()?;\n        result.map_err(RuntimeError::Engine)\n    }\n}' \
