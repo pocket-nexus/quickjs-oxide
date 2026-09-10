@@ -20,7 +20,9 @@
 - S16：0/1/2 条边的无 HashMap 事务已实现，重复边及后续边失败不发布测试通过。
 - S07/S13–S16 合并版本：1930 项库测试、943 项 CLI/oracle（1 ignored）、108 个正式 A/B 样本通过；新 focused/full 待完成。
 - S08：转入慢表示的 Array 复用 dictionary 存储，保留 QuickJS 的表示敏感行为；库测试、2 项针对性测试和完整 CLI/oracle 通过，72 个样本通过，churn 宽度曲线近似持平。见[带洞数组报告](reports/holey-array-dictionary.md)及其中表示方案细化理由。
-- S17–S19：待完成；正在重采样 VM/调用路径。
+- S17：依据新 profile 实现数值栈原位更新，保留 locals/TDZ/验证检查；固定循环及调用工作量改善约 7%–9%。
+- S18：普通 Call/CallMethod 借用调用者参数窗口，callee 保留拥有型帧；未引入帧池。调用实测基本持平，仅确认减少临时分配。1933 项库测试及完整 CLI/oracle 通过，见 [VM 报告](reports/vm-stack-and-call.md)。
+- S19：进行中；最终全量兼容性、CI 门禁和综合性能复测待完成。
 
 阶段集成验证：`596c788` 的引擎语义 fingerprint
 `f75c3be9b62379c442e0e059d57a24a4df7e8dbe8275d88f8ca31e0f2583f573`
