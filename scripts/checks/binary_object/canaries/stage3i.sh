@@ -298,8 +298,8 @@ expect_full_rewrite_rejected stage3d-raise-bypass \
     $'    ) -> Result<Option<Completion>, Error> {\n        if matches!(value, Value::Undefined) {\n            return Ok(Some(Completion::Throw(value)));\n        }\n        host.ensure_backtrace(&value)?;\n        loop {'
 expect_full_rewrite_rejected stage3d-execute-inner-post-route-throw-return \
     stage3d-throw-critical-route src/engine/vm/mod.rs \
-    '            if let Some(completion) = self.execute_hot_instruction(code, instruction, host)? {' \
-    $'            if matches!(instruction, Instruction::Throw) {\n                return Ok(InterpreterExit::Complete(Completion::Return(Value::Undefined)));\n            }\n            if let Some(completion) = self.execute_hot_instruction(code, instruction, host)? {'
+    '            let completion = match instruction {' \
+    $'            if matches!(instruction, Instruction::Throw) {\n                return Ok(InterpreterExit::Complete(Completion::Return(Value::Undefined)));\n            }\n            let completion = match instruction {'
 expect_full_rewrite_rejected stage3d-execute-hot-entry-throw-return \
     stage3d-throw-critical-route src/engine/vm/mod.rs \
     $'    ) -> Result<Option<Completion>, Error> {\n        match instruction {\n            Instruction::Nop => {}' \

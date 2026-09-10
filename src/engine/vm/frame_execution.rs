@@ -145,128 +145,107 @@ impl VmActivation {
                 .checked_add(1)
                 .ok_or_else(|| Error::internal("program counter overflow"))?;
 
-            let suspension = match instruction {
-                Instruction::InitialYield => Some(VmSuspendKind::Initial),
-                Instruction::Yield => Some(VmSuspendKind::Yield),
-                Instruction::YieldStar => Some(VmSuspendKind::YieldStar),
-                Instruction::AsyncYieldStar => Some(VmSuspendKind::AsyncYieldStar),
-                Instruction::Await => Some(VmSuspendKind::Await),
-                _ => None,
-            };
-            if let Some(kind) = suspension {
-                return Ok(InterpreterExit::Suspend(kind));
-            }
-
-            if matches!(
-                instruction,
+            // Classify once. Each arm delegates to the existing semantic
+            // handler; PC publication and exception handling stay unchanged.
+            let completion = match instruction {
+                Instruction::InitialYield => {
+                    return Ok(InterpreterExit::Suspend(VmSuspendKind::Initial));
+                }
+                Instruction::Yield => return Ok(InterpreterExit::Suspend(VmSuspendKind::Yield)),
+                Instruction::YieldStar => {
+                    return Ok(InterpreterExit::Suspend(VmSuspendKind::YieldStar));
+                }
+                Instruction::AsyncYieldStar => {
+                    return Ok(InterpreterExit::Suspend(VmSuspendKind::AsyncYieldStar));
+                }
+                Instruction::Await => return Ok(InterpreterExit::Suspend(VmSuspendKind::Await)),
                 Instruction::Arguments(_)
-                    | Instruction::Rest(_)
-                    | Instruction::VariableEnvironment
-                    | Instruction::HasEvalVariable { .. }
-                    | Instruction::GetEvalVariable { .. }
-                    | Instruction::PutEvalVariable { .. }
-                    | Instruction::DeleteEvalVariable { .. }
-                    | Instruction::DefineEvalVariable { .. }
-                    | Instruction::ToObject
-                    | Instruction::HasDynamicBinding { .. }
-                    | Instruction::GetDynamicBinding { .. }
-                    | Instruction::PutDynamicBinding { .. }
-                    | Instruction::DeleteDynamicBinding { .. }
-                    | Instruction::DynamicEnvironmentObject(_)
-                    | Instruction::GlobalReference(_)
-                    | Instruction::GetRefValue(_)
-                    | Instruction::GetRefValueUndef(_)
-                    | Instruction::PutRefValue(_)
-                    | Instruction::Object
-                    | Instruction::RegExp(_)
-                    | Instruction::SetNameComputed
-                    | Instruction::DefineMethod { .. }
-                    | Instruction::DefineMethodComputed { .. }
-                    | Instruction::DefineClass { .. }
-                    | Instruction::SetProto
-                    | Instruction::CopyDataProperties
-                    | Instruction::CopyDataPropertiesExcluded { .. }
-                    | Instruction::IteratorStart
-                    | Instruction::AsyncIteratorStart
-                    | Instruction::IteratorNext
-                    | Instruction::IteratorCall(_)
-                    | Instruction::ForAwaitOfStart
-                    | Instruction::ForAwaitOfNext
-                    | Instruction::IteratorGetValueDone
-                    | Instruction::ForInStart
-                    | Instruction::ForInNext
-            ) {
-                if let Some(completion) = self.execute_cold_instruction(instruction, host)? {
-                    return Ok(InterpreterExit::Complete(completion));
-                }
-                continue;
-            }
-
-            if matches!(
-                instruction,
+                | Instruction::Rest(_)
+                | Instruction::VariableEnvironment
+                | Instruction::HasEvalVariable { .. }
+                | Instruction::GetEvalVariable { .. }
+                | Instruction::PutEvalVariable { .. }
+                | Instruction::DeleteEvalVariable { .. }
+                | Instruction::DefineEvalVariable { .. }
+                | Instruction::ToObject
+                | Instruction::HasDynamicBinding { .. }
+                | Instruction::GetDynamicBinding { .. }
+                | Instruction::PutDynamicBinding { .. }
+                | Instruction::DeleteDynamicBinding { .. }
+                | Instruction::DynamicEnvironmentObject(_)
+                | Instruction::GlobalReference(_)
+                | Instruction::GetRefValue(_)
+                | Instruction::GetRefValueUndef(_)
+                | Instruction::PutRefValue(_)
+                | Instruction::Object
+                | Instruction::RegExp(_)
+                | Instruction::SetNameComputed
+                | Instruction::DefineMethod { .. }
+                | Instruction::DefineMethodComputed { .. }
+                | Instruction::DefineClass { .. }
+                | Instruction::SetProto
+                | Instruction::CopyDataProperties
+                | Instruction::CopyDataPropertiesExcluded { .. }
+                | Instruction::IteratorStart
+                | Instruction::AsyncIteratorStart
+                | Instruction::IteratorNext
+                | Instruction::IteratorCall(_)
+                | Instruction::ForAwaitOfStart
+                | Instruction::ForAwaitOfNext
+                | Instruction::IteratorGetValueDone
+                | Instruction::ForInStart
+                | Instruction::ForInNext => self.execute_cold_instruction(instruction, host)?,
                 Instruction::Import
-                    | Instruction::Call(_)
-                    | Instruction::TailCall(_)
-                    | Instruction::Eval { .. }
-                    | Instruction::CallMethod(_)
-                    | Instruction::TailCallMethod(_)
-                    | Instruction::Construct(_)
-                    | Instruction::ConstructSuper(_)
-                    | Instruction::InitDerivedConstructor
-                    | Instruction::Apply(_)
-                    | Instruction::ApplySuper
-                    | Instruction::ApplyEval { .. }
-            ) {
-                if let Some(completion) = self.execute_call_instruction(instruction, host)? {
-                    return Ok(InterpreterExit::Complete(completion));
+                | Instruction::Call(_)
+                | Instruction::TailCall(_)
+                | Instruction::Eval { .. }
+                | Instruction::CallMethod(_)
+                | Instruction::TailCallMethod(_)
+                | Instruction::Construct(_)
+                | Instruction::ConstructSuper(_)
+                | Instruction::InitDerivedConstructor
+                | Instruction::Apply(_)
+                | Instruction::ApplySuper
+                | Instruction::ApplyEval { .. } => {
+                    self.execute_call_instruction(instruction, host)?
                 }
-                continue;
-            }
-
-            if matches!(
-                instruction,
                 Instruction::Neg
-                    | Instruction::Plus
-                    | Instruction::Inc
-                    | Instruction::Dec
-                    | Instruction::PostInc
-                    | Instruction::PostDec
-                    | Instruction::BitNot
-                    | Instruction::Not
-                    | Instruction::TypeOf
-                    | Instruction::IsUndefinedOrNull
-                    | Instruction::IsUndefined
-                    | Instruction::IsNull
-                    | Instruction::TypeOfIsUndefined
-                    | Instruction::TypeOfIsFunction
-                    | Instruction::Add
-                    | Instruction::Sub
-                    | Instruction::Mul
-                    | Instruction::Div
-                    | Instruction::Mod
-                    | Instruction::Pow
-                    | Instruction::Shl
-                    | Instruction::Sar
-                    | Instruction::Shr
-                    | Instruction::BitAnd
-                    | Instruction::BitXor
-                    | Instruction::BitOr
-                    | Instruction::Eq
-                    | Instruction::StrictEq
-                    | Instruction::Neq
-                    | Instruction::StrictNeq
-                    | Instruction::Lt
-                    | Instruction::Lte
-                    | Instruction::Gt
-                    | Instruction::Gte
-            ) {
-                if let Some(completion) = self.execute_numeric_instruction(instruction, host)? {
-                    return Ok(InterpreterExit::Complete(completion));
-                }
-                continue;
-            }
-
-            if let Some(completion) = self.execute_hot_instruction(code, instruction, host)? {
+                | Instruction::Plus
+                | Instruction::Inc
+                | Instruction::Dec
+                | Instruction::PostInc
+                | Instruction::PostDec
+                | Instruction::BitNot
+                | Instruction::Not
+                | Instruction::TypeOf
+                | Instruction::IsUndefinedOrNull
+                | Instruction::IsUndefined
+                | Instruction::IsNull
+                | Instruction::TypeOfIsUndefined
+                | Instruction::TypeOfIsFunction
+                | Instruction::Add
+                | Instruction::Sub
+                | Instruction::Mul
+                | Instruction::Div
+                | Instruction::Mod
+                | Instruction::Pow
+                | Instruction::Shl
+                | Instruction::Sar
+                | Instruction::Shr
+                | Instruction::BitAnd
+                | Instruction::BitXor
+                | Instruction::BitOr
+                | Instruction::Eq
+                | Instruction::StrictEq
+                | Instruction::Neq
+                | Instruction::StrictNeq
+                | Instruction::Lt
+                | Instruction::Lte
+                | Instruction::Gt
+                | Instruction::Gte => self.execute_numeric_instruction(instruction, host)?,
+                _ => self.execute_hot_instruction(code, instruction, host)?,
+            };
+            if let Some(completion) = completion {
                 return Ok(InterpreterExit::Complete(completion));
             }
         }

@@ -4943,6 +4943,27 @@ impl VmHost for RuntimeVmHost {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unpublished_host_cannot_enter_published_execution() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut host = RuntimeVmHost::empty_for_test(runtime.clone(), context.realm);
+        let error = Vm::new()
+            .execute_published(
+                CallInput {
+                    this_value: Value::Undefined,
+                    new_target: Value::Undefined,
+                    callee_global: runtime.global_object_for_realm(context.realm).unwrap(),
+                },
+                &mut host,
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.message(),
+            "unpublished host cannot execute published code"
+        );
+    }
+
     use super::*;
     use crate::engine::api::Context;
     use crate::engine::code::bytecode::EvalVariableSource;
