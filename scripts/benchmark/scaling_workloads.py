@@ -1,0 +1,102 @@
+"""Project-authored scaling workloads; counts are fixed before timing begins.
+
+Each generator returns JavaScript and an independently calculated stdout value.
+These are diagnostic whole-process workloads, not upstream benchmark scores.
+"""
+from pathlib import Path
+
+from run import digest
+
+CASES = ("map-int", "map-string", "set", "map-churn", "set-churn",
+         "set-intersection", "prop-write", "prop-delete", "array-truncate",
+         "scope", "constants", "module", "long-key")
+
+
+def prepare(directory, case, size, operations):
+    if case not in CASES or size < 1 or operations < 1:
+        raise ValueError("known case and positive size/operations required")
+    if operations % size:
+        raise ValueError("size must divide operations to preserve fixed work")
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "workload.mjs"
+    files = []
+    prefix = f"const size = {size}, operations = {operations};\nlet sum = 0;\n"
+    if case in ("map-int", "map-string", "set"):
+        key = '"key" + i' if case == "map-string" else "i"
+        constructor = "Set" if case == "set" else "Map"
+        insert = f"c.add({key})" if case == "set" else f"c.set({key}, i)"
+        body = f"""for (let batch = 0; batch < operations / size; batch++) {{
+  const c = new {constructor}();
+  for (let i = 0; i < size; i++) {insert};
+  for (let i = 0; i < size; i++) sum += c.has({key}) ? 1 : 0;
+}}"""
+        expected = operations
+    elif case in ("map-churn", "set-churn"):
+        # size controls history; live size stays one. Query work stays fixed.
+        constructor = "Set" if case == "set-churn" else "Map"
+        insert = "c.add(0)" if case == "set-churn" else "c.set(0, 0)"
+        body = f"""const c = new {constructor}();
+for (let i = 0; i < size; i++) {{ {insert}; c.delete(0); }}
+{insert};
+for (let i = 0; i < operations; i++) sum += c.has(0) ? 1 : 0;
+sum += c.size;"""
+        expected = operations + 1
+    elif case == "set-intersection":
+        body = """for (let batch = 0; batch < operations / size; batch++) {
+  const a = new Set(), b = new Set();
+  for (let i = 0; i < size; i++) { a.add(i); b.add(i); }
+  sum += a.intersection(b).size;
+}"""
+        expected = operations
+    elif case == "prop-write":
+        body = """const o = {};
+for (let i = 0; i < size; i++) o['p' + i] = i;
+for (let i = 0; i < operations; i++) o.p0 = i;
+sum = o.p0 + Object.keys(o).length;"""
+        expected = operations - 1 + size
+    elif case == "prop-delete":
+        body = """for (let batch = 0; batch < operations / size; batch++) {
+  const o = {};
+  for (let i = 0; i < size; i++) o['p' + i] = i;
+  for (let i = 0; i < size; i++) sum += delete o['p' + i] ? 1 : 0;
+  if (Object.keys(o).length !== 0) throw Error('delete failed');
+}"""
+        expected = operations
+    elif case == "array-truncate":
+        body = """for (let batch = 0; batch < operations / size; batch++) {
+  const a = [];
+  for (let i = 0; i < size; i++) a.push(i);
+  delete a[0];
+  a.length = 0;
+  if (Object.keys(a).length !== 0) throw Error('truncate failed');
+  sum += size;
+}"""
+        expected = operations
+    elif case == "scope":
+        declarations = "".join(f"let v{i} = {i};\n" for i in range(size))
+        references = "+".join(f"v{i}" for i in range(size))
+        body = f"function f() {{\n{declarations}\nreturn {references};\n}}\nsum = f();"
+        expected = size * (size - 1) // 2
+    elif case == "constants":
+        # typeof unresolved globals exercises compiler name constants without throwing.
+        terms = "\n".join(f"sum += typeof global_{i} === 'undefined' ? 1 : 0;" for i in range(size))
+        body = f"function f() {{\n{terms}\n}}\nf();"
+        expected = size
+    elif case == "module":
+        dependency = directory / "exports.mjs"
+        dependency.write_text("".join(f"export const v{i} = {i};\n" for i in range(size)))
+        files.append(dependency)
+        body = "import * as ns from './exports.mjs';\nfor (const key of Object.keys(ns)) sum += ns[key];"
+        expected = size * (size - 1) // 2
+    else:  # long-key: repeated content lookup; the two strings are built separately.
+        body = """const a = 'x'.repeat(size) + '!', b = 'x'.repeat(size) + '!';
+const c = new Map([[a, 1]]);
+for (let i = 0; i < operations; i++) sum += c.get(b);
+"""
+        expected = operations
+    path.write_text(prefix + body + "\nconsole.log(String(sum));\n")
+    files.append(path)
+    return {"case": case, "size": size, "operations": operations,
+            "path": str(path.resolve()), "expected": f"{expected}\n",
+            "files": {f.name: digest(f) for f in files}}
