@@ -12,7 +12,7 @@ def check(ctx):
         "published-executable-owner",
         "Execution snapshots must pair immutable metadata with their owning Runtime root",
         ctx.rust_code_only(ctx.read_source("src/engine/code/executable.rs")),
-        "67be6671fe641174d8c2b60f58b6685e4c1c4ce59da4329deb139f466b38dc68",
+        "b0e17803d8764af21ce804857d1f6eaaad478a3ddcc875d9083d4b9c179ac6e4",
     )
     # The owning wrapper is the only path from a draft to verified publication.
     # Authenticate constructors too: checking a consumer call alone would allow

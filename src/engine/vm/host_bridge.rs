@@ -996,6 +996,7 @@ impl RuntimeVmHost {
             .ok_or_else(|| Error::internal("argument definition index is out of bounds"))
     }
 
+    #[cfg(test)]
     fn validate_capture_definition(
         &self,
         definition: VariableDefinition,
@@ -1379,11 +1380,7 @@ impl RuntimeVmHost {
         let caller_bytecode = self.executable.root().cloned().ok_or_else(|| {
             Error::internal("direct eval frame did not retain its caller bytecode")
         })?;
-        let caller_metadata = self
-            .runtime
-            .snapshot_function_bytecode(&caller_bytecode)
-            .map_err(runtime_error_to_vm_error)?
-            .metadata;
+        let caller_metadata = self.executable.metadata;
         // Authenticate every immutable source before compilation. Corrupt
         // published bytecode must fail without compiling attacker-selected
         // names or converting any frame binding to a VarRef.
@@ -1557,10 +1554,7 @@ impl RuntimeVmHost {
         // Production and published-code tests always require the linked table.
         #[cfg(test)]
         if self.executable.root().is_none() {
-            let name = match usize::try_from(index)
-                .ok()
-                .and_then(|index| self.executable.constants.get(index))
-            {
+            let name = match self.executable.constant(index) {
                 Some(BytecodeConstant::Value(RawValue::String(name))) => name.clone(),
                 Some(
                     BytecodeConstant::Value(_)
@@ -2607,9 +2601,9 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn load_constant(&mut self, index: u32) -> Result<Value, Error> {
-        let constant = usize::try_from(index)
-            .ok()
-            .and_then(|index| self.executable.constants.get(index))
+        let constant = self
+            .executable
+            .constant(index)
             .ok_or_else(|| Error::internal("constant index is out of bounds"))?;
         match constant {
             BytecodeConstant::Value(value) => self
@@ -2777,9 +2771,9 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn instantiate_closure(&mut self, index: u32) -> Result<Value, Error> {
-        let constant = usize::try_from(index)
-            .ok()
-            .and_then(|index| self.executable.constants.get(index))
+        let constant = self
+            .executable
+            .constant(index)
             .ok_or_else(|| Error::internal("constant index is out of bounds"))?;
         let BytecodeConstant::Function(bytecode) = constant else {
             return Err(Error::internal(
@@ -2802,7 +2796,10 @@ impl VmHost for RuntimeVmHost {
             let root = match descriptor.source {
                 ClosureSource::ParentLocal(index) => {
                     let definition = self.local_definition(index)?;
-                    self.validate_capture_definition(definition, descriptor)?;
+                    #[cfg(test)]
+                    if self.executable.root().is_none() {
+                        self.validate_capture_definition(definition, descriptor)?;
+                    }
                     let binding = self
                         .locals
                         .get_mut(usize::from(index))
@@ -2819,8 +2816,13 @@ impl VmHost for RuntimeVmHost {
                     )?
                 }
                 ClosureSource::ParentArgument(index) => {
-                    let definition = self.argument_definition(index)?;
-                    self.validate_capture_definition(definition, descriptor)?;
+                    #[cfg(test)]
+                    if self.executable.root().is_none() {
+                        self.validate_capture_definition(
+                            self.argument_definition(index)?,
+                            descriptor,
+                        )?;
+                    }
                     let binding = self.arguments.get_mut(usize::from(index)).ok_or_else(|| {
                         Error::internal("captured argument index is out of bounds")
                     })?;
@@ -3183,10 +3185,7 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn create_regexp(&mut self, index: u32) -> Result<Completion, Error> {
-        let (pattern, program) = match usize::try_from(index)
-            .ok()
-            .and_then(|index| self.executable.constants.get(index))
-        {
+        let (pattern, program) = match self.executable.constant(index) {
             Some(BytecodeConstant::RegExp { pattern, program }) => {
                 (pattern.clone(), program.clone())
             }

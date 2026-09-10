@@ -24,6 +24,15 @@ impl std::ops::Deref for PublishedFunctionSnapshot {
 }
 
 impl PublishedFunctionSnapshot {
+    /// One checked projection for all constant consumers. The opcode still
+    /// chooses the kind-specific operation; this view owns no extra roots.
+    #[inline]
+    pub(crate) fn constant(&self, index: u32) -> Option<&BytecodeConstant> {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| self.constants.get(index))
+    }
+
     pub(crate) fn root(&self) -> Option<&FunctionBytecodeRef> {
         self.root.as_ref()
     }
