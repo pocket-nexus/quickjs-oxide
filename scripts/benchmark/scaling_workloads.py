@@ -10,10 +10,12 @@ from run import digest
 CASES = ("map-int", "map-string", "set", "map-churn", "set-churn",
          "set-intersection", "prop-write", "prop-delete", "array-truncate",
          "scope", "constants", "module", "module-imports", "long-key",
-         "map-iterate-churn", "set-iterate-churn")
+         "map-iterate-churn", "set-iterate-churn", "array-index", "array-holey",
+         "typed-index", "arguments", "mapped-arguments", "regexp-groups")
 
 
-BATCHED_CASES = ("map-int", "map-string", "set", "set-intersection", "prop-delete", "array-truncate")
+BATCHED_CASES = ("map-int", "map-string", "set", "set-intersection", "prop-delete", "array-truncate",
+                 "array-index", "typed-index", "arguments", "mapped-arguments", "regexp-groups")
 
 def prepare(directory, case, size, operations):
     if case not in CASES or size < 1 or operations < 1:
@@ -90,6 +92,37 @@ sum = o.p0 + Object.keys(o).length;"""
   a.length = 0;
   if (Object.keys(a).length !== 0) throw Error('truncate failed');
   sum += size;
+}"""
+        expected = operations
+    elif case in ("array-index", "typed-index"):
+        constructor = "new Array(size).fill(0)" if case == "array-index" else "new Uint32Array(size)"
+        body = f"""const a = {constructor};
+for (let i = 0; i < operations; i++) {{ const index = i % size; a[index] = index; sum += a[index]; }}"""
+        expected = operations * (size - 1) // 2
+    elif case == "array-holey":
+        body = """const a = [];
+for (let i = 0; i < size; i++) a.push(i);
+const index = Math.floor(size / 2);
+for (let i = 0; i < operations; i++) { delete a[index]; a[index] = i; sum += a[index]; }
+if (a.length !== size) throw Error('length changed');"""
+        expected = operations * (operations - 1) // 2
+    elif case in ("arguments", "mapped-arguments"):
+        function = ('function f() { "use strict"; return arguments.length; }' if case == "arguments"
+                    else 'const f = Function("first", "first = 1; if (arguments[0] !== 1) throw Error(\'alias lost\'); return arguments.length;");')
+        body = f"""{function}
+const args = new Array(size).fill(0);
+for (let i = 0; i < operations / size; i++) sum += f.apply(null, args);"""
+        expected = operations
+    elif case == "regexp-groups":
+        if size >= 255:
+            raise ValueError("regexp-groups size must fit the pinned capture limit (<255)")
+        body = """let pattern = '';
+for (let i = 0; i < size; i++) pattern += '(?<g' + i + '>a)';
+const re = new RegExp(pattern, 'd'), input = 'a'.repeat(size);
+for (let i = 0; i < operations / size; i++) {
+  const result = re.exec(input);
+  if (result.groups.g0 !== 'a' || result.indices.groups.g0 !== result.indices[1]) throw Error('capture mismatch');
+  sum += Object.keys(result.groups).length;
 }"""
         expected = operations
     elif case == "scope":

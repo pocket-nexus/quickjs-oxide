@@ -4,18 +4,22 @@
 
 当前进展（2026-09-11）：
 
-- S01：已加入 16 类固定工作量生成器、结果校验和失败保留；12 项 Python 测试及 Oxide 26 项小规模 smoke 通过。完整规模基线、内存实验与正式 A/B 仍待收集。首次集合探索测量与编译短暂重叠，不用作正式验收。
+- S01：已加入 22 类固定工作量生成器、结果校验和失败保留；12 项 Python 测试及 Oxide 26 项小规模 smoke 通过。完整规模基线、内存实验与正式 A/B 仍待收集。首次集合探索测量与编译短暂重叠，不用作正式验收。
 - S02/S03：Map/Set 共用键规则和非拥有型索引已接通。1911 项库测试、16 项 map 过滤及 10 项 set 过滤 CLI/oracle 测试、源码布局检查通过；当前源码独立重放的 6844 个 focused Test262 变体全部通过且结果行与冻结基线一致。正式集合 A/B 的 168 个样本全部通过，容量曲线基本持平，详见[集合测量报告](reports/indexed-collections.md)。冻结基线未改写，全量 Test262 尚未重跑。
 - S05：同 flags 属性更新提前返回已实现；1911 项库测试、11 项 property 过滤 CLI/oracle 测试及 release 构建通过。24 个 A/B 样本通过，写入宽度曲线基本持平，详见[属性槽测量报告](reports/property-slot-update.md)。该提交的新 focused/full Test262 验证待完成。
 - S09：模块表专用索引和共享只读绑定槽已实现；1912 项库测试及 19 项模块 CLI/oracle 测试通过，48 个正式样本通过。整程序仍有超线性成本，见[模块测量报告](reports/module-indexes.md)。
 - S10：作用域名称索引已实现，保留最后声明优先及晚插入函数名顺序；1913 项库测试及完整 CLI 测试（943 通过、1 ignored，包含固定 oracle）通过。72 个正式样本通过输出校验；大作用域改善，大模块单步退化约 18%，尚未性能验收，见[作用域报告](reports/compiler-scope-index.md)。新 focused/full 验证待完成。
 - S11：字符串常量索引已实现；1914 项库测试及完整 CLI/oracle 回归通过，72 个正式样本通过。大常量案例约 3 倍改善，见[常量报告](reports/compiler-constant-index.md)。新 focused/full 验证待完成。
 - S12：进行中，新模块 profile 显示平坦字符串使用通用 rope 遍历仍是热点，直接切片比较/哈希已实现，72 个样本通过；模块和长键改善，常量案例单步退化，见[平坦字符串报告](reports/flat-strings.md)。每索引固定上限的弱字符串哈希缓存已接通，1922 项库测试和完整 CLI/oracle 通过；86 个正式样本通过，见[哈希缓存报告](reports/string-hash-memo.md)。整体性能验收待完成。
-- S07：稀疏截断批量布局提交已实现，1916 项库测试和完整 CLI/oracle 通过；24 个正式样本通过，固定工作量曲线近似持平。整数/固定键路径仍待完成。
+- S07：稀疏截断批量布局提交已实现，1916 项库测试和完整 CLI/oracle 通过；24 个正式样本通过，固定工作量曲线近似持平。整数/固定键路径也已接通，避免数字→字符串→atom 往返，见[整数键与批量构建报告](reports/integer-keys-builtin-batches.md)。
 - S10a（新增证据）：调试位置生成每次从源码开头扫描，CPU 采样中占主要热点；source 层每 256 字节检查点索引已实现，1917 项库测试和完整 CLI/oracle 通过；72 个正式样本通过，见[源码位置报告](reports/source-coordinate-index.md)。
 - S04：统一 CollectionRecords 已实现，递增 ID 与物理存储分离；活游标不阻止回收。1921 项库测试、完整 CLI/oracle 回归及 228 个正式样本通过，容量测试通过。保留顺序树的 O(log n) 代价，常规操作有约 4%–13% 退化，见[回收报告](reports/collection-records.md)。新 focused/full 验证待完成。
 - S06：dictionary 实现已接通；紧凑物理槽 + 独立插入顺序，共享 shape 首次分离。1926 项库测试、943 项 CLI/oracle（1 ignored）以及 48 个正式样本通过；删除宽度曲线近似持平，见[dictionary 报告](reports/dictionary-objects.md)。新 focused/full 验证待完成。
-- S08、S13–S19：未开始。
+- S13：TypedArray immediate integer atom 直接分类，数值 -0 与字符串 "-0"、非规范字符串和跨 runtime 测试通过。
+- S14/S15：Arguments 完整布局一次发布，RegExp 命名捕获与结果属性批量发布；共享边界只处理所有权和失败回滚。
+- S16：0/1/2 条边的无 HashMap 事务已实现，重复边及后续边失败不发布测试通过。
+- S07/S13–S16 合并版本：1930 项库测试、943 项 CLI/oracle（1 ignored）、108 个正式 A/B 样本通过；新 focused/full 待完成。
+- S08、S17–S19：待实施；带洞数组对照仍显示随宽度增长，需继续修复。
 
 阶段集成验证：`383a2e1` 的引擎语义 fingerprint
 `88c01546f974f8b2eae8b7cad7ad7649df6de36a08438c693f7fab8e4f706a99`

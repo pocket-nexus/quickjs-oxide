@@ -174,3 +174,5 @@ cargo test --locked -p quickjs-oxide --lib --features profiling profiling_
 Run the broader Rust/QuickJS comparison tests and Test262 independently of
 benchmarking. Never revise conformance baselines to turn a performance change
 into an apparent pass.
+
+Scaling workloads also cover Array/TypedArray integer reads and writes, repeated interior Array deletion/reinsertion, strict and mapped Arguments construction, and RegExp named groups/indices. Use sizes below 255 for regexp-groups. Mapped arguments use a non-strict Function body explicitly because workload files are modules.
