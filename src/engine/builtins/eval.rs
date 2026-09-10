@@ -490,13 +490,14 @@ impl Runtime {
         // A restricted host must reject newly compiled eval bytecode before
         // declaration preflight or binding creation can mutate the realm.
         self.ensure_dynamic_import_bytecode_tree_authorized(function)?;
-        let PublishedFunctionSnapshot {
+        let snapshot = self.snapshot_function_bytecode(function)?;
+        let crate::engine::code::runtime::PublishedFunctionData {
             closure_variables,
             metadata,
             realm: function_realm,
             ..
-        } = self.snapshot_function_bytecode(function)?;
-        if function_realm != realm || metadata.eval_kind != kind {
+        } = &*snapshot;
+        if *function_realm != realm || metadata.eval_kind != kind {
             return Err(RuntimeError::Invariant(
                 "published eval bytecode disagrees with its invocation realm or kind",
             ));

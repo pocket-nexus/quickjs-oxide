@@ -1,7 +1,7 @@
+pub(crate) use super::executable::{PublishedFunctionData, PublishedFunctionSnapshot};
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::Atom;
 use crate::engine::code::bytecode_publish;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::source::QuickJsSourceLocator;
@@ -352,38 +352,6 @@ impl Runtime {
         ))
     }
 
-    pub(crate) fn snapshot_function_bytecode(
-        &self,
-        function: &FunctionBytecodeRef,
-    ) -> Result<PublishedFunctionSnapshot, RuntimeError> {
-        let _operation = self.operation();
-        if !function.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("function bytecode"));
-        }
-        let root = function.clone();
-        let state = self.0.state.borrow();
-        let bytecode = state.heap.function_bytecode(function.bytecode_id())?;
-        // The realm is a strong edge of the bytecode node. Validating it here
-        // makes a corrupt realm edge fail before entering a VM frame.
-        state.heap.context(bytecode.realm)?;
-        Ok(PublishedFunctionSnapshot {
-            root,
-            code: bytecode.code.clone(),
-            constants: bytecode.constants.clone(),
-            property_key_atoms: bytecode.property_key_atoms.clone(),
-            argument_definitions: bytecode.argument_definitions.clone(),
-            local_definitions: bytecode.local_definitions.clone(),
-            closure_variables: bytecode.closure_variables.clone(),
-            eval_environments: bytecode.eval_environments.clone(),
-            arg_eval_variable_object_local: bytecode
-                .parameter_environment
-                .as_ref()
-                .and_then(|layout| layout.arg_eval_variable_object_local),
-            metadata: bytecode.metadata,
-            realm: bytecode.realm,
-        })
-    }
-
     #[cfg(test)]
     pub fn test_function_debug_location(
         &self,
@@ -527,21 +495,6 @@ pub(crate) enum Compilation {
 /// `constants` contains raw heap identities, so the owning bytecode root is
 /// part of the snapshot. The raw constant pool therefore cannot outlive the GC
 /// node whose edges keep those identities valid.
-pub(crate) struct PublishedFunctionSnapshot {
-    pub(crate) root: FunctionBytecodeRef,
-    pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
-    pub(crate) constants: Rc<[BytecodeConstant]>,
-    pub(crate) property_key_atoms: Option<Rc<[Atom]>>,
-    pub(crate) argument_definitions: Rc<[VariableDefinition]>,
-    pub(crate) local_definitions: Rc<[VariableDefinition]>,
-    pub(crate) closure_variables: Rc<[ClosureVariable]>,
-    pub(crate) eval_environments: Rc<[EvalEnvironment<Atom>]>,
-    /// Parameter-scope variable-object slot, carried separately from the
-    /// body `<var>` slot in `FunctionMetadata`.
-    pub(crate) arg_eval_variable_object_local: Option<u16>,
-    pub(crate) metadata: FunctionMetadata,
-    pub(crate) realm: ContextId,
-}
 
 pub(crate) enum FlatConstant {
     Value(RawValue),

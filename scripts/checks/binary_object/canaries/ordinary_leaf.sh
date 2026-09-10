@@ -116,3 +116,17 @@ expect_full_rewrite_rejected published-function-public-draft published-function-
     src/engine/code/bytecode_publish/verified.rs \
     'pub(crate) struct VerifiedFunction(UnlinkedFunction);' \
     'pub(crate) struct VerifiedFunction(pub(crate) UnlinkedFunction);'
+
+expect_full_rewrite_rejected published-executable-wrong-runtime published-executable-owner \
+    src/engine/code/executable.rs \
+    '        if !function.belongs_to(self) {' \
+    '        if false {'
+expect_full_rewrite_rejected published-executable-mutable-layout published-executable-owner \
+    src/engine/code/executable.rs \
+    '    data: PublishedFunctionData,' \
+    '    pub(crate) data: PublishedFunctionData,'
+
+expect_full_rewrite_rejected published-frame-code-substitution published-frame-owner \
+    src/engine/vm/host_bridge.rs \
+    '        Ok((self.executable.code.clone(), activation))' \
+    '        Ok((Rc::from([]), activation))'

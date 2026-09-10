@@ -8,6 +8,12 @@ from ..evidence import publication as evidence
 
 
 def check(ctx):
+    ctx.require_normalized_code_sha256(
+        "published-executable-owner",
+        "Execution snapshots must pair immutable metadata with their owning Runtime root",
+        ctx.rust_code_only(ctx.read_source("src/engine/code/executable.rs")),
+        "67be6671fe641174d8c2b60f58b6685e4c1c4ce59da4329deb139f466b38dc68",
+    )
     # The owning wrapper is the only path from a draft to verified publication.
     # Authenticate constructors too: checking a consumer call alone would allow
     # the wrapper to stop invoking its role-specific verifier.

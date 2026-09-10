@@ -774,10 +774,17 @@ def check(ctx):
         "stage3d-throw-critical-route",
         "execute_published must return the activation's Completion directly without post-processing Throw",
         execute_published_item,
-        "b2743fde8341d22bb2592d3810e10030ecce6f812befe9be150a80ccd982a0a7",
+        "6704a2e5ab9c5cdd3086ab43544dd900ffa22497bc2d5da9ab2c7842eee6bb01",
     )
 
     runtime_vm_host_relative = "src/engine/vm/host_bridge.rs"
+    ctx.require_normalized_code_sha256(
+        "published-frame-owner",
+        "Activation code and metadata must come from the same sealed host snapshot",
+        ctx.stage3b_function(runtime_vm_host_relative, "new_activation", "published-frame-owner"),
+        "88806b84077ca2ffc8bb4691e5dc30e344f95241ae30a1ead4ed3092df0e7022",
+    )
+
 
     execute_bytecode_callable_item = ctx.stage3b_function(
         runtime_vm_host_relative,

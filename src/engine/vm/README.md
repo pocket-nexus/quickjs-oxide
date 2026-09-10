@@ -29,3 +29,12 @@
 - [protocol.rs](protocol.rs)：执行请求、宿主协议和 VM 入口。
 - [tests.rs](tests.rs)：模块回归测试。
 - [unwind.rs](unwind.rs)：异常和迭代器展开。
+
+## 已发布执行入口
+
+RuntimeVmHost 持有 code 模块的完整只读执行快照，而非独立常量、绑定定义
+和代码片段。`CallInput` 只携带本次调用的动态输入；`new_activation` 从 host
+自身的快照取得代码与布局。普通与可挂起驱动共享构造契约，保持不同返回类型，
+避免扩大普通递归栈帧。恢复状态由 `decode_vm_activation` 验证后封装为字段
+私有的 `RootedVmActivation`，只通过其 run 消费；动态恢复检查不能由发布验证
+替代。合成 host fixture 不能进入生产 published 执行入口。

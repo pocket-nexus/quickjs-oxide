@@ -12,7 +12,7 @@ use crate::engine::atom::{Atom, AtomKind, PropertyKeyKind};
 use crate::engine::builtins::native::{ArrayIteratorKind, NativeFunctionId, PrimitiveKind};
 use crate::engine::code::bytecode::{
     ApplyKind, ArgumentsKind, DefineMethodKind, DynamicEnvironmentSource, EvalVariableSource,
-    PrivateNameSource,
+    Instruction, PrivateNameSource,
 };
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName, EvalBinding,
@@ -20,7 +20,7 @@ use crate::engine::code::function::metadata::{
     VariableDefinition,
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
-use crate::engine::code::runtime::PublishedFunctionSnapshot;
+use crate::engine::code::runtime::{PublishedFunctionData, PublishedFunctionSnapshot};
 use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
@@ -43,8 +43,8 @@ use crate::engine::vm::frames::ActiveFrameGuard;
 use crate::engine::vm::{
     AppendStartOutcome, ArgumentListOutcome, BytecodePc, CallInput, Completion, DefineClassOutcome,
     DirectEvalInvocation, ForInNextOutcome, ForInStartOutcome, ForOfNextOutcome, ForOfStartOutcome,
-    IteratorCloseOutcome, ToPrimitiveHint, Vm, VmActivationParts, VmExit, VmHost, VmResume,
-    VmSuspendKind, VmSuspension,
+    IteratorCloseOutcome, ToPrimitiveHint, Vm, VmActivation, VmActivationParts, VmExit, VmHost,
+    VmResume, VmSuspendKind, VmSuspension,
 };
 use std::rc::Rc;
 
@@ -419,27 +419,13 @@ pub(crate) struct RuntimeVmHost {
     /// constructor return-protocol errors are allocated here, unlike ordinary
     /// bytecode errors which belong to `current_realm`.
     caller_realm: ContextId,
-    current_bytecode: Option<FunctionBytecodeRef>,
-    /// Compile-time QuickJS `strip_var_debug` decision for this exact frame.
-    strip_variable_debug: bool,
+    executable: PublishedFunctionSnapshot,
     /// Current callee retained for sloppy mapped `arguments.callee`.
     /// Detached host-only tests do not execute the arguments opcode.
     current_function: Option<ObjectRef>,
     /// Authored call arity before the argument frame was padded to formal
     /// width. `arguments.length` and its dense prefix use this exact count.
     actual_argument_count: usize,
-    constants: Rc<[BytecodeConstant]>,
-    property_key_atoms: Option<Rc<[Atom]>>,
-    argument_definitions: Rc<[VariableDefinition]>,
-    local_definitions: Rc<[VariableDefinition]>,
-    closure_variables: Rc<[ClosureVariable]>,
-    eval_environments: Rc<[EvalEnvironment<Atom>]>,
-    /// Exact local slot authenticated by bytecode metadata as this frame's
-    /// hidden sloppy-eval variable object.
-    eval_variable_object_local: Option<u16>,
-    /// Exact local slot authenticated by the parameter-environment layout as
-    /// the independent hidden sloppy-eval argument-scope variable object.
-    arg_eval_variable_object_local: Option<u16>,
     closure_slots: Vec<VarRefRoot>,
     arguments: Vec<FrameBinding>,
     locals: Vec<FrameBinding>,
@@ -507,12 +493,12 @@ fn generator_raw_value_atom(value: &RawValue) -> Option<Atom> {
 /// are detached. `host.active_frame_token` remains a sentinel until the
 /// short-lived bytecode active frame is pushed for the actual resume.
 pub(crate) struct RootedVmActivation {
-    pub(crate) suspend_kind: VmSuspendKind,
-    pub(crate) suspension: VmSuspension,
-    pub(crate) host: RuntimeVmHost,
-    pub(crate) bytecode: FunctionBytecodeRef,
-    pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
-    pub(crate) metadata: FunctionMetadata,
+    suspend_kind: VmSuspendKind,
+    suspension: VmSuspension,
+    host: RuntimeVmHost,
+    bytecode: FunctionBytecodeRef,
+    code: Rc<[crate::engine::code::bytecode::Instruction]>,
+    metadata: FunctionMetadata,
     saved_pc: usize,
 }
 
@@ -619,6 +605,40 @@ enum VmPropertyKeyConversion {
 }
 
 impl RuntimeVmHost {
+    /// Code and layout are taken from this host's sealed snapshot, never from
+    /// caller-supplied slices. Keep ordinary and suspendable drivers separate.
+    pub(super) fn new_activation(
+        &self,
+        input: CallInput,
+    ) -> Result<(Rc<[Instruction]>, VmActivation), Error> {
+        if self.executable.root().is_none() {
+            return Err(Error::internal(
+                "unpublished host cannot execute published code",
+            ));
+        }
+        let metadata = self.executable.metadata;
+        if self.closure_count() != usize::from(metadata.closure_count) {
+            return Err(Error::internal(
+                "function object closure slot count does not match bytecode metadata",
+            ));
+        }
+        let function = self
+            .current_function
+            .as_ref()
+            .ok_or_else(|| Error::internal("published frame has no current function"))?
+            .clone();
+        let activation = VmActivation::new_in_realm(
+            metadata,
+            self.caller_realm,
+            self.current_realm,
+            function,
+            input.this_value,
+            input.new_target,
+            input.callee_global,
+        );
+        Ok((self.executable.code.clone(), activation))
+    }
+
     /// QuickJS `OP_typeof` converts one of its predefined type atoms back to
     /// the atom's canonical String cell. Runtime construction pins the full
     /// result set, so every realm reuses the same representation while sibling
@@ -642,18 +662,9 @@ impl RuntimeVmHost {
             active_frame_token: ActiveFrameToken(0),
             current_realm,
             caller_realm: current_realm,
-            current_bytecode: None,
-            strip_variable_debug: false,
+            executable: PublishedFunctionSnapshot::empty_for_test(current_realm),
             current_function: None,
             actual_argument_count: 0,
-            constants: Rc::from([]),
-            property_key_atoms: None,
-            argument_definitions: Rc::from([]),
-            local_definitions: Rc::from([]),
-            closure_variables: Rc::from([]),
-            eval_environments: Rc::from([]),
-            eval_variable_object_local: None,
-            arg_eval_variable_object_local: None,
             closure_slots: Vec::new(),
             arguments: Vec::new(),
             locals: Vec::new(),
@@ -670,19 +681,15 @@ impl RuntimeVmHost {
         arguments: Vec<Value>,
         locals: Vec<Value>,
     ) -> Result<Self, RuntimeError> {
-        let PublishedFunctionSnapshot {
-            root,
-            code: _,
-            constants,
-            property_key_atoms,
+        let executable = runtime.snapshot_function_bytecode(bytecode)?;
+        let PublishedFunctionData {
             argument_definitions,
             local_definitions,
             closure_variables,
-            eval_environments,
-            arg_eval_variable_object_local,
-            metadata,
             realm,
-        } = runtime.snapshot_function_bytecode(bytecode)?;
+            ..
+        } = &*executable;
+        let realm = *realm;
         if realm != current_realm {
             return Err(RuntimeError::Invariant(
                 "test eval frame realm disagrees with its bytecode",
@@ -702,18 +709,9 @@ impl RuntimeVmHost {
             active_frame_token: ActiveFrameToken(0),
             current_realm,
             caller_realm: current_realm,
-            current_bytecode: Some(root),
-            strip_variable_debug: metadata.strip_variable_debug,
+            executable,
             current_function: None,
             actual_argument_count: arguments.len(),
-            constants,
-            property_key_atoms,
-            argument_definitions,
-            local_definitions,
-            closure_variables,
-            eval_environments,
-            eval_variable_object_local: metadata.eval_variable_object_local,
-            arg_eval_variable_object_local,
             closure_slots,
             arguments: arguments.into_iter().map(FrameBinding::Direct).collect(),
             locals: locals.into_iter().map(FrameBinding::Direct).collect(),
@@ -743,12 +741,9 @@ impl RuntimeVmHost {
         suspension: VmSuspension,
     ) -> Result<EncodedVmActivation, RuntimeError> {
         let (kind, parts) = suspension.into_parts().map_err(RuntimeError::Engine)?;
-        let bytecode = self
-            .current_bytecode
-            .as_ref()
-            .ok_or(RuntimeError::Invariant(
-                "resumable host has no current bytecode root",
-            ))?;
+        let bytecode = self.executable.root().ok_or(RuntimeError::Invariant(
+            "resumable host has no current bytecode root",
+        ))?;
         let caller_realm = parts.caller_realm.ok_or(RuntimeError::Invariant(
             "resumable VM activation has no caller realm",
         ))?;
@@ -767,8 +762,8 @@ impl RuntimeVmHost {
         if caller_realm != self.caller_realm
             || callee_realm != self.current_realm
             || self.current_function.as_ref() != Some(current_function)
-            || self.arguments.len() < self.argument_definitions.len()
-            || self.locals.len() != self.local_definitions.len()
+            || self.arguments.len() < self.executable.argument_definitions.len()
+            || self.locals.len() != self.executable.local_definitions.len()
             || self.reusable_captured_locals.len() != self.locals.len()
             || self.actual_argument_count > self.arguments.len()
         {
@@ -831,19 +826,22 @@ impl RuntimeVmHost {
         runtime.0.state.borrow().heap.context(resume_caller_realm)?;
         let bytecode_probe =
             FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), data.bytecode)?;
-        let PublishedFunctionSnapshot {
-            root,
+        let executable = runtime.snapshot_function_bytecode(&bytecode_probe)?;
+        let PublishedFunctionData {
             code,
-            constants,
-            property_key_atoms,
             argument_definitions,
             local_definitions,
             closure_variables,
-            eval_environments,
-            arg_eval_variable_object_local,
             metadata,
             realm,
-        } = runtime.snapshot_function_bytecode(&bytecode_probe)?;
+            ..
+        } = &*executable;
+        let metadata = *metadata;
+        let realm = *realm;
+        let root = executable
+            .root()
+            .expect("runtime snapshot owns bytecode")
+            .clone();
         drop(bytecode_probe);
         if metadata.function_kind != expected_function_kind
             || realm != data.vm.callee_realm
@@ -925,23 +923,15 @@ impl RuntimeVmHost {
             callee_global: Some(callee_global),
         };
         let suspension = VmSuspension::from_parts(kind, parts).map_err(RuntimeError::Engine)?;
+        let code = code.clone();
         let host = RuntimeVmHost {
             runtime,
             active_frame_token: ActiveFrameToken(0),
             current_realm: data.vm.callee_realm,
             caller_realm: resume_caller_realm,
-            current_bytecode: Some(root.clone()),
-            strip_variable_debug: metadata.strip_variable_debug,
+            executable,
             current_function: Some(current_function),
             actual_argument_count: data.actual_argument_count,
-            constants,
-            property_key_atoms,
-            argument_definitions,
-            local_definitions,
-            closure_variables,
-            eval_environments,
-            eval_variable_object_local: metadata.eval_variable_object_local,
-            arg_eval_variable_object_local,
             closure_slots,
             arguments,
             locals,
@@ -988,14 +978,16 @@ impl RuntimeVmHost {
     }
 
     fn local_definition(&self, index: u16) -> Result<VariableDefinition, Error> {
-        self.local_definitions
+        self.executable
+            .local_definitions
             .get(usize::from(index))
             .copied()
             .ok_or_else(|| Error::internal("local definition index is out of bounds"))
     }
 
     fn argument_definition(&self, index: u16) -> Result<VariableDefinition, Error> {
-        self.argument_definitions
+        self.executable
+            .argument_definitions
             .get(usize::from(index))
             .copied()
             .ok_or_else(|| Error::internal("argument definition index is out of bounds"))
@@ -1097,10 +1089,10 @@ impl RuntimeVmHost {
     }
 
     fn eval_variable_object_local_kind(&self, index: u16) -> Option<ClosureVariableKind> {
-        if self.eval_variable_object_local == Some(index) {
+        if self.executable.metadata.eval_variable_object_local == Some(index) {
             return Some(ClosureVariableKind::EvalVariableObject);
         }
-        if self.arg_eval_variable_object_local == Some(index) {
+        if self.executable.arg_eval_variable_object_local == Some(index) {
             return Some(ClosureVariableKind::ArgEvalVariableObject);
         }
         None
@@ -1289,6 +1281,7 @@ impl RuntimeVmHost {
                     }
                     EvalBindingSource::Closure(index) => {
                         let descriptor = *self
+                            .executable
                             .closure_variables
                             .get(usize::from(index))
                             .ok_or_else(|| {
@@ -1349,6 +1342,7 @@ impl RuntimeVmHost {
                     }
                     EvalBindingSource::Closure(index) => {
                         let descriptor = *self
+                            .executable
                             .closure_variables
                             .get(usize::from(index))
                             .ok_or_else(|| {
@@ -1374,11 +1368,12 @@ impl RuntimeVmHost {
         caller_strict: bool,
     ) -> Result<PreparedEvalEnvironment, Error> {
         let descriptor = self
+            .executable
             .eval_environments
             .get(usize::from(index))
             .cloned()
             .ok_or_else(|| Error::internal("eval environment index is out of bounds"))?;
-        let caller_bytecode = self.current_bytecode.clone().ok_or_else(|| {
+        let caller_bytecode = self.executable.root().cloned().ok_or_else(|| {
             Error::internal("direct eval frame did not retain its caller bytecode")
         })?;
         let caller_metadata = self
@@ -1499,7 +1494,10 @@ impl RuntimeVmHost {
     /// of those atoms as publication/authentication metadata, so diagnostics
     /// must apply the same independent rule without deleting semantic names.
     fn local_lexical_uninitialized_error(&self, name: Option<Atom>) -> Result<Error, Error> {
-        self.lexical_uninitialized_error_with_visibility(name, !self.strip_variable_debug)
+        self.lexical_uninitialized_error_with_visibility(
+            name,
+            !self.executable.metadata.strip_variable_debug,
+        )
     }
 
     fn closure_lexical_uninitialized_error(
@@ -1519,7 +1517,7 @@ impl RuntimeVmHost {
         );
         self.lexical_uninitialized_error_with_visibility(
             name,
-            semantic_name || !self.strip_variable_debug,
+            semantic_name || !self.executable.metadata.strip_variable_debug,
         )
     }
 
@@ -1536,6 +1534,7 @@ impl RuntimeVmHost {
 
     fn closure_name(&self, index: u16) -> Result<Option<Atom>, Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
@@ -1554,10 +1553,10 @@ impl RuntimeVmHost {
         // Synthetic host-only unit tests have no published bytecode owner.
         // Production and published-code tests always require the linked table.
         #[cfg(test)]
-        if self.current_bytecode.is_none() {
+        if self.executable.root().is_none() {
             let name = match usize::try_from(index)
                 .ok()
-                .and_then(|index| self.constants.get(index))
+                .and_then(|index| self.executable.constants.get(index))
             {
                 Some(BytecodeConstant::Value(RawValue::String(name))) => name.clone(),
                 Some(
@@ -1579,7 +1578,7 @@ impl RuntimeVmHost {
         }
         let atom = usize::try_from(index)
             .ok()
-            .and_then(|index| self.property_key_atoms.as_ref()?.get(index))
+            .and_then(|index| self.executable.property_key_atoms.as_ref()?.get(index))
             .copied()
             .filter(|atom| !atom.is_null())
             .ok_or_else(|| Error::internal("static name opcode has no linked property key"))?;
@@ -1624,6 +1623,7 @@ impl RuntimeVmHost {
             }
             EvalVariableSource::Closure(index) => {
                 let descriptor = self
+                    .executable
                     .closure_variables
                     .get(usize::from(index))
                     .copied()
@@ -2121,7 +2121,7 @@ impl Runtime {
         caller_realm: ContextId,
         callable: &CallableRef,
         mut host: RuntimeVmHost,
-        input: CallInput<'_>,
+        input: CallInput,
         active_frame: ActiveFrameGuard,
     ) -> Result<Completion, RuntimeError> {
         let result = Vm::new().start_published(input, &mut host);
@@ -2154,19 +2154,19 @@ impl Runtime {
         if self.bytecode_call_would_overflow() {
             return self.bytecode_stack_overflow_completion(caller_realm, &bytecode);
         }
-        let PublishedFunctionSnapshot {
-            root,
-            code,
-            constants,
-            property_key_atoms,
-            argument_definitions,
+        let executable = self.snapshot_function_bytecode(&bytecode)?;
+        let PublishedFunctionData {
             local_definitions,
-            closure_variables,
-            eval_environments,
-            arg_eval_variable_object_local,
             metadata,
             realm,
-        } = self.snapshot_function_bytecode(&bytecode)?;
+            ..
+        } = &*executable;
+        let metadata = *metadata;
+        let realm = *realm;
+        let root = executable
+            .root()
+            .expect("runtime snapshot owns bytecode")
+            .clone();
         let callee_global = self.global_object_for_realm(realm)?;
         let active_frame = self.push_bytecode_active_frame(
             callable.as_object().clone(),
@@ -2203,18 +2203,9 @@ impl Runtime {
             active_frame_token: active_frame.token(),
             current_realm: realm,
             caller_realm,
-            current_bytecode: Some(root),
-            strip_variable_debug: metadata.strip_variable_debug,
+            executable,
             current_function: Some(callable.as_object().clone()),
             actual_argument_count: arguments.len(),
-            constants,
-            property_key_atoms,
-            argument_definitions,
-            local_definitions,
-            closure_variables,
-            eval_environments,
-            eval_variable_object_local: metadata.eval_variable_object_local,
-            arg_eval_variable_object_local,
             closure_slots,
             arguments: frame_arguments,
             locals: frame_locals,
@@ -2222,11 +2213,6 @@ impl Runtime {
         };
         let is_module_link_entry = metadata.is_module && this_value == Value::Bool(true);
         let input = CallInput {
-            code: &code,
-            metadata,
-            caller_realm,
-            callee_realm: realm,
-            current_function: callable.as_object().clone(),
             this_value,
             new_target,
             callee_global,
@@ -2624,7 +2610,7 @@ impl VmHost for RuntimeVmHost {
     fn load_constant(&mut self, index: u32) -> Result<Value, Error> {
         let constant = usize::try_from(index)
             .ok()
-            .and_then(|index| self.constants.get(index))
+            .and_then(|index| self.executable.constants.get(index))
             .ok_or_else(|| Error::internal("constant index is out of bounds"))?;
         match constant {
             BytecodeConstant::Value(value) => self
@@ -2794,7 +2780,7 @@ impl VmHost for RuntimeVmHost {
     fn instantiate_closure(&mut self, index: u32) -> Result<Value, Error> {
         let constant = usize::try_from(index)
             .ok()
-            .and_then(|index| self.constants.get(index))
+            .and_then(|index| self.executable.constants.get(index))
             .ok_or_else(|| Error::internal("constant index is out of bounds"))?;
         let BytecodeConstant::Function(bytecode) = constant else {
             return Err(Error::internal(
@@ -2888,7 +2874,7 @@ impl VmHost for RuntimeVmHost {
     fn set_function_name(&mut self, value: &Value, name_index: u32) -> Result<(), Error> {
         let constant = usize::try_from(name_index)
             .ok()
-            .and_then(|index| self.constants.get(index))
+            .and_then(|index| self.executable.constants.get(index))
             .ok_or_else(|| Error::internal("function-name constant index is out of bounds"))?;
         let BytecodeConstant::Value(RawValue::String(name)) = constant else {
             return Err(Error::internal(
@@ -2941,7 +2927,7 @@ impl VmHost for RuntimeVmHost {
                     .ok_or_else(|| Error::internal("arguments creation has no current function"))?;
                 let mapped_argument_count = self
                     .actual_argument_count
-                    .min(self.argument_definitions.len());
+                    .min(self.executable.argument_definitions.len());
                 let mut roots = Vec::with_capacity(self.actual_argument_count);
                 for (index, binding) in self
                     .arguments
@@ -3038,8 +3024,12 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn create_variable_environment(&mut self) -> Result<Completion, Error> {
-        if self.eval_variable_object_local.is_none()
-            && self.arg_eval_variable_object_local.is_none()
+        if self
+            .executable
+            .metadata
+            .eval_variable_object_local
+            .is_none()
+            && self.executable.arg_eval_variable_object_local.is_none()
         {
             return Err(Error::internal(
                 "variable-environment creation has no authenticated local",
@@ -3162,6 +3152,7 @@ impl VmHost for RuntimeVmHost {
 
     fn global_reference(&mut self, index: u16) -> Result<Completion, Error> {
         if self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .is_some_and(|descriptor| descriptor.kind.is_private())
@@ -3195,7 +3186,7 @@ impl VmHost for RuntimeVmHost {
     fn create_regexp(&mut self, index: u32) -> Result<Completion, Error> {
         let (pattern, program) = match usize::try_from(index)
             .ok()
-            .and_then(|index| self.constants.get(index))
+            .and_then(|index| self.executable.constants.get(index))
         {
             Some(BytecodeConstant::RegExp { pattern, program }) => {
                 (pattern.clone(), program.clone())
@@ -3314,7 +3305,7 @@ impl VmHost for RuntimeVmHost {
     ) -> Result<DefineClassOutcome, Error> {
         let name = match usize::try_from(name)
             .ok()
-            .and_then(|index| self.constants.get(index))
+            .and_then(|index| self.executable.constants.get(index))
         {
             Some(BytecodeConstant::Value(RawValue::String(name))) => name.clone(),
             Some(
@@ -3495,6 +3486,7 @@ impl VmHost for RuntimeVmHost {
 
     fn get_global_var(&mut self, index: u16, throw_if_missing: bool) -> Result<Completion, Error> {
         let descriptor = *self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("global closure index is out of bounds"))?;
@@ -3567,6 +3559,7 @@ impl VmHost for RuntimeVmHost {
 
     fn delete_global_var(&mut self, index: u16) -> Result<Completion, Error> {
         let descriptor = *self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("global closure index is out of bounds"))?;
@@ -3633,6 +3626,7 @@ impl VmHost for RuntimeVmHost {
         strict: bool,
     ) -> Result<Completion, Error> {
         let descriptor = *self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("global closure index is out of bounds"))?;
@@ -3939,7 +3933,7 @@ impl VmHost for RuntimeVmHost {
         // Final host-policy boundary: reject before filename observation,
         // Promise allocation, conversion side effects, or loader callbacks.
         self.runtime
-            .ensure_dynamic_import_bytecode_authorized(self.current_bytecode.as_ref())
+            .ensure_dynamic_import_bytecode_authorized(self.executable.root())
             .map_err(runtime_error_to_vm_error)?;
         // QuickJS snapshots the active Script/Module name before allocating
         // the caller-facing capability. A missing name is intentionally not
@@ -4611,6 +4605,7 @@ impl VmHost for RuntimeVmHost {
 
     fn get_var_ref(&mut self, index: u16) -> Result<Value, Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
@@ -4635,6 +4630,7 @@ impl VmHost for RuntimeVmHost {
 
     fn put_var_ref(&mut self, index: u16, value: Value) -> Result<(), Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
@@ -4659,6 +4655,7 @@ impl VmHost for RuntimeVmHost {
 
     fn get_var_ref_checked(&mut self, index: u16) -> Result<Value, Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
@@ -4693,6 +4690,7 @@ impl VmHost for RuntimeVmHost {
 
     fn put_var_ref_checked(&mut self, index: u16, value: Value) -> Result<(), Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
@@ -4733,6 +4731,7 @@ impl VmHost for RuntimeVmHost {
 
     fn initialize_var_ref(&mut self, index: u16, value: Value) -> Result<(), Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .copied()
@@ -4761,6 +4760,7 @@ impl VmHost for RuntimeVmHost {
         value: Value,
     ) -> Result<(), Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .copied()
@@ -4788,6 +4788,7 @@ impl VmHost for RuntimeVmHost {
 
     fn initialize_derived_var_ref(&mut self, index: u16, value: Value) -> Result<(), Error> {
         let descriptor = self
+            .executable
             .closure_variables
             .get(usize::from(index))
             .copied()
@@ -4932,17 +4933,17 @@ mod tests {
     ) -> (RuntimeVmHost, ObjectRef) {
         let object = runtime.new_object(None).unwrap();
         let mut host = RuntimeVmHost::empty_for_test(runtime, realm);
-        host.constants = Rc::from([BytecodeConstant::Value(RawValue::String(
+        host.executable.constants = Rc::from([BytecodeConstant::Value(RawValue::String(
             JsString::from_static("added"),
         ))]);
-        host.local_definitions = Rc::from([VariableDefinition {
+        host.executable.local_definitions = Rc::from([VariableDefinition {
             name: None,
             is_lexical: false,
             is_const: false,
             is_parameter_initializer: false,
             kind,
         }]);
-        host.eval_variable_object_local = authenticated_local;
+        host.executable.metadata.eval_variable_object_local = authenticated_local;
         host.locals = vec![FrameBinding::Direct(Value::Object(object.clone()))];
         host.reusable_captured_locals = vec![false];
         (host, object)
@@ -5030,7 +5031,7 @@ mod tests {
         let second = runtime.new_object(None).unwrap();
 
         let mut local_host = RuntimeVmHost::empty_for_test(runtime.clone(), context.realm);
-        local_host.local_definitions = Rc::from([derived_this_definition()]);
+        local_host.executable.local_definitions = Rc::from([derived_this_definition()]);
         local_host.locals = vec![FrameBinding::Uninitialized];
         local_host.reusable_captured_locals = vec![false];
         local_host
@@ -5051,7 +5052,7 @@ mod tests {
             .new_uninitialized_captured_var_ref(true, false, ClosureVariableKind::Normal)
             .unwrap();
         let mut closure_host = RuntimeVmHost::empty_for_test(runtime.clone(), context.realm);
-        closure_host.closure_variables = Rc::from([ClosureVariable {
+        closure_host.executable.closure_variables = Rc::from([ClosureVariable {
             source: ClosureSource::ParentLocal(0),
             name: ClosureVariableName::Atom(this_key.atom()),
             is_lexical: true,
@@ -5083,7 +5084,7 @@ mod tests {
 
         let mut host = RuntimeVmHost::empty_for_test(runtime.clone(), defining.realm);
         host.caller_realm = caller.realm;
-        host.local_definitions = Rc::from([derived_this_definition()]);
+        host.executable.local_definitions = Rc::from([derived_this_definition()]);
         host.locals = vec![FrameBinding::Uninitialized];
         host.reusable_captured_locals = vec![false];
 
@@ -5270,10 +5271,10 @@ mod tests {
             )
             .unwrap();
         let mut closure = RuntimeVmHost::empty_for_test(runtime, context.realm);
-        closure.constants = Rc::from([BytecodeConstant::Value(RawValue::String(
+        closure.executable.constants = Rc::from([BytecodeConstant::Value(RawValue::String(
             JsString::from_static("added"),
         ))]);
-        closure.closure_variables = Rc::from([ClosureVariable {
+        closure.executable.closure_variables = Rc::from([ClosureVariable {
             source: ClosureSource::ParentClosure(0),
             name: ClosureVariableName::None,
             is_lexical: false,
@@ -5299,7 +5300,7 @@ mod tests {
                 ClosureVariableKind::EvalVariableObject,
             )
             .unwrap();
-        closure.closure_variables = Rc::from([ClosureVariable {
+        closure.executable.closure_variables = Rc::from([ClosureVariable {
             source: ClosureSource::ParentClosure(0),
             name: ClosureVariableName::None,
             is_lexical: false,
@@ -5335,7 +5336,7 @@ mod tests {
             )
             .unwrap();
         let mut host = RuntimeVmHost::empty_for_test(runtime, context.realm);
-        host.local_definitions = Rc::from([VariableDefinition {
+        host.executable.local_definitions = Rc::from([VariableDefinition {
             name: Some(Atom::from_raw(71)),
             is_lexical: false,
             is_const: false,
@@ -5368,7 +5369,7 @@ mod tests {
             "with-object initialization did not receive an Object"
         );
 
-        host.local_definitions = Rc::from([VariableDefinition {
+        host.executable.local_definitions = Rc::from([VariableDefinition {
             name: None,
             is_lexical: false,
             is_const: false,

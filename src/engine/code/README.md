@@ -21,3 +21,8 @@
 - [module.rs](module.rs)：Runtime-independent ECMAScript module drafts.。
 - [rooted.rs](rooted.rs)：Runtime-rooted immutable function bytecode and compiler drafts.。
 - [runtime.rs](runtime.rs)：运行时操作或共享所有权入口（见本目录边界）。
+
+`executable` 提供不可变的已发布执行快照。快照在 Runtime 身份与 realm
+验证后取得字节码 root，共享代码和常量等只读 backing storage，不复制内容。
+读取投影不会调用 JS；只有合成测试可以修改无 root 的 fixture，已发布快照
+在测试中也保持不可变。运行时值的 rooting 和释放仍遵循原 heap 契约。
