@@ -4,6 +4,7 @@
 //! each context is a separate realm and execution surface. The heap and
 //! intrinsics extend this boundary; they are not hidden in the compiler or VM.
 
+mod layout;
 use self::error::RuntimeError;
 use self::intrinsics::promise::HostPromiseRejectionTracker;
 use self::module::ModuleLoader;
