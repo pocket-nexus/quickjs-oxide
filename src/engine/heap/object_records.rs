@@ -293,6 +293,7 @@ pub enum ObjectPayload {
     /// `undefined`. A distinct payload preserves the unforgeable Set brand.
     Set {
         records: Vec<MapRecord>,
+        key_index: CollectionIndex,
         /// Ordered stable indices of live elements; see the Map counterpart.
         live_indices: BTreeSet<usize>,
         size: usize,
@@ -814,7 +815,7 @@ impl ObjectData {
     /// [`Heap::set_insert_record`] after the runtime resolves SameValueZero
     /// equality. The shared record value slot remains `undefined`.
     #[must_use]
-    pub const fn set(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn set(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
             slots,
@@ -826,6 +827,7 @@ impl ObjectData {
             kind: ObjectKind::Set,
             payload: ObjectPayload::Set {
                 records: Vec::new(),
+                key_index: CollectionIndex::default(),
                 live_indices: BTreeSet::new(),
                 size: 0,
             },

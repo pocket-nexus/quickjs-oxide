@@ -677,6 +677,27 @@ impl Heap {
         self.drain_zero_queue()
     }
 
+    /// Set uses the same non-owning index and key semantics as Map.
+    pub(crate) fn set_find_record(
+        &self,
+        id: ObjectId,
+        key: &RawValue,
+    ) -> Result<Option<usize>, HeapError> {
+        if !is_map_storable_value(key) {
+            return Err(HeapError::Invariant(
+                "Set lookup contains an internal value sentinel",
+            ));
+        }
+        match &self.object(id)?.payload {
+            ObjectPayload::Set {
+                records, key_index, ..
+            } => Ok(key_index.find(records, key)),
+            _ => Err(HeapError::Invariant(
+                "Set lookup reached an object with the wrong class",
+            )),
+        }
+    }
+
     /// Borrow the stable insertion-order record array of one genuine Set.
     /// Live elements occupy `key`; both live and tombstoned `value` slots are
     /// always `undefined`.
@@ -729,6 +750,7 @@ impl Heap {
 
         let ObjectPayload::Set {
             records,
+            key_index,
             live_indices,
             size,
         } = &mut self.object_mut(id)?.payload
@@ -736,6 +758,7 @@ impl Heap {
             unreachable!("Set payload was validated before retaining record edges")
         };
         let record_index = records.len();
+        key_index.insert(&key, record_index);
         records.push(MapRecord {
             key: Some(key),
             value: RawValue::Undefined,
@@ -757,6 +780,7 @@ impl Heap {
         let key = {
             let ObjectPayload::Set {
                 records,
+                key_index,
                 live_indices,
                 size,
             } = &mut self.object_mut(id)?.payload
@@ -786,6 +810,7 @@ impl Heap {
             let key = record.key.take().ok_or(HeapError::Invariant(
                 "Set deletion requires a live record index",
             ))?;
+            key_index.remove(&key, index);
             *size -= 1;
             key
         };
@@ -806,6 +831,7 @@ impl Heap {
         let removed = {
             let ObjectPayload::Set {
                 records,
+                key_index,
                 live_indices,
                 size,
             } = &mut self.object_mut(id)?.payload
@@ -828,6 +854,7 @@ impl Heap {
                     removed.push(key);
                 }
             }
+            key_index.clear();
             live_indices.clear();
             *size = 0;
             removed

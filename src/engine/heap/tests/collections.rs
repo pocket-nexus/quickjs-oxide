@@ -3,6 +3,29 @@ use crate::engine::heap::native::{MapNativeKind, NativeCProto, SetNativeKind};
 use super::*;
 
 #[test]
+fn set_index_matches_zero_signs_and_survives_reinsertion() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let set = heap
+        .allocate_object(ObjectData::set(shape, Vec::new()))
+        .unwrap();
+    heap.set_insert_record(set, RawValue::Int(0)).unwrap();
+    assert_eq!(
+        heap.set_find_record(set, &RawValue::Float(-0.0)),
+        Ok(Some(0))
+    );
+    heap.set_delete_record(set, 0).unwrap();
+    assert_eq!(heap.set_find_record(set, &RawValue::Int(0)), Ok(None));
+    heap.set_insert_record(set, RawValue::Int(0)).unwrap();
+    assert_eq!(
+        heap.set_find_record(set, &RawValue::Float(0.0)),
+        Ok(Some(1))
+    );
+    heap.set_clear(set).unwrap();
+    assert_eq!(heap.set_find_record(set, &RawValue::Int(0)), Ok(None));
+}
+
+#[test]
 fn map_index_matches_numeric_keys_and_survives_delete_and_clear() {
     let mut heap = Heap::new();
     let shape = empty_shape(&mut heap);
@@ -519,6 +542,7 @@ fn set_layout_and_iterator_source_are_structurally_validated() {
         is_constructor: false,
         kind: ObjectKind::Set,
         payload: ObjectPayload::Set {
+            key_index: CollectionIndex::default(),
             records: vec![MapRecord {
                 key: Some(RawValue::Int(1)),
                 value: RawValue::Int(2),

@@ -1866,6 +1866,7 @@ impl Heap {
         }
         if let ObjectPayload::Set {
             records,
+            key_index,
             live_indices,
             size,
         } = &object.payload
@@ -1900,6 +1901,7 @@ impl Heap {
                     "Set live index does not match its record layout",
                 ));
             }
+            key_index.validate(records)?;
         }
         if let ObjectPayload::SetIterator {
             object: source,

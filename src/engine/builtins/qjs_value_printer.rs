@@ -824,6 +824,7 @@ impl QjsValuePrinter<'_, '_> {
             }
             ObjectPayload::MapIterator { .. } => ("Map Iterator", PrintableBody::Ordinary),
             ObjectPayload::Set {
+                key_index: _,
                 records: source,
                 live_indices,
                 size,

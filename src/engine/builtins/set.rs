@@ -513,23 +513,13 @@ impl Runtime {
     }
 
     fn find_set_record(&self, set: &ObjectRef, key: &Value) -> Result<Option<usize>, RuntimeError> {
-        let records = self
+        let raw_key = self.raw_property_value(key)?;
+        Ok(self
             .0
             .state
             .borrow()
             .heap
-            .set_records(set.object_id())?
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| record.key.as_ref().map(|key| (index, key.clone())))
-            .collect::<Vec<_>>();
-        for (index, candidate) in records {
-            let candidate = self.root_raw_value(&candidate)?;
-            if candidate.same_value_zero(key) {
-                return Ok(Some(index));
-            }
-        }
-        Ok(None)
+            .set_find_record(set.object_id(), &raw_key)?)
     }
 
     fn insert_set_record(&self, set: &ObjectRef, key: Value) -> Result<bool, RuntimeError> {
@@ -1371,9 +1361,7 @@ impl Runtime {
                     }
                     ObjectIteratorStep::Throw(value) => return Ok(Completion::Throw(value)),
                 };
-                if self.find_set_record(&set, &value)?.is_some()
-                    && self.find_set_record(&result, &value)?.is_none()
-                {
+                if self.find_set_record(&set, &value)?.is_some() {
                     self.insert_set_record(&result, value)?;
                 }
             }
@@ -1392,7 +1380,7 @@ impl Runtime {
                 NativeConversion::Value(present) => present,
                 NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
             };
-            if present && self.find_set_record(&result, &value)?.is_none() {
+            if present {
                 self.insert_set_record(&result, value)?;
             }
         }
@@ -1501,7 +1489,7 @@ impl Runtime {
             // not the copy. Mutating foreign iterators make this observable.
             if self.find_set_record(&set, &value)?.is_some() {
                 self.delete_set_record(&result, &value)?;
-            } else if self.find_set_record(&result, &value)?.is_none() {
+            } else {
                 self.insert_set_record(&result, value)?;
             }
         }
