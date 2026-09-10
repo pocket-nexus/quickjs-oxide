@@ -1440,6 +1440,8 @@ struct FunctionIr {
     /// an outer operation. Parentheses deliberately preserve this marker.
     last_optional_chain: Option<FinalizedOptionalChain>,
     constants: Vec<IrConstant>,
+    /// First primitive string occurrence; constant ordinals remain append-only.
+    string_constants: HashMap<JsString, u32>,
     closure_variables: Vec<ClosureVariable>,
     /// Exact flattened caller bindings imported by a synthetic direct-eval
     /// root. Entries retain their original R1w descriptor indices even though
@@ -1656,6 +1658,7 @@ impl FunctionIr {
             last_identifier_reference: None,
             last_optional_chain: None,
             constants: Vec::new(),
+            string_constants: HashMap::new(),
             closure_variables: Vec::new(),
             external_bindings: Vec::new(),
             eval_caller_profile: EvalCallerProfile {
@@ -1733,6 +1736,18 @@ impl FunctionIr {
             None,
         );
         Ok(())
+    }
+
+    /// Preserve every authored constant and its ordinal. Only name-constant
+    /// reuse consults the derived first-occurrence index.
+    fn append_constant(&mut self, constant: IrConstant) -> Result<u32, Error> {
+        let index = u32::try_from(self.constants.len())
+            .map_err(|_| Error::new(ErrorKind::JsInternal, "out of memory"))?;
+        if let IrConstant::Primitive(Value::String(value)) = &constant {
+            self.string_constants.entry(value.clone()).or_insert(index);
+        }
+        self.constants.push(constant);
+        Ok(index)
     }
 
     fn add_binding(
@@ -7846,11 +7861,7 @@ impl<'source> Parser<'source> {
     }
 
     fn add_constant(&mut self, constant: IrConstant) -> Result<u32, Error> {
-        let function = self.current_ir_mut();
-        let index = u32::try_from(function.constants.len())
-            .map_err(|_| Error::new(ErrorKind::JsInternal, "out of memory"))?;
-        function.constants.push(constant);
-        Ok(index)
+        self.current_ir_mut().append_constant(constant)
     }
 
     fn emit_instruction(&mut self, instruction: Instruction) -> Result<usize, Error> {

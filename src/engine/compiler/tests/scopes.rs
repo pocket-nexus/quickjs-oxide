@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn string_constant_lookup_preserves_first_literal_and_append_ordinals() {
+    let mut tree = Parser::parse("", JsString::from_static("<constant-index>")).unwrap();
+    let function = &mut tree.functions[0];
+    let start = function.constants.len() as u32;
+    let literal = || {
+        IrConstant::Primitive(crate::engine::value::PrimitiveValue::String(
+            JsString::from_static("name"),
+        ))
+    };
+    assert_eq!(function.append_constant(literal()).unwrap(), start);
+    assert_eq!(function.append_constant(literal()).unwrap(), start + 1);
+    assert_eq!(ensure_string_constant(function, "name").unwrap(), start);
+    assert_eq!(
+        ensure_string_constant(function, "other").unwrap(),
+        start + 2
+    );
+    assert_eq!(
+        ensure_string_constant(function, "other").unwrap(),
+        start + 2
+    );
+    assert_eq!(function.constants.len(), start as usize + 3);
+}
+
+#[test]
 fn scope_name_lookup_selects_the_last_duplicate_parameter() {
     let tree = Parser::parse(
         "(function f(value, value) { return value; })",
