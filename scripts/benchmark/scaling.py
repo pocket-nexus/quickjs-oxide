@@ -6,7 +6,7 @@ import json
 import re
 import statistics
 
-from scaling_workloads import CASES, prepare
+from scaling_workloads import BATCHED_CASES, CASES, prepare
 from run import binary_metadata, digest, machine_metadata, run_sample
 
 
@@ -49,9 +49,11 @@ def main():
     args = parser.parse_args()
     if args.repeat < 1 or args.timeout <= 0 or args.operations < 1:
         parser.error("repeat, timeout and operations must be positive")
-    if len(set(args.sizes)) != len(args.sizes) or any(s < 1 or args.operations % s for s in args.sizes):
-        parser.error("sizes must be unique positive divisors of operations")
+    if len(set(args.sizes)) != len(args.sizes) or any(s < 1 for s in args.sizes):
+        parser.error("sizes must be unique positive integers")
     cases = args.case or list(CASES)
+    if any(case in BATCHED_CASES for case in cases) and any(args.operations % s for s in args.sizes):
+        parser.error("batched workload sizes must divide operations")
     if len(set(cases)) != len(cases):
         parser.error("cases must be unique")
     engines = {}

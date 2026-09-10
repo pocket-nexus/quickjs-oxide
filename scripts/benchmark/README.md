@@ -22,6 +22,9 @@ Any failed repetition disqualifies its group. Metadata includes binary hashes,
 available verified build receipts, workload files/hashes and generator identity.
 Use ordinary builds and the build/provenance procedure below for formal timing.
 
+Only batched workloads require size to divide operations. History, width, key
+length and generated-source sizes can vary independently of query counts.
+
 The scaling dimensions differ intentionally:
 
 | Cases | Size changes | Operations controls |

@@ -13,10 +13,12 @@ CASES = ("map-int", "map-string", "set", "map-churn", "set-churn",
          "map-iterate-churn", "set-iterate-churn")
 
 
+BATCHED_CASES = ("map-int", "map-string", "set", "set-intersection", "prop-delete", "array-truncate")
+
 def prepare(directory, case, size, operations):
     if case not in CASES or size < 1 or operations < 1:
         raise ValueError("known case and positive size/operations required")
-    if operations % size:
+    if case in BATCHED_CASES and operations % size:
         raise ValueError("size must divide operations to preserve fixed work")
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)

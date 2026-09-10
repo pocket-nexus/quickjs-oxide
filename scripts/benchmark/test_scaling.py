@@ -45,6 +45,11 @@ class Workloads(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.decode(), workload["expected"])
 
+    def test_history_size_is_independent_of_iteration_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workload = scaling.prepare(Path(directory), "map-iterate-churn", 256, 8)
+            self.assertEqual(workload["expected"], "9\n")
+
     def test_capacity_cannot_silently_change_total_operations(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
