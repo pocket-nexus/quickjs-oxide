@@ -276,19 +276,19 @@ impl VmActivation {
                 Instruction::IfFalse(target) => {
                     let value = self.pop()?;
                     if !host.to_boolean(&value)? {
-                        self.pc = checked_target(*target, code.len())?;
+                        self.pc = host.static_branch_target(*target, code.len())?;
                     }
                     continue;
                 }
                 Instruction::IfTrue(target) => {
                     let value = self.pop()?;
                     if host.to_boolean(&value)? {
-                        self.pc = checked_target(*target, code.len())?;
+                        self.pc = host.static_branch_target(*target, code.len())?;
                     }
                     continue;
                 }
                 Instruction::Goto(target) => {
-                    self.pc = checked_target(*target, code.len())?;
+                    self.pc = host.static_branch_target(*target, code.len())?;
                     continue;
                 }
                 Instruction::InitialYield => {

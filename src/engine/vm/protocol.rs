@@ -35,6 +35,14 @@ pub(crate) struct CallInput {
 }
 
 pub(crate) trait VmHost {
+    /// Resolve an immediate IfTrue/IfFalse/Goto operand. General hosts
+    /// validate targets here; a host paired with published code may reuse its
+    /// verifier's bound. Dynamic return/unwind/resume PCs never use this hook.
+    #[inline]
+    fn static_branch_target(&self, target: u32, code_len: usize) -> Result<usize, Error> {
+        super::activation::checked_target(target, code_len)
+    }
+
     fn update_active_bytecode_pc(&mut self, pc: BytecodePc) -> Result<(), Error>;
     /// Attach a QuickJS-style backtrace before the active frame can unwind.
     /// Detached execution has no realm heap and therefore implements this as

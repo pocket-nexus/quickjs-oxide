@@ -186,3 +186,57 @@ fn repeated_closure_creation_reuses_cells_without_erasing_their_metadata() {
         );
     }
 }
+
+#[test]
+fn static_branch_targets_remain_checked_at_untrusted_boundaries() {
+    use super::{DetachedHost, VmActivation};
+    use crate::engine::code::bytecode::{DetachedBytecode, Instruction};
+    use crate::engine::code::function::UnlinkedFunction;
+    use crate::engine::code::function::metadata::FunctionMetadata;
+
+    // Even an unreachable malformed operand is rejected by publication.
+    let runtime = Runtime::new();
+    let context = runtime.new_context();
+    let draft = UnlinkedFunction::fixture(
+        vec![
+            Instruction::Undefined,
+            Instruction::Return,
+            Instruction::Goto(u32::MAX),
+        ],
+        vec![],
+        FunctionMetadata {
+            max_stack: 1,
+            ..FunctionMetadata::default()
+        },
+    );
+    let error = runtime
+        .publish_unlinked_function(context.realm, draft)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("jump target is out of bounds"),
+        "{error}"
+    );
+
+    for branch in [
+        Instruction::Goto(2),
+        Instruction::IfTrue(2),
+        Instruction::IfFalse(2),
+    ] {
+        let function = DetachedBytecode::<Value> {
+            code: vec![branch.clone()],
+            constants: vec![],
+            local_count: 0,
+            max_stack: 1,
+        };
+        let mut host = DetachedHost::new(&function);
+        let mut activation = VmActivation::new(1);
+        activation
+            .stack
+            .push(Value::Bool(!matches!(branch, Instruction::IfFalse(_))));
+        let error = activation
+            .execute_inner(&function.code, &mut host)
+            .err()
+            .unwrap();
+        assert_eq!(error.message(), "jump target is out of bounds");
+    }
+}

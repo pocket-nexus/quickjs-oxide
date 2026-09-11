@@ -1928,6 +1928,18 @@ impl Runtime {
 }
 
 impl VmHost for RuntimeVmHost {
+    #[inline]
+    fn static_branch_target(&self, target: u32, _code_len: usize) -> Result<usize, Error> {
+        // Production execution takes code from this host's immutable snapshot.
+        // The verifier checks every immediate target, including unreachable
+        // instructions. Keep synthetic hosts on the checked path.
+        #[cfg(test)]
+        if self.executable.root().is_none() {
+            return super::activation::checked_target(target, _code_len);
+        }
+        usize::try_from(target).map_err(|_| Error::internal("jump target overflow"))
+    }
+
     fn update_active_bytecode_pc(&mut self, pc: BytecodePc) -> Result<(), Error> {
         self.runtime
             .update_active_bytecode_pc(self.active_frame_token, pc)
