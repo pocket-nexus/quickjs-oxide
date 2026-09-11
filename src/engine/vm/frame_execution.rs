@@ -145,9 +145,152 @@ impl VmActivation {
                 .checked_add(1)
                 .ok_or_else(|| Error::internal("program counter overflow"))?;
 
-            // Classify once. Each arm delegates to the existing semantic
-            // handler; PC publication and exception handling stay unchanged.
+            // Frame-local operations finish here without a second opcode match.
+            // Larger semantic handlers remain separate to bound recursive
+            // native frames. Every route publishes PC before executing.
             let completion = match instruction {
+                Instruction::PushI32(value) => {
+                    self.stack.push(Value::Int(*value));
+                    continue;
+                }
+                Instruction::Undefined => {
+                    self.stack.push(Value::Undefined);
+                    continue;
+                }
+                Instruction::Null => {
+                    self.stack.push(Value::Null);
+                    continue;
+                }
+                Instruction::PushFalse => {
+                    self.stack.push(Value::Bool(false));
+                    continue;
+                }
+                Instruction::PushTrue => {
+                    self.stack.push(Value::Bool(true));
+                    continue;
+                }
+                Instruction::GetLocal(index) => {
+                    self.stack.push(host.get_local(*index)?);
+                    continue;
+                }
+                Instruction::PutLocal(index) => {
+                    let value = self.pop()?;
+                    host.put_local(*index, value)?;
+                    continue;
+                }
+                Instruction::SetLocal(index) => {
+                    let value = self
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| Error::internal("set local on an empty stack"))?;
+                    host.put_local(*index, value)?;
+                    continue;
+                }
+                Instruction::GetLocalCheck(index) => {
+                    self.stack.push(host.get_local_checked(*index)?);
+                    continue;
+                }
+                Instruction::PutLocalCheck(index) => {
+                    let value = self.pop()?;
+                    host.put_local_checked(*index, value)?;
+                    continue;
+                }
+                Instruction::SetLocalCheck(index) => {
+                    let value =
+                        self.stack.last().cloned().ok_or_else(|| {
+                            Error::internal("set lexical local on an empty stack")
+                        })?;
+                    host.put_local_checked(*index, value)?;
+                    continue;
+                }
+                Instruction::GetArg(index) => {
+                    self.stack.push(host.get_argument(*index)?);
+                    continue;
+                }
+                Instruction::PutArg(index) => {
+                    let value = self.pop()?;
+                    host.put_argument(*index, value)?;
+                    continue;
+                }
+                Instruction::SetArg(index) => {
+                    let value = self
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| Error::internal("set argument on an empty stack"))?;
+                    host.put_argument(*index, value)?;
+                    continue;
+                }
+                Instruction::GetVarRef(index) => {
+                    self.stack.push(host.get_var_ref(*index)?);
+                    continue;
+                }
+                Instruction::PutVarRef(index) => {
+                    let value = self.pop()?;
+                    host.put_var_ref(*index, value)?;
+                    continue;
+                }
+                Instruction::SetVarRef(index) => {
+                    let value = self
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| Error::internal("set VarRef on an empty stack"))?;
+                    host.put_var_ref(*index, value)?;
+                    continue;
+                }
+                Instruction::GetVarRefCheck(index) => {
+                    self.stack.push(host.get_var_ref_checked(*index)?);
+                    continue;
+                }
+                Instruction::PutVarRefCheck(index) => {
+                    let value = self.pop()?;
+                    host.put_var_ref_checked(*index, value)?;
+                    continue;
+                }
+                Instruction::Drop => {
+                    self.pop()?;
+                    continue;
+                }
+                Instruction::Dup => {
+                    let value = self
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| Error::internal("dup on an empty stack"))?;
+                    self.stack.push(value);
+                    continue;
+                }
+                Instruction::Nip => {
+                    let (_, value) = self.pop_pair()?;
+                    self.stack.push(value);
+                    continue;
+                }
+                Instruction::Swap => {
+                    let (left, right) = self.pop_pair()?;
+                    self.stack.push(right);
+                    self.stack.push(left);
+                    continue;
+                }
+                Instruction::IfFalse(target) => {
+                    let value = self.pop()?;
+                    if !host.to_boolean(&value)? {
+                        self.pc = checked_target(*target, code.len())?;
+                    }
+                    continue;
+                }
+                Instruction::IfTrue(target) => {
+                    let value = self.pop()?;
+                    if host.to_boolean(&value)? {
+                        self.pc = checked_target(*target, code.len())?;
+                    }
+                    continue;
+                }
+                Instruction::Goto(target) => {
+                    self.pc = checked_target(*target, code.len())?;
+                    continue;
+                }
                 Instruction::InitialYield => {
                     return Ok(InterpreterExit::Suspend(VmSuspendKind::Initial));
                 }

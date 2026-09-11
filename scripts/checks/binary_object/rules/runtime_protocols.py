@@ -346,7 +346,7 @@ def check(ctx):
             "stage3c-tail-vm",
             "the execute_inner prefix through call-family routing must not intercept, alias, or remove tail completion",
             normalized_execute_inner[:call_route_end],
-            "984431b3c48e48d46b10df22fb2165b7e8d773cad61aea4d36985f40ab0772cd",
+            "9da3c403a04fe451e755c19edaa84b6a798d7f2ded0ff278bfa92175a6b4dcb4",
         )
 
     capability_relative = "src/engine/code/binary_object/function_translate/capability.rs"
@@ -756,14 +756,14 @@ def check(ctx):
         "stage3d-throw-critical-route",
         "execute_inner must carry raw48 from fetch through the hot dispatcher without a guarded completion alias",
         execute_inner_item,
-        "27cf64b31111f07f1fb002b5dad2d753fcd68bb6699691a96b2d7cfe63ddb5c6",
+        "f4e6f2c1df648850363915663fcc829385bf777eb3a61d20dbc0ee6f1e837e50",
     )
 
     ctx.require_normalized_code_sha256(
         "stage3d-throw-critical-route",
         "execute_hot_instruction must enter its unique match before handling Throw and retain the exact dispatch body",
         execute_hot_item,
-        "2fab69bd24de64e6ab0149f4c267b8312e1cebecb6064c4f8c81a44a74156304",
+        "2b6f0378a1ab5e2a7fec880e88ee7ad700f6cdb9872828d0ed86ab164ec6dde0",
     )
 
     execute_published_item = ctx.stage3b_function(
