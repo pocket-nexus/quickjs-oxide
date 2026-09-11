@@ -226,8 +226,8 @@ impl Runtime {
             // Dense elements are own data properties. Read the value under
             // this same classification borrow; holes and named properties
             // still use the exotic descriptor/prototype algorithm.
-            if let ObjectPayload::Array { dense: Some(dense) } = &data.payload
-                && let Some(index) = state.atoms.array_index(key.atom())?
+            if let Some(index) = key.atom().immediate_integer()
+                && let ObjectPayload::Array { dense: Some(dense) } = &data.payload
                 && let Some(value) = dense.get(index as usize)
             {
                 Selected::Value(value.clone())
