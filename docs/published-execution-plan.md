@@ -4,20 +4,159 @@
 
 读者：共同维护 quickjs-oxide 的人和 agent。读完后应能选择一个依赖已满足的步骤，找到模块拥有者，说明该步骤的验证依据与动态语义，完成实现、评审、测量和交接，无需恢复聊天上下文。
 
-## 本次补齐的实施与验收（基于 `49cfa30`）
+## 当前实施计划与交接状态
 
-之前 E05–E07 的“候选处置完成”不代表对应重复工作已消除。以下以当前实现为起点，仍在 PR #18 内按优化拆提交；只在实际优化提交后执行 benchmark，结果留在忽略的 target 目录。
+本节是当前进度的唯一清单；第 4 节保留原步骤及其对应关系，不另行宣告完成。补齐工作以 `49cfa30` 为起点，代码已推进至 `7521630`，仍提交到原 PR #18 的 `perf/published-vm-execution` 分支，base 保持 `perf/indexed-data-structures`。当前按用户要求先完善计划，未继续实施栈优化。
 
-| 项目 | 具体实现 | 验收与状态 |
-| --- | --- | --- |
-| eval 静态描述的共享 | code/executable 提供同一不可变环境数组及索引的拥有视图，准备、编译、物化共享它；用拥有者身份比较替换两次深拷贝与结构比较，不缓存动态查找 | 待实现；嵌套 eval、遮蔽、super、失败前不捕获、错误环境身份拒绝；eval-wide/capture A/B |
-| 闭包捕获元数据 | 复用已捕获单元时直接验证实际 cell 与 descriptor；仅首次建立单元才取 canonical local metadata，避免每次 FClosure 无条件取定义 | 待实现；FunctionName 视图、私有捕获、循环 CloseLocal、逃逸/重入；反复捕获同一槽与首次捕获控制 A/B |
-| 静态分支 | VmHost 明确区分已发布静态目标与通用受检目标；生产 host 复用同一 snapshot 的发布证明，合成入口保留验界；仅迁移 IfTrue/IfFalse/Goto，动态恢复/异常地址不动 | 待实现；错误目标、最后一条指令、分支/finally/恢复、架构门禁；loop/int/call A/B，退化时撤回具体实现 |
-| 栈重复操作 | 检查多操作数访问中可由一次切片匹配证明的重复长度判断；在安全 Rust 内合并实际重复操作，不取消动态恢复检查 | 待核查并实施可证明部分；空栈/单元素错误及值释放语义，算术/分支控制 A/B |
-| 常量 | 保留单一常量池与安全 enum 投影；已有 Atom 表已消除字符串键重复 intern。没有证据支持为去掉一个 enum match 引入复制池/逐指令表；此项明确保留，不计性能优化完成 | 不新建常量表示；报告明确常量分类仍存在 |
-| 已撤回 PC 实验 | 保留 checked_add；先前反复计时已证明该简化退化 | 无需重做同一实验，不将其结论推广到静态目标 |
+### 交付范围和顺序
 
-每项提交前检查正确性，提交后测该项和控制组；末尾按最终代码完成集成验收。若具体方案没有收益，应记录该方案的证据，不以此自动关闭未探索的整个方向。最终逐项报告已消除的工作、必要保留项和未完成项，不用综合加速代替单项交付。
+按 **eval 环境共享 → 闭包捕获元数据 → 静态分支 → 栈重复操作 → 最终集成验收** 推进。前两项已有实现与初步 A/B，第三项已实现但尚未测量，第四项尚未实现。已提交不等于已验收，阶段性收益不等于全计划完成。
+
+| 项目 | 代码入口与具体改动 | 保留的动态语义与抽象边界 | 当前状态与下一步 |
+| --- | --- | --- | --- |
+| eval 环境共享（E06） | `code/executable.rs` 的 `PublishedEvalEnvironment` 共享已发布环境数组及索引，并持有字节码 root；`prepare_direct_eval_environment`、`materialize_direct_eval_environment` 与 `builtins/eval.rs` 传递该视图，用身份核对替换两次深拷贝及结构比较 | 私有构造检查索引；不缓存动态名字解析或实际槽；编译成功后才捕获，保留 strictness、实际槽和 cell 检查。静态规则只由发布器维护，旧测试专用验证器已在 `ed80e61` 删除 | `4b7bd08` 已实现；相关测试及初步 A/B 已执行。下一步在最终代码上完成集成验证，不能把波动范围内的耗时变化称为收益 |
+| 闭包捕获元数据（E06） | `host_bridge.rs::instantiate_closure` 对已有 Captured 槽直接复用实际 cell；仅首次创建或 CloseLocal 后重新捕获才读取父局部定义、构造 canonical metadata | 复用统一的 `capture_frame_binding`；保留 cell/descriptor 合法视图验证、root 所有权及清理。FunctionName 的访问视图不能覆盖新 cell 的 canonical metadata；不复制完整捕获描述符表 | `d0d329e` 已实现；单元测试和初步 A/B 已执行。控制负载出现待复核退化，尚未性能验收；先扩大交错样本并定位，不直接宣布采用 |
+| 静态分支（E07） | `VmHost::static_branch_target` 的默认实现验界；`RuntimeVmHost` 复用与自身 snapshot 配对的发布证明；`frame_execution.rs` 仅将 IfTrue/IfFalse/Goto 的立即数目标交给该入口 | 发布器检查所有目标，包括不可达指令；无 root 的合成 host 保留验界。异常展开、Gosub/Ret、恢复 PC 和取指检查不使用该入口；不新增可伪造的信任标志或 PC 表 | `7521630` 已实现并通过当前单元测试、Clippy、格式和边界扫描；提交后的 A/B、完整架构变异及最终恢复回归尚待执行 |
+| 栈重复操作（E07） | 从 `frame_execution.rs::pop_pair` 及真实多操作数消费者入手，核查两次 pop 的重复长度判断；尝试由一次切片匹配证明足够元素，再安全移动值并调整栈长 | 保持现有 Vec/Value 表示，不引入 unsafe。保留空栈和单元素失败时的消费、释放顺序，不能以 panic 替代内部错误；动态恢复检查保留 | 尚未实现。先明确错误与所有权契约并补行为测试，再实施一次范围判断的具体方案；若生成代码没有消除重复工作或引入退化，记录证据并检查同类消费者，不自动关闭整个方向 |
+| 最终集成（E09） | 在最终采用的代码上验证各优化组合及控制组，清除实验残留，更新本节和模块契约 | 所有入口沿用同一发布拥有权与帧配对契约；不复制静态验证器、opcode 表或依赖人工同步的元数据 | 未完成；须等前述项目分别取得验收结论。独立评审仍待完成 |
+
+### 每项验收
+
+1. **eval**：环境身份与错误索引、root 生命周期、嵌套 eval、with 遮蔽、super、编译失败前不捕获；使用 `eval-wide`、`eval-capture`，加无 eval 的调用/循环控制组。共享结构的收益不能只靠 getter 或结构相等测试证明。
+2. **闭包**：首次捕获、同槽反复捕获、参数捕获、FunctionName/导入视图、私有绑定、循环 CloseLocal、逃逸与重入；分别测 `closure-create`、`argument-capture`、`lexical-lifetime` 和 `func_closure_call`。当前先处理控制组退化的不确定性，再决定保留或修改实现。
+3. **静态分支**：发布拒绝不可达坏目标、通用 host 拒绝越界、合法边界目标、分支与 finally/异常/恢复组合，以及保护执行入口和路由的架构变异；测空/递增/递减循环、整数运算、普通与闭包调用。
+4. **栈**：空栈、单元素、双元素顺序，带 root 的值在成功/失败路径上的释放与异常清理；检查生成代码是否实际合并范围判断，再测整数运算、比较、Swap/Nip 及调用控制。不能只把 `.get()` 改成下标并称为优化。
+5. **集成**：按第 5 节完成最终 workspace/feature 组合、严格 Clippy、全部架构变异、Test262 focused/full、Node/WASM 和 50+8 固定控制矩阵。冻结结果不改写；若只有引擎指纹变化，单独核对后明确说明。以前提交的验证不替代最终代码验收。
+
+### 明确保留、不重复实施的部分
+
+- **常量投影（E05）**：保留单一常量池和安全 enum match；已有静态属性 Atom 表继续使用。统一访问入口属于结构整理，不能记为常量分类已消除。不为去掉一次 match 引入复制常量池或逐指令类型表；rooting、新闭包和 RegExp 对象创建仍需执行。
+- **PC 递增**：此前 checked_add 简化已有重复测量证明退化，保持回退，不重做同一实验。该结论不适用于静态分支目标的重复验界。
+- **动态检查和表示**：保留 TDZ、实际捕获状态、参数别名、cell const、引用管理、动态返回地址、异常展开与恢复验证。不进行全栈表示重写、独立执行指令枚举或静态 PC 表建设；这不免除上表局部栈操作的检查合并工作。
+
+### 提交、测量与完成规则
+
+- 所有工作继续进入原 PR #18，一个可独立解释的优化一个小提交。提交前运行受影响的正确性检查；**只有实际优化提交之后才做 benchmark**，准备性抽象和纯文档提交不另做性能测量。
+- 每项至少五轮交错 A/B，保留正确输出准入、耗时及 instructions/cycles；对无法区分的波动和疑似退化追加双方样本并调查。某个方案失败只撤回该方案，不自动关闭尚未探索的方向。
+- 原 PR #17 的 `b11f2be` 用于整体比较；补齐阶段以重新构建的 `49cfa30` 为起点，各步骤再与直接前序比较。构建须核对源码、工具链、参数及 ELF 哈希；旧 receipt 与二进制不符时禁止直接测量或改写 receipt 冒充验证。
+- 本轮原始数据仅保存在忽略的 `target/published-follow-*`，不提交 benchmark 结果文件。本文件记录方案、状态和验证入口，不复制测量表。更换工作区时须重新生成数据，不能假定本地 target 可用。
+- 状态分别写“已实现”“已运行验证”“性能待确认”“已验收”或“保留且未优化”。只有所有待做项都有实现与验收证据、明确保留项没有被算成收益、最终集成完成，才可宣告交付完成。不得用“候选均有处置”替代这一条件。
+
+### 可执行任务分解
+
+以下任务号用于提交说明与交接；每个任务先读对应拥有者 README。这里只规划和核对既有实现，不授权以修改任务描述代替未完成的实现。
+
+#### P1：完成 eval 共享视图的验收
+
+**输入与拥有者**：`4b7bd08`；`code/executable.rs`、`vm/host_bridge.rs`、`vm/host_bridge/eval_validation.rs`、`builtins/eval.rs`。已有类型为 `PublishedEvalEnvironment`，不再新增“环境计划”包装层。
+
+实施检查：
+
+1. 检查构造入口只从 snapshot 取得有效索引；私有字段必须同时保存只读环境数组、索引和对应字节码 root。构造失败不应产生可用视图。
+2. 确认 `PreparedEvalEnvironment → 编译 → MaterializedEvalEnvironment` 移动或共享同一视图；比较只能验证同一数组和索引，不重新逐项比较名称、flags 和拓扑。
+3. 确认编译前没有创建 VarRef；编译失败时视图与临时引用被释放。编译成功后才能捕获当前帧的真实绑定。
+4. 搜索这条路径上的 `EvalEnvironment::clone` 和 descriptor 克隆，区分 Rc/root 引用复制与 scopes/bindings 深拷贝。若仍有深拷贝消费者，逐一说明用途或迁移；不以“已加 Rc 类型”作为验收依据。
+5. 检查静态规则仅在 `bytecode_publish` 中实现；VM 测试不得再保存一份静态验证算法。
+
+测试落点：`executable::tests` 验证共享身份、不同索引、不同数组、root 存活及越界拒绝；`published_execution_tests` 验证同一环境多次 eval 仍观察新值、with 遮蔽、嵌套 eval、super；现有编译失败/捕获顺序测试必须通过。新增测试只覆盖现有测试未证明的契约，不复制 getter 实现。
+
+采用条件：深拷贝与结构比较已实际移除；没有新增按绑定数复制的缓存；正确性通过；eval 目标负载指令或分配工作减少，且控制组无未解释退化。耗时无法区分时明确标为未证明耗时收益。需要修正时单独提交 `perf(eval): ...`，纯验收不制造空提交。
+
+#### P2：核实并修正捕获复用路径
+
+**输入与拥有者**：`d0d329e`；`host_bridge.rs::instantiate_closure`、`capture_frame_binding`、`close_frame_binding`；`published_execution_tests.rs`。优先处理初步测量中闭包调用控制组的异常变化。
+
+实施检查：
+
+1. 对 ParentLocal 按实际 FrameBinding 分两种职责：已有 Captured 只验证并复用 cell；Direct、Uninitialized、Private 等首次捕获状态取得父定义，用 canonical flags 建立 cell。
+2. 保持 ParentArgument、ParentClosure、ParentGlobal 各自的来源语义，不能为了共用函数把所有来源伪装成局部槽。
+3. 对 FunctionName 的可变访问视图以及 ModuleImportView，检查实际 cell 验证仍允许发布器认证的差异；首次创建必须使用 canonical metadata，不能直接复制视图 flags。
+4. 检查新增状态分支是否随后又进入相同的完整状态 match，抵消已省的定义访问。若反汇编或诊断负载证实重复分派有成本，可提取小型“验证并复用已有 cell”函数供真实调用者共享；不引入布尔模式参数、通用 capture trait 或完整副本表。
+5. 检查借用在任何可能重入的运行时操作前结束；错误与中途失败不得泄漏已捕获 roots。CloseLocal 后必须重新进入首次捕获路径。
+
+测试落点：在发布到执行测试中分别覆盖第一次捕获、同槽两个闭包共享更新、循环每轮独立 cell、命名函数与直接 eval 共用 cell、私有字段/方法。保留模块 live-binding 与错误 cell 元数据的既有边界测试。
+
+测量步骤：先对 `4b7bd08 → d0d329e` 的上述四个负载补十轮交错 A/B，双方使用相同机器、CPU 与普通 release 构建；同时比较 instructions/cycles，检查退化是否可复现。若复现，先定位代码布局或新增分派成本，实施一个具体修正后提交并重新五轮 A/B。不能用目标微负载略少指令掩盖调用控制组变慢。若最终撤回，保留不采用该实现的证据，明确首次/重复捕获仍有哪些工作，而不是宣布捕获方向全部完成。
+
+#### P3：验证静态分支确实减少运行时工作
+
+**输入与拥有者**：`7521630`；`bytecode.rs::validate_target`、`protocol.rs::VmHost`、`host_bridge.rs::static_branch_target`、`frame_execution.rs::execute_inner`。
+
+证明链必须逐点核对：
+
+1. verifier 对所有 IfTrue/IfFalse/Goto 操作数执行范围验证，不能只检查可达块。
+2. `execute_published`、`start_published` 经 `new_activation` 取得同一 host 的代码和布局；恢复路径经 `decode_vm_activation` 保持对应关系。任何能混配代码与 host 的生产入口都必须先封闭，不能靠注释假定不存在。
+3. `VmHost` 默认入口继续调用受检目标转换；Runtime host 仅复用已发布目标范围证明。无 root 的测试 fixture 必须继续拒绝坏目标。
+4. 搜索新入口的全部调用者，只允许三个立即数分支使用；Catch/Gosub/Ret、异常 region、恢复 PC 继续用原检查。u32 到 usize 的必要转换保留，不能通过截断扩大平台假设。
+5. 检查生成代码中 Runtime host 路径的目标范围比较确实消失，且未新增每次指令的信任标志分支或间接调用。
+
+测试落点：现有 `static_branch_targets_remain_checked_at_untrusted_boundaries` 要断言明确的目标错误，防止因 max_stack 等无关错误“通过”；补合法首/尾目标、两个条件方向、finally 内分支、挂起后分支及回溯 PC 的缺口。架构规则不仅更新 hash：执行现有 tail/throw 路由变异，确认错误拦截仍被拒绝；补充“让通用/合成目标入口不验界”的反例覆盖。
+
+提交后测量：以 `d0d329e` 为直接前序，对 `7521630` 做至少五轮 loop/int/call/closure A/B 和 instructions/cycles。当前尚未执行这一步。若发现可复现退化，调整具体实现或撤回它；不使用已失败的 PC 递增实验代替本步骤测量。
+
+#### P4：实现一次范围判断的双操作数取出
+
+**输入与拥有者**：最终采用的 P3 版本；`frame_execution.rs::pop_pair`，消费者为同文件 Nip/Swap、`numeric_execution.rs` 和 `dispatch.rs` 的二元操作。先改共同拥有者，不逐 opcode 复制快路径。
+
+当前语义是先 pop 右值，再 pop 左值，返回 `(left, right)`。新实现必须保留下面的可观察状态：
+
+| 输入栈 | 返回与剩余状态 |
+| --- | --- |
+| 空栈 | 返回原 underflow 错误，栈仍为空 |
+| 单元素 | 消费并释放该元素，返回原 underflow 错误，栈为空 |
+| 至少两元素 | 返回原顺序的左右值，前缀不变；取出的 roots 不提前释放 |
+
+首选算法：对可变尾切片做一次“至少两个元素”匹配；成功后用 `mem::replace(..., Value::Undefined)` 移出右、左值，结束切片借用后将 Vec 截断两格；失败路径保持原 pop 的消费顺序与错误。所有移动使用安全 Rust，不使用 unchecked/set_len，不新增临时 Vec，不 clone Value。只有编译器消除了多余占位写入/释放及重复验界，才有采用依据。
+
+实施顺序：
+
+1. 先为上表三个状态增加直接行为测试，包含对象或其他持有 root 的值，检查失败释放及成功后值仍存活。
+2. 修改单个 `pop_pair`，让所有现有消费者自然使用；不同时改变算术或属性语义。
+3. 检查普通二元运算、Swap/Nip、属性写入和异常路径；保持用户转换回调发生时机不变。
+4. 检查 release 反汇编中的范围判断、Value 移动及 drop 数量。若占位值操作导致更多工作，尝试局部切片分解的等价实现，不引入独立栈类型；仍不成立时记录此方案不采用。
+5. 同时核查 `clone_at_depth` 的 checked_sub 后 get 是否已经被编译器合并，区分源码重复与真实机器码重复。仅在仍有重复且有具体可维护方案时另拆优化提交；不机械地替换索引。
+
+验证负载：整数与浮点运算、比较、Swap/Nip 专用循环，外加调用与属性访问控制组。新增诊断脚本固定循环次数和输出，并在第一次 A/B 前冻结哈希；结果不代替完整控制矩阵。这个任务尚未开始实现，不得因 P3 有收益而跳过。
+
+#### P5：最终集成、文档与独立评审
+
+依赖 P1–P4 的最终采用版本，不依赖旧的“候选处置完成”结论。
+
+1. 清点每项最终减少的操作，注明只属于维护性改善或必要保留的部分。检查没有测试专用静态验证器、双 opcode 表、可伪造凭据或临时兼容入口残留。
+2. 按下面命令入口执行最终正确性验收；所有失败都要定位到本次变更或冻结基线，不能直接更新 oracle/Test262 期望。完整矩阵按最终采用代码重建，构建和测试不得与测量争抢同一机器。
+3. 比较完整 50 microbench + 8 V8 控制组，按固定输出准入；与 `49cfa30` 比较补齐部分，与 `b11f2be` 比较累计效果。不得将固定工作量的比率称为上游 adaptive score。
+4. 独立评审重点为 eval 视图原子生命周期、FunctionName/cell 视图差异、静态分支的代码配对及栈错误路径的释放语义。自查单独记录，不冒充独立评审。
+5. 在本文件更新任务状态、提交和未解决项，在模块 README/契约文档记录最终职责。PR 描述同步实际范围；原始 benchmark 文件不提交。没有满足本任务时保持“集成未完成”。
+
+### 验证与复现入口
+
+命令从仓库根目录执行。下列定向命令对应 P1–P4；工作区集成组合以 README 和 `.github/workflows/ci.yml` 为准，不在计划里维护第二份完整 CI 配置。
+
+```sh
+cargo fmt --all -- --check
+cargo +1.88.0 test --locked -p quickjs-oxide --lib published_execution_tests
+cargo +1.88.0 test --locked -p quickjs-oxide --lib eval_
+cargo +1.88.0 test --locked -p quickjs-oxide --lib
+cargo +1.88.0 clippy --locked -p quickjs-oxide --lib -- -D warnings
+./scripts/checks/check-binary-object-boundary.sh --scan-only "$PWD"
+PYTHONPATH=scripts/checks python3 -m unittest discover -s scripts/checks/binary_object/tests
+./scripts/checks/check-binary-object-boundary.sh
+./scripts/test262/test-test262.sh --focused
+TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
+./scripts/web/test-web-playground.sh
+```
+
+性能入口使用 `scripts/benchmark/fixed.py`。当前本地 manifest 为 `target/published-follow-manifest.json`，仅适用于哈希校验仍通过的工作区；迁移机器必须从固定负载来源重新生成。先构建已提交版本，分别复制为不可变 before/after 二进制并记录 receipt，再执行，例如 P3：
+
+```sh
+python3 scripts/benchmark/fixed.py \
+  --manifest target/published-follow-manifest.json \
+  --engine before=/absolute/before/qjs --engine after=/absolute/after/qjs \
+  --case empty_loop --case int_arith --case func_call --case func_closure_call \
+  --repeat 5 --cpu 2 --output target/published-follow-branch-ab
+```
+
+CPU 2 是当前机器的绑定设置；更换机器须重新记录实际 CPU。另用 `perf stat -x, -e instructions:u,cycles:u -- taskset -c 2 ...` 对同一冻结负载按相同轮次交错采样，逐样本验证退出码和标准输出，不混入 profiling 特性或后台构建。当前 P1/P2 的本地证据位于 `target/published-follow-eval-*`、`target/published-follow-capture-*`；P3/P4 不得引用这些结果声称自己的优化已经测量。
 
 ## 1. 目标与基线
 
@@ -118,13 +257,13 @@ dispatch 分类可统一拥有，先评估单一明确分派结构；仅在实�
 | E02 已发布执行描述 | E01 | 收拢不可变代码及布局；封闭构造；迁移生产发布与 snapshot | 未验证草稿或不匹配元数据无法经正常接口进入生产 VM；发布失败回滚与原有边界测试通过 | 已实现：`VerifiedFunction` 消费准确草稿；snapshot 收拢只读拥有权。`7a343e5` / `5b96313`。 |
 | E03 代码与帧配对 | E02 | 统一建帧契约；普通调用、模块特殊入口、generator/async 恢复接入；隔离合成测试入口 | 错代码、错 Runtime、错 closure 布局和非法恢复被拒绝；重入、清理、递归上限不退化 | 已实现：`new_activation` 从 host 推导代码/布局；恢复封装字段私有。`5b96313`。上游 callable 来源仍由原提取边界负责。 |
 | E04 绑定访问 | E03 | 一起处理 local、argument、VarRef 的共享机制与静态模式检查 | 普通/词法/捕获语义测试、错误反例通过；逐项记录减少的工作与 loop/call/closure A/B | 已实现：普通/checked 读写复用发布保证；初始化和 CloseLocal 移除已证明的模式检查；捕获写入不再 clone cell，错误名字按需读取。TDZ、实际 cell const、特殊初始化协议保留。`a4b7830` / `27f5f30`。 |
-| E05 常量与静态名字 | E03 | 种类明确的常量访问；复用链接 Atom；避免重复分类 | 常量种类混用在边界拒绝；root 生命周期与异常一致；执行、发布、内存数据齐全 | 已完成候选处置：统一常量投影，复用既有 Atom 表。保留安全的 enum match；单独包装 getter 不会消除匹配，为此复制常量池/种类表不采用。`51065a5` / `a23ec52`。 |
-| E06 捕获与 eval 计划 | E04、E05 | 将静态父子描述符匹配和环境整理移至发布；实际 cell/调用方验证留在边界 | 特殊视图、eval 遮蔽/捕获、逃逸、失败回滚通过；无回调重放或缓存失效问题 | 已实现：复用父子描述符和 caller snapshot；eval 拓扑/名字/flags 验证留在发布器，执行前仅检查调用方 strictness、实际槽和 closure cell。捕获及实际引用验证保留。`51065a5` / `8d4a2da`。 |
-| E07 静态控制流与栈 | E03、E04 | 评估目标转换、PC 递增与栈检查；只迁移证明完整的部分 | 分支、finally、异常、恢复、回溯及畸形字节码覆盖；无 panic 替代原错误；记录保留项 | 已完成候选处置：PC 递增简化已实验并因重复计时回退撤回；保留原 checked_add、目标与栈检查。成功取指的范围证明成立，但不是采用改动的充分理由。未新增 PC 表或栈表示。 |
+| E05 常量与静态名字 | E03 | 种类明确的常量访问；复用链接 Atom；避免重复分类 | 常量种类混用在边界拒绝；root 生命周期与异常一致；执行、发布、内存数据齐全 | 明确保留分类操作：统一常量投影，复用既有 Atom 表。安全 enum match 仍在，不计作已消除的重复分类；不新增复制池/种类表。`51065a5` / `a23ec52`。 |
+| E06 捕获与 eval 计划 | E04、E05 | 将静态父子描述符匹配和环境整理移至发布；实际 cell/调用方验证留在边界 | 特殊视图、eval 遮蔽/捕获、逃逸、失败回滚通过；无回调重放或缓存失效问题 | 初始静态验证迁移已实现（`51065a5` / `8d4a2da`）；补齐环境共享与捕获元数据分别见 `4b7bd08` / `d0d329e`。该步骤尚未最终验收，当前状态以上方清单为准。 |
+| E07 静态控制流与栈 | E03、E04 | 评估目标转换、PC 递增与栈检查；只迁移证明完整的部分 | 分支、finally、异常、恢复、回溯及畸形字节码覆盖；无 panic 替代原错误；记录保留项 | 未完成：PC 递增实验已撤回；静态分支 `7521630` 已实现但待测量及完整验收；栈重复操作尚未实现。动态目标与恢复检查保留。 |
 | E08 dispatch | E04、E05、E07 | 统一指令分类拥有者，评估减少多层分类；不改变操作语义 | opcode 覆盖完整，原 PC 对应不变；机器码/指令数与综合负载支持选型 | 已实现：常用绑定、字面量、简单栈操作和分支在循环中直接执行；调用、复杂数值转换与其他语义处理器独立保留以控制递归帧。无预解码表或第二指令枚举。`7a7fab7` / `254581d`。 |
-| E09 集成与交接 | E06、E08 | 清除临时兼容入口与双实现；更新职责文档；完整正确性与性能复测 | 第 5、6 节验收齐全，保留无收益/退化结果，每项候选有最终处置 | 后续优化均在提交后做定向 A/B；采用三个优化，撤回 PC 实验。完整控制矩阵已复测，正确性验收与独立评审记录见 PR。结果保留在本地 target，不提交 benchmark 报告。 |
+| E09 集成与交接 | E06、E08 | 清除临时兼容入口与双实现；更新职责文档；完整正确性与性能复测 | 第 5、6 节验收齐全，保留无收益/退化结果，每项候选有最终处置 | 未完成：此前控制矩阵仅对应补齐前的代码。须对最终采用版本重新完成集成验收；独立评审仍待进行。测量结果保留在本地 target，不提交 benchmark 报告。 |
 
-本轮实际顺序为 E04 写入与生命周期 → E08 常用指令直接执行 → E06 eval 发布保证 → E07 PC 递增实验与撤回。E05 的种类表与 E07 的新 PC/栈表示是评估候选，并非必建抽象；不采用的理由见执行契约说明。计划不承诺消除 QuickJS 与本解释器的全部机器指令差距。
+补齐前已经实施 E04 写入与生命周期、E08 常用指令直接执行、E06 eval 发布保证，并撤回 PC 递增实验。当前后续顺序、必要保留项与验收标准见文首清单；这些历史改动不代表 E06/E07/E09 已完成。计划不承诺消除 QuickJS 与本解释器的全部机器指令差距。
 
 E04/E05/E07 在设计上部分独立，但共享 VM 与代码存储，不默认并行编辑同一核心文件。E01 确认证明缺口后可细分步骤或调整依赖，并在此表记录理由。
 
