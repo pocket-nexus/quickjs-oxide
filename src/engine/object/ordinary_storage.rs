@@ -223,18 +223,25 @@ impl Runtime {
             let state = self.0.state.borrow();
             let id = object.object_id();
             let data = state.heap.object(id)?;
+            let is_array = matches!(
+                (data.kind, &data.payload),
+                (ObjectKind::Array, ObjectPayload::Array { .. })
+            );
             // Dense elements are own data properties. Read the value under
-            // this same classification borrow; holes and named properties
-            // still use the exotic descriptor/prototype algorithm.
+            // this same classification borrow. Other own Array slots share
+            // value/getter selection; exotic misses retain their fallback.
             if let Some(index) = key.atom().immediate_integer()
                 && let ObjectPayload::Array { dense: Some(dense) } = &data.payload
                 && let Some(value) = dense.get(index as usize)
             {
                 Selected::Value(value.clone())
-            } else if !is_ordinary(data) {
+            } else if !is_ordinary(data) && !is_array {
                 return Ok(ReadProbe::Special(special_kind(data)));
             } else {
                 match locate(&state, id, key.atom())? {
+                    // A miss may still be a non-immediate dense index. Leave
+                    // exotic misses to the complete Array lookup algorithm.
+                    None if is_array => return Ok(ReadProbe::Special(SpecialKind::Other)),
                     None => Selected::Missing(state.heap.shape(data.shape)?.prototype()),
                     Some(slot) => match &data.slots[slot.index] {
                         PropertySlot::Data(value) => Selected::Value(value.clone()),

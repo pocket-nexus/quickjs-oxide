@@ -215,7 +215,11 @@ fn ordinary_property_dense_reads_preserve_holes_receivers_and_transitions() {
     check(
         r#"
         var token={}; var a=[token, 2, 3];
-        var own=a[0]===token && Reflect.get(a,'0',{})===token;
+        var denseLength=a.length===3 && a[0]===token && Reflect.get(a,'0',{})===token;
+        var symbol=Symbol(); a[symbol]=token; a['01']=5; a[2147483648]=6;
+        var large=a[2147483648]===6; delete a[2147483648]; a.length=3;
+        var own=a[0]===token && Reflect.get(a,'0',{})===token
+            && denseLength && a.length===3 && a['01']===5 && a[symbol]===token && large;
         delete a[1];
         var proto=Object.create(Array.prototype);
         Object.defineProperty(proto,'1',{get(){return this.marker},configurable:true});
