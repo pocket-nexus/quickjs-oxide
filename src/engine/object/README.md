@@ -4,6 +4,9 @@
 
 通过 heap 保存原始记录与引用边；调用和用户代码执行交给 VM 协调；内置方法归 builtins。
 
+普通属性读写与定义的后续重构见[普通对象属性访问内核改造计划](../../../docs/ordinary-property-plan.md)。
+该文档为尚未实施的设计，包含目标职责、迁移步骤和验收条件。
+
 Dictionary 模式用于普通对象和已转为慢表示的 Array。共享 shape 首次分离，独占 shape
 原地转换并脱离 weak cache。物理槽用 swap-remove，插入顺序由独立双向链接维护；
 `Shape::entries()` 只表示槽顺序，可观察遍历必须使用 `ordered_indices()` 或
