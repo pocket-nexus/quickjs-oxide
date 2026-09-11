@@ -192,6 +192,17 @@ impl Runtime {
     ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
+        self.get_own_property_in_operation(object, key)
+    }
+
+    /// The caller has validated object/key domains and holds an operation
+    /// guard. Keep the descriptor algorithm shared without nesting public
+    /// validation/cleanup boundaries on completion-aware Get fallback.
+    pub(super) fn get_own_property_in_operation(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
         if let Some(snapshot) = self.ordinary_property_snapshot(object, key)? {
             return match snapshot {
                 Some(snapshot) => self.materialize_property_snapshot(object, key, snapshot),

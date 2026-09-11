@@ -934,7 +934,7 @@ impl Runtime {
             };
             return Ok(NativeConversion::Value(Some(value)));
         }
-        let own = self.get_own_property(object, key)?;
+        let own = self.get_own_property_in_operation(object, key)?;
         if let Some(own) = own {
             return match own {
                 CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
@@ -1028,7 +1028,6 @@ impl Runtime {
         value: Value,
         receiver: Value,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
-        let _operation = self.operation();
         match self.prepare_set_property_with_receiver_in_realm(
             Some(realm),
             object,
@@ -1048,10 +1047,15 @@ impl Runtime {
                 setter,
                 receiver,
                 argument,
-            } => match self.call_internal(realm, &setter, receiver, &[argument])? {
-                Completion::Return(_) => Ok(NativeConversion::Value(InternalSetResult::Accepted)),
-                Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
-            },
+            } => {
+                let _operation = self.operation();
+                match self.call_internal(realm, &setter, receiver, &[argument])? {
+                    Completion::Return(_) => {
+                        Ok(NativeConversion::Value(InternalSetResult::Accepted))
+                    }
+                    Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+                }
+            }
         }
     }
 
