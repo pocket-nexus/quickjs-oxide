@@ -40,46 +40,89 @@ fn locate(
     }))
 }
 
+pub(super) enum SetProbe {
+    Stored(bool),
+    Writable,
+    Setter(Option<crate::engine::object::CallableRef>),
+    Missing(Option<ObjectRef>),
+    Special,
+}
+
 impl Runtime {
-    /// None means that another semantic owner must handle the write. This
-    /// method never consumes the value or invokes a callback before declining.
-    pub(super) fn try_set_ordinary_own_data(
+    /// The target stays rooted until the selected setter/prototype has been
+    /// promoted. No callback, mutation or cleanup occurs between snapshot and
+    /// promotion. Data writes locate and commit in a single mutable borrow.
+    pub(super) fn ordinary_set_probe(
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
         value: &Value,
-    ) -> Result<Option<bool>, RuntimeError> {
-        self.validate_object_and_key(object, key)?;
-        self.validate_value_domain(value, "property value")?;
-        let mut state = self.0.state.borrow_mut();
-        let id = object.object_id();
-        if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
-            return Ok(None);
+        receiver_is_target: bool,
+    ) -> Result<SetProbe, RuntimeError> {
+        enum Selected {
+            Setter(Option<ObjectId>),
+            Missing(Option<ObjectId>),
         }
-        let Some(slot) = locate(&state, id, key.atom())? else {
-            return Ok(None);
-        };
-        if !matches!(
-            state.heap.object(id)?.slots[slot.index],
-            PropertySlot::Data(_)
-        ) {
-            return Ok(None);
-        }
-        if !slot.flags.writable {
-            return Ok(Some(false));
-        }
-        // Conversion only duplicates primitive storage/identities. The input
-        // remains rooted by the caller throughout retain, publication and drain.
-        let replacement = PropertySlot::Data(self.raw_property_value(value)?);
-        let atoms = state.retain_slot_atoms(std::slice::from_ref(&replacement))?;
-        match state.heap.replace_object_slot(id, slot.index, replacement) {
-            Ok(cleanup) => state.apply_cleanup(cleanup)?,
-            Err(error) => {
-                state.release_atoms(atoms)?;
-                return Err(error.into());
+        let selected = {
+            let mut state = self.0.state.borrow_mut();
+            let id = object.object_id();
+            if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+                return Ok(SetProbe::Special);
             }
+            match locate(&state, id, key.atom())? {
+                None => {
+                    let data = state.heap.object(id)?;
+                    Selected::Missing(state.heap.shape(data.shape)?.prototype())
+                }
+                Some(slot) => match &state.heap.object(id)?.slots[slot.index] {
+                    PropertySlot::Data(_) => {
+                        if !slot.flags.writable {
+                            return Ok(SetProbe::Stored(false));
+                        }
+                        if !receiver_is_target {
+                            return Ok(SetProbe::Writable);
+                        }
+                        let replacement = PropertySlot::Data(self.raw_property_value(value)?);
+                        replace_data(&mut state, id, slot, replacement)?;
+                        return Ok(SetProbe::Stored(true));
+                    }
+                    PropertySlot::Accessor { set, .. } => Selected::Setter(*set),
+                    PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
+                        return Ok(SetProbe::Special);
+                    }
+                },
+            }
+        };
+        Ok(match selected {
+            Selected::Setter(set) => SetProbe::Setter(
+                set.map(|id| {
+                    ObjectRef::from_borrowed_handle(self.clone(), id)
+                        .map(crate::engine::object::CallableRef::from_validated_object)
+                })
+                .transpose()?,
+            ),
+            Selected::Missing(prototype) => SetProbe::Missing(
+                prototype
+                    .map(|id| ObjectRef::from_borrowed_handle(self.clone(), id))
+                    .transpose()?,
+            ),
+        })
+    }
+}
+
+fn replace_data(
+    state: &mut RuntimeState,
+    id: ObjectId,
+    slot: OwnSlot,
+    replacement: PropertySlot,
+) -> Result<(), RuntimeError> {
+    let atoms = state.retain_slot_atoms(std::slice::from_ref(&replacement))?;
+    match state.heap.replace_object_slot(id, slot.index, replacement) {
+        Ok(cleanup) => state.apply_cleanup(cleanup),
+        Err(error) => {
+            state.release_atoms(atoms)?;
+            Err(error.into())
         }
-        Ok(Some(true))
     }
 }
 

@@ -15,7 +15,7 @@ use crate::engine::atom::{Atom, PropertyKeyKind};
 use crate::engine::builtins::CanonicalNumericIndex;
 use crate::engine::heap::{ContextId, ObjectPayload, ProxyData};
 use crate::engine::object::operations::{
-    ArrayOwnKey, InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
+    InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
     PropertySetRejection, complete_to_validation_record, descriptor_to_validation_record,
     validation_record_to_complete,
 };
@@ -1001,29 +1001,6 @@ impl Runtime {
         Ok(Completion::Return(result))
     }
 
-    fn ordinary_set_fast_path_available(
-        &self,
-        object: &ObjectRef,
-        receiver: &Value,
-    ) -> Result<bool, RuntimeError> {
-        if let Value::Object(receiver) = receiver
-            && (self.proxy_snapshot_if_any(receiver)?.is_some()
-                || self.typed_array_is_object(receiver)?)
-        {
-            return Ok(false);
-        }
-        let mut current = Some(object.clone());
-        while let Some(object) = current {
-            if self.proxy_snapshot_if_any(&object)?.is_some()
-                || self.typed_array_is_object(&object)?
-            {
-                return Ok(false);
-            }
-            current = self.get_prototype_of(&object)?;
-        }
-        Ok(true)
-    }
-
     pub(crate) fn internal_set(
         &self,
         realm: ContextId,
@@ -1032,15 +1009,10 @@ impl Runtime {
         value: Value,
         receiver: Value,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
-        if matches!(&receiver, Value::Object(target) if target == object)
-            && let Some(accepted) = self.try_set_ordinary_own_data(object, key, &value)?
-        {
-            return Ok(NativeConversion::Value(if accepted {
-                InternalSetResult::Accepted
-            } else {
-                InternalSetResult::Rejected(PropertySetRejection::ReadOnly)
-            }));
-        }
+        let _operation = self.operation();
+        self.validate_object_and_key(object, key)?;
+        self.validate_value_domain(&value, "property value")?;
+        self.validate_value_domain(&receiver, "property receiver")?;
         if self.proxy_snapshot_if_any(object)?.is_some() {
             return self.proxy_set(realm, object, key, value, receiver);
         }
@@ -1089,138 +1061,26 @@ impl Runtime {
                 }
             }
         }
-        if self.ordinary_set_fast_path_available(object, &receiver)? {
-            return match self.prepare_set_property_with_receiver_in_realm(
-                Some(realm),
-                object,
-                key,
-                value,
+        match self.prepare_set_property_with_receiver_in_realm(
+            Some(realm),
+            object,
+            key,
+            value,
+            receiver,
+        )? {
+            PropertySetAction::Complete => Ok(NativeConversion::Value(InternalSetResult::Accepted)),
+            PropertySetAction::RejectedProxyTrap => Ok(NativeConversion::Value(
+                InternalSetResult::RejectedProxyTrap,
+            )),
+            PropertySetAction::Throw(value) => Ok(NativeConversion::Throw(value)),
+            PropertySetAction::Rejected(reason) => {
+                Ok(NativeConversion::Value(InternalSetResult::Rejected(reason)))
+            }
+            PropertySetAction::Call {
+                setter,
                 receiver,
-            )? {
-                PropertySetAction::Complete => {
-                    Ok(NativeConversion::Value(InternalSetResult::Accepted))
-                }
-                PropertySetAction::Throw(value) => Ok(NativeConversion::Throw(value)),
-                PropertySetAction::Rejected(rejection) => Ok(NativeConversion::Value(
-                    InternalSetResult::Rejected(rejection),
-                )),
-                PropertySetAction::Call {
-                    setter,
-                    receiver,
-                    argument,
-                } => match self.call_internal(realm, &setter, receiver, &[argument])? {
-                    Completion::Return(_) => {
-                        Ok(NativeConversion::Value(InternalSetResult::Accepted))
-                    }
-                    Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
-                },
-            };
-        }
-
-        let own = match self.internal_get_own_property(realm, object, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let own = if let Some(own) = own {
-            own
-        } else {
-            let prototype = match self.internal_get_prototype_of(realm, object)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            };
-            if let Some(prototype) = prototype {
-                return self.internal_set(realm, &prototype, key, value, receiver);
-            }
-            CompleteOrdinaryPropertyDescriptor::Data {
-                value: Value::Undefined,
-                writable: true,
-                enumerable: true,
-                configurable: true,
-            }
-        };
-
-        match own {
-            CompleteOrdinaryPropertyDescriptor::Data {
-                writable: false, ..
-            } => Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::ReadOnly,
-            ))),
-            CompleteOrdinaryPropertyDescriptor::Data { .. } => {
-                let Value::Object(receiver) = receiver else {
-                    return Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                        PropertySetRejection::NotObject,
-                    )));
-                };
-                let existing = match self.internal_get_own_property(realm, &receiver, key)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-                };
-                let descriptor = match existing {
-                    Some(CompleteOrdinaryPropertyDescriptor::Accessor { set: None, .. }) => {
-                        return Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                            PropertySetRejection::NoSetter,
-                        )));
-                    }
-                    Some(CompleteOrdinaryPropertyDescriptor::Accessor { set: Some(_), .. }) => {
-                        return Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                            PropertySetRejection::ReadOnly,
-                        )));
-                    }
-                    Some(CompleteOrdinaryPropertyDescriptor::Data {
-                        writable: false, ..
-                    }) => {
-                        return Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                            PropertySetRejection::ReadOnly,
-                        )));
-                    }
-                    Some(CompleteOrdinaryPropertyDescriptor::Data { .. }) => {
-                        OrdinaryPropertyDescriptor {
-                            value: DescriptorField::Present(value),
-                            ..OrdinaryPropertyDescriptor::new()
-                        }
-                    }
-                    None => OrdinaryPropertyDescriptor {
-                        value: DescriptorField::Present(value),
-                        writable: DescriptorField::Present(true),
-                        enumerable: DescriptorField::Present(true),
-                        configurable: DescriptorField::Present(true),
-                        ..OrdinaryPropertyDescriptor::new()
-                    },
-                };
-                match self.internal_define_own_property(realm, &receiver, key, &descriptor)? {
-                    NativeConversion::Value(InternalDefineResult::Defined) => {
-                        Ok(NativeConversion::Value(InternalSetResult::Accepted))
-                    }
-                    NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => Ok(
-                        NativeConversion::Value(InternalSetResult::RejectedProxyTrap),
-                    ),
-                    NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object)) => {
-                        let rejection = if !self.has_own_property(&object, key)?
-                            && !self.is_extensible(&object)?
-                        {
-                            PropertySetRejection::NotExtensible
-                        } else if matches!(self.array_own_key(&object, key)?, ArrayOwnKey::Index(_))
-                            && !self.array_length_state(&object)?.1
-                        {
-                            PropertySetRejection::ArrayLengthReadOnly
-                        } else {
-                            PropertySetRejection::ReadOnly
-                        };
-                        Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                            rejection,
-                        )))
-                    }
-                    NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
-                }
-            }
-            CompleteOrdinaryPropertyDescriptor::Accessor { set: None, .. } => {
-                Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                    PropertySetRejection::NoSetter,
-                )))
-            }
-            CompleteOrdinaryPropertyDescriptor::Accessor {
-                set: Some(setter), ..
-            } => match self.call_internal(realm, &setter, receiver, &[value])? {
+                argument,
+            } => match self.call_internal(realm, &setter, receiver, &[argument])? {
                 Completion::Return(_) => Ok(NativeConversion::Value(InternalSetResult::Accepted)),
                 Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
             },
