@@ -48,12 +48,30 @@ fn locate(
     }))
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum SpecialKind {
+    Proxy,
+    TypedArray,
+    ModuleNamespace,
+    Other,
+}
+
+// Reuse only for the immediate fallback, before any observable operation.
+fn special_kind(data: &crate::engine::heap::ObjectData) -> SpecialKind {
+    match (data.kind, &data.payload) {
+        (_, ObjectPayload::Proxy(_)) => SpecialKind::Proxy,
+        (_, ObjectPayload::TypedArray(_)) => SpecialKind::TypedArray,
+        (ObjectKind::ModuleNamespace, _) => SpecialKind::ModuleNamespace,
+        _ => SpecialKind::Other,
+    }
+}
+
 pub(super) enum SetProbe {
     Stored(bool),
     Writable,
     Setter(Option<ObjectId>),
     Missing(Option<ObjectRef>),
-    Special,
+    Special(SpecialKind),
 }
 
 impl Runtime {
@@ -74,8 +92,9 @@ impl Runtime {
         let selected = {
             let mut state = self.0.state.borrow_mut();
             let id = object.object_id();
-            if !is_ordinary(state.heap.object(id)?) {
-                return Ok(SetProbe::Special);
+            let data = state.heap.object(id)?;
+            if !is_ordinary(data) {
+                return Ok(SetProbe::Special(special_kind(data)));
             }
             match locate(&state, id, key.atom())? {
                 None => {
@@ -96,7 +115,7 @@ impl Runtime {
                     }
                     PropertySlot::Accessor { set, .. } => Selected::Setter(*set),
                     PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
-                        return Ok(SetProbe::Special);
+                        return Ok(SetProbe::Special(SpecialKind::Other));
                     }
                 },
             }
@@ -125,7 +144,7 @@ pub(super) enum ReadProbe {
     Value(Value),
     Getter(Option<crate::engine::object::CallableRef>),
     Missing(Option<ObjectRef>),
-    Special,
+    Special(SpecialKind),
 }
 
 pub(super) struct OwnFlags {
@@ -205,7 +224,7 @@ impl Runtime {
             let id = object.object_id();
             let data = state.heap.object(id)?;
             if !is_ordinary(data) {
-                return Ok(ReadProbe::Special);
+                return Ok(ReadProbe::Special(special_kind(data)));
             }
             match locate(&state, id, key.atom())? {
                 None => Selected::Missing(state.heap.shape(data.shape)?.prototype()),
@@ -213,7 +232,7 @@ impl Runtime {
                     PropertySlot::Data(value) => Selected::Value(value.clone()),
                     PropertySlot::Accessor { get, .. } => Selected::Getter(*get),
                     PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
-                        return Ok(ReadProbe::Special);
+                        return Ok(ReadProbe::Special(SpecialKind::Other));
                     }
                 },
             }

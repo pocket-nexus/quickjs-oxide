@@ -10,6 +10,7 @@
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind, NativeErrorMessage};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::object::ordinary_storage::SpecialKind;
 
 use crate::engine::atom::{Atom, PropertyKeyKind};
 use crate::engine::builtins::CanonicalNumericIndex;
@@ -910,18 +911,19 @@ impl Runtime {
 
     pub(super) fn get_special_or_missing(
         &self,
+        kind: SpecialKind,
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
-        if self.proxy_snapshot_if_any(object)?.is_some() {
+        if matches!(kind, SpecialKind::Proxy) {
             return Ok(match self.proxy_get(realm, object, key, receiver)? {
                 Completion::Return(value) => NativeConversion::Value(Some(value)),
                 Completion::Throw(value) => NativeConversion::Throw(value),
             });
         }
-        if self.typed_array_is_object(object)?
+        if matches!(kind, SpecialKind::TypedArray)
             && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
         {
             let value = match numeric {
@@ -932,10 +934,7 @@ impl Runtime {
             };
             return Ok(NativeConversion::Value(Some(value)));
         }
-        let own = match self.internal_get_own_property(realm, object, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
+        let own = self.get_own_property(object, key)?;
         if let Some(own) = own {
             return match own {
                 CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
@@ -1060,32 +1059,24 @@ impl Runtime {
     /// writes do not pre-classify or walk any prototype here.
     pub(super) fn try_special_set(
         &self,
+        kind: SpecialKind,
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
         value: &Value,
         receiver: &Value,
     ) -> Result<Option<NativeConversion<InternalSetResult>>, RuntimeError> {
-        let (proxy, namespace, typed) = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
-            (
-                matches!(data.payload, ObjectPayload::Proxy(_)),
-                data.kind == crate::engine::heap::ObjectKind::ModuleNamespace,
-                matches!(data.payload, ObjectPayload::TypedArray(_)),
-            )
-        };
-        if proxy {
+        if matches!(kind, SpecialKind::Proxy) {
             return self
                 .proxy_set(realm, object, key, value.clone(), receiver.clone())
                 .map(Some);
         }
-        if namespace {
+        if matches!(kind, SpecialKind::ModuleNamespace) {
             return Ok(Some(NativeConversion::Value(InternalSetResult::Rejected(
                 PropertySetRejection::ReadOnly,
             ))));
         }
-        if !typed {
+        if !matches!(kind, SpecialKind::TypedArray) {
             return Ok(None);
         }
         let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {

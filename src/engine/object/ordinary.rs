@@ -7,7 +7,7 @@ use crate::engine::object::operations::{
     ArrayOwnKey, InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
     PropertySetRejection,
 };
-use crate::engine::object::ordinary_storage::SetProbe;
+use crate::engine::object::ordinary_storage::{SetProbe, SpecialKind};
 use crate::engine::object::{
     CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey,
@@ -62,10 +62,11 @@ impl Runtime {
         {
             return Err(RuntimeError::Invariant("exotic Set requires a realm"));
         }
-        let mut cursor = Some(object.clone());
-        while let Some(current) = cursor {
-            let same_receiver = matches!(&receiver, Value::Object(target) if target == &current);
-            match self.ordinary_set_probe(&current, key, &value, same_receiver)? {
+        let mut prototype = None;
+        loop {
+            let current = prototype.as_ref().unwrap_or(object);
+            let same_receiver = matches!(&receiver, Value::Object(target) if target == current);
+            match self.ordinary_set_probe(current, key, &value, same_receiver)? {
                 SetProbe::Stored(accepted) => {
                     return Ok(if accepted {
                         PropertySetAction::Complete
@@ -86,29 +87,29 @@ impl Runtime {
                         None => PropertySetAction::Rejected(PropertySetRejection::NoSetter),
                     });
                 }
-                SetProbe::Missing(prototype) => {
-                    cursor = prototype;
+                SetProbe::Missing(next) => {
+                    let Some(next) = next else { break };
+                    prototype = Some(next);
                     continue;
                 }
-                SetProbe::Special => {
-                    if realm.is_none() && self.is_proxy_object(&current)? {
+                SetProbe::Special(kind) => {
+                    if realm.is_none() && matches!(kind, SpecialKind::Proxy) {
                         return Err(RuntimeError::Invariant("exotic Set requires a realm"));
                     }
                     if let Some(realm) = realm
                         && let Some(result) =
-                            self.try_special_set(realm, &current, key, &value, &receiver)?
+                            self.try_special_set(kind, realm, current, key, &value, &receiver)?
                     {
                         return Ok(set_completion(result));
                     }
                 }
             }
-            if let Some(property) = self.get_own_property(&current, key)? {
+            if let Some(property) = self.get_own_property(current, key)? {
                 match property {
                     CompleteOrdinaryPropertyDescriptor::Data { writable, .. } => {
-                        if same_receiver
-                            && self.array_own_key(&current, key)? == ArrayOwnKey::Length
+                        if same_receiver && self.array_own_key(current, key)? == ArrayOwnKey::Length
                         {
-                            return self.prepare_set_array_length(realm, &current, key, value);
+                            return self.prepare_set_array_length(realm, current, key, value);
                         }
                         if !writable {
                             return Ok(PropertySetAction::Rejected(PropertySetRejection::ReadOnly));
@@ -127,7 +128,10 @@ impl Runtime {
                     }
                 }
             }
-            cursor = self.get_prototype_of(&current)?;
+            let Some(next) = self.get_prototype_of(current)? else {
+                break;
+            };
+            prototype = Some(next);
         }
         let Value::Object(receiver) = receiver else {
             return Ok(PropertySetAction::Rejected(PropertySetRejection::NotObject));
@@ -152,7 +156,7 @@ impl Runtime {
             SetProbe::Missing(_) => {
                 return self.define_set_receiver(realm, &receiver, key, value, false);
             }
-            SetProbe::Special => {}
+            SetProbe::Special(_) => {}
             SetProbe::Writable => unreachable!("receiver probe commits a writable data slot"),
         }
         let existing = match realm {
@@ -284,8 +288,8 @@ impl Runtime {
                 }
                 ReadProbe::Missing(Some(next)) => prototype = Some(next),
                 ReadProbe::Missing(None) => return Ok(NativeConversion::Value(None)),
-                ReadProbe::Special => {
-                    return self.get_special_or_missing(realm, current, key, receiver);
+                ReadProbe::Special(kind) => {
+                    return self.get_special_or_missing(kind, realm, current, key, receiver);
                 }
             }
         }
