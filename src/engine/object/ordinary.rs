@@ -63,7 +63,6 @@ impl Runtime {
             return Err(RuntimeError::Invariant("exotic Set requires a realm"));
         }
         let mut cursor = Some(object.clone());
-        let mut first = true;
         while let Some(current) = cursor {
             let same_receiver = matches!(&receiver, Value::Object(target) if target == &current);
             match self.ordinary_set_probe(&current, key, &value, same_receiver)? {
@@ -78,7 +77,9 @@ impl Runtime {
                 SetProbe::Setter(set) => {
                     return Ok(match set {
                         Some(setter) => PropertySetAction::Call {
-                            setter,
+                            setter: crate::engine::object::CallableRef::from_validated_object(
+                                ObjectRef::from_borrowed_handle(self.clone(), setter)?,
+                            ),
                             receiver,
                             argument: value,
                         },
@@ -87,22 +88,17 @@ impl Runtime {
                 }
                 SetProbe::Missing(prototype) => {
                     cursor = prototype;
-                    first = false;
                     continue;
                 }
                 SetProbe::Special => {
-                    // Only an encountered exotic prototype delegates. The initial
-                    // object's special Set has already been selected by internal_set.
-                    if !first
-                        && (self.is_proxy_object(&current)?
-                            || self.typed_array_is_object(&current)?
-                            || self.is_module_namespace_object(&current)?)
+                    if realm.is_none() && self.is_proxy_object(&current)? {
+                        return Err(RuntimeError::Invariant("exotic Set requires a realm"));
+                    }
+                    if let Some(realm) = realm
+                        && let Some(result) =
+                            self.try_special_set(realm, &current, key, &value, &receiver)?
                     {
-                        let realm =
-                            realm.ok_or(RuntimeError::Invariant("exotic Set requires a realm"))?;
-                        return Ok(set_completion(
-                            self.internal_set(realm, &current, key, value, receiver)?,
-                        ));
+                        return Ok(set_completion(result));
                     }
                 }
             }
@@ -132,7 +128,6 @@ impl Runtime {
                 }
             }
             cursor = self.get_prototype_of(&current)?;
-            first = false;
         }
         let Value::Object(receiver) = receiver else {
             return Ok(PropertySetAction::Rejected(PropertySetRejection::NotObject));
@@ -273,9 +268,10 @@ impl Runtime {
     ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
         use crate::engine::object::ordinary_storage::ReadProbe;
         use crate::engine::vm::Completion;
-        let mut current = object.clone();
+        let mut prototype = None;
         loop {
-            match self.ordinary_read_probe(&current, key)? {
+            let current = prototype.as_ref().unwrap_or(object);
+            match self.ordinary_read_probe(current, key)? {
                 ReadProbe::Value(value) => return Ok(NativeConversion::Value(Some(value))),
                 ReadProbe::Getter(None) => {
                     return Ok(NativeConversion::Value(Some(Value::Undefined)));
@@ -286,10 +282,10 @@ impl Runtime {
                         Completion::Throw(value) => NativeConversion::Throw(value),
                     });
                 }
-                ReadProbe::Missing(Some(prototype)) => current = prototype,
+                ReadProbe::Missing(Some(next)) => prototype = Some(next),
                 ReadProbe::Missing(None) => return Ok(NativeConversion::Value(None)),
                 ReadProbe::Special => {
-                    return self.get_special_or_missing(realm, &current, key, receiver);
+                    return self.get_special_or_missing(realm, current, key, receiver);
                 }
             }
         }

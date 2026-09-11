@@ -9,6 +9,22 @@ fn check(source: &str) {
 }
 
 #[test]
+fn ordinary_property_context_free_set_rejects_proxy_prototype() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let Value::Object(object) = context.eval("Object.create(new Proxy({}, {}))").unwrap() else {
+        panic!("expected object")
+    };
+    let key = runtime.intern_property_key("x").unwrap();
+    assert!(matches!(
+        runtime.prepare_set_property(&object, &key, Value::Int(1)),
+        Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+            "exotic Set requires a realm"
+        ))
+    ));
+}
+
+#[test]
 fn ordinary_property_receiver_proxy_preserves_traps_and_rejection_object() {
     check(
         r#"
@@ -127,4 +143,69 @@ fn ordinary_property_array_length_conversion_precedes_readonly_rejection() {
       rejected&&calls>0&&threw&&a.length===0;
     "#,
     );
+}
+
+#[test]
+fn ordinary_property_proxy_forwarding_preserves_rejection_classification() {
+    use crate::engine::object::operations::{InternalSetResult, PropertySetRejection};
+    use crate::engine::value::conversion::NativeConversion;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    for (source, name, expected) in [
+        (
+            "new Proxy(Object.preventExtensions({}),{})",
+            "x",
+            PropertySetRejection::NotExtensible,
+        ),
+        (
+            "var a=[];Object.defineProperty(a,'length',{writable:false});new Proxy(a,{})",
+            "0",
+            PropertySetRejection::ArrayLengthReadOnly,
+        ),
+    ] {
+        let Value::Object(proxy) = context.eval(source).unwrap() else {
+            panic!("expected Proxy")
+        };
+        let key = runtime.intern_property_key(name).unwrap();
+        let outcome = runtime
+            .internal_set(
+                context.realm,
+                &proxy,
+                &key,
+                Value::Int(1),
+                Value::Object(proxy.clone()),
+            )
+            .unwrap();
+        assert!(
+            matches!(outcome, NativeConversion::Value(InternalSetResult::Rejected(reason)) if reason == expected)
+        );
+    }
+}
+
+#[test]
+fn ordinary_property_replacing_last_heap_edge_reclaims_old_object() {
+    use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let object = runtime.new_object(None).unwrap();
+    let old = runtime.new_object(None).unwrap();
+    let old_id = old.object_id();
+    let key = runtime.intern_property_key("x").unwrap();
+    runtime
+        .define_own_property(
+            &object,
+            &key,
+            &OrdinaryPropertyDescriptor {
+                value: DescriptorField::Present(Value::Object(old)),
+                writable: DescriptorField::Present(true),
+                ..OrdinaryPropertyDescriptor::new()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        runtime.0.state.borrow().heap.object_strong_count(old_id),
+        Ok(1)
+    );
+    context.set_property(&object, &key, Value::Null).unwrap();
+    assert!(runtime.0.state.borrow().heap.object(old_id).is_err());
 }

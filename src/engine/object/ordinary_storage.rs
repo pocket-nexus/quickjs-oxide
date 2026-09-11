@@ -4,7 +4,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::Atom;
 use crate::engine::heap::runtime::RuntimeState;
-use crate::engine::heap::{ObjectId, ObjectPayload, PropertySlot};
+use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::Value;
@@ -12,6 +12,14 @@ use crate::engine::value::Value;
 struct OwnSlot {
     index: usize,
     flags: PropertyFlags,
+}
+
+// Payload alone is insufficient: module namespaces share Ordinary storage.
+fn is_ordinary(data: &crate::engine::heap::ObjectData) -> bool {
+    matches!(
+        (data.kind, &data.payload),
+        (ObjectKind::Ordinary, ObjectPayload::Ordinary)
+    )
 }
 
 // The caller keeps the state borrowed until the located slot is consumed.
@@ -43,7 +51,7 @@ fn locate(
 pub(super) enum SetProbe {
     Stored(bool),
     Writable,
-    Setter(Option<crate::engine::object::CallableRef>),
+    Setter(Option<ObjectId>),
     Missing(Option<ObjectRef>),
     Special,
 }
@@ -66,7 +74,7 @@ impl Runtime {
         let selected = {
             let mut state = self.0.state.borrow_mut();
             let id = object.object_id();
-            if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+            if !is_ordinary(state.heap.object(id)?) {
                 return Ok(SetProbe::Special);
             }
             match locate(&state, id, key.atom())? {
@@ -94,13 +102,7 @@ impl Runtime {
             }
         };
         Ok(match selected {
-            Selected::Setter(set) => SetProbe::Setter(
-                set.map(|id| {
-                    ObjectRef::from_borrowed_handle(self.clone(), id)
-                        .map(crate::engine::object::CallableRef::from_validated_object)
-                })
-                .transpose()?,
-            ),
+            Selected::Setter(set) => SetProbe::Setter(set),
             Selected::Missing(prototype) => SetProbe::Missing(
                 prototype
                     .map(|id| ObjectRef::from_borrowed_handle(self.clone(), id))
@@ -140,7 +142,7 @@ impl Runtime {
         self.validate_object_and_key(object, key)?;
         let state = self.0.state.borrow();
         let id = object.object_id();
-        if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+        if !is_ordinary(state.heap.object(id)?) {
             return Ok(None);
         }
         Ok(Some(locate(&state, id, key.atom())?.map(|slot| OwnFlags {
@@ -161,7 +163,7 @@ impl Runtime {
         use crate::engine::object::operations::PropertySnapshot;
         let state = self.0.state.borrow();
         let id = object.object_id();
-        if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+        if !is_ordinary(state.heap.object(id)?) {
             return Ok(None);
         }
         let Some(slot) = locate(&state, id, key.atom())? else {
@@ -193,25 +195,43 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<ReadProbe, RuntimeError> {
-        use crate::engine::object::operations::PropertySnapshot;
-        let Some(snapshot) = self.ordinary_property_snapshot(object, key)? else {
-            return Ok(ReadProbe::Special);
-        };
-        Ok(match snapshot {
-            Some(PropertySnapshot::Data { value, .. }) => {
-                ReadProbe::Value(self.root_raw_value(&value)?)
+        enum Selected {
+            Value(crate::engine::heap::RawValue),
+            Getter(Option<ObjectId>),
+            Missing(Option<ObjectId>),
+        }
+        let selected = {
+            let state = self.0.state.borrow();
+            let id = object.object_id();
+            let data = state.heap.object(id)?;
+            if !is_ordinary(data) {
+                return Ok(ReadProbe::Special);
             }
-            Some(PropertySnapshot::Accessor { get, .. }) => ReadProbe::Getter(
+            match locate(&state, id, key.atom())? {
+                None => Selected::Missing(state.heap.shape(data.shape)?.prototype()),
+                Some(slot) => match &data.slots[slot.index] {
+                    PropertySlot::Data(value) => Selected::Value(value.clone()),
+                    PropertySlot::Accessor { get, .. } => Selected::Getter(*get),
+                    PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
+                        return Ok(ReadProbe::Special);
+                    }
+                },
+            }
+        };
+        Ok(match selected {
+            Selected::Value(value) => ReadProbe::Value(self.root_raw_value(&value)?),
+            Selected::Getter(get) => ReadProbe::Getter(
                 get.map(|id| {
                     ObjectRef::from_borrowed_handle(self.clone(), id)
                         .map(crate::engine::object::CallableRef::from_validated_object)
                 })
                 .transpose()?,
             ),
-            Some(PropertySnapshot::AutoInit | PropertySnapshot::VarRef { .. }) => {
-                ReadProbe::Special
-            }
-            None => ReadProbe::Missing(self.get_prototype_of(object)?),
+            Selected::Missing(prototype) => ReadProbe::Missing(
+                prototype
+                    .map(|id| ObjectRef::from_borrowed_handle(self.clone(), id))
+                    .transpose()?,
+            ),
         })
     }
 }
@@ -237,7 +257,7 @@ impl Runtime {
         }
         let mut state = self.0.state.borrow_mut();
         let id = object.object_id();
-        if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+        if !is_ordinary(state.heap.object(id)?) {
             return Ok(None);
         }
         let Some(slot) = locate(&state, id, key.atom())? else {

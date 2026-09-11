@@ -532,6 +532,9 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
+        if let Some(flags) = self.ordinary_property_flags(object, key)? {
+            return Ok(NativeConversion::Value(flags.is_some()));
+        }
         if self.proxy_snapshot_if_any(object)?.is_none()
             && !self.is_module_namespace_object(object)?
         {
@@ -586,6 +589,11 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
+        if let Some(flags) = self.ordinary_property_flags(object, key)? {
+            return Ok(NativeConversion::Value(
+                flags.is_some_and(|own| own.flags.enumerable),
+            ));
+        }
         if self.proxy_snapshot_if_any(object)?.is_none()
             && !self.is_module_namespace_object(object)?
         {
@@ -776,6 +784,27 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        let mut prototype = None;
+        loop {
+            let current = prototype.as_ref().unwrap_or(object);
+            match self.ordinary_property_flags(current, key)? {
+                Some(Some(_)) => return Ok(NativeConversion::Value(true)),
+                Some(None) => match self.get_prototype_of(current)? {
+                    Some(next) => prototype = Some(next),
+                    None => return Ok(NativeConversion::Value(false)),
+                },
+                None => return self.has_special_property(realm, current, key),
+            }
+        }
+    }
+
+    fn has_special_property(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<NativeConversion<bool>, RuntimeError> {
         if self.proxy_snapshot_if_any(object)?.is_some() {
             return self.proxy_has_property(realm, object, key);
         }
@@ -873,6 +902,7 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
+        let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
         self.validate_value_domain(&receiver, "property receiver")?;
         self.get_ordinary_chain(realm, object, key, receiver)
@@ -1000,57 +1030,6 @@ impl Runtime {
         receiver: Value,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
         let _operation = self.operation();
-        self.validate_object_and_key(object, key)?;
-        self.validate_value_domain(&value, "property value")?;
-        self.validate_value_domain(&receiver, "property receiver")?;
-        if self.proxy_snapshot_if_any(object)?.is_some() {
-            return self.proxy_set(realm, object, key, value, receiver);
-        }
-        if self.is_module_namespace_object(object)? {
-            return Ok(NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::ReadOnly,
-            )));
-        }
-        if self.typed_array_is_object(object)?
-            && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-        {
-            let receiver_is_target =
-                matches!(&receiver, Value::Object(receiver) if receiver == object);
-            match numeric {
-                CanonicalNumericIndex::Valid(index) if receiver_is_target => {
-                    return Ok(
-                        match self.typed_array_set_index(realm, object, index, &value)? {
-                            NativeConversion::Value(()) => {
-                                NativeConversion::Value(InternalSetResult::Accepted)
-                            }
-                            NativeConversion::Throw(value) => NativeConversion::Throw(value),
-                        },
-                    );
-                }
-                CanonicalNumericIndex::Valid(index) => {
-                    if self
-                        .typed_array_get_index_descriptor(object, index)?
-                        .is_none()
-                    {
-                        return Ok(NativeConversion::Value(InternalSetResult::Accepted));
-                    }
-                }
-                CanonicalNumericIndex::Invalid if receiver_is_target => {
-                    let element = self.typed_array_snapshot(object)?.element;
-                    return Ok(
-                        match self.typed_array_convert_element(realm, element, &value)? {
-                            NativeConversion::Value(_) => {
-                                NativeConversion::Value(InternalSetResult::Accepted)
-                            }
-                            NativeConversion::Throw(value) => NativeConversion::Throw(value),
-                        },
-                    );
-                }
-                CanonicalNumericIndex::Invalid => {
-                    return Ok(NativeConversion::Value(InternalSetResult::Accepted));
-                }
-            }
-        }
         match self.prepare_set_property_with_receiver_in_realm(
             Some(realm),
             object,
@@ -1075,6 +1054,70 @@ impl Runtime {
                 Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
             },
         }
+    }
+
+    /// Only encountered special targets reach this dispatch. Ordinary own
+    /// writes do not pre-classify or walk any prototype here.
+    pub(super) fn try_special_set(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: &Value,
+        receiver: &Value,
+    ) -> Result<Option<NativeConversion<InternalSetResult>>, RuntimeError> {
+        let (proxy, namespace, typed) = {
+            let state = self.0.state.borrow();
+            let data = state.heap.object(object.object_id())?;
+            (
+                matches!(data.payload, ObjectPayload::Proxy(_)),
+                data.kind == crate::engine::heap::ObjectKind::ModuleNamespace,
+                matches!(data.payload, ObjectPayload::TypedArray(_)),
+            )
+        };
+        if proxy {
+            return self
+                .proxy_set(realm, object, key, value.clone(), receiver.clone())
+                .map(Some);
+        }
+        if namespace {
+            return Ok(Some(NativeConversion::Value(InternalSetResult::Rejected(
+                PropertySetRejection::ReadOnly,
+            ))));
+        }
+        if !typed {
+            return Ok(None);
+        }
+        let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
+            return Ok(None);
+        };
+        let same_receiver = matches!(receiver, Value::Object(receiver) if receiver == object);
+        let result = match numeric {
+            CanonicalNumericIndex::Valid(index) if same_receiver => {
+                self.typed_array_set_index(realm, object, index, value)?
+            }
+            CanonicalNumericIndex::Invalid if same_receiver => {
+                let element = self.typed_array_snapshot(object)?.element;
+                match self.typed_array_convert_element(realm, element, value)? {
+                    NativeConversion::Value(_) => NativeConversion::Value(()),
+                    NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                }
+            }
+            CanonicalNumericIndex::Invalid => NativeConversion::Value(()),
+            CanonicalNumericIndex::Valid(index) => {
+                if self
+                    .typed_array_get_index_descriptor(object, index)?
+                    .is_some()
+                {
+                    return Ok(None);
+                }
+                NativeConversion::Value(())
+            }
+        };
+        Ok(Some(match result {
+            NativeConversion::Value(()) => NativeConversion::Value(InternalSetResult::Accepted),
+            NativeConversion::Throw(value) => NativeConversion::Throw(value),
+        }))
     }
 
     fn proxy_set(
