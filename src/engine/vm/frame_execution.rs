@@ -401,12 +401,11 @@ impl VmActivation {
     }
 
     pub(in crate::engine::vm) fn clone_at_depth(&self, depth: u8) -> Result<Value, Error> {
-        // Slice iterators select the tail-relative slot in constant time with
-        // one bound, without a checked subtraction followed by another lookup.
+        // A too-large depth wraps above len, so the single checked lookup
+        // rejects it. Valid depths select the original tail-relative slot.
+        let index = self.stack.len().wrapping_sub(usize::from(depth) + 1);
         self.stack
-            .iter()
-            .rev()
-            .nth(usize::from(depth))
+            .get(index)
             .cloned()
             .ok_or_else(|| Error::internal("bytecode stack depth operand is out of bounds"))
     }
@@ -482,9 +481,6 @@ impl VmActivation {
         Ok(value)
     }
 
-    // Keep the shared value-moving body out of the large opcode dispatchers.
-    // Inlining it reduced instructions but regressed measured arithmetic time.
-    #[inline(never)]
     pub(in crate::engine::vm) fn pop_pair(&mut self) -> Result<(Value, Value), Error> {
         if self.stack.len() < 2 {
             return Err(self.pair_underflow());

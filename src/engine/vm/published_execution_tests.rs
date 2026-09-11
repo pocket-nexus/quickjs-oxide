@@ -338,3 +338,29 @@ fn depth_stack_reads_select_from_the_tail_and_retain_roots() {
     drop(saved);
     assert!(runtime.0.state.borrow().heap.object(id).is_err());
 }
+
+#[test]
+fn depth_stack_reads_cover_the_entire_bytecode_operand_range() {
+    use super::VmActivation;
+    for length in [0, 1, 255, 256, 257] {
+        let mut activation = VmActivation::new(length);
+        activation
+            .stack
+            .extend((0..length).map(|index| Value::Int(index as i32)));
+        for depth in 0..=u8::MAX {
+            let result = activation.clone_at_depth(depth);
+            if usize::from(depth) < length {
+                assert_eq!(
+                    result.unwrap(),
+                    Value::Int((length - usize::from(depth) - 1) as i32)
+                );
+            } else {
+                assert_eq!(
+                    result.unwrap_err().message(),
+                    "bytecode stack depth operand is out of bounds"
+                );
+            }
+            assert_eq!(activation.stack.len(), length);
+        }
+    }
+}
