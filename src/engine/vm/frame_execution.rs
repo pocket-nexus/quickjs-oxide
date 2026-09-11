@@ -483,24 +483,17 @@ impl VmActivation {
 
     pub(in crate::engine::vm) fn pop_pair(&mut self) -> Result<(Value, Value), Error> {
         if self.stack.len() < 2 {
-            return Err(self.pair_underflow());
+            // Match sequential-pop failure: consume a lone right operand,
+            // construct the error, then release the operand.
+            let right = self.pop()?;
+            let error = Error::internal("bytecode stack underflow");
+            drop(right);
+            return Err(error);
         }
         // The shared bound proves both pops. Neither move can invoke user
         // code or change the stack except by removing its own operand.
         let right = self.stack.pop().expect("two operands were checked");
         let left = self.stack.pop().expect("one checked operand remains");
         Ok((left, right))
-    }
-
-    /// Keep error allocation and operand destruction out of the successful
-    /// pair's native frame. A lone right value is released after constructing
-    /// the error, just as with the original two sequential pops.
-    #[cold]
-    #[inline(never)]
-    fn pair_underflow(&mut self) -> Error {
-        let right = self.stack.pop();
-        let error = Error::internal("bytecode stack underflow");
-        drop(right);
-        error
     }
 }
