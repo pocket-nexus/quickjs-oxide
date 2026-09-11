@@ -192,6 +192,12 @@ impl Runtime {
     ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
+        if let Some(snapshot) = self.ordinary_property_snapshot(object, key)? {
+            return match snapshot {
+                Some(snapshot) => self.materialize_property_snapshot(object, key, snapshot),
+                None => Ok(None),
+            };
+        }
         if self.typed_array_is_object(object)?
             && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
         {
@@ -247,6 +253,15 @@ impl Runtime {
             }
         };
 
+        self.materialize_property_snapshot(object, key, snapshot)
+    }
+
+    pub(super) fn materialize_property_snapshot(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        snapshot: PropertySnapshot,
+    ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
         match snapshot {
             PropertySnapshot::Data { value, flags } => {
                 Ok(Some(CompleteOrdinaryPropertyDescriptor::Data {
@@ -1252,6 +1267,9 @@ impl Runtime {
     ) -> Result<bool, RuntimeError> {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
+        if let Some(flags) = self.ordinary_property_flags(object, key)? {
+            return Ok(flags.is_some());
+        }
         if self.typed_array_is_object(object)?
             && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
         {
@@ -1282,6 +1300,9 @@ impl Runtime {
         key: &PropertyKey,
     ) -> Result<bool, RuntimeError> {
         self.validate_object_and_key(object, key)?;
+        if let Some(flags) = self.ordinary_property_flags(object, key)? {
+            return Ok(flags.is_some_and(|own| own.flags.enumerable));
+        }
         if self.typed_array_is_object(object)?
             && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
         {

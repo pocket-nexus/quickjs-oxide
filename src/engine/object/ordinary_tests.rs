@@ -1,0 +1,130 @@
+//! Observable regression coverage for the shared ordinary property kernel.
+use crate::engine::api::runtime::Runtime;
+use crate::engine::value::Value;
+
+fn check(source: &str) {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
+}
+
+#[test]
+fn ordinary_property_receiver_proxy_preserves_traps_and_rejection_object() {
+    check(
+        r#"
+      var log=[]; var target={x:0};
+      var p=new Proxy(target,{
+        getOwnPropertyDescriptor(t,k){log.push('get:'+k);return Reflect.getOwnPropertyDescriptor(t,k)},
+        defineProperty(t,k,d){log.push('define:'+k);return Reflect.defineProperty(t,k,d)}
+      });
+      var accepted=Reflect.set({x:1},'x',42,p);
+      var frozen=new Proxy(Object.preventExtensions({}),{});
+      var a=[];Object.defineProperty(a,'length',{writable:false});
+      var ap=new Proxy(a,{});
+      var rejected=!Reflect.set(frozen,'x',1)&&!Reflect.set(ap,'0',1);
+      var token={}; var threw=false;
+      var throwing=new Proxy({}, {defineProperty(){throw token}});
+      try{Reflect.set({x:0},'x',1,throwing)}catch(e){threw=e===token}
+      accepted&&target.x===42&&log.join(',')==='get:x,define:x'&&rejected&&threw;
+    "#,
+    );
+}
+
+#[test]
+fn ordinary_property_accessor_reentry_and_receiver_rules() {
+    check(
+        r#"
+      var calls=0;var o={};
+      Object.defineProperty(o,'x',{configurable:true,get(){
+        delete this.x; this.y=9; return 7;
+      },set(v){calls++;delete this.x;this.x=v}});
+      var read=o.x;
+      Object.defineProperty(o,'x',{configurable:true,set(v){calls++;delete this.x;this.x=v}});
+      o.x=42;
+      var r={set x(v){calls+=100}};
+      var rejected=!Reflect.set({x:0},'x',1,r);
+      var receiver={};var p={set q(v){this.saved=v}};
+      var ok=Reflect.set(p,'q',12,receiver);
+      read===7&&o.x===42&&calls===1&&rejected&&ok&&receiver.saved===12;
+    "#,
+    );
+}
+
+#[test]
+fn ordinary_property_update_relocates_after_conversion() {
+    check(
+        r#"
+      var o={a:1,x:{valueOf(){delete o.a;delete o.x;o.y=7;return 4}},z:3};
+      o.x++;
+      var first=o.x===5&&o.y===7&&o.z===3;
+      o.x={valueOf(){Object.defineProperty(o,'x',{value:9,writable:false});return 2}};
+      var accepted=false;try{(function(){'use strict';o.x+=1})()}catch(e){accepted=e instanceof TypeError}
+      first&&accepted&&o.x===9;
+    "#,
+    );
+}
+
+#[test]
+fn ordinary_property_metadata_does_not_invoke_accessors_and_missing_stays_distinct() {
+    check(
+        r#"
+      var calls=0;var o={get x(){calls++;return undefined}};
+      var a=Object.hasOwn(o,'x')&&o.propertyIsEnumerable('x');
+      var d=Object.getOwnPropertyDescriptor(o,'x');
+      var b=typeof d.get==='function'&&d.set===undefined&&calls===0;
+      var p=new Proxy({}, {get(){calls++;return undefined}});
+      var c=Object.create(p);var v=c.unknown;
+      a&&b&&v===undefined&&calls===1&&o.x===undefined&&calls===2;
+    "#,
+    );
+}
+
+#[test]
+fn ordinary_property_value_define_obeys_all_flags_and_same_value() {
+    check(
+        r#"
+      var values=[undefined,null,true,0,-0,1,1.5,NaN,'x',Symbol('s'),{},1n];
+      var good=true;
+      for(var writable of [false,true])for(var configurable of [false,true])for(var enumerable of [false,true]){
+        for(var old of values)for(var next of values){
+          var o={};Object.defineProperty(o,'x',{value:old,writable,configurable,enumerable});
+          Object.preventExtensions(o);
+          var expected=writable||configurable||Object.is(old,next);
+          var accepted=Reflect.defineProperty(o,'x',{value:next});
+          var d=Object.getOwnPropertyDescriptor(o,'x');
+          good=good&&accepted===expected&&Object.is(d.value,expected?next:old)&&d.writable===writable&&d.configurable===configurable&&d.enumerable===enumerable;
+        }
+      }
+      good;
+    "#,
+    );
+}
+
+#[test]
+fn ordinary_property_dictionary_symbols_and_self_references() {
+    check(
+        r#"
+      var o={};var s=Symbol('key');var a=Symbol('a'),b=Symbol('b');
+      for(var i=0;i<100;i++)o['p'+i]=i;
+      delete o.p1;delete o.p50;
+      o.p99=o;o[s]=a;o[s]=a;o[s]=b;
+      var keys=Reflect.ownKeys(o);
+      o.p2=42;
+      o.p99=null;
+      o.p2===42&&o[s]===b&&o.p99===null&&keys[keys.length-1]===s&&!Object.hasOwn(o,'p1');
+    "#,
+    );
+}
+
+#[test]
+fn ordinary_property_array_length_conversion_precedes_readonly_rejection() {
+    check(
+        r#"
+      var a=[];Object.defineProperty(a,'length',{writable:false});
+      var calls=0;var rejected=!Reflect.set(a,'length',{valueOf(){calls++;return 0}});
+      var token={};var threw=false;
+      try{Reflect.set(a,'length',{valueOf(){throw token}})}catch(e){threw=e===token}
+      rejected&&calls>0&&threw&&a.length===0;
+    "#,
+    );
+}

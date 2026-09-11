@@ -556,6 +556,15 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
+        if let Some(own) = self.ordinary_property_flags(object, key)? {
+            match own {
+                None => return Ok(NativeConversion::Value(false)),
+                Some(own) if !own.needs_materialization => {
+                    return Ok(NativeConversion::Value(own.flags.enumerable));
+                }
+                Some(_) => {}
+            }
+        }
         Ok(match self.internal_get_own_property(realm, object, key)? {
             NativeConversion::Value(Some(descriptor)) => {
                 NativeConversion::Value(descriptor.enumerable())
@@ -838,45 +847,14 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Completion, RuntimeError> {
-        if self.proxy_snapshot_if_any(object)?.is_some() {
-            return self.proxy_get(realm, object, key, receiver);
-        }
-        if self.typed_array_is_object(object)?
-            && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-        {
-            let value = match numeric {
-                CanonicalNumericIndex::Valid(index) => self
-                    .typed_array_read_index(object, index)?
-                    .unwrap_or(Value::Undefined),
-                CanonicalNumericIndex::Invalid => Value::Undefined,
-            };
-            return Ok(Completion::Return(value));
-        }
-        let own = match self.internal_get_own_property(realm, object, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        if let Some(own) = own {
-            return match own {
-                CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
-                    Ok(Completion::Return(value))
+        Ok(
+            match self.internal_get_or_missing(realm, object, key, receiver)? {
+                NativeConversion::Value(value) => {
+                    Completion::Return(value.unwrap_or(Value::Undefined))
                 }
-                CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. } => {
-                    Ok(Completion::Return(Value::Undefined))
-                }
-                CompleteOrdinaryPropertyDescriptor::Accessor {
-                    get: Some(getter), ..
-                } => self.call_internal(realm, &getter, receiver, &[]),
-            };
-        }
-        let prototype = match self.internal_get_prototype_of(realm, object)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let Some(prototype) = prototype else {
-            return Ok(Completion::Return(Value::Undefined));
-        };
-        self.internal_get(realm, &prototype, key, receiver)
+                NativeConversion::Throw(value) => Completion::Throw(value),
+            },
+        )
     }
 
     /// Completion-aware property read which preserves QuickJS's internal
@@ -895,8 +873,20 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        self.validate_value_domain(&receiver, "property receiver")?;
+        self.get_ordinary_chain(realm, object, key, receiver)
+    }
+
+    pub(super) fn get_special_or_missing(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        receiver: Value,
+    ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
         if self.proxy_snapshot_if_any(object)?.is_some() {
-            return Ok(match self.internal_get(realm, object, key, receiver)? {
+            return Ok(match self.proxy_get(realm, object, key, receiver)? {
                 Completion::Return(value) => NativeConversion::Value(Some(value)),
                 Completion::Throw(value) => NativeConversion::Throw(value),
             });

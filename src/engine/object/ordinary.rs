@@ -56,6 +56,12 @@ impl Runtime {
         self.validate_object_and_key(object, key)?;
         self.validate_value_domain(&value, "property value")?;
         self.validate_value_domain(&receiver, "property receiver")?;
+        if realm.is_none()
+            && (self.is_proxy_object(object)?
+                || matches!(&receiver, Value::Object(object) if self.is_proxy_object(object)?))
+        {
+            return Err(RuntimeError::Invariant("exotic Set requires a realm"));
+        }
         let mut cursor = Some(object.clone());
         let mut first = true;
         while let Some(current) = cursor {
@@ -204,6 +210,7 @@ impl Runtime {
                 ..OrdinaryPropertyDescriptor::new()
             }
         };
+        let mut rejected_object = None;
         let defined = match realm {
             Some(realm) => {
                 match self.internal_define_own_property(realm, receiver, key, &descriptor)? {
@@ -211,7 +218,10 @@ impl Runtime {
                     NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
                         return Ok(PropertySetAction::RejectedProxyTrap);
                     }
-                    NativeConversion::Value(InternalDefineResult::RejectedOrdinary(_)) => false,
+                    NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object)) => {
+                        rejected_object = Some(object);
+                        false
+                    }
                     NativeConversion::Throw(value) => return Ok(PropertySetAction::Throw(value)),
                 }
             }
@@ -223,6 +233,7 @@ impl Runtime {
         if defined {
             return Ok(PropertySetAction::Complete);
         }
+        let receiver = rejected_object.as_ref().unwrap_or(receiver);
         Ok(PropertySetAction::Rejected(
             if !self.has_own_property(receiver, key)? && !self.is_extensible(receiver)? {
                 PropertySetRejection::NotExtensible
@@ -246,6 +257,41 @@ fn set_completion(result: NativeConversion<InternalSetResult>) -> PropertySetAct
         }
         NativeConversion::Value(InternalSetResult::RejectedProxyTrap) => {
             PropertySetAction::RejectedProxyTrap
+        }
+    }
+}
+
+impl Runtime {
+    /// Ordinary nodes are iterative. A special node delegates exactly once and
+    /// preserves the distinction between missing and an observed undefined.
+    pub(super) fn get_ordinary_chain(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        receiver: Value,
+    ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
+        use crate::engine::object::ordinary_storage::ReadProbe;
+        use crate::engine::vm::Completion;
+        let mut current = object.clone();
+        loop {
+            match self.ordinary_read_probe(&current, key)? {
+                ReadProbe::Value(value) => return Ok(NativeConversion::Value(Some(value))),
+                ReadProbe::Getter(None) => {
+                    return Ok(NativeConversion::Value(Some(Value::Undefined)));
+                }
+                ReadProbe::Getter(Some(getter)) => {
+                    return Ok(match self.call_internal(realm, &getter, receiver, &[])? {
+                        Completion::Return(value) => NativeConversion::Value(Some(value)),
+                        Completion::Throw(value) => NativeConversion::Throw(value),
+                    });
+                }
+                ReadProbe::Missing(Some(prototype)) => current = prototype,
+                ReadProbe::Missing(None) => return Ok(NativeConversion::Value(None)),
+                ReadProbe::Special => {
+                    return self.get_special_or_missing(realm, &current, key, receiver);
+                }
+            }
         }
     }
 }

@@ -126,6 +126,103 @@ fn replace_data(
     }
 }
 
+pub(super) enum ReadProbe {
+    Value(Value),
+    Getter(Option<crate::engine::object::CallableRef>),
+    Missing(Option<ObjectRef>),
+    Special,
+}
+
+pub(super) struct OwnFlags {
+    pub(super) flags: PropertyFlags,
+    pub(super) needs_materialization: bool,
+}
+
+impl Runtime {
+    pub(super) fn ordinary_property_flags(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<Option<Option<OwnFlags>>, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        let state = self.0.state.borrow();
+        let id = object.object_id();
+        if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+            return Ok(None);
+        }
+        Ok(Some(locate(&state, id, key.atom())?.map(|slot| OwnFlags {
+            flags: slot.flags,
+            needs_materialization: matches!(
+                state.heap.object(id).expect("located live object").slots[slot.index],
+                PropertySlot::AutoInit(_) | PropertySlot::VarRef(_)
+            ),
+        })))
+    }
+
+    pub(super) fn ordinary_property_snapshot(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<Option<Option<crate::engine::object::operations::PropertySnapshot>>, RuntimeError>
+    {
+        use crate::engine::object::operations::PropertySnapshot;
+        let state = self.0.state.borrow();
+        let id = object.object_id();
+        if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+            return Ok(None);
+        }
+        let Some(slot) = locate(&state, id, key.atom())? else {
+            return Ok(Some(None));
+        };
+        let flags = slot.flags;
+        Ok(Some(Some(
+            match &state.heap.object(id)?.slots[slot.index] {
+                PropertySlot::Data(value) => PropertySnapshot::Data {
+                    value: value.clone(),
+                    flags,
+                },
+                PropertySlot::Accessor { get, set } => PropertySnapshot::Accessor {
+                    get: *get,
+                    set: *set,
+                    flags,
+                },
+                PropertySlot::VarRef(var_ref) => PropertySnapshot::VarRef {
+                    var_ref: *var_ref,
+                    flags,
+                },
+                PropertySlot::AutoInit(_) => PropertySnapshot::AutoInit,
+            },
+        )))
+    }
+
+    pub(super) fn ordinary_read_probe(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<ReadProbe, RuntimeError> {
+        use crate::engine::object::operations::PropertySnapshot;
+        let Some(snapshot) = self.ordinary_property_snapshot(object, key)? else {
+            return Ok(ReadProbe::Special);
+        };
+        Ok(match snapshot {
+            Some(PropertySnapshot::Data { value, .. }) => {
+                ReadProbe::Value(self.root_raw_value(&value)?)
+            }
+            Some(PropertySnapshot::Accessor { get, .. }) => ReadProbe::Getter(
+                get.map(|id| {
+                    ObjectRef::from_borrowed_handle(self.clone(), id)
+                        .map(crate::engine::object::CallableRef::from_validated_object)
+                })
+                .transpose()?,
+            ),
+            Some(PropertySnapshot::AutoInit | PropertySnapshot::VarRef { .. }) => {
+                ReadProbe::Special
+            }
+            None => ReadProbe::Missing(self.get_prototype_of(object)?),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
