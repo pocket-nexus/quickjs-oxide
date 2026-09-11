@@ -54,3 +54,8 @@ checked 读取仍在每次访问时检查 TDZ，只在构造异常时查询名�
 架构变异测试，不能只改源码指纹。checked 写入与初始化复用发布的模式保证，仍检查实际 TDZ、const cell
 和生命周期。eval 复用发布拓扑，在编译前验证实际槽与 closure cell；
 异常栈、恢复和特殊初始化协议仍由原边界检查。
+
+捕获复用由 `reuse_frame_capture` 验证实际 cell 与 descriptor 的视图关系并保留 root；
+已 Captured 的局部槽不再进入完整建单元分派，首次捕获仍由父定义提供 canonical metadata。
+`static_branch_target` 只消费 IfTrue/IfFalse/Goto 的已验证立即数；生产 code/host
+必须来自同一 snapshot。通用 host 和无 root fixture 继续验界，异常/恢复地址不走此入口。

@@ -56,7 +56,7 @@
 2. 确认 `PreparedEvalEnvironment → 编译 → MaterializedEvalEnvironment` 移动或共享同一视图；比较只能验证同一数组和索引，不重新逐项比较名称、flags 和拓扑。
 3. 确认编译前没有创建 VarRef；编译失败时视图与临时引用被释放。编译成功后才能捕获当前帧的真实绑定。
 4. 搜索这条路径上的 `EvalEnvironment::clone` 和 descriptor 克隆，区分 Rc/root 引用复制与 scopes/bindings 深拷贝。若仍有深拷贝消费者，逐一说明用途或迁移；不以“已加 Rc 类型”作为验收依据。
-5. 检查静态规则仅在 `bytecode_publish` 中实现；VM 测试不得再保存一份静态验证算法。
+5. 检查静态规则由发布验证层（含 `bytecode_publish` 调用的 `bytecode_validation`）统一拥有；VM 测试不得再保存一份静态验证算法。
 
 测试落点：`executable::tests` 验证共享身份、不同索引、不同数组、root 存活及越界拒绝；`published_execution_tests` 验证同一环境多次 eval 仍观察新值、with 遮蔽、嵌套 eval、super；现有编译失败/捕获顺序测试必须通过。新增测试只覆盖现有测试未证明的契约，不复制 getter 实现。
 
@@ -92,11 +92,11 @@
 
 测试落点：现有 `static_branch_targets_remain_checked_at_untrusted_boundaries` 要断言明确的目标错误，防止因 max_stack 等无关错误“通过”；补合法首/尾目标、两个条件方向、finally 内分支、挂起后分支及回溯 PC 的缺口。架构规则不仅更新 hash：执行现有 tail/throw 路由变异，确认错误拦截仍被拒绝；补充“让通用/合成目标入口不验界”的反例覆盖。
 
-提交后测量：以 `d0d329e` 为直接前序，对 `7521630` 做至少五轮 loop/int/call/closure A/B 和 instructions/cycles。当前尚未执行这一步。若发现可复现退化，调整具体实现或撤回它；不使用已失败的 PC 递增实验代替本步骤测量。
+提交后测量：以 `d0d329e` 为直接前序，对 `7521630` 做至少五轮 loop/int/call/closure A/B 和 instructions/cycles。若 P2 后续修正或撤回，在最终前序版本上重新比较，不能仅沿用这组历史结果验收。若发现可复现退化，调整具体实现或撤回它；不使用已失败的 PC 递增实验代替本步骤测量。
 
 #### P4：实现一次范围判断的双操作数取出
 
-**输入与拥有者**：最终采用的 P3 版本；`frame_execution.rs::pop_pair`，消费者为同文件 Nip/Swap、`numeric_execution.rs` 和 `dispatch.rs` 的二元操作。先改共同拥有者，不逐 opcode 复制快路径。
+**输入与拥有者**：最终采用的 P3 版本；先检查现有 release 机器码是否仍有重复范围判断，再决定是否实施候选算法。`frame_execution.rs::pop_pair`，消费者为同文件 Nip/Swap、`numeric_execution.rs` 和 `dispatch.rs` 的二元操作。先改共同拥有者，不逐 opcode 复制快路径。
 
 当前语义是先 pop 右值，再 pop 左值，返回 `(left, right)`。新实现必须保留下面的可观察状态：
 

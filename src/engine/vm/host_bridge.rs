@@ -234,13 +234,21 @@ fn capture_frame_binding(
             *binding = FrameBinding::Captured(root.clone());
             Ok(root)
         }
-        FrameBinding::Captured(root) => {
-            runtime
-                .validate_var_ref_metadata(root, descriptor)
-                .map_err(|error| Error::internal(error.to_string()))?;
-            Ok(root.clone())
-        }
+        FrameBinding::Captured(root) => reuse_frame_capture(runtime, root, descriptor),
     }
+}
+
+/// Reuse a live cell through a publication-authenticated descriptor view.
+/// This checks actual cell metadata without redispatching its frame storage.
+fn reuse_frame_capture(
+    runtime: &Runtime,
+    root: &VarRefRoot,
+    descriptor: ClosureVariable,
+) -> Result<VarRefRoot, Error> {
+    runtime
+        .validate_var_ref_metadata(root, descriptor)
+        .map_err(|error| Error::internal(error.to_string()))?;
+    Ok(root.clone())
 }
 
 fn close_frame_binding(
@@ -2498,8 +2506,8 @@ impl VmHost for RuntimeVmHost {
                     // the child's authenticated view against that actual cell;
                     // only a new cell needs the parent's definition. In
                     // particular, do not recreate FunctionName view metadata.
-                    let capture = if matches!(binding, FrameBinding::Captured(_)) {
-                        descriptor
+                    if let FrameBinding::Captured(root) = binding {
+                        reuse_frame_capture(&self.runtime, root, descriptor)?
                     } else {
                         let definition = self
                             .executable
@@ -2508,14 +2516,14 @@ impl VmHost for RuntimeVmHost {
                             .ok_or_else(|| {
                                 Error::internal("local definition index is out of bounds")
                             })?;
-                        ClosureVariable {
+                        let capture = ClosureVariable {
                             is_lexical: definition.is_lexical,
                             is_const: definition.is_const,
                             kind: definition.kind,
                             ..descriptor
-                        }
-                    };
-                    capture_frame_binding(&self.runtime, binding, capture)?
+                        };
+                        capture_frame_binding(&self.runtime, binding, capture)?
+                    }
                 }
                 ClosureSource::ParentArgument(index) => {
                     #[cfg(test)]

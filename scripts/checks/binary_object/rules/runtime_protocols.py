@@ -38,6 +38,17 @@ def check(ctx):
         return stage3b_items[key]
     ctx.stage3b_function = stage3b_function
 
+    for relative, expected in (
+        ("src/engine/vm/protocol.rs", "0a19ef66059453bfa14d9d92a9b617f5d94e8dc1f40044a582dcbfc4db8a8026"),
+        ("src/engine/vm/host_bridge.rs", "1552130a60bd6192571af5b09a7b9a4b1387acc1dffd2bb9e946546205e11c28"),
+    ):
+        ctx.require_normalized_code_sha256(
+            "published-static-target",
+            "Static target reuse must retain the general and synthetic host checks",
+            ctx.stage3b_function(relative, "static_branch_target", "published-static-target"),
+            expected,
+        )
+
     def stage3j_source_function(relative: str, name: str, diagnostic: str) -> str:
         source = ctx.read_source(relative)
         code = ctx.rust_code_only(source)

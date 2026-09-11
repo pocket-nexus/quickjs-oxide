@@ -240,3 +240,37 @@ fn static_branch_targets_remain_checked_at_untrusted_boundaries() {
         assert_eq!(error.message(), "jump target is out of bounds");
     }
 }
+
+#[test]
+fn synthetic_runtime_host_checks_static_targets() {
+    use super::VmHost;
+    use super::host_bridge::RuntimeVmHost;
+    let runtime = Runtime::new();
+    let context = runtime.new_context();
+    let host = RuntimeVmHost::empty_for_test(runtime.clone(), context.realm);
+    assert_eq!(host.static_branch_target(0, 1).unwrap(), 0);
+    for (target, length) in [(0, 0), (1, 1), (u32::MAX, 1)] {
+        assert_eq!(
+            host.static_branch_target(target, length)
+                .unwrap_err()
+                .message(),
+            "jump target is out of bounds"
+        );
+    }
+}
+
+#[test]
+fn published_static_branches_preserve_resume_finally_and_loop_targets() {
+    for source in [
+        "(function(){let n=0; do {++n} while(n<3); while(n>1){--n} return n===1;})()",
+        "(function(){let n=0; for(let i=0;i<5;i++){try{if(i%2)continue; n+=i;}finally{++n;}}return n===11;})()",
+        "(function(){function* g(){let n=0;try{while(n<3){yield n++;}}finally{n=9;}return n;}let it=g();return it.next().value===0&&it.next().value===1&&it.return(7).value===7;})()",
+    ] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert!(
+            matches!(context.eval(source).unwrap(), Value::Bool(true)),
+            "{source}"
+        );
+    }
+}

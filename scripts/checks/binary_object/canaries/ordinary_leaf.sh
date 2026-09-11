@@ -130,3 +130,12 @@ expect_full_rewrite_rejected published-frame-code-substitution published-frame-o
     src/engine/vm/host_bridge.rs \
     '        Ok((self.executable.code.clone(), activation))' \
     '        Ok((Rc::from([]), activation))'
+
+expect_full_rewrite_rejected published-branch-general-check published-static-target \
+    src/engine/vm/protocol.rs \
+    '        super::activation::checked_target(target, code_len)' \
+    '        Ok(target as usize)'
+expect_full_rewrite_rejected published-branch-fixture-check published-static-target \
+    src/engine/vm/host_bridge.rs \
+    '            return super::activation::checked_target(target, _code_len);' \
+    '            return Ok(target as usize);'

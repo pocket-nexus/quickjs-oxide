@@ -229,8 +229,12 @@ mod tests {
         another_owner.environments = Rc::from([environment]);
         assert!(!view.same_environment(&another_owner));
         drop(view);
+        drop(another_index);
+        drop(another_owner);
         assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_ok());
         assert!(!shared.caller_strict);
+        drop(shared);
+        assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_err());
     }
 
     #[test]
