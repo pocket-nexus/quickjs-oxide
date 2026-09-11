@@ -896,6 +896,7 @@ impl Runtime {
     /// than recovering the ordinary-chain missing sentinel. Global binding
     /// reads depend on that distinction to choose between `undefined` and a
     /// ReferenceError.
+    #[inline]
     pub(crate) fn internal_get_or_missing(
         &self,
         realm: ContextId,
