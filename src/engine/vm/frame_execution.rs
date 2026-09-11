@@ -482,18 +482,20 @@ impl VmActivation {
     }
 
     pub(in crate::engine::vm) fn pop_pair(&mut self) -> Result<(Value, Value), Error> {
-        if self.stack.len() < 2 {
+        let [prefix @ .., left, right] = self.stack.as_mut_slice() else {
             // Match sequential-pop failure: consume a lone right operand,
             // construct the error, then release the operand.
             let right = self.pop()?;
             let error = Error::internal("bytecode stack underflow");
             drop(right);
             return Err(error);
-        }
-        // The shared bound proves both pops. Neither move can invoke user
-        // code or change the stack except by removing its own operand.
-        let right = self.stack.pop().expect("two operands were checked");
-        let left = self.stack.pop().expect("one checked operand remains");
+        };
+        let retained = prefix.len();
+        let right = std::mem::replace(right, Value::Undefined);
+        let left = std::mem::replace(left, Value::Undefined);
+        // Both removed slots are now inert; truncation cannot release roots
+        // or invoke user code. The returned values retain their ownership.
+        self.stack.truncate(retained);
         Ok((left, right))
     }
 }
