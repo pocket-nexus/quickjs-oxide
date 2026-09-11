@@ -23,7 +23,7 @@
 | 常量和静态名字 | verifier 区分 PushConst、FClosure、RegExp、字符串名字；发布已有 property Atom 表 | 共享 `snapshot.constant` 的下标投影，继续使用原 Atom 表。安全 Rust 的 enum match 保留；无第二份种类表，不宣称消除了所有常量分类 |
 | 父子捕获 | `verify_unlinked_tree_with_root` 与 `verify_capture_flags` 验证来源、flags、名字及 FunctionName 视图；`instantiate_closure` | ParentLocal/ParentArgument 不再重复静态匹配；保留 canonical local metadata、`capture_frame_binding`、`validate_var_ref_metadata`、实际共享 cell 和失败清理 |
 | eval 环境 | `verify_eval_environments`、`verify_eval_scope_topology`、专用 eval verifier；`prepare_direct_eval_environment` 与 `validate_eval_frame_bindings` | 从同一 snapshot 取环境，不再重复扫描静态拓扑与匹配名字/flags；编译前检查 caller strictness、实际槽与 closure cell 元数据。动态捕获仍由原捕获入口验证；没有缓存 eval 查找结果 |
-| 静态控制流和栈 | 原栈/目标 verifier；`execute_inner`、unwind 与 decode/resume | PC 递增实验已撤回。`static_branch_target` 仅对已发布 host 的 IfTrue/IfFalse/Goto 复用目标范围证明，通用和合成 host 继续验界；该改动性能尚待确认。异常、Gosub/Ret、恢复与栈检查保留；局部多操作数栈检查合并仍待实施，见计划 |
+| 静态控制流和栈 | 原栈/目标 verifier；`execute_inner`、unwind 与 decode/resume | PC 递增实验已撤回。`static_branch_target` 仅对已发布 host 的 IfTrue/IfFalse/Goto 复用目标范围证明，通用和合成 host 继续验界。`pop_pair` 合并两次长度判断，`clone_at_depth` 保留一次安全查询；非法栈仍返回原错误。异常、Gosub/Ret、恢复检查保留，验收状态见计划 |
 | dispatch | immutable opcode；`execute_inner` | 常用绑定、字面量、简单栈操作与条件/无条件分支在顶层 match 直接执行。复杂语义仍委派原处理器，以限制普通递归的本机帧；PC 发布、异常处理、挂起点不变，不新增分类表 |
 
 所有移除静态模式检查的 host 方法，对无 root 的合成 fixture 仍保留拒绝检查。该 fixture 无法进入 `execute_published`/`start_published`。这保留了内部错误契约测试，不建立生产兼容分支。
@@ -40,7 +40,7 @@ snapshot 复用原 Rc 数组；构造增加固定数量引用，数据空间不�
 
 真实发布到执行的契约测试位于 `src/engine/vm/published_execution_tests.rs`；snapshot 的 Runtime 身份、root 生命周期与只读保证测试位于 `src/engine/code/executable.rs`。发布边界的拒绝规则与变异测试位于 `scripts/checks/binary_object/`。修改这些契约时同步维护对应正例、反例和模块 README。
 
-此前候选处置不等同于全部优化完成；补充实施状态见计划。常量 enum match 是安全取得变体的操作；给 getter 改名或增加种类表不自动消除它，因此沿用单一常量池。本轮不重写栈表示或新增静态 PC 表，但仍须完成计划列出的静态分支验收与局部栈重复操作分析和实现；不能用表示改造不在范围内来关闭这些工作。
+此前候选处置不等同于全部优化完成；补充实施状态见计划。常量 enum match 是安全取得变体的操作；给 getter 改名或增加种类表不自动消除它，因此沿用单一常量池。本轮不重写栈表示或新增静态 PC 表，静态分支、双操作数范围判断及深度查询已按计划实现；最终集成状态以计划为准。
 
 `host_bridge/eval_validation.rs` 只检查实际帧；静态反例由发布器的 `eval_super_capabilities_are_authenticated_at_publication`、`strict_script_global_eval_anchor_does_not_leak_to_strict_functions` 和环境来源/flags 测试维护，不复制第二套测试专用验证器。真实发布到执行的 eval 测试覆盖遮蔽、捕获、嵌套 eval 与 super，另有实际槽缺失和错误 cell 元数据的反例。
 
@@ -50,4 +50,8 @@ snapshot 复用原 Rc 数组；构造增加固定数量引用，数据空间不�
 
 ## 补充实施：已捕获局部槽
 
-`instantiate_closure` 仅在建立新捕获单元时读取父局部定义并构造 canonical metadata。已有 `FrameBinding::Captured` 直接由 `capture_frame_binding` 验证实际 cell 与子 descriptor 的合法视图关系并复用 root，避免再次取静态定义。CloseLocal 后的槽会重新走建立路径；FunctionName 的视图差异不能覆盖新 cell 的 canonical metadata。
+`instantiate_closure` 仅在建立新捕获单元时读取父局部定义并构造 canonical metadata。已有 `FrameBinding::Captured` 直接由 `reuse_frame_capture` 验证实际 cell 与子 descriptor 的合法视图关系并复用 root，避免再次取静态定义。CloseLocal 后的槽会重新走建立路径；FunctionName 的视图差异不能覆盖新 cell 的 canonical metadata。
+
+## 补充实施：栈访问
+
+`pop_pair` 在一个长度门槛后移动右、左值；检查与移动之间不调用用户代码。失败时保留先消费右值、构造错误、再释放右值的顺序。`clone_at_depth` 由 u8 深度计算的非零偏移通过 wrapping_sub 映射尾部索引；过深索引环绕到栈长以外，仍由安全 get 返回原错误。没有 unsafe、临时 Vec 或新的栈表示。切片占位值、drain 和强制内联实验增加了清理工作或造成耗时退化，因此未保留。
