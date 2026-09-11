@@ -482,7 +482,7 @@ impl VmActivation {
     }
 
     pub(in crate::engine::vm) fn pop_pair(&mut self) -> Result<(Value, Value), Error> {
-        let [prefix @ .., left, right] = self.stack.as_mut_slice() else {
+        let Some(start) = self.stack.len().checked_sub(2) else {
             // Match sequential-pop failure: consume a lone right operand,
             // construct the error, then release the operand.
             let right = self.pop()?;
@@ -490,12 +490,11 @@ impl VmActivation {
             drop(right);
             return Err(error);
         };
-        let retained = prefix.len();
-        let right = std::mem::replace(right, Value::Undefined);
-        let left = std::mem::replace(left, Value::Undefined);
-        // Both removed slots are now inert; truncation cannot release roots
-        // or invoke user code. The returned values retain their ownership.
-        self.stack.truncate(retained);
+        // Drain owns exactly two tail slots. Moving both values exhausts it;
+        // dropping the empty drain leaves the prefix and its roots untouched.
+        let mut tail = self.stack.drain(start..);
+        let right = tail.next_back().expect("two tail operands were checked");
+        let left = tail.next_back().expect("one checked tail operand remains");
         Ok((left, right))
     }
 }
