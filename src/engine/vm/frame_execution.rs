@@ -482,7 +482,9 @@ impl VmActivation {
         Ok(value)
     }
 
-    #[inline]
+    // Keep the shared value-moving body out of the large opcode dispatchers.
+    // Inlining it reduced instructions but regressed measured arithmetic time.
+    #[inline(never)]
     pub(in crate::engine::vm) fn pop_pair(&mut self) -> Result<(Value, Value), Error> {
         if self.stack.len() < 2 {
             return Err(self.pair_underflow());
