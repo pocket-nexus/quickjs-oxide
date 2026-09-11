@@ -3,3 +3,6 @@ dev-support/test262/generated/*.tsv whitespace=-blank-at-eol
 
 # Upstream source context in test-only patches may intentionally retain spaces.
 dev-support/quickjs/*.patch whitespace=-blank-at-eol
+
+# Keep machine-generated samples available without obscuring code review.
+docs/reports/published-execution*.json linguist-generated=true
