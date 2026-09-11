@@ -19,12 +19,12 @@
 | local 普通/词法访问 | `verify_unlinked_tree_with_root`、`private_elements::verify_unlinked` 验证 opcode 与定义；`get_local`、`put_local`、`set_local_uninitialized`、`get_local_checked` 消费 | 删除生产路径重复的静态模式查询；保留下标访问错误、TDZ、Direct/Captured/private 动态状态和重新进入作用域 |
 | argument | 发布参数布局；同一 snapshot 初始化缺省槽；`get_argument`/`put_argument` | 与 local 复用内联的 `read_frame_binding`/`write_frame_binding`；不把参数直接槽永久化，mapped arguments 与捕获仍有效 |
 | VarRef | `verify_unlinked_tree_with_root` 验证 descriptor 与读写 opcode；`get_var_ref`、`put_var_ref`、`get_var_ref_checked` | 去掉普通/checked 读取中的重复描述符模式检查；实际 root、cell、TDZ 和 live binding 不省略 |
-| checked 写入、初始化、CloseLocal | 发布已知部分访问模式，但处理器同时依赖定义名字、const、cell 与复用状态 | 保留。未把整个方法当成静态检查删除，也未为少数分支新增通用访问策略；若继续优化，按具体 opcode 给出动态分支证明和专门 A/B |
+| checked 写入、初始化、CloseLocal | 发布器拒绝 checked 写入普通/private/const 定义；验证 InitializeLocal、InitializeVarRef 和 CloseLocal 的模式 | 成功写入不再查询模式与错误名字；初始化/CloseLocal 的静态模式检查仅在合成 fixture 保留。实际 TDZ、cell const、with 值身份、捕获复用和派生构造器初始化协议保留 |
 | 常量和静态名字 | verifier 区分 PushConst、FClosure、RegExp、字符串名字；发布已有 property Atom 表 | 共享 `snapshot.constant` 的下标投影，继续使用原 Atom 表。安全 Rust 的 enum match 保留；无第二份种类表，不宣称消除了所有常量分类 |
 | 父子捕获 | `verify_unlinked_tree_with_root` 与 `verify_capture_flags` 验证来源、flags、名字及 FunctionName 视图；`instantiate_closure` | ParentLocal/ParentArgument 不再重复静态匹配；保留 canonical local metadata、`capture_frame_binding`、`validate_var_ref_metadata`、实际共享 cell 和失败清理 |
-| eval 环境 | `verify_eval_environments`、`verify_eval_scope_topology`、专用 eval verifier；`prepare_eval_environment` | 从已持有 snapshot 直接取得 caller metadata，避免再次 snapshot/root；保留实际调用方身份、全部环境验证、遮蔽与动态引用。没有缓存 eval 查找结果 |
-| 静态控制流和栈 | 原栈/目标 verifier；`execute_inner`、unwind 与 decode/resume | 评估后保留 PC 递增、目标范围与栈检查。它们还覆盖异常、Gosub/Ret 和重建 activation；本轮没有足够独立证明删除它们 |
-| dispatch | immutable opcode；`execute_inner` | 一个明确 match 分类，委派原 cold/call/numeric/hot 处理器；PC 发布、异常处理、挂起点均保留，不额外维护分类表 |
+| eval 环境 | `verify_eval_environments`、`verify_eval_scope_topology`、专用 eval verifier；`prepare_direct_eval_environment` 与 `validate_eval_frame_bindings` | 从同一 snapshot 取环境，不再重复扫描静态拓扑与匹配名字/flags；编译前检查 caller strictness、实际槽与 closure cell 元数据。动态捕获仍由原捕获入口验证；没有缓存 eval 查找结果 |
+| 静态控制流和栈 | 原栈/目标 verifier；`execute_inner`、unwind 与 decode/resume | 保留原 PC 递增、目标范围与栈检查。成功取指足以证明递增加一安全，但简化后的实现出现可重复计时回退，已撤回。栈与目标还服务异常、Gosub/Ret、合成测试和重建 activation；不为删除检查另建一套执行表示 |
+| dispatch | immutable opcode；`execute_inner` | 常用绑定、字面量、简单栈操作与条件/无条件分支在顶层 match 直接执行。复杂语义仍委派原处理器，以限制普通递归的本机帧；PC 发布、异常处理、挂起点不变，不新增分类表 |
 
 所有移除静态模式检查的 host 方法，对无 root 的合成 fixture 仍保留拒绝检查。该 fixture 无法进入 `execute_published`/`start_published`。这保留了内部错误契约测试，不建立生产兼容分支。
 
@@ -40,4 +40,6 @@ snapshot 复用原 Rc 数组；构造增加固定数量引用，数据空间不�
 
 真实发布到执行的契约测试位于 `src/engine/vm/published_execution_tests.rs`；snapshot 的 Runtime 身份、root 生命周期与只读保证测试位于 `src/engine/code/executable.rs`。发布边界的拒绝规则与变异测试位于 `scripts/checks/binary_object/`。修改这些契约时同步维护对应正例、反例和模块 README。
 
-本说明记录当前代码保证，不代表原计划中全部优化已完成。常量种类分类、checked 写入、初始化、CloseLocal，以及控制流和栈检查仍保留，后续逐项建立证明后再优化。
+本轮候选均已明确采用或保留。常量 enum match 是安全取得变体的操作；给 getter 改名或增加种类表不自动消除它，因此沿用单一常量池。更广泛的数值处理器合并、栈表示改造和静态 PC 表需要新的成本与语义依据，不是本轮未完成的隐含交付。
+
+`host_bridge/eval_validation.rs` 只检查实际帧；静态反例由发布器的 `eval_super_capabilities_are_authenticated_at_publication`、`strict_script_global_eval_anchor_does_not_leak_to_strict_functions` 和环境来源/flags 测试维护，不复制第二套测试专用验证器。真实发布到执行的 eval 测试覆盖遮蔽、捕获、嵌套 eval 与 super，另有实际槽缺失和错误 cell 元数据的反例。
