@@ -169,3 +169,20 @@ fn instruction_fetch_rejects_invalid_pc_before_advancing_it() {
         assert_eq!(activation.pc, if pc == 0 { 1 } else { pc });
     }
 }
+
+#[test]
+fn repeated_closure_creation_reuses_cells_without_erasing_their_metadata() {
+    for source in [
+        "(function(){let x=1; let a=()=>x; let b=()=>++x; return b()===2&&a()===2;})()",
+        "(function(){let fs=[]; for(let i=0;i<3;i++){let x=i; fs.push(()=>x,()=>++x)} return fs[1]()===1&&fs[0]()===1&&fs[3]()===2&&fs[2]()===2;})()",
+        "(function named(){let a=()=>named; let b=eval('()=>named'); named=1; return a()===b()&&typeof a()==='function';})()",
+        "(function(){class A{#x=3; read(){return [()=>this.#x,()=>this.#x]}} let fs=new A().read(); return fs[0]()===3&&fs[1]()===3;})()",
+    ] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert!(
+            matches!(context.eval(source).unwrap(), Value::Bool(true)),
+            "{source}"
+        );
+    }
+}

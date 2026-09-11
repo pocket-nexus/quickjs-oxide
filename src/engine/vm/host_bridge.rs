@@ -2471,25 +2471,39 @@ impl VmHost for RuntimeVmHost {
         for descriptor in closure_variables.iter().copied() {
             let root = match descriptor.source {
                 ClosureSource::ParentLocal(index) => {
-                    let definition = self.local_definition(index)?;
                     #[cfg(test)]
                     if self.executable.root().is_none() {
-                        self.validate_capture_definition(definition, descriptor)?;
+                        self.validate_capture_definition(
+                            self.local_definition(index)?,
+                            descriptor,
+                        )?;
                     }
                     let binding = self
                         .locals
                         .get_mut(usize::from(index))
                         .ok_or_else(|| Error::internal("captured local index is out of bounds"))?;
-                    capture_frame_binding(
-                        &self.runtime,
-                        binding,
+                    // Existing cells already own canonical metadata. Validate
+                    // the child's authenticated view against that actual cell;
+                    // only a new cell needs the parent's definition. In
+                    // particular, do not recreate FunctionName view metadata.
+                    let capture = if matches!(binding, FrameBinding::Captured(_)) {
+                        descriptor
+                    } else {
+                        let definition = self
+                            .executable
+                            .local_definitions
+                            .get(usize::from(index))
+                            .ok_or_else(|| {
+                                Error::internal("local definition index is out of bounds")
+                            })?;
                         ClosureVariable {
                             is_lexical: definition.is_lexical,
                             is_const: definition.is_const,
                             kind: definition.kind,
                             ..descriptor
-                        },
-                    )?
+                        }
+                    };
+                    capture_frame_binding(&self.runtime, binding, capture)?
                 }
                 ClosureSource::ParentArgument(index) => {
                     #[cfg(test)]

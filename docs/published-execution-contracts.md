@@ -47,3 +47,7 @@ snapshot 复用原 Rc 数组；构造增加固定数量引用，数据空间不�
 ## 补充实施：eval 环境共享
 
 `PublishedEvalEnvironment` 私有构造只接受 snapshot 中存在的索引，持有同一环境数组和字节码 root。`PreparedEvalEnvironment` 与 `MaterializedEvalEnvironment` 传递该视图，编译边界的身份检查比较 Rc 数组和索引；不再深拷贝 scopes/bindings 或重新比较结构。编译失败前不捕获、实际帧槽和 cell 元数据检查不变。没有新增每环境的预计算数组或动态查找缓存。
+
+## 补充实施：已捕获局部槽
+
+`instantiate_closure` 仅在建立新捕获单元时读取父局部定义并构造 canonical metadata。已有 `FrameBinding::Captured` 直接由 `capture_frame_binding` 验证实际 cell 与子 descriptor 的合法视图关系并复用 root，避免再次取静态定义。CloseLocal 后的槽会重新走建立路径；FunctionName 的视图差异不能覆盖新 cell 的 canonical metadata。
