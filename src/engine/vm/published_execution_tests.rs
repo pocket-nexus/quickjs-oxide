@@ -106,3 +106,24 @@ fn published_resume_keeps_captured_cells_live_through_finally() {
         .unwrap();
     assert!(matches!(value, Value::Int(10)));
 }
+
+#[test]
+fn published_lexical_writes_preserve_tdz_const_and_iteration_lifetimes() {
+    for source in [
+        "(function(){let x=1; x=4; return x===4;})()",
+        "(function(){let x=1; const set=v=>x=v; set(4); return x===4;})()",
+        "(function(){const set=v=>x=v; let caught=false; try{set(4)}catch(e){caught=e instanceof ReferenceError} let x=1; set(5); return caught&&x===5;})()",
+        "(function(){let caught=false; try{x=4}catch(e){caught=e instanceof ReferenceError} let x=1; return caught&&x===1;})()",
+        "(function(){const x=1; try{x=4}catch(e){return e instanceof TypeError&&x===1} return false;})()",
+        "(function(){const x=1; const set=v=>x=v; try{set(4)}catch(e){return e instanceof TypeError&&x===1} return false;})()",
+        "(function(){let fs=[]; for(let i=0;i<3;i++){let x=i; fs.push(()=>++x)} return fs[0]()===1&&fs[1]()===2&&fs[2]()===3&&fs[0]()===2;})()",
+        "(function(){let x=1; eval('x=4'); return x===4;})()",
+    ] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert!(
+            matches!(context.eval(source).unwrap(), Value::Bool(true)),
+            "{source}"
+        );
+    }
+}

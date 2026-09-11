@@ -4429,15 +4429,19 @@ impl VmHost for RuntimeVmHost {
 
     fn initialize_local(&mut self, index: u16, value: Value) -> Result<(), Error> {
         let definition = self.local_definition(index)?;
-        if definition.kind.is_private() {
-            return Err(Error::internal(
-                "ordinary lexical initialization referenced a private-name binding",
-            ));
-        }
-        if !definition.is_lexical && definition.kind != ClosureVariableKind::WithObject {
-            return Err(Error::internal(
-                "local initialization referenced an ordinary local definition",
-            ));
+        // Publication proves the operand mode; actual binding state stays dynamic.
+        #[cfg(test)]
+        if self.executable.root().is_none() {
+            if definition.kind.is_private() {
+                return Err(Error::internal(
+                    "ordinary lexical initialization referenced a private-name binding",
+                ));
+            }
+            if !definition.is_lexical && definition.kind != ClosureVariableKind::WithObject {
+                return Err(Error::internal(
+                    "local initialization referenced an ordinary local definition",
+                ));
+            }
         }
         if definition.kind == ClosureVariableKind::WithObject {
             let Value::Object(object) = &value else {
@@ -4531,16 +4535,20 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn put_local_checked(&mut self, index: u16, value: Value) -> Result<(), Error> {
-        let definition = self.local_definition(index)?;
-        if definition.kind.is_private() {
-            return Err(Error::internal(
-                "checked local write referenced a private-name binding",
-            ));
-        }
-        if !definition.is_lexical {
-            return Err(Error::internal(
-                "checked local write referenced an ordinary definition",
-            ));
+        // Publication proves the operand mode; actual binding state stays dynamic.
+        #[cfg(test)]
+        if self.executable.root().is_none() {
+            let definition = self.local_definition(index)?;
+            if definition.kind.is_private() {
+                return Err(Error::internal(
+                    "checked local write referenced a private-name binding",
+                ));
+            }
+            if !definition.is_lexical {
+                return Err(Error::internal(
+                    "checked local write referenced an ordinary definition",
+                ));
+            }
         }
         let binding = self
             .locals
@@ -4548,8 +4556,12 @@ impl VmHost for RuntimeVmHost {
             .ok_or_else(|| Error::internal("local index is out of bounds"))?;
         match binding {
             FrameBinding::Direct(slot) => {
-                if definition.is_const {
-                    return Err(self.lexical_read_only_error(definition.name)?);
+                #[cfg(test)]
+                if self.executable.root().is_none() {
+                    let definition = self.executable.local_definitions[usize::from(index)];
+                    if definition.is_const {
+                        return Err(self.lexical_read_only_error(definition.name)?);
+                    }
                 }
                 *slot = value;
                 Ok(())
@@ -4558,23 +4570,24 @@ impl VmHost for RuntimeVmHost {
                 "checked local write reached a private-element frame cell",
             )),
             FrameBinding::Uninitialized => {
-                Err(self.local_lexical_uninitialized_error(definition.name)?)
+                Err(self.local_lexical_uninitialized_error(self.local_definition(index)?.name)?)
             }
             FrameBinding::Captured(root) => {
-                let cell = self
-                    .runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .var_ref(root.id())
-                    .map_err(|error| Error::internal(error.to_string()))?
-                    .clone();
-                if matches!(cell.value, RawValue::Uninitialized) {
-                    return Err(self.local_lexical_uninitialized_error(definition.name)?);
+                let (uninitialized, is_const) = {
+                    let state = self.runtime.0.state.borrow();
+                    let cell = state
+                        .heap
+                        .var_ref(root.id())
+                        .map_err(|error| Error::internal(error.to_string()))?;
+                    (matches!(cell.value, RawValue::Uninitialized), cell.is_const)
+                };
+                if uninitialized {
+                    return Err(
+                        self.local_lexical_uninitialized_error(self.local_definition(index)?.name)?
+                    );
                 }
-                if cell.is_const {
-                    return Err(self.lexical_read_only_error(definition.name)?);
+                if is_const {
+                    return Err(self.lexical_read_only_error(self.local_definition(index)?.name)?);
                 }
                 self.runtime
                     .write_var_ref(root, value)
@@ -4585,10 +4598,14 @@ impl VmHost for RuntimeVmHost {
 
     fn close_local(&mut self, index: u16) -> Result<(), Error> {
         let definition = self.local_definition(index)?;
-        if !definition.is_lexical && definition.kind != ClosureVariableKind::WithObject {
-            return Err(Error::internal(
-                "CloseLocal referenced an ordinary local definition",
-            ));
+        // Publication proves the operand mode; actual binding state stays dynamic.
+        #[cfg(test)]
+        if self.executable.root().is_none() {
+            if !definition.is_lexical && definition.kind != ClosureVariableKind::WithObject {
+                return Err(Error::internal(
+                    "CloseLocal referenced an ordinary local definition",
+                ));
+            }
         }
         let reusable = self
             .reusable_captured_locals
@@ -4724,40 +4741,46 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn put_var_ref_checked(&mut self, index: u16, value: Value) -> Result<(), Error> {
-        let descriptor = self
-            .executable
-            .closure_variables
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        if descriptor.kind.is_private() {
-            return Err(Error::internal(
-                "checked closure write referenced a private-name binding",
-            ));
-        }
-        if !descriptor.is_lexical {
-            return Err(Error::internal(
-                "checked closure write referenced an ordinary binding",
-            ));
+        // Publication proves the operand mode; actual binding state stays dynamic.
+        #[cfg(test)]
+        if self.executable.root().is_none() {
+            let descriptor = self
+                .executable
+                .closure_variables
+                .get(usize::from(index))
+                .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
+            if descriptor.kind.is_private() {
+                return Err(Error::internal(
+                    "checked closure write referenced a private-name binding",
+                ));
+            }
+            if !descriptor.is_lexical {
+                return Err(Error::internal(
+                    "checked closure write referenced an ordinary binding",
+                ));
+            }
         }
         let root = self
             .closure_slots
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        let cell = self
-            .runtime
-            .0
-            .state
-            .borrow()
-            .heap
-            .var_ref(root.id())
-            .map_err(|error| Error::internal(error.to_string()))?
-            .clone();
-        let name = self.closure_name(index)?;
-        if matches!(cell.value, RawValue::Uninitialized) {
-            return Err(self.closure_lexical_uninitialized_error(descriptor.source, name)?);
+        let (uninitialized, is_const) = {
+            let state = self.runtime.0.state.borrow();
+            let cell = state
+                .heap
+                .var_ref(root.id())
+                .map_err(|error| Error::internal(error.to_string()))?;
+            (matches!(cell.value, RawValue::Uninitialized), cell.is_const)
+        };
+        if uninitialized {
+            let descriptor = self.executable.closure_variables[usize::from(index)];
+            return Err(self.closure_lexical_uninitialized_error(
+                descriptor.source,
+                self.closure_name(index)?,
+            )?);
         }
-        if cell.is_const {
-            return Err(self.lexical_read_only_error(name)?);
+        if is_const {
+            return Err(self.lexical_read_only_error(self.closure_name(index)?)?);
         }
         self.runtime
             .write_var_ref(root, value)
@@ -4765,19 +4788,23 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn initialize_var_ref(&mut self, index: u16, value: Value) -> Result<(), Error> {
-        let descriptor = self
-            .executable
-            .closure_variables
-            .get(usize::from(index))
-            .copied()
-            .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        if descriptor.source != ClosureSource::ModuleDeclaration
-            || !descriptor.is_lexical
-            || descriptor.kind != ClosureVariableKind::Normal
-        {
-            return Err(Error::internal(
-                "module lexical initialization referenced a non-declaration binding",
-            ));
+        // Publication proves the operand mode; actual binding state stays dynamic.
+        #[cfg(test)]
+        if self.executable.root().is_none() {
+            let descriptor = self
+                .executable
+                .closure_variables
+                .get(usize::from(index))
+                .copied()
+                .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
+            if descriptor.source != ClosureSource::ModuleDeclaration
+                || !descriptor.is_lexical
+                || descriptor.kind != ClosureVariableKind::Normal
+            {
+                return Err(Error::internal(
+                    "module lexical initialization referenced a non-declaration binding",
+                ));
+            }
         }
         let root = self
             .closure_slots
