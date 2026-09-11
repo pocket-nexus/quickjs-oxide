@@ -1,6 +1,6 @@
 # 普通对象属性访问内核改造计划
 
-状态：P0–P4 已实现，P5 收口与完整验收进行中。源码核对基线 `fec7519`（2026-09-11）。
+状态：P0–P5 已实现并完成验收。源码核对基线 `fec7519`（2026-09-11）。
 面向实施者和评审者：按本文迁移普通属性读、写、定义及元数据查询，并验证语义、所有权和实际性能。
 来源为 benchmark issue #16 的对象属性问题；历史热点仅用于选方向，不能作为当前收益预测。
 
@@ -194,6 +194,40 @@ Test262 fingerprint 变化与实际行为变化分别报告，不能改冻结 re
 每个切片记录源码提交、修改拥有者、已运行验证、未运行验证、基线/新 ELF 及工作负载哈希、A/B 分布、
 退化和最终处置。原始实验保留在忽略的 target；计划和维护契约入库，不预填结果。
 涉及借用/引用事务及 Set 语义收敛的变更需要独立评审，实施者自查不得称为独立评审。
-实现记录：P1 `88a39d1`，P2 `5ad6436`，P3 `68ce00f`，P4 `eaea103`。P5 正在完成特殊分派收口、架构反例和完整验收。
+实现记录：P1 `88a39d1`，P2 `5ad6436`，P3 `68ce00f`，P4 `eaea103`。P5 `bc16d97`，特殊分类/初始借用收口 `41ba53a`，清理与验证边界收口 `9c91663`。
 存储实现采用私有 `OwnSlot` 与短借用 probe，不导出 session/slot；白名单同时检查 kind 和 payload。
 引用事务由 RuntimeState 统一管理，发布前失败回滚新引用，发布后清理失败不撤销已发布引用。
+
+
+### 已实现的职责与验收
+
+- 自有 Data Set：同一次借用中定位、检查 writable、替换已有槽；不预扫原型、不构造旧值 descriptor、不往返 Define。
+- Get/Get-or-missing：共同定位后只提取 value 或 getter；完整 descriptor 只在其消费者需要时物化。
+- value-only Define：共享槽事务和纯权限判定，保留 SameValue、字段缺失、flags 和跨 Runtime 规则。
+- Has/HasOwn/enumerable：共享定位和 flags；snapshot 与实际 GetOwnProperty 对 AutoInit/VarRef 的不同要求保持。
+- 普通原型链：逐层定位，命中即停；特殊分类在进入回调前复用，异 receiver 单独查找。Array/TypedArray 等特殊对象及普通 AutoInit/VarRef 仍保留相应回退，不把剩余成本称为已经全部消失。
+
+最终存储提交以 `9c91663` 为准。独立评审覆盖引用事务、Set 收敛、特殊分类与共享 operation 边界；最后一轮没有阻塞问题。
+Rust 1.88.0 的 workspace 3068 项、实际 QuickJS differential 3072 项、全部 Clippy/feature/doc 组合和 Node/WASM 验收通过；各有原有 ignored 项的两组不计入通过数。
+701 个原有架构反例被拒绝，最终源码扫描和新增 8 个内核反例通过。Test262 focused 6844 项通过，full 102037 项行为向量未变（79982 pass、原有 50 个可运行失败）。
+严格 receipt gate 因源码 fingerprint 变化报告 checksum drift；仅规范化该字段后，TSV/JSONL 完整 SHA-256 与冻结基线相同，未修改冻结 receipts。
+
+基线为 #18 `fec7519`（ELF 构建提交 `c1dfce3` 仅增加设计文档）；普通 release 使用相同 Rust 1.94.1 和构建 flags、CPU 2、Ryzen 7 7840HS。
+已运行 50+8 固定矩阵和 38 项对象诊断，各五轮交错；超过 3% 的疑似退化追加十轮。各优化提交也与直接前序交错对照。
+最终关键耗时变化：prop_read -11.4%，prop_write -67.0%，prop_update -56.0%，value-only Define -25.6%，enumerable -15.1%。
+自有写入原型深度 0–256 的新耗时约 66–68 ms，基线约 149–1221 ms（包含 setup；另有 setup-only 控制）。八项固定真实程序耗时几何均值 -10.8%。
+剩余退化如实保留：array_read +6.5%，typed_array_read +7.4%，typed_array_write +2.8%（十轮）。实现计划完成不代表所有特殊对象负载都获益。
+
+普通 ELF、构建 receipts、工作负载哈希、完整分布、instructions/cycles 和匹配 ELF 的叶采样保留在忽略的 `target/property-delivery-*` / `target/property-final3-*`；完整数据随本次 PR 描述报告。
+首次 pilot、与架构检查重叠的早期 P3 计时，以及 Node 彩色参考输出导致 admission 失败的诊断轮次均不用于结论。差分测试曾遇到并行 feature 构建覆盖 CLI 的测试竞争，已在构建结束后串行重跑通过。
+Rust 1.94.1 的两项 debug native-stack-budget 失败已在未改动 #18 上独立复现；本次完整验收使用仓库固定的 Rust 1.88.0。
+
+诊断生成器可复现实际测量的 38 个程序字节、参数及无颜色 Node 参考输出：
+
+```sh
+python3 scripts/benchmark/ordinary_workloads.py --output target/ordinary-diagnostics
+python3 scripts/benchmark/fixed.py --manifest target/ordinary-diagnostics/manifest.json \
+  --engine before=target/property-baseline/release/qjs \
+  --engine after=target/property-final3/release/qjs --repeat 5 --cpu 2 \
+  --output target/ordinary-replay
+```
