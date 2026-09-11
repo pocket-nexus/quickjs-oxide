@@ -209,3 +209,41 @@ fn ordinary_property_replacing_last_heap_edge_reclaims_old_object() {
     context.set_property(&object, &key, Value::Null).unwrap();
     assert!(runtime.0.state.borrow().heap.object(old_id).is_err());
 }
+
+#[test]
+fn ordinary_property_dense_reads_preserve_holes_receivers_and_transitions() {
+    check(
+        r#"
+        var token={}; var a=[token, 2, 3];
+        var own=a[0]===token && Reflect.get(a,'0',{})===token;
+        delete a[1];
+        var proto=Object.create(Array.prototype);
+        Object.defineProperty(proto,'1',{get(){return this.marker},configurable:true});
+        Object.setPrototypeOf(a,proto); a.marker=7;
+        var hole=a[1]===7 && Reflect.get(a,'1',{marker:9})===9;
+        Object.defineProperty(a,'2',{get(){return this.marker+1},configurable:true});
+        var accessor=a[2]===8;
+        Object.defineProperty(a,'0',{value:token,writable:false});
+        own && hole && accessor && a[0]===token && !Reflect.set(a,'0',4);
+        "#,
+    );
+}
+
+#[test]
+fn ordinary_property_typed_access_revalidates_after_conversion() {
+    check(
+        r#"
+        var b=new ArrayBuffer(4,{maxByteLength:8});
+        var tracking=new Uint8Array(b); var fixed=new Uint8Array(b,0,4);
+        tracking[3]={valueOf(){b.resize(2);return 9}};
+        var shrunk=tracking[3]===undefined && fixed[0]===undefined;
+        tracking[3]={valueOf(){b.resize(8);return 11}};
+        var grown=tracking[3]===11 && fixed[3]===11;
+        fixed[0]={valueOf(){b.transfer();return 42}};
+        var detached=tracking[0]===undefined && fixed[0]===undefined;
+        var shared=new Uint16Array(new SharedArrayBuffer(4));
+        shared[1]=513;
+        shrunk && grown && detached && shared[1]===513;
+        "#,
+    );
+}

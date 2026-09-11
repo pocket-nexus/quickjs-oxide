@@ -223,18 +223,27 @@ impl Runtime {
             let state = self.0.state.borrow();
             let id = object.object_id();
             let data = state.heap.object(id)?;
-            if !is_ordinary(data) {
+            // Dense elements are own data properties. Read the value under
+            // this same classification borrow; holes and named properties
+            // still use the exotic descriptor/prototype algorithm.
+            if let ObjectPayload::Array { dense: Some(dense) } = &data.payload
+                && let Some(index) = state.atoms.array_index(key.atom())?
+                && let Some(value) = dense.get(index as usize)
+            {
+                Selected::Value(value.clone())
+            } else if !is_ordinary(data) {
                 return Ok(ReadProbe::Special(special_kind(data)));
-            }
-            match locate(&state, id, key.atom())? {
-                None => Selected::Missing(state.heap.shape(data.shape)?.prototype()),
-                Some(slot) => match &data.slots[slot.index] {
-                    PropertySlot::Data(value) => Selected::Value(value.clone()),
-                    PropertySlot::Accessor { get, .. } => Selected::Getter(*get),
-                    PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
-                        return Ok(ReadProbe::Special(SpecialKind::Other));
-                    }
-                },
+            } else {
+                match locate(&state, id, key.atom())? {
+                    None => Selected::Missing(state.heap.shape(data.shape)?.prototype()),
+                    Some(slot) => match &data.slots[slot.index] {
+                        PropertySlot::Data(value) => Selected::Value(value.clone()),
+                        PropertySlot::Accessor { get, .. } => Selected::Getter(*get),
+                        PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
+                            return Ok(ReadProbe::Special(SpecialKind::Other));
+                        }
+                    },
+                }
             }
         };
         Ok(match selected {
