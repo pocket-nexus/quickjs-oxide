@@ -401,13 +401,12 @@ impl VmActivation {
     }
 
     pub(in crate::engine::vm) fn clone_at_depth(&self, depth: u8) -> Result<Value, Error> {
-        let index = self
-            .stack
-            .len()
-            .checked_sub(usize::from(depth) + 1)
-            .ok_or_else(|| Error::internal("bytecode stack depth operand is out of bounds"))?;
+        // Slice iterators select the tail-relative slot in constant time with
+        // one bound, without a checked subtraction followed by another lookup.
         self.stack
-            .get(index)
+            .iter()
+            .rev()
+            .nth(usize::from(depth))
             .cloned()
             .ok_or_else(|| Error::internal("bytecode stack depth operand is out of bounds"))
     }
@@ -484,8 +483,18 @@ impl VmActivation {
     }
 
     pub(in crate::engine::vm) fn pop_pair(&mut self) -> Result<(Value, Value), Error> {
-        let right = self.pop()?;
-        let left = self.pop()?;
+        if self.stack.len() < 2 {
+            // Preserve the original sequential-pop failure: a lone right
+            // operand is consumed and released after constructing the error.
+            let right = self.pop()?;
+            let error = Error::internal("bytecode stack underflow");
+            drop(right);
+            return Err(error);
+        }
+        // The shared bound proves both pops. Neither move can invoke user
+        // code or change the stack except by removing its own operand.
+        let right = self.stack.pop().expect("two operands were checked");
+        let left = self.stack.pop().expect("one checked operand remains");
         Ok((left, right))
     }
 }

@@ -59,3 +59,7 @@ checked 读取仍在每次访问时检查 TDZ，只在构造异常时查询名�
 已 Captured 的局部槽不再进入完整建单元分派，首次捕获仍由父定义提供 canonical metadata。
 `static_branch_target` 只消费 IfTrue/IfFalse/Goto 的已验证立即数；生产 code/host
 必须来自同一 snapshot。通用 host 和无 root fixture 继续验界，异常/恢复地址不走此入口。
+
+`pop_pair` 用一次长度门槛证明两个直接 Vec::pop；没有用户代码或回调能在
+检查和移动间改变栈。单元素失败仍先消费右值、构造错误，再释放右值。
+`clone_at_depth` 通过切片反向迭代器的 nth 做常数时间尾部选择，保留越界错误和 root 克隆。

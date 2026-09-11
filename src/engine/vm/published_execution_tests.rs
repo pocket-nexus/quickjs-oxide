@@ -274,3 +274,67 @@ fn published_static_branches_preserve_resume_finally_and_loop_targets() {
         );
     }
 }
+
+#[test]
+fn paired_stack_reads_preserve_order_and_root_cleanup_on_every_length() {
+    use super::VmActivation;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let mut activation = VmActivation::new(3);
+    assert_eq!(
+        activation.pop_pair().unwrap_err().message(),
+        "bytecode stack underflow"
+    );
+    let single = context.new_object().unwrap();
+    let single_id = single.object_id();
+    activation.stack.push(Value::Object(single));
+    assert_eq!(
+        activation.pop_pair().unwrap_err().message(),
+        "bytecode stack underflow"
+    );
+    assert!(activation.stack.is_empty());
+    assert!(runtime.0.state.borrow().heap.object(single_id).is_err());
+
+    let left = context.new_object().unwrap();
+    let right = context.new_object().unwrap();
+    let left_id = left.object_id();
+    let right_id = right.object_id();
+    activation
+        .stack
+        .extend([Value::Int(7), Value::Object(left), Value::Object(right)]);
+    let (left, right) = activation.pop_pair().unwrap();
+    assert_eq!(activation.stack, [Value::Int(7)]);
+    assert!(matches!(&left, Value::Object(root) if root.object_id() == left_id));
+    assert!(matches!(&right, Value::Object(root) if root.object_id() == right_id));
+    assert!(runtime.0.state.borrow().heap.object(left_id).is_ok());
+    assert!(runtime.0.state.borrow().heap.object(right_id).is_ok());
+    drop((left, right));
+    assert!(runtime.0.state.borrow().heap.object(left_id).is_err());
+    assert!(runtime.0.state.borrow().heap.object(right_id).is_err());
+}
+
+#[test]
+fn depth_stack_reads_select_from_the_tail_and_retain_roots() {
+    use super::VmActivation;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let object = context.new_object().unwrap();
+    let id = object.object_id();
+    let mut activation = VmActivation::new(2);
+    activation
+        .stack
+        .extend([Value::Object(object), Value::Int(9)]);
+    assert_eq!(activation.clone_at_depth(0).unwrap(), Value::Int(9));
+    let saved = activation.clone_at_depth(1).unwrap();
+    for depth in [2, u8::MAX] {
+        assert_eq!(
+            activation.clone_at_depth(depth).unwrap_err().message(),
+            "bytecode stack depth operand is out of bounds"
+        );
+        assert_eq!(activation.stack.len(), 2);
+    }
+    drop(activation);
+    assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+    drop(saved);
+    assert!(runtime.0.state.borrow().heap.object(id).is_err());
+}
