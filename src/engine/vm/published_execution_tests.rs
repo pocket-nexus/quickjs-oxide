@@ -146,3 +146,26 @@ fn published_eval_reuses_topology_but_observes_live_scope_and_super() {
         );
     }
 }
+
+#[test]
+fn instruction_fetch_rejects_invalid_pc_before_advancing_it() {
+    use super::{DetachedHost, VmActivation};
+    use crate::engine::code::bytecode::{DetachedBytecode, Instruction};
+    let function = DetachedBytecode::<Value> {
+        code: vec![Instruction::Nop],
+        constants: vec![],
+        local_count: 0,
+        max_stack: 0,
+    };
+    for pc in [0, 1, usize::MAX] {
+        let mut host = DetachedHost::new(&function);
+        let mut activation = VmActivation::new(0);
+        activation.pc = pc;
+        let error = activation
+            .execute_inner(&function.code, &mut host)
+            .err()
+            .expect("invalid PC must fail at instruction fetch");
+        assert_eq!(error.message(), "bytecode ended without return");
+        assert_eq!(activation.pc, if pc == 0 { 1 } else { pc });
+    }
+}
