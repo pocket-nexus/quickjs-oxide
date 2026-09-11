@@ -11,6 +11,33 @@ use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::heap::{BytecodeConstant, ContextId};
 use std::rc::Rc;
 
+/// A rooted, immutable eval descriptor selected from its publisher's array.
+/// Cloning this view shares the array; it never copies scopes or bindings.
+#[derive(Clone)]
+pub(crate) struct PublishedEvalEnvironment {
+    owner: FunctionBytecodeRef,
+    environments: Rc<[EvalEnvironment<Atom>]>,
+    index: usize,
+}
+
+impl PublishedEvalEnvironment {
+    pub(crate) fn same_environment(&self, other: &Self) -> bool {
+        self.index == other.index && Rc::ptr_eq(&self.environments, &other.environments)
+    }
+
+    pub(crate) fn owner(&self) -> &FunctionBytecodeRef {
+        &self.owner
+    }
+}
+
+impl std::ops::Deref for PublishedEvalEnvironment {
+    type Target = EvalEnvironment<Atom>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.environments[self.index]
+    }
+}
+
 pub(crate) struct PublishedFunctionSnapshot {
     root: Option<FunctionBytecodeRef>,
     data: PublishedFunctionData,
@@ -31,6 +58,16 @@ impl PublishedFunctionSnapshot {
         usize::try_from(index)
             .ok()
             .and_then(|index| self.constants.get(index))
+    }
+
+    pub(crate) fn eval_environment(&self, index: u16) -> Option<PublishedEvalEnvironment> {
+        let index = usize::from(index);
+        self.eval_environments.get(index)?;
+        Some(PublishedEvalEnvironment {
+            owner: self.root.as_ref()?.clone(),
+            environments: self.eval_environments.clone(),
+            index,
+        })
     }
 
     pub(crate) fn root(&self) -> Option<&FunctionBytecodeRef> {
@@ -162,6 +199,38 @@ mod tests {
             [Instruction::PushI32(42), Instruction::Return]
         ));
         assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_ok());
+    }
+
+    #[test]
+    fn eval_view_shares_storage_but_authenticates_the_selected_environment() {
+        use crate::engine::code::function::metadata::EvalVariableEnvironment;
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let owner = publish(&runtime, context.realm);
+        let id = owner.bytecode_id();
+        let environment = EvalEnvironment {
+            scopes: Box::new([]),
+            variable_environment: EvalVariableEnvironment::Global,
+            caller_strict: false,
+            super_call_allowed: false,
+            super_allowed: false,
+        };
+        let view = PublishedEvalEnvironment {
+            owner,
+            environments: Rc::from([environment.clone(), environment.clone()]),
+            index: 0,
+        };
+        let shared = view.clone();
+        assert!(view.same_environment(&shared));
+        let mut another_index = view.clone();
+        another_index.index = 1;
+        assert!(!view.same_environment(&another_index));
+        let mut another_owner = view.clone();
+        another_owner.environments = Rc::from([environment]);
+        assert!(!view.same_environment(&another_owner));
+        drop(view);
+        assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_ok());
+        assert!(!shared.caller_strict);
     }
 
     #[test]

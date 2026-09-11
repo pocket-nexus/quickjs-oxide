@@ -19,7 +19,9 @@ use crate::engine::code::function::metadata::{
     EvalBindingSource, EvalEnvironment, FunctionKind, FunctionMetadata, VariableDefinition,
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
-use crate::engine::code::runtime::{PublishedFunctionData, PublishedFunctionSnapshot};
+use crate::engine::code::runtime::{
+    PublishedEvalEnvironment, PublishedFunctionData, PublishedFunctionSnapshot,
+};
 use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
@@ -72,8 +74,7 @@ pub(crate) const TYPEOF_STATIC_ATOMS: [&str; 8] = [
 /// QuickJS's ordering: parse/publish errors occur before closure capture.
 pub(crate) struct PreparedEvalEnvironment {
     pub(crate) index: u16,
-    pub(crate) caller_bytecode: FunctionBytecodeRef,
-    pub(crate) descriptor: EvalEnvironment<Atom>,
+    pub(crate) descriptor: PublishedEvalEnvironment,
 }
 
 /// Live cells paired with one immutable caller-environment descriptor.
@@ -84,9 +85,7 @@ pub(crate) struct PreparedEvalEnvironment {
 /// actual cells live for the instantiation/execution interval.
 pub(crate) struct MaterializedEvalEnvironment {
     pub(crate) index: u16,
-    /// Retain the owner of descriptor atoms through final instantiation.
-    pub(crate) _caller_bytecode: FunctionBytecodeRef,
-    pub(crate) descriptor: EvalEnvironment<Atom>,
+    pub(crate) descriptor: PublishedEvalEnvironment,
     pub(crate) roots: Box<[VarRefRoot]>,
 }
 
@@ -1066,32 +1065,19 @@ impl RuntimeVmHost {
     ) -> Result<PreparedEvalEnvironment, Error> {
         let descriptor = self
             .executable
-            .eval_environments
-            .get(usize::from(index))
-            .cloned()
+            .eval_environment(index)
             .ok_or_else(|| Error::internal("eval environment index is out of bounds"))?;
-        let caller_bytecode = self.executable.root().cloned().ok_or_else(|| {
-            Error::internal("direct eval frame did not retain its caller bytecode")
-        })?;
         // Publication authenticates the immutable topology and source modes.
         // Check this frame's actual slots before compiling or capturing anything.
         self.validate_eval_frame_bindings(&descriptor, caller_strict)?;
-        Ok(PreparedEvalEnvironment {
-            index,
-            caller_bytecode,
-            descriptor,
-        })
+        Ok(PreparedEvalEnvironment { index, descriptor })
     }
 
     fn materialize_direct_eval_environment(
         &mut self,
         prepared: PreparedEvalEnvironment,
     ) -> Result<MaterializedEvalEnvironment, Error> {
-        let PreparedEvalEnvironment {
-            index,
-            caller_bytecode,
-            descriptor,
-        } = prepared;
+        let PreparedEvalEnvironment { index, descriptor } = prepared;
         let binding_count = descriptor
             .scopes
             .iter()
@@ -1132,7 +1118,6 @@ impl RuntimeVmHost {
         }
         Ok(MaterializedEvalEnvironment {
             index,
-            _caller_bytecode: caller_bytecode,
             descriptor,
             roots: roots.into_boxed_slice(),
         })

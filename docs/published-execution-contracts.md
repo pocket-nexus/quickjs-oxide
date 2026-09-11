@@ -40,6 +40,10 @@ snapshot 复用原 Rc 数组；构造增加固定数量引用，数据空间不�
 
 真实发布到执行的契约测试位于 `src/engine/vm/published_execution_tests.rs`；snapshot 的 Runtime 身份、root 生命周期与只读保证测试位于 `src/engine/code/executable.rs`。发布边界的拒绝规则与变异测试位于 `scripts/checks/binary_object/`。修改这些契约时同步维护对应正例、反例和模块 README。
 
-本轮候选均已明确采用或保留。常量 enum match 是安全取得变体的操作；给 getter 改名或增加种类表不自动消除它，因此沿用单一常量池。更广泛的数值处理器合并、栈表示改造和静态 PC 表需要新的成本与语义依据，不是本轮未完成的隐含交付。
+此前候选处置不等同于全部优化完成；补充实施状态见计划。常量 enum match 是安全取得变体的操作；给 getter 改名或增加种类表不自动消除它，因此沿用单一常量池。更广泛的数值处理器合并、栈表示改造和静态 PC 表需要新的成本与语义依据，不是本轮未完成的隐含交付。
 
 `host_bridge/eval_validation.rs` 只检查实际帧；静态反例由发布器的 `eval_super_capabilities_are_authenticated_at_publication`、`strict_script_global_eval_anchor_does_not_leak_to_strict_functions` 和环境来源/flags 测试维护，不复制第二套测试专用验证器。真实发布到执行的 eval 测试覆盖遮蔽、捕获、嵌套 eval 与 super，另有实际槽缺失和错误 cell 元数据的反例。
+
+## 补充实施：eval 环境共享
+
+`PublishedEvalEnvironment` 私有构造只接受 snapshot 中存在的索引，持有同一环境数组和字节码 root。`PreparedEvalEnvironment` 与 `MaterializedEvalEnvironment` 传递该视图，编译边界的身份检查比较 Rc 数组和索引；不再深拷贝 scopes/bindings 或重新比较结构。编译失败前不捕获、实际帧槽和 cell 元数据检查不变。没有新增每环境的预计算数组或动态查找缓存。

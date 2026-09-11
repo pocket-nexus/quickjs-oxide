@@ -33,3 +33,7 @@
 Value/Function/RegExp 种类 match；属性名字继续使用原有链接 Atom 表。
 错误 Runtime 或 realm 在借出执行视图之前被拒绝。root 的生命周期与不可变性
 反例见 `executable::tests`；发布失败的事务回滚仍由 `runtime` 拥有。
+
+`PublishedEvalEnvironment` 通过受检索引共享已发布环境数组，并持有字节码 root。
+准备、编译和物化只复制 Rc/root 引用；同一环境按数组身份和索引核对，
+不再深拷贝或比较静态 scopes/bindings。动态名字解析与捕获不在此视图缓存。

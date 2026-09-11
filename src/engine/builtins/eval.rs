@@ -129,7 +129,7 @@ impl Runtime {
         })?;
         let (bindings, caller_profile) = self.direct_eval_root_bindings(realm, &environment)?;
         let arguments_forbidden = self
-            .snapshot_function_bytecode(&environment.caller_bytecode)?
+            .snapshot_function_bytecode(environment.descriptor.owner())?
             .metadata
             .arguments_forbidden;
         let function = match self.compile_eval_in_realm(
@@ -153,7 +153,11 @@ impl Runtime {
         // attaches it to caller VarRefs. Preserve that error/GC ordering by
         // invoking the host's capture step only after successful compilation.
         let environment = materialize(environment).map_err(RuntimeError::Engine)?;
-        if environment.index != environment_index || environment.descriptor != expected_descriptor {
+        if environment.index != environment_index
+            || !environment
+                .descriptor
+                .same_environment(&expected_descriptor)
+        {
             return Err(RuntimeError::Invariant(
                 "materialized eval environment disagrees with its prepared descriptor",
             ));
@@ -204,11 +208,11 @@ impl Runtime {
         realm: ContextId,
         environment: &crate::engine::vm::host_bridge::PreparedEvalEnvironment,
     ) -> Result<(Vec<EvalRootBinding<JsString>>, EvalCallerProfile), RuntimeError> {
-        if !environment.caller_bytecode.belongs_to(self) {
+        if !environment.descriptor.owner().belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("direct eval caller bytecode"));
         }
         let caller_realm = self
-            .snapshot_function_bytecode(&environment.caller_bytecode)?
+            .snapshot_function_bytecode(environment.descriptor.owner())?
             .realm;
         if caller_realm != realm {
             return Err(RuntimeError::Invariant(

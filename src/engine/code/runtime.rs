@@ -1,4 +1,6 @@
-pub(crate) use super::executable::{PublishedFunctionData, PublishedFunctionSnapshot};
+pub(crate) use super::executable::{
+    PublishedEvalEnvironment, PublishedFunctionData, PublishedFunctionSnapshot,
+};
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
