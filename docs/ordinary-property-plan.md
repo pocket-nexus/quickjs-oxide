@@ -199,7 +199,7 @@ Test262 fingerprint 变化与实际行为变化分别报告，不能改冻结 re
 引用事务由 RuntimeState 统一管理，发布前失败回滚新引用，发布后清理失败不撤销已发布引用。
 
 
-### 已实现的职责与验收
+### P5 首次验收（9c91663）
 
 - 自有 Data Set：同一次借用中定位、检查 writable、替换已有槽；不预扫原型、不构造旧值 descriptor、不往返 Define。
 - Get/Get-or-missing：共同定位后只提取 value 或 getter；完整 descriptor 只在其消费者需要时物化。
@@ -207,18 +207,18 @@ Test262 fingerprint 变化与实际行为变化分别报告，不能改冻结 re
 - Has/HasOwn/enumerable：共享定位和 flags；snapshot 与实际 GetOwnProperty 对 AutoInit/VarRef 的不同要求保持。
 - 普通原型链：逐层定位，命中即停；特殊分类在进入回调前复用，异 receiver 单独查找。Array/TypedArray 等特殊对象及普通 AutoInit/VarRef 仍保留相应回退，不把剩余成本称为已经全部消失。
 
-最终存储提交以 `9c91663` 为准。独立评审覆盖引用事务、Set 收敛、特殊分类与共享 operation 边界；最后一轮没有阻塞问题。
+P5 首次验收的存储提交为 `9c91663`。独立评审覆盖引用事务、Set 收敛、特殊分类与共享 operation 边界；最后一轮没有阻塞问题。
 Rust 1.88.0 的 workspace 3068 项、实际 QuickJS differential 3072 项、全部 Clippy/feature/doc 组合和 Node/WASM 验收通过；各有原有 ignored 项的两组不计入通过数。
 701 个原有架构反例被拒绝，最终源码扫描和新增 8 个内核反例通过。Test262 focused 6844 项通过，full 102037 项行为向量未变（79982 pass、原有 50 个可运行失败）。
 严格 receipt gate 因源码 fingerprint 变化报告 checksum drift；仅规范化该字段后，TSV/JSONL 完整 SHA-256 与冻结基线相同，未修改冻结 receipts。
 
 基线为 #18 `fec7519`（ELF 构建提交 `c1dfce3` 仅增加设计文档）；普通 release 使用相同 Rust 1.94.1 和构建 flags、CPU 2、Ryzen 7 7840HS。
 已运行 50+8 固定矩阵和 38 项对象诊断，各五轮交错；超过 3% 的疑似退化追加十轮。各优化提交也与直接前序交错对照。
-最终关键耗时变化：prop_read -11.4%，prop_write -67.0%，prop_update -56.0%，value-only Define -25.6%，enumerable -15.1%。
+首次验收关键耗时变化：prop_read -11.4%，prop_write -67.0%，prop_update -56.0%，value-only Define -25.6%，enumerable -15.1%。
 自有写入原型深度 0–256 的新耗时约 66–68 ms，基线约 149–1221 ms（包含 setup；另有 setup-only 控制）。八项固定真实程序耗时几何均值 -10.8%。
-剩余退化如实保留：array_read +6.5%，typed_array_read +7.4%，typed_array_write +2.8%（十轮）。实现计划完成不代表所有特殊对象负载都获益。
+首次验收发现的退化：array_read +6.5%，typed_array_read +7.4%，typed_array_write +2.8%（十轮）。这些退化已在后续修复中消除，见下节。
 
-普通 ELF、构建 receipts、工作负载哈希、完整分布、instructions/cycles 和匹配 ELF 的叶采样保留在忽略的 `target/property-delivery-*` / `target/property-final3-*`；完整数据随本次 PR 描述报告。
+普通 ELF、构建 receipts、工作负载哈希、完整分布、instructions/cycles 和匹配 ELF 的叶采样保留在忽略的 `target/property-delivery-*` / `target/property-final3-*`；当轮本地数据保留用于前后对照。
 首次 pilot、与架构检查重叠的早期 P3 计时，以及 Node 彩色参考输出导致 admission 失败的诊断轮次均不用于结论。差分测试曾遇到并行 feature 构建覆盖 CLI 的测试竞争，已在构建结束后串行重跑通过。
 Rust 1.94.1 的两项 debug native-stack-budget 失败已在未改动 #18 上独立复现；本次完整验收使用仓库固定的 Rust 1.88.0。
 
@@ -228,6 +228,31 @@ Rust 1.94.1 的两项 debug native-stack-budget 失败已在未改动 #18 上独
 python3 scripts/benchmark/ordinary_workloads.py --output target/ordinary-diagnostics
 python3 scripts/benchmark/fixed.py --manifest target/ordinary-diagnostics/manifest.json \
   --engine before=target/property-baseline/release/qjs \
-  --engine after=target/property-final3/release/qjs --repeat 5 --cpu 2 \
+  --engine after=target/property-regfix3/release/qjs --repeat 5 --cpu 2 \
   --output target/ordinary-replay
 ```
+
+
+### Array / TypedArray 退化修复（1cc51bb）
+
+Array 的直接编码稠密索引和真正 Array 的已有自有槽共享 value/getter 选择，不构造完整 descriptor；Array 未命中、需要回退的非直接编码稠密索引、AutoInit/VarRef 仍走原算法。读取扩展不放宽普通 Set/Define 白名单。命名属性不预先解析数组索引，避免 `length` 读取额外开销。
+TypedArray 的边界计算和字节访问复用同一次访问中的 owned buffer token，边界计算抽成纯函数供原有状态查询共享。写入仍在可能执行用户代码的值转换之后重新获取 token，不跨回调缓存状态；所有元素类型共用该机制。
+
+最终 engine 为 `1cc51bb`，仍与 #18 的普通 release 在相同 Rust 1.94.1、flags 和 CPU 2 上比较。重点七项同时与旧 #19 `9c91663` 做十轮轮换顺序三方对照；完整 58 项矩阵及 38 项对象诊断另各做五轮交错，所有样本输出校验通过，计时没有与编译/测试重叠。
+
+| 操作 | 相对 #18 耗时变化（十轮中位数） |
+| --- | ---: |
+| 数组元素读取 | -18.2% |
+| 数组 length 读取 | -28.8% |
+| TypedArray 元素读取 | -12.9% |
+| TypedArray 元素写入 | -18.9% |
+| 普通属性读取 | -13.5% |
+| 普通属性写入 | -65.4% |
+| 普通属性更新 | -54.7% |
+
+完整 50 项微基准耗时几何均值 -8.6%，8 项真实程序 -12.7% 且全部改善。最终 58+38 项没有超过 3% 的退化；不把这一阈值表述为每个负载都更快。五轮 instructions/cycles 对照也确认四项 Array/TypedArray 重点负载的指令数和 cycles 均减少。
+
+最终源码的 Rust 1.88.0 workspace/all-targets + test262-host + pinned QuickJS 对照为 3074 passed、0 failed、1 原有 ignored；包含 14 项属性回归，覆盖稠密/慢 Array、空洞和原型 getter、receiver、命名/Symbol/大索引，以及转换期间 resize/detach 与共享 buffer。13 组 QuickJS fixture、19 组 C oracle、三种 Clippy 配置、15 个 Web/WASM 示例、格式/布局、架构扫描和 16 项架构测试通过。
+全量 Test262 102037 个结果逐项未变（79982 pass、80032 runnable、同样 50 个 runnable failures）。仅规范化源码指纹 `e4f461c60faf9116313fcbcc6fc062d691f308ad4042e7f98d9a9154d21deea3` 后，完整 TSV/JSONL SHA-256 与冻结基线相同；严格 receipt gate 的源码指纹差异和语义结果差异分别处理，没有修改冻结 receipts。
+
+最终普通 ELF、构建 receipts、完整样本/分布、stdout/stderr、计数器与验证记录保留在忽略的 `target/property-regfix3-*`；完整性能表见 [PR #19](https://github.com/pocket-stack/quickjs-oxide/pull/19)。仅内联的尝试已撤回，中间候选的命名属性退化在最终版本中修复；中间版本不混入最终性能表。

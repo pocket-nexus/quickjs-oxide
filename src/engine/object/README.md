@@ -7,6 +7,8 @@
 普通属性读写与定义的职责和验收见[普通对象属性访问内核改造计划](../../../docs/ordinary-property-plan.md)。
 `ordinary_storage` 在一次借用内完成分类、定位与槽更新；`ordinary` 拥有普通对象算法，
 `internal_methods` 拥有特殊对象和 completion 分发。槽索引不跨回调逃逸；只 root 当前操作需要的值。
+真正 Array 的自有槽和直接编码稠密索引共享按需读取；未命中仍进入特殊对象回退，
+Set/Define 的普通对象白名单不因此扩大。TypedArray 字节访问与边界检查的 token 复用由 builtins 负责，不能跨值转换回调。
 
 Dictionary 模式用于普通对象和已转为慢表示的 Array。共享 shape 首次分离，独占 shape
 原地转换并脱离 weak cache。物理槽用 swap-remove，插入顺序由独立双向链接维护；
