@@ -140,10 +140,10 @@ impl VmActivation {
                 .get(self.pc)
                 .ok_or_else(|| Error::internal("bytecode ended without return"))?;
             host.update_active_bytecode_pc(BytecodePc::new(self.pc))?;
-            // Successful fetch proves pc < code.len(), so the next PC is
-            // representable even on malformed test/resume inputs. The next
-            // fetch still checks bounds; jumps and unwind targets stay checked.
-            self.pc += 1;
+            self.pc = self
+                .pc
+                .checked_add(1)
+                .ok_or_else(|| Error::internal("program counter overflow"))?;
 
             // Frame-local operations finish here without a second opcode match.
             // Larger semantic handlers remain separate to bound recursive
