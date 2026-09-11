@@ -482,19 +482,18 @@ impl VmActivation {
     }
 
     pub(in crate::engine::vm) fn pop_pair(&mut self) -> Result<(Value, Value), Error> {
-        let Some(start) = self.stack.len().checked_sub(2) else {
+        if self.stack.len() < 2 {
             // Match sequential-pop failure: consume a lone right operand,
             // construct the error, then release the operand.
             let right = self.pop()?;
             let error = Error::internal("bytecode stack underflow");
             drop(right);
             return Err(error);
-        };
-        // Drain owns exactly two tail slots. Moving both values exhausts it;
-        // dropping the empty drain leaves the prefix and its roots untouched.
-        let mut tail = self.stack.drain(start..);
-        let right = tail.next_back().expect("two tail operands were checked");
-        let left = tail.next_back().expect("one checked tail operand remains");
+        }
+        // The shared bound proves both pops. Neither move can invoke user
+        // code or change the stack except by removing its own operand.
+        let right = self.stack.pop().expect("two operands were checked");
+        let left = self.stack.pop().expect("one checked operand remains");
         Ok((left, right))
     }
 }
