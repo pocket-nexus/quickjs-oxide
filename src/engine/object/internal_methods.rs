@@ -1032,6 +1032,15 @@ impl Runtime {
         value: Value,
         receiver: Value,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
+        if matches!(&receiver, Value::Object(target) if target == object)
+            && let Some(accepted) = self.try_set_ordinary_own_data(object, key, &value)?
+        {
+            return Ok(NativeConversion::Value(if accepted {
+                InternalSetResult::Accepted
+            } else {
+                InternalSetResult::Rejected(PropertySetRejection::ReadOnly)
+            }));
+        }
         if self.proxy_snapshot_if_any(object)?.is_some() {
             return self.proxy_set(realm, object, key, value, receiver);
         }
