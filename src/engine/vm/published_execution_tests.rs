@@ -127,3 +127,22 @@ fn published_lexical_writes_preserve_tdz_const_and_iteration_lifetimes() {
         );
     }
 }
+
+#[test]
+fn published_eval_reuses_topology_but_observes_live_scope_and_super() {
+    for source in [
+        "(function(a){let x=2; const f=()=>eval('x+=a'); f(); return x===5;})(3)",
+        "(function(){let x=1; let o={x:4}; with(o){eval('x+=2')} return x===1&&o.x===6;})()",
+        "(function(){let fs=[]; for(let i=0;i<3;i++){let x=i; fs.push(eval('()=>++x'))} return fs[0]()===1&&fs[1]()===2&&fs[2]()===3;})()",
+        "(function(){class A{m(){return 2}} class B extends A{m(){return eval('super.m()')+1}} return new B().m()===3;})()",
+        "(function(){class A{constructor(){this.n=3}} class B extends A{constructor(){eval('super()')}} return new B().n===3;})()",
+        "(function(){let x=1; eval(\"eval('x=4')\"); return x===4;})()",
+    ] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert!(
+            matches!(context.eval(source).unwrap(), Value::Bool(true)),
+            "{source}"
+        );
+    }
+}
