@@ -443,19 +443,7 @@ impl Runtime {
         };
         let raw = self.raw_property_value(&initialized)?;
         let mut state = self.0.state.borrow_mut();
-        let retained_atoms = state.retain_slot_atoms(&[PropertySlot::Data(raw.clone())])?;
-        let cleanup =
-            match state
-                .heap
-                .replace_object_slot(object_id, slot_index, PropertySlot::Data(raw))
-            {
-                Ok(cleanup) => cleanup,
-                Err(error) => {
-                    state.release_atoms(retained_atoms)?;
-                    return Err(error.into());
-                }
-            };
-        state.apply_cleanup(cleanup)?;
+        state.replace_property_slot(object_id, slot_index, PropertySlot::Data(raw))?;
         drop(state);
         drop(initialized);
         Ok(())
@@ -576,6 +564,9 @@ impl Runtime {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
         self.validate_descriptor_domains(descriptor)?;
+        if let Some(defined) = self.try_define_ordinary_value(object, key, descriptor)? {
+            return Ok(PropertyDefineOutcome::Defined(defined));
+        }
         if descriptor.is_mixed_descriptor() {
             return Err(PropertyDefinitionError::InvalidDescriptor.into());
         }

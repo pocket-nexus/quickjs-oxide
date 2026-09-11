@@ -116,14 +116,7 @@ fn replace_data(
     slot: OwnSlot,
     replacement: PropertySlot,
 ) -> Result<(), RuntimeError> {
-    let atoms = state.retain_slot_atoms(std::slice::from_ref(&replacement))?;
-    match state.heap.replace_object_slot(id, slot.index, replacement) {
-        Ok(cleanup) => state.apply_cleanup(cleanup),
-        Err(error) => {
-            state.release_atoms(atoms)?;
-            Err(error.into())
-        }
-    }
+    state.replace_property_slot(id, slot.index, replacement)
 }
 
 pub(super) enum ReadProbe {
@@ -220,6 +213,51 @@ impl Runtime {
             }
             None => ReadProbe::Missing(self.get_prototype_of(object)?),
         })
+    }
+}
+
+impl Runtime {
+    pub(super) fn try_define_ordinary_value(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &crate::engine::object::OrdinaryPropertyDescriptor,
+    ) -> Result<Option<bool>, RuntimeError> {
+        use crate::engine::object::DescriptorField;
+        let DescriptorField::Present(value) = &descriptor.value else {
+            return Ok(None);
+        };
+        if !matches!(descriptor.writable, DescriptorField::Absent)
+            || !matches!(descriptor.enumerable, DescriptorField::Absent)
+            || !matches!(descriptor.configurable, DescriptorField::Absent)
+            || !matches!(descriptor.get, DescriptorField::Absent)
+            || !matches!(descriptor.set, DescriptorField::Absent)
+        {
+            return Ok(None);
+        }
+        let mut state = self.0.state.borrow_mut();
+        let id = object.object_id();
+        if !matches!(state.heap.object(id)?.payload, ObjectPayload::Ordinary) {
+            return Ok(None);
+        }
+        let Some(slot) = locate(&state, id, key.atom())? else {
+            return Ok(None);
+        };
+        let PropertySlot::Data(old) = &state.heap.object(id)?.slots[slot.index] else {
+            return Ok(None);
+        };
+        let raw = self.raw_property_value(value)?;
+        if !crate::engine::object::property::data_value_update_allowed(
+            slot.flags.configurable,
+            slot.flags.writable,
+            old,
+            &raw,
+            crate::engine::value::collection_key::same_value,
+        ) {
+            return Ok(Some(false));
+        }
+        replace_data(&mut state, id, slot, PropertySlot::Data(raw))?;
+        Ok(Some(true))
     }
 }
 
