@@ -6,7 +6,6 @@ use crate::engine::compiler::model::ir::CallArguments;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
 use crate::engine::compiler::model::ir::FunctionId;
-use crate::engine::compiler::lexer::Identifier;
 use crate::engine::compiler::model::ir::IdentifierAccess;
 use crate::engine::compiler::IdentifierReference;
 use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
@@ -29,17 +28,9 @@ use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::compiler::lexer::TokenKind;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::arrow;
-use crate::engine::compiler::class;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
-use crate::engine::compiler::lowering;
 use crate::engine::compiler::optional_chain;
-use crate::engine::compiler::parser;
 use crate::engine::compiler::private_reference;
-use crate::engine::compiler::resolution;
 use crate::engine::compiler::source_offset;
-use crate::engine::compiler::template;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn consume_statement_terminator(&mut self) -> Result<(), Error> {

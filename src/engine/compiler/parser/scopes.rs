@@ -8,9 +8,6 @@ use crate::engine::compiler::Parser;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::model::ir::SpannedIrOp;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
-use crate::engine::compiler::parser;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn push_scope(&mut self, kind: ScopeKind) -> ScopeId {

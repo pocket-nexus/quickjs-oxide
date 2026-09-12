@@ -14,17 +14,30 @@
 pub mod lexer;
 mod model;
 mod parser;
+#[cfg(test)]
+use model::bindings::EvalDeclarationMode;
+#[cfg(test)]
+use model::bindings::EvalDeclarationTarget;
+#[cfg(test)]
+use model::bindings::EvalDeclarationValue;
+#[cfg(test)]
+use model::bindings::IrAnnexBinding;
+#[cfg(test)]
+use model::ir::CallArguments;
+#[cfg(test)]
+use crate::engine::code::bytecode::ApplyKind;
+#[cfg(test)]
+use crate::engine::compiler::lexer::LexerOptions;
+#[cfg(test)]
+use crate::engine::compiler::lexer::quickjs_simple_lookahead_is_of;
+#[cfg(test)]
+use pseudo_binding::HOME_OBJECT_LOCAL_NAME;
+#[cfg(test)]
+use pseudo_binding::NEW_TARGET_LOCAL_NAME;
+
 use parser::builder::FunctionBuilder;
-use model::bindings::{
-    BindingId, BindingKind, BindingStorage, EvalDeclarationMode, EvalDeclarationTarget,
-    EvalDeclarationValue, IrAnnexBinding, IrBinding, IrEvalDeclaration, IrGlobalDeclaration,
-    IrHoistedFunction, IrProgramAnnexFunction, IrScopedFunction, SyntheticLocal,
-    SyntheticLocalKind, binding_kind_from_closure_flags, binding_kinds_compatible,
-};
-use model::ir::{
-    CallArguments, FunctionId, IdentifierAccess, IdentifierReferenceAccess, IrConstant, IrOp,
-    PrivateFieldAccess, SpannedIrOp,
-};
+use model::bindings::{BindingId, BindingKind, BindingStorage, IrBinding, IrEvalDeclaration, IrGlobalDeclaration, IrHoistedFunction, IrProgramAnnexFunction, IrScopedFunction, SyntheticLocal, SyntheticLocalKind, binding_kind_from_closure_flags, binding_kinds_compatible};
+use model::ir::{FunctionId, IdentifierAccess, IdentifierReferenceAccess, IrConstant, IrOp, PrivateFieldAccess, SpannedIrOp};
 use model::scope::{IrScope, ScopeId, ScopeKind};
 
 mod scope_validation;
@@ -32,11 +45,7 @@ use scope_validation::validate_scope_graph;
 mod resolution;
 #[cfg(test)]
 use resolution::ensure_closure_variable;
-use resolution::{
-    ResolvedBinding, apply_quickjs_late_throw_sites, capture_binding_path, ensure_string_constant,
-    find_or_create_own_binding, insert_hoist_fragment, ordered_hoisted_functions,
-    prepend_hoist_prefix, push_closure_variable, resolve_identifiers,
-};
+use resolution::{ResolvedBinding, apply_quickjs_late_throw_sites, capture_binding_path, ensure_string_constant, find_or_create_own_binding, insert_hoist_fragment, ordered_hoisted_functions, prepend_hoist_prefix, push_closure_variable, resolve_identifiers};
 mod lowering;
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorMessage};
 #[cfg(test)]
@@ -45,30 +54,15 @@ use crate::engine::atom::AtomTable;
 use crate::engine::code::bytecode::DetachedBytecode;
 use crate::source::{SourceLocation, SourceSpan};
 
-use crate::engine::code::bytecode::{
-    ApplyKind, ArgumentsKind, DynamicEnvironmentSource, EvalVariableSource, Instruction,
-    MAX_LOCAL_SLOTS, PrivateNameSource, WithObjectSource, verify_parts,
-};
+use crate::engine::code::bytecode::{ArgumentsKind, DynamicEnvironmentSource, EvalVariableSource, Instruction, MAX_LOCAL_SLOTS, PrivateNameSource, WithObjectSource, verify_parts};
 use crate::engine::code::bytecode_validation::quickjs_copies_defined_argument_count;
 use crate::engine::code::debug::{DebugInfoMode, Pc2LineEntry, Pc2LineTable};
 use crate::source::{QuickJsSourceLocator, SourceOffset};
 
-use crate::engine::code::function::metadata::{
-    ClassInitializerKind, ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName,
-    ConstructorKind, EvalBinding, EvalBindingSource, EvalCallerProfile, EvalCallerVariableTarget,
-    EvalEnvironment, EvalKind, EvalRootBinding, EvalScope, EvalScopeKind, EvalVariableEnvironment,
-    FunctionKind as BytecodeFunctionKind, FunctionMetadata, ParameterArgumentCell,
-    ParameterBodyStorage, ParameterDefaultSource, ParameterEnvironmentLayout, ParameterPatternCopy,
-};
-use crate::engine::code::function::{
-    UnlinkedConstant, UnlinkedFunction, UnlinkedFunctionDebug, UnlinkedVariableDefinition,
-};
+use crate::engine::code::function::metadata::{ClassInitializerKind, ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName, ConstructorKind, EvalBinding, EvalBindingSource, EvalCallerProfile, EvalCallerVariableTarget, EvalEnvironment, EvalKind, EvalRootBinding, EvalScope, EvalScopeKind, EvalVariableEnvironment, FunctionKind as BytecodeFunctionKind, FunctionMetadata, ParameterArgumentCell, ParameterBodyStorage, ParameterDefaultSource, ParameterEnvironmentLayout, ParameterPatternCopy};
+use crate::engine::code::function::{UnlinkedConstant, UnlinkedFunction, UnlinkedFunctionDebug, UnlinkedVariableDefinition};
 use crate::engine::code::module::{ModuleImportAttribute, ModuleRequest, UnlinkedModule};
-use crate::engine::compiler::lexer::{
-    Identifier, Keyword, LexContext, LexError, LexErrorKind, Lexer, LexerOptions, LexicalGoal,
-    NumberKind, NumericRadix, Punctuator, Span, TemplatePartKind, Token, TokenKind,
-    quickjs_simple_lookahead_is_of,
-};
+use crate::engine::compiler::lexer::{Identifier, Keyword, LexContext, LexError, LexErrorKind, Lexer, LexicalGoal, NumberKind, NumericRadix, Punctuator, Span, TemplatePartKind, Token, TokenKind};
 use crate::engine::value::bigint::JsBigInt;
 use crate::engine::value::{JsString, JsStringError, PrimitiveValue as Value};
 use crate::source::text::SourceText;
@@ -79,7 +73,6 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::ops::Range;
-use std::rc::Rc;
 
 mod arrow;
 mod class;
@@ -93,12 +86,7 @@ mod private_reference;
 mod pseudo_binding;
 mod template;
 
-use optional_chain::PendingOptionalChain;
-use pseudo_binding::{
-    ACTIVE_FUNCTION_LOCAL_NAME, HOME_OBJECT_LOCAL_NAME, NEW_TARGET_LOCAL_NAME, PseudoBinding,
-    THIS_LOCAL_NAME, ensure_eval_visible_pseudo_bindings, find_or_create_own_pseudo_binding,
-    function_owns_pseudo_binding, install_pseudo_binding_prologues,
-};
+use pseudo_binding::{ACTIVE_FUNCTION_LOCAL_NAME, PseudoBinding, THIS_LOCAL_NAME, ensure_eval_visible_pseudo_bindings, find_or_create_own_pseudo_binding, function_owns_pseudo_binding, install_pseudo_binding_prologues};
 
 /// Default filename used by the Rust convenience compile/eval APIs.
 pub const DEFAULT_EVAL_FILENAME: &str = "<input>";

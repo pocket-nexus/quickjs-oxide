@@ -1,11 +1,12 @@
 //! Primary expressions and array literals.
 
+use crate::engine::compiler::strict_reserved_identifier;
+use crate::engine::compiler::source_span;
 use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
 use crate::engine::code::function::metadata::EvalKind;
 use crate::engine::compiler::FunctionKind;
-use crate::engine::compiler::lexer::Identifier;
 use crate::engine::compiler::model::ir::IdentifierAccess;
 use crate::engine::compiler::IdentifierContext;
 use crate::engine::code::bytecode::Instruction;
@@ -22,12 +23,7 @@ use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
 use crate::engine::compiler::lexer::TokenKind;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::class;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
-use crate::engine::compiler::lexer;
 use crate::engine::compiler::parse_number;
-use crate::engine::compiler::parser;
 use crate::engine::compiler::source_offset;
 use crate::engine::compiler::validate_identifier;
 

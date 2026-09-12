@@ -1,5 +1,6 @@
 //! For, while and do iteration grammar.
 
+use crate::engine::compiler::source_span;
 use crate::engine::compiler::BreakControlKind;
 use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
@@ -7,7 +8,6 @@ use crate::engine::api::error::ErrorKind;
 use crate::engine::compiler::ForAssignmentDeclaration;
 use crate::engine::compiler::ForAssignmentTargetInfo;
 use crate::engine::compiler::ForIterationKind;
-use crate::engine::compiler::lexer::Identifier;
 use crate::engine::compiler::model::ir::IdentifierAccess;
 use crate::engine::compiler::IdentifierContext;
 use crate::engine::compiler::IdentifierReference;
@@ -26,10 +26,6 @@ use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::compiler::StatementCompletion;
 use crate::engine::compiler::StatementPosition;
 use crate::engine::compiler::lexer::TokenKind;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
-use crate::engine::compiler::lexer;
-use crate::engine::compiler::parser;
 use crate::engine::compiler::relocate_ir_fragment;
 use crate::engine::compiler::source_offset;
 use crate::engine::compiler::validate_identifier_reservation;

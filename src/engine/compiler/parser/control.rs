@@ -5,7 +5,6 @@ use crate::engine::compiler::BreakControlKind;
 use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
-use crate::engine::compiler::lexer::Identifier;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::value::JsString;
@@ -14,9 +13,6 @@ use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::lexer::TokenKind;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::destructuring;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::generator;
 use crate::engine::compiler::source_offset;
 
 impl<'source> Parser<'source> {

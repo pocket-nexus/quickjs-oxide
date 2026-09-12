@@ -1,5 +1,6 @@
 //! Root compilation and consuming parser completion.
 
+use crate::engine::compiler::ModuleImportAttributeChecker;
 use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
 use crate::engine::code::function::metadata::EvalCallerProfile;
@@ -24,14 +25,9 @@ use crate::engine::compiler::RootCompileContext;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
 use crate::engine::compiler::SuperCapabilities;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
 use crate::engine::compiler::install_eval_external_bindings;
 use crate::engine::compiler::lex_error;
-use crate::engine::compiler::lexer;
-use crate::engine::compiler::lowering;
 use crate::engine::compiler::module;
-use crate::engine::compiler::parser;
 use crate::engine::compiler::validate_source_length;
 
 impl<'source> Parser<'source> {

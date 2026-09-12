@@ -1,5 +1,6 @@
 //! Ordered declaration registration and hoisting grammar.
 
+use crate::engine::compiler::source_span;
 use crate::engine::compiler::model::bindings::BindingId;
 use crate::engine::compiler::model::bindings::BindingKind;
 use crate::engine::compiler::model::bindings::BindingStorage;
@@ -29,11 +30,7 @@ use crate::engine::compiler::PreparedScopedFunction;
 use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::bindings::binding_kind_from_closure_flags;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
 use crate::engine::compiler::module;
-use crate::engine::compiler::parser;
-use crate::engine::compiler::resolution;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn register_var_binding(

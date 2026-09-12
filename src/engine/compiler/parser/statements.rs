@@ -1,5 +1,6 @@
 //! Statement and declaration-list grammar.
 
+use crate::engine::compiler::source_span;
 use crate::engine::compiler::model::bindings::BindingKind;
 use crate::engine::compiler::model::bindings::BindingStorage;
 use crate::engine::compiler::BreakControlKind;
@@ -8,10 +9,8 @@ use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
 use crate::engine::compiler::ForAssignmentDeclaration;
 use crate::engine::compiler::FunctionKind;
-use crate::engine::compiler::lexer::Identifier;
 use crate::engine::compiler::model::ir::IdentifierAccess;
 use crate::engine::compiler::IdentifierContext;
-use crate::engine::compiler::IdentifierReference;
 use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
 use crate::engine::compiler::InMode;
 use crate::engine::code::bytecode::Instruction;
@@ -31,13 +30,7 @@ use crate::engine::compiler::model::bindings::SyntheticLocalKind;
 use crate::engine::compiler::lexer::TokenKind;
 use crate::engine::value::PrimitiveValue as Value;
 use crate::engine::compiler::WITH_OBJECT_LOCAL_NAME;
-use crate::engine::compiler::class;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
-use crate::engine::compiler::parser;
 use crate::engine::compiler::source_offset;
-use crate::engine::compiler::template;
-use crate::engine::compiler::tests;
 use crate::engine::compiler::validate_identifier_reservation;
 
 impl<'source> Parser<'source> {

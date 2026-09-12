@@ -47,9 +47,7 @@ impl DerefMut for FunctionBuilder {
 
 use crate::engine::compiler::AnonymousFunctionDefinition;
 use crate::engine::api::error::ErrorKind;
-use crate::engine::compiler::lexer::Identifier;
 use crate::engine::compiler::model::ir::IdentifierAccess;
-use crate::engine::compiler::IdentifierReference;
 use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::model::ir::IrConstant;
@@ -61,9 +59,6 @@ use crate::source::SourceOffset;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::class;
-use crate::engine::compiler::fn;
-use crate::engine::compiler::function;
 use crate::engine::compiler::resolution::insert_hoist_fragment;
 use crate::engine::compiler::source_offset;
 

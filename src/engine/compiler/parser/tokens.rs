@@ -1,12 +1,12 @@
 //! Token lookahead, lexical goals and diagnostic cursor.
 
+use crate::engine::compiler::source_span;
 use crate::engine::api::error::Error;
 use crate::engine::code::function::metadata::EvalKind;
 use crate::engine::compiler::ForHeadDelimiter;
 use crate::engine::compiler::ForIterationKind;
 use crate::engine::compiler::FunctionKind;
 use crate::engine::compiler::lexer::Identifier;
-use crate::engine::compiler::IdentifierReference;
 use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexicalGoal;
@@ -16,16 +16,8 @@ use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::TemplatePartKind;
 use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::lexer::TokenKind;
-use crate::engine::compiler::arrow;
-use crate::engine::compiler::destructuring;
-use crate::engine::compiler::fn;
 use crate::engine::compiler::for_head_regexp_allowed_after;
-use crate::engine::compiler::function;
-use crate::engine::compiler::generator;
 use crate::engine::compiler::lex_error;
-use crate::engine::compiler::lexer;
-use crate::engine::compiler::module;
-use crate::engine::compiler::parser;
 use crate::engine::compiler::quickjs_directive_asi_token;
 use crate::engine::compiler::lexer::quickjs_simple_lookahead_is_of;
 
