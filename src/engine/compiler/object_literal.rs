@@ -1,12 +1,12 @@
 use super::{
-    IdentifierAccess, IdentifierContext, IrConstant, Parser, parse_number, source_offset,
-    source_span, validate_identifier,
+    IdentifierContext, Parser, parse_number, source_offset, source_span, validate_identifier,
 };
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::{DefineMethodKind, Instruction};
 use crate::engine::compiler::lexer::{
     NumberKind, Punctuator, TokenKind, quickjs_simple_lookahead_has_line_terminator,
 };
+use crate::engine::compiler::model::ir::{IdentifierAccess, IrConstant};
 use crate::engine::value::{JsString, PrimitiveValue as Value};
 
 enum ObjectMethodPropertyKey {

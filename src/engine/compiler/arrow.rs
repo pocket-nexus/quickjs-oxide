@@ -50,7 +50,7 @@ impl<'source> Parser<'source> {
         let parent_strict = self.functions[parent].strict;
         let mut parameter_tokens = Vec::new();
         let child = self.functions.len();
-        let parent_scope = self.functions[parent].current_scope;
+        let parent_scope = self.functions[parent].context.current_scope;
         let parent_execution_kind = self.functions[parent].execution_kind;
         let parent_is_class_static_block = self.functions[parent].class_initializer_kind
             == Some(ClassInitializerKind::StaticBlock);
@@ -58,7 +58,7 @@ impl<'source> Parser<'source> {
             super_call_allowed: self.functions[parent].super_call_allowed,
             super_allowed: self.functions[parent].super_allowed,
         };
-        self.functions.push(FunctionIr::new(
+        self.functions.push(FunctionBuilder::new(
             Some(ParentLink {
                 function: parent,
                 definition_scope: parent_scope,
@@ -255,7 +255,7 @@ impl<'source> Parser<'source> {
 
         self.functions[child].strict = strict;
         self.finish_identifier_parameter_environment()?;
-        self.functions[child].in_function_body = true;
+        self.functions[child].context.in_function_body = true;
 
         let range_end = if block_body {
             self.parse_function_body()?;

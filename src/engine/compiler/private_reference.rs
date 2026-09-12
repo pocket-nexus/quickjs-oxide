@@ -28,7 +28,7 @@ impl<'source> Parser<'source> {
         span: Span,
         site: SourceOffset,
     ) -> Result<usize, Error> {
-        let scope = self.current_ir().current_scope;
+        let scope = self.current_ir().context.current_scope;
         self.emit_at(
             IrOp::PrivateField {
                 name,
@@ -82,7 +82,7 @@ impl<'source> Parser<'source> {
             unreachable!("private-in probe changed the current token")
         };
         let name = private_binding_name(&identifier.value);
-        let scope = self.current_ir().current_scope;
+        let scope = self.current_ir().context.current_scope;
         self.advance()?;
         if !matches!(self.current().kind, TokenKind::Keyword(Keyword::In)) {
             return Err(Error::internal(

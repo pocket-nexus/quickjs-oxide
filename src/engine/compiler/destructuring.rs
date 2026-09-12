@@ -307,13 +307,13 @@ impl<'source> Parser<'source> {
         &mut self,
         pattern: BindingPatternKind,
     ) -> Result<(), Error> {
-        let entry_depth = self.current_ir().stack_depth;
+        let entry_depth = self.current_ir().context.stack_depth;
         let initializer_jump = self.emit_instruction(Instruction::Goto(u32::MAX))?;
         let assignment_target = self.current_ir().ops.len();
 
         // The backward edge carries the retained expression result below the
         // separate value consumed by the destructuring pattern.
-        self.current_ir_mut().stack_depth = entry_depth
+        self.current_ir_mut().context.stack_depth = entry_depth
             .checked_add(2)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         self.parse_assignment_pattern(pattern)?;
@@ -322,7 +322,7 @@ impl<'source> Parser<'source> {
 
         let initializer_target = self.current_ir().ops.len();
         self.patch_jump(initializer_jump, initializer_target)?;
-        self.current_ir_mut().stack_depth = entry_depth;
+        self.current_ir_mut().context.stack_depth = entry_depth;
         self.expect_punctuator(Punctuator::Equal)?;
         // QuickJS restores PF_IN_ACCEPTED for a destructuring RHS even when
         // the enclosing expression is an ExpressionNoIn.
@@ -337,10 +337,10 @@ impl<'source> Parser<'source> {
 
         let done_target = self.current_ir().ops.len();
         self.patch_jump(done_jump, done_target)?;
-        self.current_ir_mut().stack_depth = entry_depth + 1;
-        self.current_ir_mut().last_member_reference = None;
-        self.current_ir_mut().last_identifier_reference = None;
-        self.current_ir_mut().last_optional_chain = None;
+        self.current_ir_mut().context.stack_depth = entry_depth + 1;
+        self.current_ir_mut().context.last_member_reference = None;
+        self.current_ir_mut().context.last_identifier_reference = None;
+        self.current_ir_mut().context.last_optional_chain = None;
         Ok(())
     }
 
@@ -411,7 +411,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_catch_binding_pattern(&mut self, pattern: BindingPatternKind) -> Result<(), Error> {
-        let entry_depth = self.current_ir().stack_depth;
+        let entry_depth = self.current_ir().context.stack_depth;
         let expected_depth = entry_depth
             .checked_sub(1)
             .ok_or_else(|| Error::internal("catch binding pattern has no exception value"))?;
@@ -450,12 +450,12 @@ impl<'source> Parser<'source> {
                 source_span(pattern_span),
             ));
         }
-        let entry_depth = self.current_ir().stack_depth;
+        let entry_depth = self.current_ir().context.stack_depth;
         let initializer_jump = self.emit_instruction(Instruction::Goto(u32::MAX))?;
         let assignment_target = self.current_ir().ops.len();
 
         // The backward edge from the initializer carries exactly its value.
-        self.current_ir_mut().stack_depth = entry_depth
+        self.current_ir_mut().context.stack_depth = entry_depth
             .checked_add(1)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         match pattern {
@@ -471,7 +471,7 @@ impl<'source> Parser<'source> {
 
         let initializer_target = self.current_ir().ops.len();
         self.patch_jump(initializer_jump, initializer_target)?;
-        self.current_ir_mut().stack_depth = entry_depth;
+        self.current_ir_mut().context.stack_depth = entry_depth;
         if !self.consume_punctuator(Punctuator::Equal)? {
             if let TokenKind::Punctuator(punctuator) = self.current().kind {
                 return Err(self.syntax_here(format!(
@@ -499,7 +499,7 @@ impl<'source> Parser<'source> {
 
         let done_target = self.current_ir().ops.len();
         self.patch_jump(done_jump, done_target)?;
-        self.current_ir_mut().stack_depth = entry_depth;
+        self.current_ir_mut().context.stack_depth = entry_depth;
         Ok(())
     }
 
@@ -978,7 +978,7 @@ impl<'source> Parser<'source> {
             return Ok(false);
         }
 
-        let value_depth = self.current_ir().stack_depth;
+        let value_depth = self.current_ir().context.stack_depth;
         self.emit_instruction(Instruction::Dup)?;
         self.emit_instruction(Instruction::Undefined)?;
         self.emit_instruction(Instruction::StrictEq)?;
@@ -997,7 +997,7 @@ impl<'source> Parser<'source> {
         let done_jump = self.emit_instruction(Instruction::Goto(u32::MAX))?;
         let initializer_target = self.current_ir().ops.len();
         self.patch_jump(use_initializer, initializer_target)?;
-        self.current_ir_mut().stack_depth = value_depth;
+        self.current_ir_mut().context.stack_depth = value_depth;
         self.emit_instruction(Instruction::Drop)?;
         self.parse_assignment_allow_in()?;
         self.anonymous_function_definition = None;
@@ -1009,7 +1009,7 @@ impl<'source> Parser<'source> {
 
         let done_target = self.current_ir().ops.len();
         self.patch_jump(done_jump, done_target)?;
-        self.current_ir_mut().stack_depth = value_depth - 1;
+        self.current_ir_mut().context.stack_depth = value_depth - 1;
         Ok(true)
     }
 
@@ -1149,7 +1149,7 @@ impl<'source> Parser<'source> {
         &mut self,
     ) -> Result<DestructuringAssignmentReference, Error> {
         self.parse_left_hand_side_expression()?;
-        if self.current_ir().last_optional_chain.is_some() {
+        if self.current_ir().context.last_optional_chain.is_some() {
             return Err(self.syntax_here("invalid destructuring target"));
         }
         if let Some(target) = self.take_tail_identifier_reference()? {
@@ -1225,7 +1225,7 @@ impl<'source> Parser<'source> {
         pattern: BindingPatternKind,
         is_rest: bool,
     ) -> Result<(), Error> {
-        let value_depth = self.current_ir().stack_depth;
+        let value_depth = self.current_ir().context.stack_depth;
         if value_depth == 0 {
             return Err(Error::internal(
                 "nested assignment pattern has no value to consume",
@@ -1254,7 +1254,7 @@ impl<'source> Parser<'source> {
             let initializer_target = self.current_ir().ops.len();
             self.patch_jump(use_initializer, initializer_target)?;
 
-            self.current_ir_mut().stack_depth = value_depth;
+            self.current_ir_mut().context.stack_depth = value_depth;
             self.emit_instruction(Instruction::Drop)?;
             self.parse_assignment_allow_in()?;
             self.anonymous_function_definition = None;
@@ -1266,7 +1266,7 @@ impl<'source> Parser<'source> {
 
             let done_target = self.current_ir().ops.len();
             self.patch_jump(done_jump, done_target)?;
-            self.current_ir_mut().stack_depth = value_depth - 1;
+            self.current_ir_mut().context.stack_depth = value_depth - 1;
         } else {
             self.patch_jump(use_initializer, assignment_target)?;
         }
@@ -1421,7 +1421,7 @@ impl<'source> Parser<'source> {
             return Err(self.syntax_here("invalid destructuring target"));
         }
 
-        let scope = self.current_ir().current_scope;
+        let scope = self.current_ir().context.current_scope;
         let object_environment =
             self.parser_scope_has_authored_with(self.current_function, scope)?;
         let reference = IdentifierReference {
@@ -1694,7 +1694,7 @@ impl<'source> Parser<'source> {
             // getter/next side effect cannot retarget a sloppy `with` or global
             // assignment. Lexical bindings have a fixed cell and need no
             // reference operand.
-            let reference_scope = self.current_ir().current_scope;
+            let reference_scope = self.current_ir().context.current_scope;
             let parameter_lexical = declaration == ForAssignmentDeclaration::Var
                 && site == BindingSite::Parameter
                 && self.current_ir().parameter_scope.is_some();
@@ -2114,7 +2114,7 @@ impl<'source> Parser<'source> {
             }
         }
 
-        let reference_scope = self.current_ir().current_scope;
+        let reference_scope = self.current_ir().context.current_scope;
         let parameter_lexical = declaration == ForAssignmentDeclaration::Var
             && site == BindingSite::Parameter
             && self.current_ir().parameter_scope.is_some();
@@ -2260,7 +2260,7 @@ impl<'source> Parser<'source> {
             ));
         }
 
-        let reference_scope = self.current_ir().current_scope;
+        let reference_scope = self.current_ir().context.current_scope;
         let parameter_lexical = declaration == ForAssignmentDeclaration::Var
             && site == BindingSite::Parameter
             && self.current_ir().parameter_scope.is_some();
@@ -2354,7 +2354,7 @@ impl<'source> Parser<'source> {
         is_rest: bool,
         pattern: BindingPatternKind,
     ) -> Result<(), Error> {
-        let value_depth = self.current_ir().stack_depth;
+        let value_depth = self.current_ir().context.stack_depth;
         if value_depth == 0 {
             return Err(Error::internal(
                 "nested binding pattern has no value to consume",
@@ -2384,7 +2384,7 @@ impl<'source> Parser<'source> {
             self.patch_jump(use_initializer, initializer_target)?;
 
             // The true edge of the undefined test retains the original value.
-            self.current_ir_mut().stack_depth = value_depth;
+            self.current_ir_mut().context.stack_depth = value_depth;
             self.emit_instruction(Instruction::Drop)?;
             self.parse_assignment_allow_in()?;
             // A default attached to a BindingPattern does not perform
@@ -2398,7 +2398,7 @@ impl<'source> Parser<'source> {
 
             let done_target = self.current_ir().ops.len();
             self.patch_jump(done_jump, done_target)?;
-            self.current_ir_mut().stack_depth = value_depth - 1;
+            self.current_ir_mut().context.stack_depth = value_depth - 1;
         } else {
             // The undefined test is deliberately retained as a side-effect-free
             // branch. QuickJS nops it out, but both edges carry the same value
@@ -2469,9 +2469,9 @@ impl<'source> Parser<'source> {
         self.patch_jump(done_jump, done_target)?;
         // The true edge retains the terminal undefined value, whereas the
         // linearly emitted false edge has already consumed its value.
-        self.current_ir_mut().stack_depth = self
+        self.current_ir_mut().context.stack_depth = self
             .current_ir()
-            .stack_depth
+            .context.stack_depth
             .checked_add(1)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         self.emit_instruction(Instruction::Drop)?;

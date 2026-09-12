@@ -18,8 +18,8 @@ impl<'source> Parser<'source> {
         let outer = self.current_function;
         let aggregate = self.ensure_class_initializer(elements, true, span)?;
         let child = self.functions.len();
-        let definition_scope = self.functions[aggregate].current_scope;
-        self.functions.push(FunctionIr::new(
+        let definition_scope = self.functions[aggregate].context.current_scope;
+        self.functions.push(FunctionBuilder::new(
             Some(ParentLink {
                 function: aggregate,
                 definition_scope,

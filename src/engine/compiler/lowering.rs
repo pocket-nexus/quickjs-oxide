@@ -1,21 +1,24 @@
 //! Lower resolved IR to verified bytecode and source debug information.
+use crate::engine::compiler::model::bindings::{BindingKind, BindingStorage};
+use crate::engine::compiler::model::ir::{
+    CallArguments, IdentifierAccess, IdentifierReferenceAccess, IrConstant, IrOp, SpannedIrOp,
+};
+use crate::engine::compiler::model::scope::ScopeKind;
 
 use crate::source::coordinates::QuickJsSourceIndex;
 
 #[cfg(test)]
 use super::DetachedBytecode;
 use super::{
-    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, BindingKind, BindingStorage, BytecodeFunctionKind,
-    CallArguments, ClosureSource, ClosureVariableKind, ClosureVariableName, ConstructorKind,
-    DebugInfoMode, DynamicEnvironmentSource, EVAL_VARIABLE_OBJECT_LOCAL_NAME, Error, ErrorKind,
-    EvalBindingSource, EvalKind, FunctionIr, FunctionKind, FunctionMetadata, FunctionTree,
-    IdentifierAccess, IdentifierReferenceAccess, Instruction, IrConstant, IrOp, JsString,
-    JsStringError, MAX_BYTECODE_STACK, ParameterArgumentCell, ParameterBodyStorage,
-    ParameterEnvironmentLayout, ParameterPatternCopy, Pc2LineEntry, Pc2LineTable,
-    QuickJsSourceLocator, Range, ScopeKind, SourceOffset, SourceText, SpannedIrOp,
-    UnlinkedConstant, UnlinkedFunction, UnlinkedFunctionDebug, UnlinkedVariableDefinition,
-    apply_quickjs_late_throw_sites, quickjs_copies_defined_argument_count, unlinked_primitive,
-    verify_parts,
+    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, BytecodeFunctionKind, ClosureSource, ClosureVariableKind,
+    ClosureVariableName, ConstructorKind, DebugInfoMode, DynamicEnvironmentSource,
+    EVAL_VARIABLE_OBJECT_LOCAL_NAME, Error, ErrorKind, EvalBindingSource, EvalKind, FunctionIr,
+    FunctionKind, FunctionMetadata, FunctionTree, Instruction, JsString, JsStringError,
+    MAX_BYTECODE_STACK, ParameterArgumentCell, ParameterBodyStorage, ParameterEnvironmentLayout,
+    ParameterPatternCopy, Pc2LineEntry, Pc2LineTable, QuickJsSourceLocator, Range, SourceOffset,
+    SourceText, UnlinkedConstant, UnlinkedFunction, UnlinkedFunctionDebug,
+    UnlinkedVariableDefinition, apply_quickjs_late_throw_sites,
+    quickjs_copies_defined_argument_count, unlinked_primitive, verify_parts,
 };
 #[cfg(test)]
 use super::{AtomTable, HashMap, Value};

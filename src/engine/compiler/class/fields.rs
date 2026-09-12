@@ -77,8 +77,8 @@ impl<'source> Parser<'source> {
 
         let parent = self.current_function;
         let child = self.functions.len();
-        let definition_scope = self.current_ir().current_scope;
-        self.functions.push(FunctionIr::new(
+        let definition_scope = self.current_ir().context.current_scope;
+        self.functions.push(FunctionBuilder::new(
             Some(ParentLink {
                 function: parent,
                 definition_scope,

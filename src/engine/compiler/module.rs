@@ -475,7 +475,7 @@ impl<'source> Parser<'source> {
             return Err(self.syntax_here("invalid import binding"));
         }
         if !matches!(self.current_ir().kind, FunctionKind::Module)
-            || self.current_ir().current_scope != self.current_ir().body_scope
+            || self.current_ir().context.current_scope != self.current_ir().body_scope
         {
             return Err(Error::internal(
                 "module import binding escaped the module body",
@@ -512,7 +512,7 @@ impl<'source> Parser<'source> {
             }
         };
 
-        let scope = self.current_ir().current_scope;
+        let scope = self.current_ir().context.current_scope;
         if let Some(existing) = self.current_ir().binding_id_in_scope(scope, name) {
             let record = self
                 .current_ir_mut()
@@ -527,7 +527,7 @@ impl<'source> Parser<'source> {
             record.kind = BindingKind::Lexical { is_const: true };
         } else {
             let function = self.current_ir_mut();
-            function.add_binding(
+            function.ir.add_binding(
                 scope,
                 scope,
                 name.to_owned(),
@@ -715,7 +715,7 @@ impl<'source> Parser<'source> {
         }
         self.module_declaration_export = export;
         self.module_declaration_export_target =
-            Some((self.current_function, self.current_ir().current_scope));
+            Some((self.current_function, self.current_ir().context.current_scope));
         let result = parse(self);
         self.module_declaration_export = ModuleDeclarationExport::None;
         self.module_declaration_export_target = None;
@@ -724,7 +724,7 @@ impl<'source> Parser<'source> {
 
     pub(super) fn current_module_declaration_export(&self) -> ModuleDeclarationExport {
         if self.module_declaration_export_target
-            == Some((self.current_function, self.current_ir().current_scope))
+            == Some((self.current_function, self.current_ir().context.current_scope))
         {
             self.module_declaration_export
         } else {
@@ -737,7 +737,7 @@ impl<'source> Parser<'source> {
         name: &str,
         declaration: ModuleDeclarationOrigin,
     ) -> Result<ModuleBindingId, Error> {
-        let declaration_scope = self.current_ir().current_scope;
+        let declaration_scope = self.current_ir().context.current_scope;
         let module = self.module_ir_mut()?;
         if let Some(id) = module.binding_id(name) {
             let first_declaration = module.binding(id)?.declaration.is_none();
@@ -885,10 +885,10 @@ impl<'source> Parser<'source> {
         if source_name.is_some()
             && self
                 .current_ir()
-                .binding_id_from_scope(self.current_ir().current_scope, &name)
+                .binding_id_from_scope(self.current_ir().context.current_scope, &name)
                 .is_some_and(|(_, binding)| {
                     let binding = &self.current_ir().bindings[binding.0];
-                    if binding.declaration_scope != self.current_ir().current_scope {
+                    if binding.declaration_scope != self.current_ir().context.current_scope {
                         return false;
                     }
                     let BindingStorage::Module(module_binding) = binding.storage else {
@@ -898,7 +898,7 @@ impl<'source> Parser<'source> {
                         .as_ref()
                         .and_then(|module| module.bindings.get(module_binding.0))
                         .and_then(|binding| binding.declaration_scope)
-                        .is_some_and(|scope| scope == self.current_ir().current_scope)
+                        .is_some_and(|scope| scope == self.current_ir().context.current_scope)
                 })
         {
             return Err(Error::syntax(
@@ -938,7 +938,7 @@ impl<'source> Parser<'source> {
             .binding_in_scope(self.current_ir().var_scope, &name)
         {
             if first_declaration {
-                let declaration_scope = self.current_ir().current_scope;
+                let declaration_scope = self.current_ir().context.current_scope;
                 let binding_record = self
                     .current_ir_mut()
                     .bindings
@@ -957,9 +957,9 @@ impl<'source> Parser<'source> {
             }
         } else {
             let function = self.current_ir_mut();
-            function.add_binding(
-                function.var_scope,
-                function.current_scope,
+            function.ir.add_binding(
+                function.ir.var_scope,
+                function.context.current_scope,
                 name.clone(),
                 BindingStorage::Module(binding),
                 BindingKind::Normal,

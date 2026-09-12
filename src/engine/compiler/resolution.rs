@@ -1,16 +1,22 @@
 //! Resolve lexical names, declaration hoists, eval environments, and closure captures in the IR.
+use crate::engine::compiler::model::bindings::{
+    BindingKind, BindingStorage, EvalDeclarationTarget, EvalDeclarationValue, IrHoistedFunction,
+    binding_kind_from_closure_flags, binding_kinds_compatible,
+};
+use crate::engine::compiler::model::ir::{
+    FunctionId, IdentifierAccess, IdentifierReferenceAccess, IrConstant, IrOp, PrivateFieldAccess,
+    SpannedIrOp,
+};
+use crate::engine::compiler::model::scope::{ScopeId, ScopeKind};
 
 use super::{
-    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, ArgumentsKind, BindingKind, BindingStorage, ClosureSource,
-    ClosureVariable, ClosureVariableKind, ClosureVariableName, DynamicEnvironmentSource,
+    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, ArgumentsKind, ClosureSource, ClosureVariable,
+    ClosureVariableKind, ClosureVariableName, DynamicEnvironmentSource,
     EVAL_VARIABLE_OBJECT_LOCAL_NAME, Error, ErrorKind, EvalBinding, EvalBindingSource,
-    EvalCallerVariableTarget, EvalDeclarationTarget, EvalDeclarationValue, EvalEnvironment,
-    EvalKind, EvalScope, EvalScopeKind, EvalVariableEnvironment, EvalVariableSource, FunctionId,
-    FunctionIr, FunctionKind, FunctionTree, HashMap, IdentifierAccess, IdentifierReferenceAccess,
-    Instruction, IrConstant, IrHoistedFunction, IrOp, JsString, MAX_LOCAL_VARIABLES,
-    PrivateFieldAccess, PseudoBinding, ScopeId, ScopeKind, SourceOffset, Span, SpannedIrOp, Value,
-    WITH_OBJECT_LOCAL_NAME, WithObjectSource, binding_kind_from_closure_flags,
-    binding_kinds_compatible, ensure_eval_visible_pseudo_bindings,
+    EvalCallerVariableTarget, EvalEnvironment, EvalKind, EvalScope, EvalScopeKind,
+    EvalVariableEnvironment, EvalVariableSource, FunctionIr, FunctionKind, FunctionTree, HashMap,
+    Instruction, JsString, MAX_LOCAL_VARIABLES, PseudoBinding, SourceOffset, Span, Value,
+    WITH_OBJECT_LOCAL_NAME, WithObjectSource, ensure_eval_visible_pseudo_bindings,
     find_or_create_own_pseudo_binding, install_pseudo_binding_prologues, module, private_reference,
     source_span, validate_scope_graph,
 };

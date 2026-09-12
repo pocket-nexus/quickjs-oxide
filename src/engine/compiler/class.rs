@@ -531,8 +531,8 @@ impl<'source> Parser<'source> {
     ) -> Result<(u32, FunctionId), Error> {
         let parent = self.current_function;
         let child = self.functions.len();
-        let definition_scope = self.current_ir().current_scope;
-        self.functions.push(FunctionIr::new(
+        let definition_scope = self.current_ir().context.current_scope;
+        self.functions.push(FunctionBuilder::new(
             Some(ParentLink {
                 function: parent,
                 definition_scope,
@@ -579,8 +579,8 @@ impl<'source> Parser<'source> {
     ) -> Result<(u32, FunctionId), Error> {
         let parent = self.current_function;
         let child = self.functions.len();
-        let definition_scope = self.current_ir().current_scope;
-        self.functions.push(FunctionIr::new(
+        let definition_scope = self.current_ir().context.current_scope;
+        self.functions.push(FunctionBuilder::new(
             Some(ParentLink {
                 function: parent,
                 definition_scope,

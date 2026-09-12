@@ -1,12 +1,14 @@
 use super::{
-    BindingKind, BindingStorage, FunctionId, FunctionKind, FunctionTree, IrOp, MAX_LOCAL_VARIABLES,
-    ResolvedBinding, ScopeId, SpannedIrOp, find_or_create_own_binding, prepend_hoist_prefix,
-    source_span,
+    FunctionKind, FunctionTree, MAX_LOCAL_VARIABLES, ResolvedBinding, find_or_create_own_binding,
+    prepend_hoist_prefix, source_span,
 };
 use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::function::metadata::EvalKind;
 use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::model::bindings::{BindingKind, BindingStorage};
+use crate::engine::compiler::model::ir::{FunctionId, IrOp, SpannedIrOp};
+use crate::engine::compiler::model::scope::ScopeId;
 
 // QuickJS `JS_ATOM_this`, `JS_ATOM_new_target`, and `JS_ATOM_home_object`
 // pseudo variables. Arrow functions never own these bindings: the resolver

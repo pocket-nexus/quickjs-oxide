@@ -18,7 +18,7 @@ impl<'source> Parser<'source> {
         span: Span,
         kind: BindingKind,
     ) -> Result<u16, Error> {
-        let scope = self.current_ir().current_scope;
+        let scope = self.current_ir().context.current_scope;
         if self
             .current_ir()
             .scopes
@@ -73,7 +73,7 @@ impl<'source> Parser<'source> {
                 ));
             }
         };
-        let scope = self.current_ir().current_scope;
+        let scope = self.current_ir().context.current_scope;
         let existing = self.current_ir().binding_id_in_scope(scope, name);
 
         let primary_local = if let Some(binding_id) = existing {
@@ -172,7 +172,7 @@ impl<'source> Parser<'source> {
             )))?;
             self.emit_anonymous_set_name(definition, Instruction::SetName(name_constant))?;
         }
-        let scope = self.current_ir().current_scope;
+        let scope = self.current_ir().context.current_scope;
         self.emit_private_field_operation(
             name.clone(),
             span,
@@ -292,7 +292,7 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let first_token = lexer.next_token().unwrap();
         let source_span = first_token.span;
-        let root = FunctionIr::new(
+        let root = FunctionBuilder::new(
             None,
             FunctionKind::Script,
             FunctionSourceInfo {
@@ -358,11 +358,11 @@ mod tests {
         let root = &parser.functions[0];
         assert_eq!(root.locals.len(), MAX_LOCAL_VARIABLES);
         assert!(
-            root.binding_id_in_scope(root.current_scope, "#value")
+            root.binding_id_in_scope(root.context.current_scope, "#value")
                 .is_some()
         );
         assert!(
-            root.binding_id_in_scope(root.current_scope, "#value<set>")
+            root.binding_id_in_scope(root.context.current_scope, "#value<set>")
                 .is_none()
         );
     }

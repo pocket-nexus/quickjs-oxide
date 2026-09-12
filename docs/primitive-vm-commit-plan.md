@@ -8,6 +8,7 @@
 
 - S01 进行中：共享 scope、binding 与线性操作模型已迁入 `compiler/model/{scope,bindings,ir}.rs`，保持原有字段、声明顺序、栈效果与绑定判定；resolution/lowering 等已有显式导入的消费者改从模型所有者导入。类型可见性限于 compiler，未增加公有 API。
 - 本次是结构移动，复用现有编译器行为测试，不新增文件形状镜像测试。跨模块现状同步到 architecture.md。
+- 本轮验证：`cargo test -p quickjs-oxide --lib engine::compiler:: -- --test-threads=2` 为 298 passed、0 failed；`python3 scripts/checks/check-source-layout.py` 为 442 reachable Rust files；`bash scripts/checks/check-binary-object-boundary.sh --scan-only .` 退出 0。边界扫描不等于完整 mutation/canary 验收。
 - S01 未完成项：FunctionIr 与 parser context/builder 生命周期分离、其余生产通配导入清理、flow/relocation 与可选分析预算核对、诊断入口和完整 oracle 验收。S02–S10 均未开始；不能把模型拆分视为新执行核心覆盖。
 
 ## 1. 提交顺序与关口
