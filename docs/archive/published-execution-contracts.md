@@ -1,6 +1,8 @@
 # 已发布代码与 VM 执行契约
 
-本轮基于 PR #17 的 `b11f2be`，在同一 PR 中按发布所有权、建帧、绑定、常量/捕获和分派拆分提交。[实施计划](published-execution-plan.md)仍是范围与后续工作的入口。
+> 历史归档（2026-09-12）：下文状态、任务和契约属于文中记录的旧 PR / 源码基线，不作为当前实施指令。当前设计见[架构说明](../architecture.md)和[栈 VM 计划](../primitive-vm-plan.md)；本次归档没有更新性能或验证结果。
+
+本轮基于 PR #17 的 `b11f2be`，在同一 PR 中按发布所有权、建帧、绑定、常量/捕获和分派拆分提交。[实施计划](published-execution-plan.md)记录该阶段的范围与交付情况。
 
 ## 采用的抽象
 
@@ -38,7 +40,7 @@ snapshot 复用原 Rc 数组；构造增加固定数量引用，数据空间不�
 
 ## 测试与后续修改入口
 
-真实发布到执行的契约测试位于 `src/engine/vm/published_execution_tests.rs`；snapshot 的 Runtime 身份、root 生命周期与只读保证测试位于 `src/engine/code/executable.rs`。发布边界的拒绝规则与变异测试位于 `scripts/checks/binary_object/`。修改这些契约时同步维护对应正例、反例和模块 README。
+真实发布到执行的契约测试位于 `src/engine/vm/published_execution_tests.rs`；snapshot 的 Runtime 身份、root 生命周期与只读保证测试位于 `src/engine/code/executable.rs`。发布边界的拒绝规则与变异测试位于 `scripts/checks/binary_object/`。修改这些契约时同步维护对应正例、反例和源码契约。
 
 此前候选处置不等同于全部优化完成；补充实施状态见计划。常量 enum match 是安全取得变体的操作；给 getter 改名或增加种类表不自动消除它，因此沿用单一常量池。本轮不重写栈表示或新增静态 PC 表，静态分支、双操作数范围判断及深度查询已按计划实现；最终集成状态以计划为准。
 

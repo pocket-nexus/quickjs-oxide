@@ -1,19 +1,21 @@
 # 数据结构与复杂度改进计划
 
+> 历史归档（2026-09-12）：下文状态、任务和契约属于文中记录的旧 PR / 源码基线，不作为当前实施指令。当前设计见[架构说明](../architecture.md)和[栈 VM 计划](../primitive-vm-plan.md)；本次归档没有更新性能或验证结果。
+
 状态：计划内实现与验证已完成，集中在 stacked PR #17（base 为 #15 的 `perf/batch-builtin-initialization` 分支），待 PR 评审。S08、S17、S18 按新证据细化了表示/优化范围，具体边界见下文及报告。
 
 当前进展（2026-09-11）：
 
 - S01：22 类固定工作量生成器、独立输出校验、失败样本保留和 12 项工具测试已完成。
-- S02–S04：Map/Set 共用 SameValueZero 键索引；存活记录即时回收，暂停游标不保留历史墓碑。见[键查找](reports/indexed-collections.md)和[记录回收](reports/collection-records.md)。键定位平均 O(1)，顺序维护仍为 O(log n)，不宣称所有操作 O(1)。
-- S05/S06：同 flags 写入只替换单槽；dictionary 采用紧凑槽与独立插入顺序，避免逐次复制布局。见[槽更新](reports/property-slot-update.md)和[dictionary](reports/dictionary-objects.md)。
-- S07/S08：整数键直达、稀疏截断批处理、慢/带洞 Array 复用 dictionary，保留 QuickJS 的表示敏感语义。见[截断](reports/sparse-array-truncation.md)和[带洞数组](reports/holey-array-dictionary.md)。
-- S09–S11：模块名称/绑定槽、作用域名称和字符串常量建立专用索引，并共享只读模块槽。源码坐标索引作为实测后的补充步骤完成。见[模块](reports/module-indexes.md)、[作用域](reports/compiler-scope-index.md)、[常量](reports/compiler-constant-index.md)及[源码坐标](reports/source-coordinate-index.md)。
-- S12：平坦字符串操作避免反复构造表示；长键使用有界弱身份 hash memo，短键不分配缓存。见[平坦字符串](reports/flat-strings.md)和[哈希缓存](reports/string-hash-memo.md)。
-- S13–S16：TypedArray 数字索引、Arguments/RegExp 批量发布、0/1/2 条引用边事务完成。见[累计测量](reports/integer-keys-builtin-batches.md)，不把该累计收益归给单个提交。
+- S02–S04：Map/Set 共用 SameValueZero 键索引；存活记录即时回收，暂停游标不保留历史墓碑。见[键查找](../reports/indexed-collections.md)和[记录回收](../reports/collection-records.md)。键定位平均 O(1)，顺序维护仍为 O(log n)，不宣称所有操作 O(1)。
+- S05/S06：同 flags 写入只替换单槽；dictionary 采用紧凑槽与独立插入顺序，避免逐次复制布局。见[槽更新](../reports/property-slot-update.md)和[dictionary](../reports/dictionary-objects.md)。
+- S07/S08：整数键直达、稀疏截断批处理、慢/带洞 Array 复用 dictionary，保留 QuickJS 的表示敏感语义。见[截断](../reports/sparse-array-truncation.md)和[带洞数组](../reports/holey-array-dictionary.md)。
+- S09–S11：模块名称/绑定槽、作用域名称和字符串常量建立专用索引，并共享只读模块槽。源码坐标索引作为实测后的补充步骤完成。见[模块](../reports/module-indexes.md)、[作用域](../reports/compiler-scope-index.md)、[常量](../reports/compiler-constant-index.md)及[源码坐标](../reports/source-coordinate-index.md)。
+- S12：平坦字符串操作避免反复构造表示；长键使用有界弱身份 hash memo，短键不分配缓存。见[平坦字符串](../reports/flat-strings.md)和[哈希缓存](../reports/string-hash-memo.md)。
+- S13–S16：TypedArray 数字索引、Arguments/RegExp 批量发布、0/1/2 条引用边事务完成。见[累计测量](../reports/integer-keys-builtin-batches.md)，不把该累计收益归给单个提交。
 - S17：依据新 profile 实现 Number 栈原位更新，保留 locals/TDZ/字节码验证检查；局部 A/B 改善约 7%–9%。
-- S18：普通 Call/CallMethod 借用 caller 参数窗口，callee 仍拥有帧；未引入帧池。局部调用实测基本持平，只确认减少临时分配。S17/S18 的范围细化与证据见 [VM 报告](reports/vm-stack-and-call.md)。
-- S19：正确性、构建和架构门禁已完成；[396 个规模样本](reports/data-structure-scaling-final.md)及[522 个固定 microbench/V8 样本](reports/data-structure-fixed-final.md)全部通过。[原始自校准 harness](reports/data-structure-adaptive-final.md)、[36 个硬件计数样本和 6 份最终 profile](reports/data-structure-hardware-final.md)已保留。原始合并 V8 的两版 Oxide 均触及 90 秒上限，不产生可比较分数；固定八项均通过。
+- S18：普通 Call/CallMethod 借用 caller 参数窗口，callee 仍拥有帧；未引入帧池。局部调用实测基本持平，只确认减少临时分配。S17/S18 的范围细化与证据见 [VM 报告](../reports/vm-stack-and-call.md)。
+- S19：正确性、构建和架构门禁已完成；[396 个规模样本](../reports/data-structure-scaling-final.md)及[522 个固定 microbench/V8 样本](../reports/data-structure-fixed-final.md)全部通过。[原始自校准 harness](../reports/data-structure-adaptive-final.md)、[36 个硬件计数样本和 6 份最终 profile](../reports/data-structure-hardware-final.md)已保留。原始合并 V8 的两版 Oxide 均触及 90 秒上限，不产生可比较分数；固定八项均通过。
 
 最终源码验证覆盖上述所有引擎改动。各步骤报告保留当时的提交、局部验证和中间退化记录；其中的历史“待验证”状态不表示当前仍缺少对应兼容性验收。
 
@@ -24,7 +26,7 @@
 逐字节一致。没有新增结果差异，也没有修改或推广冻结 receipts。
 工作区测试、profiling/test262-host 组合、CI 固定 Rust 1.88 的全部 lint、原生 release
 及 Node/WASM 验收通过。完整架构反例门禁通过（694 个错误变体全部拒绝）；综合性能复测完成。
-详见[验证证据](reports/data-structure-validation.json)。
+详见[验证证据](../reports/data-structure-validation.json)。
 
 最终处置：没有留下计划内未完成的实现项。没有加入帧池、没有移除 locals/TDZ/发布验证，
 也没有新增另一套带洞数组存储；这些是实测后的范围细化，不是已实现功能。
@@ -59,7 +61,7 @@ Issue #16 中 TypedArray、平坦字符串、Arguments/RegExp 批量构建、VM�
 
 ## 2. 必须遵守的维护原则
 
-沿用 [职责边界](responsibility-boundaries.md) 和 [工作区架构](architecture.md)。不新建独立容器 crate，不建立第二套 Value、Runtime 或 GC 生命周期。保持 `unsafe_code = "forbid"`。
+职责边界的当前入口为[工作区架构](../architecture.md)。不新建独立容器 crate，不建立第二套 Value、Runtime 或 GC 生命周期。保持 `unsafe_code = "forbid"`。
 
 1. **按语义职责组织模块。** 比较规则、存储修改、JS 回调和测量工具各有明确拥有者。不能把实现堆入通用 utils，也不让运行时巨型方法继续膨胀。
 2. **抽象必须有真实使用者。** Map/Set 共享键规则和必要存储机制；作用域、模块、shape 分别拥有自己的索引。名字相似不意味着应共用一个泛型容器。
@@ -180,11 +182,11 @@ S17/S18 在开始时重采样并缩小到仍有证据的热点。若原假设不
 
 测试覆盖公开行为与内部关键不变量，避免断言辅助函数调用顺序、私有字段排布等无关实现细节。允许对索引与记录一致性、代际 ID、引用回滚等存储契约做直接单元测试。加入随机操作序列与可复现 seed；与简单语义模型或固定 QuickJS 对照，失败时保留最小复现序列。
 
-每步执行相关 Rust/CLI oracle 和 focused Test262；共享 heap、object、VM 变更须扩展到受影响的全部子系统。集成阶段按 [Test262 指南](test262.md) 运行完整固定向量，并运行仓库现有格式、lint、职责/源码布局检查以及原生/Web 构建检查。不假定基线零失败，不修改 frozen 结果来掩盖新回归。
+每步执行相关 Rust/CLI oracle 和 focused Test262；共享 heap、object、VM 变更须扩展到受影响的全部子系统。集成阶段按 [Test262 指南](../test262.md) 运行完整固定向量，并运行仓库现有格式、lint、职责/源码布局检查以及原生/Web 构建检查。不假定基线零失败，不修改 frozen 结果来掩盖新回归。
 
 ### 性能与空间
 
-按 [性能工具说明](../scripts/benchmark/README.md) 构建并保留 source/binary/toolchain/workload 身份。正式测量串行、普通构建关闭 profiling，前后版本交错重复；CPU 采样单独进行。先用 pilot 选择足够长的固定工作量，再冻结正式 N，记录分布与指令数。
+按 [性能工具说明](../../scripts/benchmark/README.md) 构建并保留 source/binary/toolchain/workload 身份。正式测量串行、普通构建关闭 profiling，前后版本交错重复；CPU 采样单独进行。先用 pilot 选择足够长的固定工作量，再冻结正式 N，记录分布与指令数。
 
 分别报告容器规模、键长度、对象宽度和历史记录数的影响。哈希查找平均 O(1) 指相对于元素数；首次字符串/BigInt 哈希仍依赖键大小，扩容是摊销成本。排序模块导出名的必要 O(E log E) 不要求消除。
 
@@ -199,7 +201,7 @@ S17/S18 在开始时重采样并缩小到仍有证据的热点。若原假设不
 ### 开始一个步骤
 
 1. 核对本文状态、当前提交、已合入工作和依赖步骤的证据。
-2. 阅读目标模块 README、相关测试和本文对应不变量；以符号名定位当前实现，避免依赖历史行号。
+2. 阅读目标模块源码契约、相关测试和本文对应不变量；以符号名定位当前实现，避免依赖历史行号。
 3. 写清该步骤的具体行为、所选表示、复杂度、所有权、回调/重入边界，以及考虑后未选方案的原因。
 4. 指定负责维护的模块与共享文件；依赖独立不等于可以同时修改同一 heap/collections 或 object 模块。
 
@@ -224,7 +226,7 @@ S01 之后可分别推进集合、属性、模块和编译器工作线。共享�
 
 如果步骤必须跨会话，记录最小可复现命令、当前失败、正在运行的任务与可安全继续的位置，不能只写“继续优化”。报告中的“测试存在”“测试已运行”“测试通过”必须严格区分。
 
-新共享模块的 README 说明：拥有/不拥有的状态、主要调用者、允许的依赖、所有权和错误契约、哪些函数可能执行用户代码、复杂度和验证入口。通过模块私有字段与类型尽量强制不变量，不把可靠性只寄托在 agent 每次都阅读长文档上。
+共享模块的局部契约说明：拥有/不拥有的状态、主要调用者、允许的依赖、所有权和错误契约、哪些函数可能执行用户代码、复杂度和验证入口。通过模块私有字段与类型尽量强制不变量，不把可靠性只寄托在 agent 每次都阅读长文档上。
 
 ## 7. 计划收口标准
 
@@ -239,12 +241,12 @@ S01 之后可分别推进集合、属性、模块和编译器工作线。共享�
 
 | 修改目标 | 首先阅读的拥有者 | 修改时必须保留的契约 |
 | --- | --- | --- |
-| Map/Set 键定位 | [collection_key.rs](../src/engine/value/collection_key.rs)、[collection_index.rs](../src/engine/heap/collection_index.rs) | SameValueZero 与哈希一致；索引不拥有额外 GC 边；完整字符串比较仍处理碰撞 |
-| 集合增删和迭代 | [collection_records.rs](../src/engine/heap/collection_records.rs)、[collections.rs](../src/engine/heap/collections.rs) | ID 不复用，clear 保留时钟；暂停游标不要求保留墓碑；引用事务先验证后发布 |
-| 对象/慢 Array 布局 | [dictionary.rs](../src/engine/object/dictionary.rs)、[dictionary_order.rs](../src/engine/object/dictionary_order.rs)、[dictionary_storage.rs](../src/engine/heap/dictionary_storage.rs) | 物理槽与语义顺序不同；共享 shape 首次分离；跨用户代码调用不能缓存槽号 |
-| 新对象批量发布 | [layout.rs](../src/engine/heap/runtime/layout.rs) | 调用者保留输入 roots；共享入口只负责 shape/slot 所有权与回滚，不接管 Arguments/RegExp 语义 |
-| 数字属性键 | [atom/runtime.rs](../src/engine/atom/runtime.rs) | 精确整数索引与一般 JS Number 转字符串分开；字符串 "-0" 不能当数字 -0 |
-| 调用参数窗口 | [frame_execution.rs](../src/engine/vm/frame_execution.rs)、[host_bridge.rs](../src/engine/vm/host_bridge.rs) | caller 借出参数，callee 仍拥有帧；所有完成/错误路径清理后缀并保留下层操作数 |
+| Map/Set 键定位 | [collection_key.rs](../../src/engine/value/collection_key.rs)、[collection_index.rs](../../src/engine/heap/collection_index.rs) | SameValueZero 与哈希一致；索引不拥有额外 GC 边；完整字符串比较仍处理碰撞 |
+| 集合增删和迭代 | [collection_records.rs](../../src/engine/heap/collection_records.rs)、[collections.rs](../../src/engine/heap/collections.rs) | ID 不复用，clear 保留时钟；暂停游标不要求保留墓碑；引用事务先验证后发布 |
+| 对象/慢 Array 布局 | [dictionary.rs](../../src/engine/object/dictionary.rs)、[dictionary_order.rs](../../src/engine/object/dictionary_order.rs)、[dictionary_storage.rs](../../src/engine/heap/dictionary_storage.rs) | 物理槽与语义顺序不同；共享 shape 首次分离；跨用户代码调用不能缓存槽号 |
+| 新对象批量发布 | [layout.rs](../../src/engine/heap/runtime/layout.rs) | 调用者保留输入 roots；共享入口只负责 shape/slot 所有权与回滚，不接管 Arguments/RegExp 语义 |
+| 数字属性键 | [atom/runtime.rs](../../src/engine/atom/runtime.rs) | 精确整数索引与一般 JS Number 转字符串分开；字符串 "-0" 不能当数字 -0 |
+| 调用参数窗口 | [frame_execution.rs](../../src/engine/vm/frame_execution.rs)、[host_bridge.rs](../../src/engine/vm/host_bridge.rs) | caller 借出参数，callee 仍拥有帧；所有完成/错误路径清理后缀并保留下层操作数 |
 
 常用定位命令：`cargo test --lib collection`、`cargo test --lib dictionary`、
 `cargo test --lib sparse_truncation`、`cargo test --lib borrowed_call_window`。

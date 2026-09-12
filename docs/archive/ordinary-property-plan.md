@@ -1,5 +1,7 @@
 # 普通对象属性访问内核改造计划
 
+> 历史归档（2026-09-12）：下文状态、任务和契约属于文中记录的旧 PR / 源码基线，不作为当前实施指令。当前设计见[架构说明](../architecture.md)和[栈 VM 计划](../primitive-vm-plan.md)；本次归档没有更新性能或验证结果。
+
 状态：P0–P5 已实现并完成验收。源码核对基线 `fec7519`（2026-09-11）。
 面向实施者和评审者：按本文迁移普通属性读、写、定义及元数据查询，并验证语义、所有权和实际性能。
 来源为 benchmark issue #16 的对象属性问题；历史热点仅用于选方向，不能作为当前收益预测。
@@ -131,7 +133,7 @@ PropertyKey 转换和 ToPropertyDescriptor 在外部语义入口完成，内核�
 | P2 普通链与 accessor Set 收敛 | 扩展同一算法处理缺失、继承、异 receiver 和 accessor；特殊对象仍分派 | 删除 `ordinary_set_fast_path_available` 和替代掉的普通 Set 分支；保留一个普通算法和特殊对象算法 |
 | P3 Get 与元数据消费者 | Get/Get-or-missing、Has、enumerable、完整 descriptor 接入共同定位与按需提取 | Getter 只 root getter；missing/undefined、AutoInit、Proxy/TDZ 语义矩阵通过 |
 | P4 value-only Define | 依赖 P1/P3；纯规则判定接入已定位槽更新 | flags 全组合及 SameValue 对照通过，不把只读 Set 与 Define 混同 |
-| P5 收口 | 删除迁移桥接/死实现，更新模块 README 和架构规则；完整回归与最终性能矩阵 | 无第二套普通规则、无裸 slot 跨回调、性能结论包含退化与控制组 |
+| P5 收口 | 删除迁移桥接/死实现，更新源码契约和架构规则；完整回归与最终性能矩阵 | 无第二套普通规则、无裸 slot 跨回调、性能结论包含退化与控制组 |
 
 P1 允许短暂保留旧路线作为迁移 fallback；P2/P5 必须清理。测试专用入口若仍需要，应委托同一算法，
 不能保留只供测试通过的旧内核。现有架构 hash/canary 可随职责变化调整，但必须更新能命中新入口的反例，

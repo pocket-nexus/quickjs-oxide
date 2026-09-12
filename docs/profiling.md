@@ -6,8 +6,13 @@ allocation trace, lifecycle timing and benchmark workflow proposed in
 are off by default. This is an observability baseline, not a CPU/call-stack
 sampler or a claim of feature/performance parity with QuickJS.
 
-Measured remote results and validation evidence: [PocketLab baseline](reports/profiler-baseline.md).
-CPU sampling and targeted counters: [CPU hotspot investigation](reports/cpu-hotspots.md).
+Historical measurements and validation evidence:
+[PocketLab baseline](reports/profiler-baseline.md) and
+[CPU hotspot investigation](reports/cpu-hotspots.md). Each report applies to
+its recorded source and build; its optimization ordering is not a current
+backlog. The [stack VM plan](primitive-vm-plan.md) selects this PR's goals
+from [issue #16's post-PR19 investigation](https://github.com/pocket-stack/quickjs-oxide/issues/16#issuecomment-5634660983).
+The redesign remains unimplemented; these links do not claim a new benchmark run.
 
 ## Build and run
 

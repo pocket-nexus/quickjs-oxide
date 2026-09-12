@@ -1,72 +1,41 @@
 # Workspace architecture
 
-The repository implements candidate A from the [architecture report](reports/interpreter-architecture.html#rust).
-One root package, quickjs-oxide, contains the complete interpreter. Its only
-top-level Rust source file is src/lib.rs.
+This document describes the current implementation and its responsibility
+boundaries. The [stack VM plan](primitive-vm-plan.md) describes the pending
+redesign, including the structures that will replace the current execution
+path. As of 2026-09-12, that redesign is still a plan; it has no new engine
+implementation or measured optimization result.
+
+## Packages and module owners
+
+One root package, `quickjs-oxide`, contains the complete interpreter.
+`src/lib.rs` is its only top-level Rust source file.
 
 ```text
 src/
   lib.rs
-  source/                 authored source, coordinates and Unicode text support
-  regexp/                 regex compilation, programs, matching and interruption
+  source/                 exact source bytes, positions and Unicode support
+  regexp/                 pattern compilation, programs, matching and interruption
   engine/
-    compiler/             lexer, parser, scopes and code generation
-    code/                 code representation, verification and publication
-    value/                values, strings, numbers and runtime conversions
-    object/               object handles, properties, shapes and internal methods
+    compiler/             lexing, parsing, scopes, resolution and lowering
+    code/                 instructions, drafts, verification and publication
+    value/                JS values, strings, numbers and runtime conversions
+    object/               properties, shapes and object internal methods
     atom/                 interned names, symbols and property keys
-    heap/                 raw records, storage operations, roots and collection
-    vm/                   protocols, frames, calls, dispatch, unwinding and suspension
+    heap/                 raw records, storage, retention, tracing and collection
+    vm/                   frames, calls, dispatch, exceptions and suspension
     realm/                global bindings, prototypes and initialization
-    builtins/             language builtins and native call dispatch
-    modules/              loaders, module instances, linking and evaluation
+    builtins/             language builtin algorithms and native call dispatch
+    modules/              module instances, loading, linking and evaluation
     jobs/                 queued computations, retained roots and cleanup
     host/                 environment capability contracts
     api/                  Runtime/Context and embedding operations
 ```
 
-Every source directory has a README describing ownership, dependencies and its
-direct files/children. Start at [src/README.md](../src/README.md).
-
-## Responsibilities and storage
-
-Runtime is defined in api/runtime.rs. RuntimeInner and RuntimeState belong to
-heap/runtime: they own the shared heap/atom domain and cleanup. Runtime methods
-live with their behavior: property operations in object, conversion in value,
-global bindings in realm, publication in code, execution in vm and builtin
-algorithms in builtins. This uses ordinary inherent implementations of one
-Runtime type; it does not introduce forwarding wrappers or parallel runtimes.
-
-Heap records describe retained raw data. The *_records modules define identities,
-payloads and state; *_storage modules maintain references and storage transitions.
-Language behavior remains in the appropriate owner, even when its raw state is
-stored by heap. Native builtin selectors now belong to builtins/native.
-
-VM protocol, completion states, activation/suspension, frame execution, instruction
-dispatch, numeric execution and unwinding have separate files. The private
-detached test host is compiled only for unit tests. Public Value and rooted
-handles continue to have one representation.
-
-source and regexp are sibling Rust modules of engine. They currently share the
-engine's exact UTF-16 string carrier; they are not standalone Cargo packages.
-Unicode algorithms and their fixed generated tables belong to source/unicode.
-The JS RegExp object shell remains in engine/builtins/regexp.
-
-## Public and private boundaries
-
-src/lib.rs declares source, regexp and engine. Only engine::api is public inside
-the engine; embeddings use that boundary directly. Legacy root aliases and
-cross-owner runtime/heap reexports have been removed. The test-support feature
-provides a small explicit differential-testing surface; detached VM fixtures are
-compiled only for unit tests. API entry points do not contain a second implementation.
-
-The bytecode decoder is a private child of engine/code. Only
-code/binary_object_publish consumes its archive models. Decoder intermediate
-visibility is restricted to the actual code/binary_object ancestry. The
-ConstructorRef capability remains opaque. Splitting sibling VM and heap helpers
-uses their enclosing module visibility without making them public APIs.
-
-## Packages and hosts
+This is a map of current owners, not a requirement to retain every internal
+file or interface. The VM plan specifies the new compiler, code and execution
+structure. Shared use alone does not require a separate crate, service trait
+or forwarding layer.
 
 | Package directory | Production workspace dependencies |
 | --- | --- |
@@ -77,19 +46,119 @@ uses their enclosing module visibility without making them public APIs.
 | apps/web | quickjs-oxide, web adapter |
 | conformance/test262 | quickjs-oxide with test262-host, native adapter |
 
-Applications construct Runtime::new_with_host_services(provider), choosing the
-native or browser provider. The main package has no production adapter dependency.
-Unit tests use a native dev dependency and a test-only HostServices identity
-bridge. Applications own files, loader policy, output presentation and job driving.
+Applications construct `Runtime::new_with_host_services(provider)`. Adapters
+implement environment capabilities such as clocks, timezone, random seed and
+output; they do not implement JS coercion or execution policy. Applications
+own inputs, module-loading policy, diagnostics and job driving. The engine
+has no production dependency on its adapters, applications or conformance
+runner.
 
-## Verification
+## Current compilation and execution
 
-Workspace tests cover module behavior and existing integration/oracle scenarios.
-The binary boundary checker follows registered physical owners and verifies their
-Rust module routes; missing or conditionally disconnected evidence fails the gate.
-Mutation fixtures follow the same ownership map. Full Test262 receipts remain
-authenticated against their historical source; a source refactor does not renew
-a conformance claim.
+The compiler produces linear `FunctionIr/IrOp` and then stack instructions.
+Shared operation and source-site data now lives in `compiler/model/ir.rs`,
+lexical identities and declaration-order indexes in `model/scope.rs`, and
+binding storage/declaration records in `model/bindings.rs`. Resolution and
+lowering consume those owners explicitly. Parser construction state and
+`FunctionIr` still share the compilation entry module; separating their
+lifetimes remains part of S01.
+Expression intermediates live on an operand stack; numbered locals do not
+make this a register VM. The current execution path splits arguments and
+locals in `RuntimeVmHost` from the operand stack in `VmActivation`, with
+additional active-frame tracking. Ordinary JS calls recursively enter the
+Rust interpreter. These are the principal ownership and driving boundaries
+that the pending plan replaces.
 
-See [the refactor record](reports/candidate-a-refactor.md) for validation results
-and the distinction between completed checks and full suites that were not rerun.
+Code verification and transactional publication already exist. Published
+instructions and constant storage already share immutable arrays; the plan
+must account for remaining per-call projections and roots rather than treat
+sharing as a missing feature. Code representation and publication belong in
+`code`; active pc, stack position and call state belong in `vm`.
+
+The redesign keeps stack instructions and the complete language frontend.
+It introduces explicit JS frames, one execution driver, domain-owned callback
+state and concentrated slot ownership. Algorithms, proposed files and
+migration order live in the [implementation design](primitive-vm-implementation-plan.md),
+[10-commit plan](primitive-vm-commit-plan.md) and
+[migration checklist](primitive-vm-migration.md). Those documents are the
+implementation plan; this overview does not duplicate their future file tree.
+
+## State and semantic boundaries
+
+`Runtime` is defined in `api/runtime.rs`. `RuntimeInner` and `RuntimeState`
+belong to `heap/runtime` and own the shared heap/atom domain and cleanup.
+Runtime methods live with their behavior: properties in `object`, conversions
+in `value`, bindings in `realm`, publication in `code`, execution in `vm`
+and builtin algorithms in `builtins`. These are inherent implementations of
+one Runtime type, not parallel runtimes.
+
+Heap records retain raw data and reference edges; storage operations maintain
+those edges. Language algorithms remain with their semantic owner. Active
+rooted values and long-lived heap records must preserve the same retention
+and collection model. The VM plan details the ownership transfer required
+when execution suspends or resumes.
+
+The following boundaries apply across internal reorganizations:
+
+- Source and module inputs preserve exact bytes and source positions.
+  Compiler constants use the restricted `PrimitiveValue` representation;
+  compilation does not create live Object or Symbol roots. Full `Value`
+  preserves Object and Symbol identity.
+- Verification authenticates the exact code that will be published.
+  Publication links names, retains roots and rolls back failures. Published
+  handles and runtime-owned identities cannot be reused across runtimes.
+- Pure Number and string helpers remain separate from runtime coercion.
+  ToPrimitive, property operations and builtin callbacks may execute JS.
+  Borrowed slots, heap views and buffer access must obey their callback and
+  mutation boundaries; their validity cannot be inferred from a directory.
+- Strings preserve exact UTF-16 code-unit semantics, including lone
+  surrogates. Latin1 and UTF-16 storage forms must agree for equality and
+  hashing. Unicode algorithms and checked-in generated tables belong to
+  `source/unicode`.
+- The `regexp` module owns pattern programs and matching. The JS RegExp
+  object, property access, coercion and replacement callbacks belong to
+  `engine/builtins/regexp`. Source and regexp are engine siblings sharing
+  the existing string carrier, not independent Cargo packages.
+- Module-host callbacks can reenter through their originating Context.
+  JS-valued failures preserve the exact thrown value, including Object and
+  Symbol identity. They are not converted to text diagnostics.
+- Jobs own pending computation and its retained roots. Applications decide
+  when to drain the queue; internal VM restructuring must preserve Promise,
+  async and module ordering.
+
+## Public API and internal visibility
+
+Embedders use `engine::api`, the only public engine module.
+`src/lib.rs` has no legacy root reexports. Test-support and Test262 hooks
+remain explicit opt-in surfaces; detached VM fixtures are unit-test-only.
+
+Use explicit imports from the actual owner and the narrowest visibility
+needed by callers. A shared Runtime type does not justify wildcard imports
+through its implementation module. New public capabilities belong in
+`api`; helpers must not expose a second value system or execution path.
+
+The BC5 decoder remains private under `engine/code`; only
+`code/binary_object_publish` consumes its archive models. Decoder
+intermediates retain restricted visibility and `ConstructorRef` remains
+opaque. Internal compiler and code types do not promise a stable external
+bytecode format or an independent compiler product.
+
+## Documentation and verification
+
+Cross-module responsibilities are maintained here; active redesign decisions
+belong in the VM plan. Local algorithm and ownership contracts belong beside
+their Rust types and functions. Add a directory guide only when it provides
+useful navigation or operating instructions; there is no per-directory
+README requirement.
+
+`scripts/checks/check-source-layout.py` checks source ownership, Rust module
+reachability and the public API boundary. It does not inspect documentation.
+When source owners change, update the relevant boundary checks and their
+negative cases to follow the real production route, not just new filenames
+or fingerprints.
+
+Use the [verification entry point](../README.md#verify) and the affected
+owners' tests. Frozen oracle and Test262 receipts refer to their recorded
+source; a refactor or documentation edit does not renew them. The
+[archived architecture and completed plans](archive/README.md) preserve
+previous decisions and results without prescribing the current VM design.
