@@ -16,9 +16,7 @@
 
 ## 1. 从数据提出架构问题
 
-当前普通 ELF profile：empty_loop 中 execute_numeric_instruction / execute_inner 约 38.44% / 33.11%；Crypto 的 to_numeric 约 9.04%；func_call 的 release_raw_no_drain 约 9.68%。empty_loop 的硬件指令数约 Oxide 7.482 billion、QuickJS 0.562 billion。原始 Earley-Boyer 在默认内部栈预算下失败。
-
-这些证据分别指向执行分派/数值路径、值与引用搬运、调用状态组织。周期比例不能相加成为可回收收益，也不能把 execute_inner 全部归为 PC 更新。
+待解决问题以 issue #16 为准：执行分派/数值路径、值与引用搬运，以及调用状态组织。本文只描述设计与验收要求，不附历史测量结果，也不宣称本 PR 已取得优化收益。
 
 现有实现的主要结构事实：
 
@@ -88,9 +86,7 @@ S 的接口隐藏栈缓存，最适合紧凑代码与低编译成本。R 的接�
 - [热处理器](https://github.com/tachyon-engine/tachyon-engine/blob/2d148e462233c884d0547d4ec0ccc8ccaa183f17/crates/tachyon-vm/src/interpreter.rs#L10319)：成功路径不分配、不运行 JS、不改变寄存器 backing。
 - [代码/window](https://github.com/tachyon-engine/tachyon-engine/blob/2d148e462233c884d0547d4ec0ccc8ccaa183f17/crates/tachyon-vm/src/runtime/code.rs#L35)：不可变已验证代码、Copy Value、raw window。
 
-已有 batch 8→1 单变量实验，空循环/整数/浮点用时约增至 1.80/1.75/1.80 倍。这说明其区间摊销有效；不证明 Oxide 能得到同样收益，也不独立说明 PC、解码、窗口分别贡献多少。
-
-吸收的是“验证 → 直接槽操作 → 明确边界 → 重绑定”，以及显式调用状态。Tachyon 的 unsafe lifetime erase、具体标签布局和数值 helper 都不是必须采用的条件；已有语义探针也不支持照搬其数值算法。QuickJS 本来就会缓存局部 pc/sp，寄存器/批次标签本身不是性能证明。
+吸收的是“验证 → 直接槽操作 → 明确边界 → 重绑定”，以及显式调用状态。Tachyon 的 unsafe lifetime erase、具体标签布局和数值 helper 都不是必须采用的条件；数值算法须按 ECMAScript 语义独立验证。QuickJS 本来就会缓存局部 pc/sp，寄存器/批次标签本身不是性能证明。
 
 ## 4. 目标结构：执行数据属于 VM，语义服务只出现在真正的边界
 

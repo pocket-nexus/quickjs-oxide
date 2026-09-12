@@ -4,7 +4,7 @@
 
 **交付方式：全部在一个 PR 内完成。** 具体顺序见[逐 commit 计划](primitive-vm-commit-plan.md)：C01–C32 主提交，类型专化按证据决定是否插入 X01/X02。P0–P9 是验收分类，不代表多个 PR；后文 A–H 也不单独合并。逐 commit 计划优先规定实施顺序，架构与问题目标保持不变。
 
-本文供实现与审查新 VM 的贡献者使用。读完后应能领取一个交付项，知道修改哪些责任、维护哪些不变量，以及如何证明其完成。架构方向见[目标架构提案](primitive-vm-plan.md)，性能依据见[PR19 profile](reports/post-pr19-profile.md)，参考研究见[Tachyon 架构报告](reports/tachyon-architecture.md)。这里把方向收敛为工作假设、接口契约和交付依赖，不重新罗列所有历史方案。
+本文供实现与审查新 VM 的贡献者使用。读完后应能领取一个交付项，知道修改哪些责任、维护哪些不变量，以及如何证明其完成。架构方向见[目标架构提案](primitive-vm-plan.md)，问题依据见 [issue #16](https://github.com/pocket-stack/quickjs-oxide/issues/16)；本 PR 不携带 benchmark/profile 结果。这里把方向收敛为工作假设、接口契约和交付依赖，不重新罗列所有历史方案。
 
 ## 1. 目标与明确选择
 
