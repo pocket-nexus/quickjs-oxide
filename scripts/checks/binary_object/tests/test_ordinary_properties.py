@@ -30,8 +30,11 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         self.assertEqual(self.scan(), [])
 
     def test_bad_boundaries_are_rejected(self):
-        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call = ordinary_properties.FILES
+        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define = ordinary_properties.FILES
         mutations = [
+            (ordinary_set, "let _operation = runtime.operation();", "runtime.internal_set(); let _operation = runtime.operation();"),
+            (proxy_set, "let key_value = runtime.property_key_value(&key)?;", "runtime.proxy_set(); let key_value = runtime.property_key_value(&key)?;"),
+            (proxy_define, "let key_value = runtime.property_key_value(&key)?;", "runtime.internal_define_own_property(); let key_value = runtime.property_key_value(&key)?;"),
             (proxy_call, "let guard = ProxyMethodStackGuard::enter(runtime);", "runtime.call_proxy(); let guard = ProxyMethodStackGuard::enter(runtime);"),
             (dispatch, "PreparedHas::Proxy(current.clone())", "PreparedHas::Complete(false)"),
             (proxy_method, "let key = runtime.intern_property_key(name)?;", "runtime.internal_get(); let key = runtime.intern_property_key(name)?;"),
@@ -44,8 +47,8 @@ class OrdinaryPropertyContracts(unittest.TestCase):
             (storage, "ObjectKind::Ordinary", "ObjectKind::ModuleNamespace"),
             (storage, "fn locate(", "fn bad() { self.call_internal(); } fn locate("),
             (dispatch, "impl Runtime {", "fn ordinary_set_fast_path_available() {} impl Runtime {"),
-            (ordinary, "self.validate_value_domain(&value,", "self.skip_domain(&value,"),
-            (ordinary, "rejected_object.as_ref().unwrap_or(receiver)", "receiver"),
+            (ordinary_set, "runtime.validate_value_domain(&value,", "runtime.skip_domain(&value,"),
+            (ordinary_set, "rejected_object.as_ref().unwrap_or(&receiver)", "&receiver"),
             (ordinary, "use crate::engine::object::ordinary_storage::ReadProbe;", "self.call_internal(); use crate::engine::object::ordinary_storage::ReadProbe;"),
             (access, 'self.validate_value_domain(&receiver,', 'self.internal_get(); self.validate_value_domain(&receiver,'),
             (runtime, "if !failure.published", "if failure.published"),

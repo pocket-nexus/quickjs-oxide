@@ -14,6 +14,9 @@ FILES = (
     "src/engine/object/internal_methods/boolean.rs",
     "src/engine/value/conversion/descriptor.rs",
     "src/engine/object/internal_methods/call.rs",
+    "src/engine/object/ordinary/set.rs",
+    "src/engine/object/internal_methods/set.rs",
+    "src/engine/object/internal_methods/define.rs",
 )
 
 
@@ -29,15 +32,15 @@ def check(ctx):
             ctx.fail("ordinary-property-source", f"missing regular source: {relative}")
             return
         sources.append(ctx.rust_code_only(path.read_text()))
-    storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call = sources
+    storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define = sources
     compact = lambda text: re.sub(r"\s+", "", text)
     requirements = [
         (not re.search(r"pub(?:\([^)]*\))?\s+struct\s+OwnSlot", storage), "slot positions must remain private to the storage owner"),
         ("(ObjectKind::Ordinary,ObjectPayload::Ordinary)" in compact(storage), "ordinary eligibility must include the semantic class"),
         (not re.search(r"\.(?:call_internal|internal_set|materialize_auto_init_property)\s*\(", storage), "storage must not execute callbacks or observable internal methods"),
-        ("ordinary_set_fast_path_available" not in ordinary + dispatch, "ordinary Set must not pre-scan the prototype chain"),
-        ("self.validate_object_and_key(object,key)?" in compact(ordinary) and "self.validate_value_domain(&value," in compact(ordinary) and "self.validate_value_domain(&receiver," in compact(ordinary), "Set must validate object, key, value and receiver domains"),
-        ("rejected_object.as_ref().unwrap_or(receiver)" in compact(ordinary), "Proxy forwarding diagnostics must use the rejected target"),
+        ("ordinary_set_fast_path_available" not in ordinary + ordinary_set + dispatch, "ordinary Set must not pre-scan the prototype chain"),
+        ("runtime.validate_object_and_key(&object,&key)?" in compact(ordinary_set) and "runtime.validate_value_domain(&value," in compact(ordinary_set) and "runtime.validate_value_domain(&receiver," in compact(ordinary_set), "Set must validate object, key, value and receiver domains"),
+        ("rejected_object.as_ref().unwrap_or(&receiver)" in compact(ordinary_set), "Proxy forwarding diagnostics must use the rejected target"),
         ("if!failure.published{self.release_atoms(atoms)?;}" in compact(runtime), "only pre-publication failures may roll back replacement Atoms"),
     ]
     body, _, _ = ctx.unique_braced_item(heap, re.compile(r"fn\s+replace_object_slot_with_status\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-transaction", "slot replacement")
@@ -60,11 +63,14 @@ def check(ctx):
         (descriptor, ("start", "next", "has", "read")),
         (dispatch, ("prepare_has_property",)),
         (proxy_call, ("start", "read", "resume")),
+        (ordinary_set, ("start", "walk", "special_own", "receiver", "define", "advance", "forward", "special", "descriptor", "defined")),
+        (proxy_set, ("start", "method", "resume", "set", "descriptor")),
+        (proxy_define, ("start", "method", "resume", "defined", "descriptor")),
     )
     for source, names in protocols:
         for name in names:
             phase, _, _ = ctx.unique_braced_item(source, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "proxy-property-step", name)
-            requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|call_proxy|proxy_method|internal_get|internal_get_own_property|internal_has_property|internal_is_extensible|native_to_property_descriptor)\s*\(", phase), "property and descriptor phases must yield observable requests to their driver"))
+            requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|call_proxy|proxy_method|internal_get|internal_get_own_property|internal_has_property|internal_is_extensible|native_to_property_descriptor|internal_set|proxy_set|internal_define_own_property|try_special_set|prepare_set_array_length|define_own_property_in_realm)\s*\(", phase), "property and descriptor phases must yield observable requests to their driver"))
     for accepted, message in requirements:
         if not accepted:
             ctx.fail("ordinary-property-contract", message)

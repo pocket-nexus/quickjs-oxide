@@ -176,7 +176,10 @@ coverage, not a claim that a whole sample ran in the new core.
 steps dispatched through synchronous Runtime entries, including callback-free
 callees and the remaining native/async callback paths. Proxy target descriptor
 queries, descriptor Has/Get, and Proxy apply continuations in the owned
-property/conversion routes no longer cross this boundary. It does not count every nested
+property/conversion routes no longer cross this boundary. Ordinary assignment
+setters and Proxy Set/receiver descriptor/define callbacks also use owned replies.
+Array length and TypedArray object conversions, including special Define paths,
+still have counted synchronous consumers. It does not count every nested
 internal callback or every domain fallback. PendingCall requests return from the
 resident dispatcher before invoking Runtime; remaining conversion and Proxy
 steps can still wait synchronously inside their driver. These are internal

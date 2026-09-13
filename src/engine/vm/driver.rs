@@ -370,6 +370,25 @@ fn run_frames_with_state(
                     forwarded = Some(completion);
                     RunExit::Complete
                 }
+                Progress::PropertyWrite(input) => {
+                    match super::property_write_driver::converted(
+                        runtime,
+                        &mut execution,
+                        id,
+                        input,
+                    )? {
+                        CallStep::Entered => continue,
+                        CallStep::Complete(completion) => {
+                            forwarded = Some(completion);
+                            RunExit::Complete
+                        }
+                        CallStep::Bridge => {
+                            return Err(Error::internal(
+                                "converted property write attempted replay",
+                            ));
+                        }
+                    }
+                }
                 Progress::PropertyRead(input) => {
                     match super::property_driver::read_converted(
                         runtime,
@@ -572,6 +591,32 @@ fn run_frames_with_state(
         } = exit
         {
             match super::eval_driver::step(runtime, &mut execution, id, arguments, environment)? {
+                CallStep::Entered => continue,
+                CallStep::Complete(completion) => {
+                    forwarded = Some(completion);
+                    exit = RunExit::Complete;
+                }
+                CallStep::Bridge => exit = RunExit::Bridge,
+            }
+        }
+        if let RunExit::SetProperty(key) = exit {
+            let frame = execution.frames.current_mut(id)?;
+            if key.is_none() && matches!(execution.slots.peek(&frame.window, 1)?, Value::Object(_))
+            {
+                next_operation = next_operation
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("write conversion identity exhausted"))?;
+                conversion = Some(
+                    super::conversion_driver::ConversionTask::start_property_write(
+                        runtime,
+                        &mut execution,
+                        id,
+                        next_operation,
+                    )?,
+                );
+                continue;
+            }
+            match super::property_write_driver::write(runtime, &mut execution, id, key)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -4498,7 +4543,7 @@ mod tests {
     }
 
     #[test]
-    fn computed_update_retains_the_original_key_across_getter_and_write_handoff() {
+    fn computed_update_retains_the_original_key_across_owned_getter_and_setter() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let object = context.eval("var key='x',hits=0,written=0;({get x(){hits++;key='y';return 40},set x(v){written=v},set y(v){throw 99}})").unwrap();
@@ -4513,9 +4558,9 @@ mod tests {
         assert!(matches!(result, Completion::Return(Value::Int(40))));
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
-        // Set is still awaiting its S05 driver path. The completed Get must
-        // carry its old canonical key into that handoff, without rereading it.
-        assert_eq!(costs.owned_bridge_exits, 1);
+        assert_eq!(costs.legacy_dispatches, 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
+        assert_eq!(costs.owned_sync_call_bridges, 0);
         drop(profile);
         assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
         assert_eq!(context.eval("written").unwrap(), Value::Int(41));
@@ -5160,7 +5205,7 @@ mod tests {
     }
 
     #[test]
-    fn object_key_updates_keep_one_conversion_across_the_remaining_set_bridge() {
+    fn object_key_updates_keep_one_conversion_across_owned_getter_and_setter() {
         for selected in ["0", "Symbol.iterator"] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
@@ -5179,7 +5224,8 @@ mod tests {
                 Completion::Return(Value::Int(41))
             ));
             assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
-            assert_eq!(profile.snapshot().owned_bridge_exits, 1);
+            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
+            assert_eq!(profile.snapshot().legacy_dispatches, 0);
             assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
             drop(profile);
             assert_eq!(
@@ -5225,6 +5271,183 @@ mod tests {
             Value::String(crate::engine::value::JsString::from_static("toPrimitive"))
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn owned_writes_keep_receiver_and_proxy_descriptor_define_order() {
+        for (setup, body, expected_trace) in [
+            (
+                "var trace=0;({n:0,set x(v){trace++;this.n=v}})",
+                "o.x=42;return o.n",
+                1,
+            ),
+            (
+                "var trace=0;var target={};var o=new Proxy(target,{get set(){trace=trace*10+1;return function(t,k,v,r){trace=trace*10+2;t[k]=v;return r===o}}});o",
+                "o.x=42;return target.x",
+                12,
+            ),
+            (
+                "var trace=0;var target={};new Proxy(target,{getOwnPropertyDescriptor(t,k){trace=trace*10+1;return undefined},defineProperty(t,k,d){trace=trace*10+2;t[k]=d.value;return d.writable&&d.enumerable&&d.configurable}})",
+                "o.x=42;return target.x",
+                12,
+            ),
+            (
+                "var trace=0;var t=new Proxy({x:0},{getOwnPropertyDescriptor(){trace=trace*10+2;return {value:42,writable:true,enumerable:true,configurable:true}}});new Proxy(t,{set(){trace=trace*10+1;return true}})",
+                "o.x=42;return 42",
+                12,
+            ),
+            (
+                "var trace=0;var setter=new Proxy(function(){},{apply(t,r,a){trace++;r.n=a[0]}});var o={n:0};Object.defineProperty(o,'x',{set:setter});o",
+                "o.x=42;return o.n",
+                1,
+            ),
+            (
+                "var trace=0;var target={};var proto={set x(v){trace++;this.answer=v}};Object.create(proto)",
+                "o.x=42;return o.answer",
+                1,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            assert!(
+                matches!(
+                    execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
+                    Completion::Return(Value::Int(42))
+                ),
+                "{setup}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            drop(profile);
+            assert_eq!(
+                context.eval("trace").unwrap(),
+                Value::Int(expected_trace),
+                "{setup}"
+            );
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_computed_writes_convert_after_rhs_and_before_nullish_rejection() {
+        for (setup, body, expected_trace) in [
+            (
+                "var trace=0;var key={toString(){trace=trace*10+2;return 'x'}};({set x(v){trace=trace*10+3},rhs(){trace=trace*10+1;return 42}})",
+                "o[key]=o.rhs();return 42",
+                123,
+            ),
+            (
+                "var trace=0;var token={};var key={toString(){trace++;throw token}};({})",
+                "try{null[key]=42}catch(e){return e===token?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var key={toString(){trace++;return 'x'}};({})",
+                "try{null[key]=42}catch(e){return e.message===\"cannot set property 'x' of null\"?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var token={};var key='x';({set x(v){trace++;throw token}})",
+                "try{o[key]=42}catch(e){return e===token?42:0}",
+                1,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            assert!(
+                matches!(
+                    execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
+                    Completion::Return(Value::Int(42))
+                ),
+                "{setup}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            drop(profile);
+            assert_eq!(
+                context.eval("trace").unwrap(),
+                Value::Int(expected_trace),
+                "{setup}"
+            );
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_write_rejections_keep_strictness_and_proxy_same_value_rules() {
+        for (setup, body) in [
+            ("new Proxy({},{set(){return false}})", "o.x=1;return 42"),
+            (
+                "new Proxy({},{set(){return false}})",
+                "'use strict';try{o.x=1}catch(e){return e.message==='proxy: cannot set property'?42:0}",
+            ),
+            (
+                "Object.freeze({x:1})",
+                "'use strict';try{o.x=2}catch(e){return e.message===\"'x' is read-only\"?42:0}",
+            ),
+            (
+                "new Proxy(Object.freeze({x:NaN}),{set(){return true}})",
+                "'use strict';o.x=NaN;return 42",
+            ),
+            (
+                "new Proxy(Object.freeze({x:0}),{set(){return true}})",
+                "try{o.x=-0}catch(e){return e.message==='proxy: inconsistent set'?42:0}",
+            ),
+            (
+                "var x={};Object.defineProperty(x,'x',{get(){return 1},configurable:false});new Proxy(x,{set(){return true}})",
+                "try{o.x=1}catch(e){return e.message==='proxy: inconsistent set'?42:0}",
+            ),
+            (
+                "var trace=0;Object.defineProperty(Number.prototype,'x',{set:function(v){'use strict';trace=this===7?v:0},configurable:true});({})",
+                "'use strict';(7).x=42;return trace",
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            assert!(
+                matches!(
+                    execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
+                    Completion::Return(Value::Int(42))
+                ),
+                "{setup}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 
     #[test]

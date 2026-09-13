@@ -777,3 +777,10 @@ pub(crate) use internal_methods::PreparedHas;
 
 #[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{ProxyBooleanKind, ProxyBooleanResume, ProxyBooleanStep};
+
+#[cfg(feature = "stack-vm")]
+pub(crate) use internal_methods::{
+    ProxyDefineResume, ProxyDefineStep, ProxySetResume, ProxySetStep,
+};
+#[cfg(feature = "stack-vm")]
+pub(crate) use ordinary::{SetResume, SetStep, set_completion};

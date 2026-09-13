@@ -14,6 +14,10 @@ use crate::engine::vm::{Completion, ToPrimitiveHint};
 enum Finish {
     Plus,
     PropertyKey,
+    PropertyWrite {
+        base: Value,
+        value: Value,
+    },
     PropertyRead {
         base: Value,
         keep_receiver: bool,
@@ -41,6 +45,7 @@ pub(super) enum Progress {
     Entered,
     Complete(Completion),
     PropertyRead(Box<super::property_driver::ConvertedRead>),
+    PropertyWrite(Box<super::property_write_driver::ConvertedWrite>),
 }
 
 impl ConversionTask {
@@ -48,6 +53,7 @@ impl ConversionTask {
     pub(super) fn operand_count(&self) -> usize {
         match self.finish {
             Finish::Plus | Finish::PropertyKey => 1,
+            Finish::PropertyWrite { .. } => 3,
             _ => 2,
         }
     }
@@ -78,6 +84,38 @@ impl ConversionTask {
             frame,
             identity,
             step: PrimitiveResume::start(runtime, parent.executable.realm, value, hint),
+        })
+    }
+
+    pub(super) fn start_property_write(
+        runtime: &Runtime,
+        execution: &mut RunningExecution,
+        frame: FrameId,
+        identity: u64,
+    ) -> Result<Self, Error> {
+        let parent = execution.frames.current_mut(frame)?;
+        for (offset, label) in [
+            (2, "property receiver"),
+            (1, "property key"),
+            (0, "property value"),
+        ] {
+            runtime
+                .validate_value_domain(execution.slots.peek(&parent.window, offset)?, label)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        let value = execution.slots.pop(&mut parent.window)?;
+        let key = execution.slots.pop(&mut parent.window)?;
+        let base = execution.slots.pop(&mut parent.window)?;
+        Ok(Self {
+            finish: Finish::PropertyWrite { base, value },
+            frame,
+            identity,
+            step: PrimitiveResume::start(
+                runtime,
+                parent.executable.realm,
+                key,
+                ToPrimitiveHint::String,
+            ),
         })
     }
 
@@ -201,6 +239,18 @@ impl ConversionTask {
                                         )
                                     }
                                 }
+                            }
+                            Finish::PropertyWrite {
+                                base,
+                                value: assigned,
+                            } => {
+                                return Ok(Progress::PropertyWrite(Box::new(
+                                    super::property_write_driver::ConvertedWrite {
+                                        base,
+                                        key: value,
+                                        value: assigned,
+                                    },
+                                )));
                             }
                             Finish::PropertyRead {
                                 base,

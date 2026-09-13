@@ -1013,3 +1013,34 @@ Array/iterator、String/RegExp/buffer 及其余同步内置尚未全部迁移；
 Earley-Boyer 默认预算的新核心覆盖仍待 S05 最终验收。S06 的提前准备仍只
 保存在独立 stash，只有 S05 完整验收后才恢复；S07 后再运行完整 benchmark/
 profile 并报告到 PR #21。
+
+
+## S05 普通 Set、Proxy Set 与 receiver Define 阶段（实施中）
+
+普通 Set 的存储探测和 receiver 判断移动到 object/ordinary/set 的共享阶段；
+旧 prepare 入口同步消费同一协议，owned 路径在 descriptor/define 回复后继续。
+保留原存储内核、原型 setter 与 receiver accessor 的不同规则、Arguments
+mapped slot 更新，以及 Proxy 转发失败时使用最终拒绝对象分类错误。
+特殊对象原型的推进也返回继续步骤，不引入新的原生递归链。
+
+Proxy Set 和 DefineOwnProperty 分别共享方法查询、trap、转发及目标 descriptor
+invariant 阶段。写入 driver 接入 PutField/PutArrayEl；对象键转换持有已求值的
+base 和 RHS，完成后一次性进入 Set。赋值保留先 RHS、后 ToPropertyKey、再检查
+nullish base 的原顺序；setter 返回值被丢弃，完成后只推进原赋值 PC。严格模式
+错误分类与旧 host_bridge 共用 finish_property_set；Proxy 的 NaN/±0 SameValue
+及缺少 setter 的不可配置 descriptor 保持原规则。读/写/转换的 typed reply
+连接被拆到 VM 子模块，算法继续归 object/value。
+
+本批最终 owned 库 2122 项、默认库 1988 项通过，其中 owned driver 100 项。
+新旧常规 oracle 各 907 项通过（各 1 项手动 65K 压力测试未运行），新旧 CLI
+profiling 各 5 项通过，非 profiling stack-vm 构建无警告。新增写入案例验证
+旧分派、整帧交接、同步调用桥均为零；两项旧 Set 交接预期加强为零交接。
+放弃等待中的 receiver descriptor/define 状态可释放 target、receiver、handler
+和 value，Runtime 无 owning cycle；错误类型的回复在应用前拒绝。
+边界 scan-only、2 项属性契约/mutation、格式/diff、源码布局 534 文件通过；
+本批未重跑完整 714 项 boundary，不能据此宣告 S05 完整验收。
+
+Array length 与 TypedArray 的对象参数转换仍由明确的同步请求消费，特殊
+Define 的转换也尚未全部改为 continuation；计数继续披露这些路径。其他 Proxy
+traps、Object/Reflect native 入口及各同步内置仍按 S05 清单继续。S06 仍保持
+延后，S07 及其后的完整 benchmark/profile 和 PR #21 comment 尚未执行。

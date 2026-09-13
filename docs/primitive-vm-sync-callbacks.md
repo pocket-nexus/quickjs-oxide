@@ -1,6 +1,6 @@
 # S05 同步回调调用点账本
 
-状态：S05 实施中，尚未验收。源码基准为 `0692496` 加当前 S05 属性查询与 Proxy Call 工作区；
+状态：S05 实施中，尚未验收。源码基准为 `4e6d589` 加当前 S05 Set 工作区；
 本文件跟踪迁移责任，不把旧同步入口仍存在等同于 owned 路径已覆盖。
 
 ## 当前覆盖与待办
@@ -18,8 +18,13 @@
 - Proxy [[Call]] 的 apply 读取、逐层可调用标记检查、转发及 trap 调用共享
   object/call 阶段；普通调用、bound Proxy、getter、转换和查询 trap 已接入。
   非 callable Proxy trap 保留先 Get apply 再拒绝的顺序，原深度 guard 跨最终回复保活。
-- native/非普通字节码 callable 仍有计数可见的同步桥；Set/其余 traps、
-  Object/Reflect 的原 native 入口和其他同步内置仍待接入完整领域恢复。
+- PutField/PutArrayEl 的普通 Set、setter、Proxy Set、receiver GetOwnProperty/
+  DefineProperty 由共享 object 阶段和 owned scheduler 推进，包含对象键的
+  string-hint 转换。计算写入先完成 RHS，再转换键，最后检查 base；读取保持
+  自己的原顺序。strict/sloppy 的完成与诊断由新旧入口共用。
+- Array length 与 TypedArray 对象参数转换，以及这些特殊对象的 Define 路径
+  仍有计数可见的同步消费器；其他 traps、Object/Reflect 的原 native 入口、
+  native/非普通字节码 callable 及其他同步内置仍待完成领域恢复。
 - Array/iterator 的 callback/sort/species/close，String/RegExp replacement，
   TypedArray/buffer 参数转换，以及 Function/scalar/Math/collections/Date/
   JSON/Error/globals 的全部同步调用点仍按原 S05 要求逐项迁移。
@@ -44,7 +49,7 @@ S04 call_preparation 的统计范围。
 下表逐调用表达式记录 `object`、`builtins`、`value`、`vm` 中当前的
 `call_internal`、`call_value_internal`、`construct_internal`。生成时排除了
 独立测试文件和内联 test-only 模块/函数，并使用现有 Rust 词法扫描器去除
-注释/字符串；本轮共有 123 个直接表达式，行号指向本次
+注释/字符串；本轮共有 125 个直接表达式，行号指向本次
 源码；后续改动以函数和调用位置复核。它是第一轮直接边界清单，**尚不是完整
 回调调用图**：经 Get/Set、ToPrimitive/ToString/ToNumber、species 和 iterator
 等 helper 间接触发的调用必须在各领域迁移时补入，不能仅凭该表清空验收 S05。
@@ -55,13 +60,15 @@ S04 call_preparation 的统计范围。
 | [src/engine/object/class_fields.rs:286](../src/engine/object/class_fields.rs#L286) `run_class_static_initializer` | `call_internal` | 旧入口保留；S04 owned class 已迁移，S07/S10 审核入口 |
 | [src/engine/object/class_fields.rs:339](../src/engine/object/class_fields.rs#L339) `call_class_static_block` | `call_internal` | 旧入口保留；S04 owned class 已迁移，S07/S10 审核入口 |
 | [src/engine/object/internal_methods/boolean.rs:276](../src/engine/object/internal_methods/boolean.rs#L276) `finish` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
-| [src/engine/object/internal_methods.rs:152](../src/engine/object/internal_methods.rs#L152) `call_value_internal` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
-| [src/engine/object/internal_methods.rs:470](../src/engine/object/internal_methods.rs#L470) `call_proxy_trap` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
-| [src/engine/object/internal_methods.rs:895](../src/engine/object/internal_methods.rs#L895) `proxy_get` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
-| [src/engine/object/internal_methods.rs:942](../src/engine/object/internal_methods.rs#L942) `internal_set` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/internal_methods.rs:160](../src/engine/object/internal_methods.rs#L160) `call_value_internal` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/internal_methods.rs:478](../src/engine/object/internal_methods.rs#L478) `call_proxy_trap` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/internal_methods.rs:903](../src/engine/object/internal_methods.rs#L903) `proxy_get` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/internal_methods.rs:950](../src/engine/object/internal_methods.rs#L950) `internal_set` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/internal_methods.rs:1043](../src/engine/object/internal_methods.rs#L1043) `proxy_set` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/object/internal_methods.rs:1155](../src/engine/object/internal_methods.rs#L1155) `proxy_get_own_property` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
-| [src/engine/object/internal_methods.rs:1471](../src/engine/object/internal_methods.rs#L1471) `call_proxy` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
-| [src/engine/object/ordinary.rs:287](../src/engine/object/ordinary.rs#L287) `finish_prepared_read` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/internal_methods.rs:1228](../src/engine/object/internal_methods.rs#L1228) `proxy_define_own_property` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/internal_methods.rs:1474](../src/engine/object/internal_methods.rs#L1474) `call_proxy` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
+| [src/engine/object/ordinary.rs:107](../src/engine/object/ordinary.rs#L107) `finish_prepared_read` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array.rs:1043](../src/engine/builtins/array.rs#L1043) `call_array_from` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array.rs:1080](../src/engine/builtins/array.rs#L1080) `call_array_from` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array.rs:1106](../src/engine/builtins/array.rs#L1106) `call_array_from` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
@@ -163,14 +170,14 @@ S04 call_preparation 的统计范围。
 | [src/engine/vm/async_generator.rs:1031](../src/engine/vm/async_generator.rs#L1031) `settle_front_async_generator_request` | `call_internal` | S06：挂起/Promise 状态机待迁移 |
 | [src/engine/vm/call_bridge.rs:135](../src/engine/vm/call_bridge.rs#L135) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/construct_driver.rs:284](../src/engine/vm/construct_driver.rs#L284) `enter_request` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/conversion_driver.rs:443](../src/engine/vm/conversion_driver.rs#L443) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/conversion_driver.rs:493](../src/engine/vm/conversion_driver.rs#L493) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/host_bridge/private_elements.rs:246](../src/engine/vm/host_bridge/private_elements.rs#L246) `get_private_field_value` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/host_bridge/private_elements.rs:280](../src/engine/vm/host_bridge/private_elements.rs#L280) `put_private_field_value` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/host_bridge.rs:1267](../src/engine/vm/host_bridge.rs#L1267) `call_iterator_method` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/host_bridge.rs:3029](../src/engine/vm/host_bridge.rs#L3029) `dynamic_import` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/host_bridge.rs:3207](../src/engine/vm/host_bridge.rs#L3207) `call_with_borrowed_arguments` | `call_value_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/host_bridge.rs:3229](../src/engine/vm/host_bridge.rs#L3229) `apply` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/host_bridge.rs:3239](../src/engine/vm/host_bridge.rs#L3239) `apply` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/host_bridge.rs:1224](../src/engine/vm/host_bridge.rs#L1224) `call_iterator_method` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/host_bridge.rs:2986](../src/engine/vm/host_bridge.rs#L2986) `dynamic_import` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/host_bridge.rs:3164](../src/engine/vm/host_bridge.rs#L3164) `call_with_borrowed_arguments` | `call_value_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/host_bridge.rs:3186](../src/engine/vm/host_bridge.rs#L3186) `apply` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/host_bridge.rs:3196](../src/engine/vm/host_bridge.rs#L3196) `apply` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/iterator_driver.rs:776](../src/engine/vm/iterator_driver.rs#L776) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/proxy_get_driver.rs:880](../src/engine/vm/proxy_get_driver.rs#L880) `advance` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/proxy_get_driver.rs:846](../src/engine/vm/proxy_get_driver.rs#L846) `advance` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/with_driver.rs:192](../src/engine/vm/with_driver.rs#L192) `read` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |

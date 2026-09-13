@@ -85,6 +85,8 @@
 
 - S05 查询与调用继续推进：Proxy target GetOwnProperty、descriptor Has/Get、嵌套 Has/IsExtensible 和 ToPrimitive 的 Proxy Get 接入共享 continuation；Proxy apply 读取、可调用标记顺序、转发和 trap 也已接入普通调用/getter/转换/查询路径。最终 owned 库 2117 项、默认库 1986 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、新旧 CLI profiling 各 5 项通过。Set、其他 traps、Object/Reflect native 入口及其余同步内置仍待收口；S05 仍未验收，未提前进入 S06/S07。
 
+- S05 写入继续推进：普通 Set、Proxy Set、receiver GetOwnProperty/DefineProperty 与 strict/sloppy 完成改为共享阶段，PutField/PutArrayEl 的 setter 和对象键转换接入 owned driver。新库 2122 项、旧库 1988 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、CLI profiling 各 5 项及扫描/契约/布局通过。Array length/TypedArray 对象参数转换、其他 traps 与 native 内置仍待继续；S05 未验收，S06/S07 仍按顺序延后。
+
 ## 1. 提交顺序与关口
 
 | 提交 | 完整交付单元 |

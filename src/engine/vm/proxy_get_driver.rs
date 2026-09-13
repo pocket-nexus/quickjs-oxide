@@ -19,293 +19,8 @@ use crate::engine::object::{
 use crate::engine::value::conversion::descriptor::{DescriptorResume, DescriptorStep};
 use crate::engine::value::{Value, conversion::NativeConversion};
 
-enum Resume {
-    Get(ProxyGetResume),
-    Call(crate::engine::object::ProxyCallResume),
-    Own(ProxyOwnResume),
-    Conversion(DescriptorResume),
-    Boolean(ProxyBooleanResume),
-}
-
-enum Step {
-    Complete(Completion),
-    BooleanComplete(NativeConversion<bool>),
-    OwnComplete(NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>),
-    Converted(NativeConversion<OrdinaryPropertyDescriptor>),
-    Has {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: Resume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: Value,
-        resume: Resume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: Resume,
-    },
-    Descriptor {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: Resume,
-    },
-    Extensible {
-        object: ObjectRef,
-        resume: Resume,
-    },
-    Convert {
-        value: Value,
-        resume: ProxyOwnResume,
-    },
-}
-
-impl From<ProxyGetStep> for Step {
-    fn from(step: ProxyGetStep) -> Self {
-        match step {
-            ProxyGetStep::Complete(result) => Self::Complete(result),
-            ProxyGetStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Get(resume),
-            },
-            ProxyGetStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Get(resume),
-            },
-            ProxyGetStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::Get(resume),
-            },
-        }
-    }
-}
-
-impl From<ProxyOwnStep> for Step {
-    fn from(step: ProxyOwnStep) -> Self {
-        match step {
-            ProxyOwnStep::Complete(result) => Self::OwnComplete(result),
-            ProxyOwnStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Extensible { object, resume } => Self::Extensible {
-                object,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Convert { value, resume } => Self::Convert { value, resume },
-        }
-    }
-}
-
-impl From<DescriptorStep> for Step {
-    fn from(step: DescriptorStep) -> Self {
-        match step {
-            DescriptorStep::Complete(result) => Self::Converted(result),
-            DescriptorStep::Has {
-                object,
-                key,
-                resume,
-            } => Self::Has {
-                object,
-                key,
-                resume: Resume::Conversion(resume),
-            },
-            DescriptorStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Conversion(resume),
-            },
-        }
-    }
-}
-
-impl From<ProxyBooleanStep> for Step {
-    fn from(step: ProxyBooleanStep) -> Self {
-        match step {
-            ProxyBooleanStep::Complete(result) => Self::BooleanComplete(result),
-            ProxyBooleanStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Has {
-                object,
-                key,
-                resume,
-            } => Self::Has {
-                object,
-                key,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Extensible { object, resume } => Self::Extensible {
-                object,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::Boolean(resume),
-            },
-        }
-    }
-}
-
-impl From<crate::engine::object::ProxyCallStep> for Step {
-    fn from(step: crate::engine::object::ProxyCallStep) -> Self {
-        use crate::engine::object::ProxyCallStep;
-        match step {
-            ProxyCallStep::Complete(result) => Self::Complete(result),
-            ProxyCallStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Call(resume),
-            },
-            ProxyCallStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Call(resume),
-            },
-        }
-    }
-}
-
-impl Resume {
-    fn boolean(
-        self,
-        runtime: &Runtime,
-        result: NativeConversion<bool>,
-    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
-        match self {
-            Self::Own(resume) => resume.extensible(result).map(Into::into),
-            Self::Boolean(resume) => resume.boolean(runtime, result).map(Into::into),
-            Self::Conversion(resume) => resume.has(runtime, result).map(Into::into),
-            Self::Get(_) | Self::Call(_) => {
-                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
-                    "Proxy Get received a boolean reply",
-                ))
-            }
-        }
-    }
-
-    fn resume(
-        self,
-        runtime: &Runtime,
-        completion: Completion,
-    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
-        match self {
-            Self::Get(resume) => resume.resume(runtime, completion).map(Into::into),
-            Self::Call(resume) => resume.resume(runtime, completion).map(Into::into),
-            Self::Own(resume) => resume.resume(runtime, completion).map(Into::into),
-            Self::Conversion(resume) => resume.read(runtime, completion).map(Into::into),
-            Self::Boolean(resume) => resume.resume(runtime, completion).map(Into::into),
-        }
-    }
-    fn descriptor(
-        self,
-        runtime: &Runtime,
-        result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
-    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
-        match self {
-            Self::Get(resume) => resume.descriptor(runtime, result).map(Into::into),
-            Self::Own(resume) => resume.descriptor(runtime, result).map(Into::into),
-            Self::Boolean(resume) => resume.descriptor(runtime, result).map(Into::into),
-            Self::Conversion(_) | Self::Call(_) => {
-                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
-                    "descriptor conversion received an own-property reply",
-                ))
-            }
-        }
-    }
-}
+mod request;
+use request::{Resume, Step};
 
 pub(super) struct PendingProxyGet {
     identity: u64,
@@ -323,8 +38,16 @@ impl PendingProxyGet {
 }
 
 enum Finish {
+    Write {
+        key: PropertyKey,
+        strict: bool,
+        depth: usize,
+    },
     PropertyRead(usize),
-    Call { depth: usize, tail: bool },
+    Call {
+        depth: usize,
+        tail: bool,
+    },
     Conversion(super::conversion_driver::ConversionWait),
 }
 
@@ -482,6 +205,52 @@ fn start_proxy_call(
     finish_error(runtime, realm, result)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_write(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    object: ObjectRef,
+    key: PropertyKey,
+    value: Value,
+    receiver: Value,
+    strict: bool,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    let realm = parent.executable.realm;
+    let result = (|| {
+        let step = crate::engine::object::SetStep::start(
+            runtime,
+            Some(realm),
+            object,
+            key.clone(),
+            value,
+            receiver,
+        )
+        .map_err(runtime_error_to_vm_error)?;
+        advance(
+            runtime,
+            execution,
+            frame,
+            identity,
+            Vec::new(),
+            step.into(),
+            Finish::Write { key, strict, depth },
+        )
+    })();
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("Set returned a conversion operation")),
+    }
+}
+
 pub(super) fn reply(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -551,15 +320,16 @@ fn advance(
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                let _depth = match finish {
-                    Finish::PropertyRead(depth) => depth,
+                let (_depth, push) = match finish {
+                    Finish::Write { depth, .. } => (depth, false),
+                    Finish::PropertyRead(depth) => (depth, true),
                     Finish::Call { depth, tail } => {
                         if tail {
                             #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_instruction(depth);
                             return Ok(Progress::Call(CallStep::Complete(completion)));
                         }
-                        depth
+                        (depth, true)
                     }
                     Finish::Conversion(wait) => {
                         return super::conversion_driver::ConversionTask::from_wait(
@@ -571,7 +341,9 @@ fn advance(
                 return match completion {
                     Completion::Return(value) => {
                         let parent = execution.frames.current_mut(frame)?;
-                        execution.slots.push(&mut parent.window, value)?;
+                        if push {
+                            execution.slots.push(&mut parent.window, value)?;
+                        }
                         parent.resume_pc = parent
                             .fault_pc
                             .checked_add(1)
@@ -582,6 +354,200 @@ fn advance(
                     }
                     completion => Ok(Progress::Call(CallStep::Complete(completion))),
                 };
+            }
+            Step::SetContinue(resume) => {
+                step = resume
+                    .advance(runtime)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                continue;
+            }
+            Step::SetDeferred(request) => {
+                #[cfg(feature = "profiling")]
+                {
+                    let may_call = match &request {
+                        crate::engine::object::SetStep::Special {
+                            object,
+                            value: Value::Object(_),
+                            receiver: Value::Object(receiver),
+                            ..
+                        } => object == receiver,
+                        crate::engine::object::SetStep::ArrayLength {
+                            value: Value::Object(_),
+                            ..
+                        } => true,
+                        _ => false,
+                    };
+                    if may_call {
+                        crate::engine::api::profiling::record_owned_sync_call_bridge();
+                    }
+                }
+                step = request
+                    .finish_sync(runtime)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                continue;
+            }
+            Step::SetComplete(action) => {
+                if let crate::engine::object::operations::PropertySetAction::Call {
+                    setter,
+                    receiver,
+                    argument,
+                } = action
+                {
+                    step = Step::Call {
+                        target: DirectCallTarget::Callable(setter),
+                        receiver,
+                        arguments: vec![argument],
+                        resume: Resume::Setter,
+                    };
+                    continue;
+                }
+                if let Some(resume) = parents.pop() {
+                    step = resume
+                        .set(runtime, action)
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
+                let Finish::Write { key, strict, .. } = &finish else {
+                    return Err(Error::internal("Set result has no assignment owner"));
+                };
+                step = Step::Complete(
+                    runtime
+                        .finish_property_set(
+                            request::set_result(action).map_err(runtime_error_to_vm_error)?,
+                            key,
+                            *strict,
+                        )
+                        .map_err(runtime_error_to_vm_error)?,
+                );
+                continue;
+            }
+            Step::Set {
+                object,
+                key,
+                value,
+                receiver,
+                resume,
+            } => {
+                if !execution.frames.can_push_with_continuations(parents.len()) {
+                    let Completion::Throw(value) = overflow(runtime, realm)? else {
+                        unreachable!()
+                    };
+                    step = resume
+                        .set(
+                            runtime,
+                            crate::engine::object::operations::PropertySetAction::Throw(value),
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
+                parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                parents.push(resume);
+                step = crate::engine::object::SetStep::start(
+                    runtime,
+                    Some(realm),
+                    object,
+                    key,
+                    value,
+                    receiver,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::SetProxy {
+                object,
+                key,
+                value,
+                receiver,
+                resume,
+            } => {
+                if !execution.frames.can_push_with_continuations(parents.len()) {
+                    let Completion::Throw(value) = overflow(runtime, realm)? else {
+                        unreachable!()
+                    };
+                    step = resume
+                        .set(
+                            runtime,
+                            crate::engine::object::operations::PropertySetAction::Throw(value),
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
+                parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                parents.push(resume);
+                step = crate::engine::object::ProxySetStep::start(
+                    runtime, realm, object, key, value, receiver,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::Defined(result) => {
+                let resume = parents
+                    .pop()
+                    .ok_or_else(|| Error::internal("Define result has no parent"))?;
+                step = resume
+                    .defined(runtime, result)
+                    .map_err(runtime_error_to_vm_error)?;
+                continue;
+            }
+            Step::Define {
+                object,
+                key,
+                descriptor,
+                resume,
+            } => {
+                if runtime
+                    .is_proxy_object(&object)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                        let Completion::Throw(value) = overflow(runtime, realm)? else {
+                            unreachable!()
+                        };
+                        step = resume
+                            .defined(runtime, NativeConversion::Throw(value))
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    parents
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                    parents.push(resume);
+                    step = crate::engine::object::ProxyDefineStep::start(
+                        runtime, realm, object, key, descriptor,
+                    )
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                    continue;
+                }
+                #[cfg(feature = "profiling")]
+                if matches!(
+                    &descriptor.value,
+                    crate::engine::object::DescriptorField::Present(Value::Object(_))
+                ) && (runtime
+                    .typed_array_is_object(&object)
+                    .map_err(runtime_error_to_vm_error)?
+                    || runtime
+                        .array_own_key(&object, &key)
+                        .map_err(runtime_error_to_vm_error)?
+                        == crate::engine::object::operations::ArrayOwnKey::Length)
+                {
+                    crate::engine::api::profiling::record_owned_sync_call_bridge();
+                }
+                let result = runtime
+                    .internal_define_own_property(realm, &object, &key, &descriptor)
+                    .map_err(runtime_error_to_vm_error)?;
+                step = resume
+                    .defined(runtime, result)
+                    .map_err(runtime_error_to_vm_error)?;
+                continue;
             }
             Step::OwnComplete(descriptor) => {
                 let parent = parents

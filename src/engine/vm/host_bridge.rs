@@ -34,9 +34,7 @@ use crate::engine::heap::{
     GeneratorVmActivation, ObjectPayload, RawValue,
 };
 
-use crate::engine::object::operations::{
-    InternalSetResult, PropertyDefineOutcome, PropertySetRejection,
-};
+use crate::engine::object::operations::{InternalSetResult, PropertyDefineOutcome};
 use crate::engine::object::{
     CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PrivateNameRef,
     PropertyKey, WellKnownSymbol,
@@ -982,50 +980,9 @@ impl RuntimeVmHost {
         key: &PropertyKey,
         strict: bool,
     ) -> Result<Completion, Error> {
-        match result {
-            NativeConversion::Value(InternalSetResult::Accepted) => {
-                Ok(Completion::Return(Value::Undefined))
-            }
-            NativeConversion::Value(_) if !strict => Ok(Completion::Return(Value::Undefined)),
-            NativeConversion::Value(InternalSetResult::RejectedProxyTrap) => {
-                Err(Error::new(ErrorKind::Type, "proxy: cannot set property"))
-            }
-            NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::ReadOnly,
-            )) => {
-                let error = self
-                    .runtime
-                    .native_atom_error(ErrorKind::Type, "'", key, "' is read-only")
-                    .map_err(runtime_error_to_vm_error)?;
-                Err(error)
-            }
-            NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::ArrayLengthReadOnly,
-            )) => {
-                let length = self
-                    .runtime
-                    .intern_property_key("length")
-                    .map_err(|error| Error::internal(error.to_string()))?;
-                let error = self
-                    .runtime
-                    .native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")
-                    .map_err(runtime_error_to_vm_error)?;
-                Err(error)
-            }
-            NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::NotConfigurable,
-            )) => Err(Error::new(ErrorKind::Type, "not configurable")),
-            NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::NoSetter,
-            )) => Err(Error::new(ErrorKind::Type, "no setter for property")),
-            NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::NotExtensible,
-            )) => Err(Error::new(ErrorKind::Type, "object is not extensible")),
-            NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::NotObject,
-            )) => Err(Error::new(ErrorKind::Type, "not an object")),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
-        }
+        self.runtime
+            .finish_property_set(result, key, strict)
+            .map_err(runtime_error_to_vm_error)
     }
 
     fn get_property_with_key(

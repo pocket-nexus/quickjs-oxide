@@ -32,6 +32,14 @@ use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarg
 use std::collections::HashSet;
 
 mod boolean;
+mod define;
+mod set;
+#[cfg(feature = "stack-vm")]
+pub(crate) use define::ProxyDefineResume;
+pub(crate) use define::ProxyDefineStep;
+#[cfg(feature = "stack-vm")]
+pub(crate) use set::ProxySetResume;
+pub(crate) use set::ProxySetStep;
 mod call;
 #[cfg(feature = "stack-vm")]
 pub(crate) use call::ProxyCallResume;
@@ -1005,7 +1013,7 @@ impl Runtime {
         }))
     }
 
-    fn proxy_set(
+    pub(super) fn proxy_set(
         &self,
         realm: ContextId,
         object: &ObjectRef,
@@ -1013,56 +1021,48 @@ impl Runtime {
         value: Value,
         receiver: Value,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
-        let (rooted, method) = match self.proxy_method(realm, object, "set")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_set(realm, &rooted.target, key, value, receiver);
-        };
-        let key_value = self.property_key_value(key)?;
-        let result = match self.call_proxy_trap(
-            realm,
-            &rooted,
-            &method,
-            &[
-                Value::Object(rooted.target.clone()),
-                key_value,
-                value.clone(),
-                receiver,
-            ],
-        )? {
-            Completion::Return(value) => self.value_to_boolean(&value)?,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !result {
-            return Ok(NativeConversion::Value(
-                InternalSetResult::RejectedProxyTrap,
-            ));
-        }
-        let target = match self.internal_get_own_property(realm, &rooted.target, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if let Some(target) = target {
-            match target {
-                CompleteOrdinaryPropertyDescriptor::Data {
-                    value: target_value,
-                    writable: false,
-                    configurable: false,
-                    ..
-                } if !value.same_value(&target_value) => {
-                    return self.proxy_invariant_throw(realm, "set");
+        let mut step =
+            ProxySetStep::start(self, realm, object.clone(), key.clone(), value, receiver)?;
+        loop {
+            step = match step {
+                ProxySetStep::Complete(result) => return Ok(result),
+                ProxySetStep::Read {
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
+                ProxySetStep::Call {
+                    target,
+                    receiver,
+                    arguments,
+                    resume,
+                } => {
+                    let completion = match target {
+                        DirectCallTarget::Callable(callable) => {
+                            self.call_internal(realm, &callable, receiver, &arguments)?
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            self.call_proxy(realm, &proxy, receiver, &arguments)?
+                        }
+                    };
+                    resume.resume(self, completion)?
                 }
-                CompleteOrdinaryPropertyDescriptor::Accessor {
-                    set: None,
-                    configurable: false,
-                    ..
-                } => return self.proxy_invariant_throw(realm, "set"),
-                _ => {}
-            }
+                ProxySetStep::Set {
+                    object,
+                    key,
+                    value,
+                    receiver,
+                    resume,
+                } => resume.set(self.internal_set(realm, &object, &key, value, receiver)?)?,
+                ProxySetStep::Descriptor {
+                    object,
+                    key,
+                    resume,
+                } => resume
+                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
+            };
         }
-        Ok(NativeConversion::Value(InternalSetResult::Accepted))
     }
 
     fn proxy_descriptor_object(
@@ -1206,49 +1206,52 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
-        let (rooted, method) = match self.proxy_method(realm, object, "defineProperty")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_define_own_property(realm, &rooted.target, key, descriptor);
-        };
-        let key_value = self.property_key_value(key)?;
-        let descriptor_object = self.proxy_descriptor_object(realm, descriptor)?;
-        let accepted = match self.call_proxy_trap(
-            realm,
-            &rooted,
-            &method,
-            &[
-                Value::Object(rooted.target.clone()),
-                key_value,
-                Value::Object(descriptor_object),
-            ],
-        )? {
-            Completion::Return(value) => self.value_to_boolean(&value)?,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !accepted {
-            return Ok(NativeConversion::Value(
-                InternalDefineResult::RejectedProxyTrap,
-            ));
+        let mut step =
+            ProxyDefineStep::start(self, realm, object.clone(), key.clone(), descriptor.clone())?;
+        loop {
+            step = match step {
+                ProxyDefineStep::Complete(result) => return Ok(result),
+                ProxyDefineStep::Read {
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
+                ProxyDefineStep::Call {
+                    target,
+                    receiver,
+                    arguments,
+                    resume,
+                } => {
+                    let completion = match target {
+                        DirectCallTarget::Callable(callable) => {
+                            self.call_internal(realm, &callable, receiver, &arguments)?
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            self.call_proxy(realm, &proxy, receiver, &arguments)?
+                        }
+                    };
+                    resume.resume(self, completion)?
+                }
+                ProxyDefineStep::Define {
+                    object,
+                    key,
+                    descriptor,
+                    resume,
+                } => resume.defined(self.internal_define_own_property(
+                    realm,
+                    &object,
+                    &key,
+                    &descriptor,
+                )?)?,
+                ProxyDefineStep::Descriptor {
+                    object,
+                    key,
+                    resume,
+                } => resume
+                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
+            };
         }
-
-        let target_descriptor = match self.internal_get_own_property(realm, &rooted.target, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let setting_not_configurable =
-            matches!(descriptor.configurable, DescriptorField::Present(false));
-        let compatible = if let Some(target) = target_descriptor.as_ref() {
-            proxy_define_descriptor_is_compatible(target, descriptor)
-        } else {
-            self.raw_extensible_bit(&rooted.target)? && !setting_not_configurable
-        };
-        if !compatible {
-            return self.proxy_invariant_throw(realm, "defineProperty");
-        }
-        Ok(NativeConversion::Value(InternalDefineResult::Defined))
     }
 
     pub(crate) fn internal_delete_property(

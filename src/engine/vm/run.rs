@@ -32,6 +32,7 @@ pub(super) enum RunExit {
         method: bool,
         tail: bool,
     },
+    SetProperty(Option<u32>),
     GetField {
         index: u32,
         keep_receiver: bool,
@@ -212,6 +213,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 slots.push(window, value)?;
                 true
             }
+            Instruction::PutField(index) => return Ok(RunExit::SetProperty(Some(*index))),
+            Instruction::PutArrayEl => return Ok(RunExit::SetProperty(None)),
             Instruction::GetField(index) | Instruction::GetField2(index) => {
                 return Ok(RunExit::GetField {
                     index: *index,
