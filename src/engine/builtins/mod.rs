@@ -54,6 +54,10 @@ mod json;
 mod map;
 mod math;
 mod object;
+#[cfg(feature = "stack-vm")]
+pub(crate) use object::prototype::{
+    BuiltinPrototypeKind, BuiltinPrototypeResume, BuiltinPrototypeStep,
+};
 pub(crate) mod promise;
 mod proxy;
 mod reflect;

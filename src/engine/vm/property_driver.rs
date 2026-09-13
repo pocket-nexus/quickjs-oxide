@@ -234,6 +234,7 @@ pub(super) fn read_prepared(
     let mut deferred = None;
     let mut proxy = None;
     let mut proxy_callback = None;
+    let mut native_callback = None;
     let value = match read {
         OrdinaryRead::Complete(value) => Some(value.unwrap_or(Value::Undefined)),
         OrdinaryRead::Call { getter, receiver } => {
@@ -263,6 +264,8 @@ pub(super) fn read_prepared(
                 _ => false,
             };
             let is_proxy = matches!(classification, CallableExecution::Proxy);
+            let is_owned_native = matches!(&classification, CallableExecution::Native { target, .. }
+                if crate::engine::builtins::BuiltinPrototypeKind::for_target(*target).is_some());
             if let CallableExecution::Bytecode {
                 bytecode,
                 closure_slots,
@@ -292,6 +295,8 @@ pub(super) fn read_prepared(
                 });
             } else if is_proxy {
                 proxy_callback = Some((callable, receiver, arguments));
+            } else if is_owned_native {
+                native_callback = Some((callable, receiver, arguments));
             } else {
                 deferred = Some(Action::Call {
                     callable,
@@ -337,6 +342,11 @@ pub(super) fn read_prepared(
             arguments,
             false,
             depth,
+        );
+    }
+    if let Some((callable, receiver, arguments)) = native_callback {
+        return super::proxy_get_driver::start_native_call(
+            runtime, execution, id, callable, receiver, arguments, false, depth,
         );
     }
     if let Some(action) = deferred {

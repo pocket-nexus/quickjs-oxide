@@ -170,6 +170,35 @@ pub(super) fn enter_call(
                     depth,
                 );
             }
+            CallableExecution::Native { target, .. }
+                if crate::engine::builtins::BuiltinPrototypeKind::for_target(target).is_some() =>
+            {
+                let depth = execution.slots.depth(window);
+                let mut arguments = Vec::new();
+                arguments
+                    .try_reserve_exact(count)
+                    .map_err(|_| Error::internal("native call arguments allocation failed"))?;
+                for _ in 0..count {
+                    arguments.push(execution.slots.pop(window)?);
+                }
+                arguments.reverse();
+                execution.slots.pop(window)?;
+                let receiver = if method {
+                    execution.slots.pop(window)?
+                } else {
+                    Value::Undefined
+                };
+                return super::proxy_get_driver::start_native_call(
+                    runtime,
+                    execution,
+                    id,
+                    callable,
+                    bound_receiver.unwrap_or(receiver),
+                    bound_arguments.unwrap_or(arguments),
+                    tail,
+                    depth,
+                );
+            }
             _ => {
                 return super::call_bridge::prepare(
                     runtime, execution, id, count, method, tail, None,
@@ -5573,6 +5602,228 @@ mod tests {
     }
 
     #[test]
+    fn owned_native_prototype_entries_drive_nested_callbacks_and_bound_calls() {
+        for (setup, body, trace) in [
+            (
+                "var trace=0;var p={};var target=new Proxy({}, {getPrototypeOf(){trace++;return p}});Object.defineProperty({},'x',{get:Object.getPrototypeOf.bind(undefined,target)})",
+                "return o.x===p?42:0",
+                1,
+            ),
+            (
+                "var trace=0;var target=new Proxy({}, {getPrototypeOf(){trace++;return null}});({valueOf:Object.getPrototypeOf.bind(undefined,target)})",
+                "return +o===0?42:0",
+                1,
+            ),
+            (
+                "var trace=0;Object.create(null)",
+                "return Object.getPrototypeOf(o)===null?42:0",
+                0,
+            ),
+            (
+                "var trace=0;42",
+                "return Object.getPrototypeOf(o)===Number.prototype?42:0",
+                0,
+            ),
+            ("var trace=0;42", "return Object.setPrototypeOf(o,null)", 0),
+            (
+                "var trace=0;42",
+                "try{Object.setPrototypeOf(o,1)}catch(e){return e.message==='not an object'?42:0}",
+                0,
+            ),
+            (
+                "var trace=0;42",
+                "try{Reflect.getPrototypeOf(o)}catch(e){return e.message==='not an object'?42:0}",
+                0,
+            ),
+            (
+                "var trace=0;new Proxy({}, {setPrototypeOf(){trace++;return false}})",
+                "return Reflect.setPrototypeOf(o,null)===false?42:0",
+                1,
+            ),
+            (
+                "var trace=0;new Proxy({}, {setPrototypeOf(){trace++;return false}})",
+                "try{Object.setPrototypeOf(o,null)}catch(e){return e.message==='proxy: bad prototype'?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var p={};var t=new Proxy({}, {getPrototypeOf(){trace++;return p}});new Proxy(t,{getPrototypeOf:Reflect.getPrototypeOf})",
+                "return Object.getPrototypeOf(o)===p?42:0",
+                1,
+            ),
+            (
+                "var trace=0;var p={};var t=new Proxy({}, {getPrototypeOf(){trace++;return p}});new Proxy(t,{get getPrototypeOf(){trace=trace*10+1;return Reflect.getPrototypeOf}})",
+                "return Object.getPrototypeOf(o)===p?42:0",
+                2,
+            ),
+            (
+                "var trace=0;var p={};var t=new Proxy({}, {getPrototypeOf(){trace++;return p}});new Proxy({}, {getPrototypeOf(){trace=trace*10+1;return Object.getPrototypeOf(t)}})",
+                "return Reflect.getPrototypeOf(o)===p?42:0",
+                2,
+            ),
+            (
+                "var trace=0;var t=new Proxy({}, {setPrototypeOf(t,p){trace++;return Reflect.setPrototypeOf(t,p)}});new Proxy(t,{setPrototypeOf:Reflect.setPrototypeOf})",
+                "return Object.setPrototypeOf(o,null)===o?42:0",
+                1,
+            ),
+            (
+                "var trace=0;var p={};var o=new Proxy({}, {getPrototypeOf(){trace++;return p}});Object.getPrototypeOf.bind(undefined,o)",
+                "return o()===p?42:0",
+                1,
+            ),
+            (
+                "var trace=0;var n=64;var o=new Proxy({}, {getPrototypeOf(){trace++;if(n--===0)return null;return Object.getPrototypeOf(o)}});o",
+                "return Object.getPrototypeOf(o)===null?42:0",
+                65,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{setup}: {result:?}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            drop(profile);
+            assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_native_prototype_recursion_uses_existing_frame_budget_and_recovers() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let object = context.eval("var calls=0;var p=new Proxy({}, {getPrototypeOf(){calls++;return Object.getPrototypeOf(p)}});p").unwrap();
+        let entry = entry(
+            &runtime,
+            &mut context,
+            "(function(p){try{Object.getPrototypeOf(p)}catch(e){return e.message==='stack overflow'?42:0}})",
+            vec![object],
+        );
+        let profile = CostProfile::start();
+        let result = execute(
+            runtime.clone(),
+            entry,
+            ExecutionLimits {
+                frames: 32,
+                ..ExecutionLimits::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(result, Completion::Return(Value::Int(42))),
+            "{result:?}"
+        );
+        let cost = profile.snapshot();
+        assert_eq!(cost.legacy_dispatches, 0);
+        assert_eq!(cost.owned_bridge_exits, 0);
+        assert_eq!(cost.owned_sync_call_bridges, 0);
+        drop(profile);
+        assert!(
+            matches!(context.eval("calls").unwrap(), Value::Int(calls) if calls > 1 && calls < 32)
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+    }
+
+    #[test]
+    fn owned_native_prototype_error_uses_defining_realm_and_keeps_native_stack() {
+        let runtime = Runtime::new();
+        let mut caller = runtime.new_context();
+        let mut defining = runtime.new_context();
+        let function = defining.eval("Object.getPrototypeOf").unwrap();
+        let prototype = defining.eval("TypeError.prototype").unwrap();
+        let object = caller
+            .eval("new Proxy({}, {getPrototypeOf(){return 1}})")
+            .unwrap();
+        let entry = entry(
+            &runtime,
+            &mut caller,
+            "(function(f,p){return f(p)})",
+            vec![function, object],
+        );
+        drop(defining);
+        let profile = CostProfile::start();
+        let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+        let cost = profile.snapshot();
+        assert_eq!(cost.legacy_dispatches, 0);
+        assert_eq!(cost.owned_bridge_exits, 0);
+        assert_eq!(cost.owned_sync_call_bridges, 0);
+        drop(profile);
+        let Completion::Throw(Value::Object(error)) = result else {
+            panic!("expected error")
+        };
+        assert_eq!(
+            runtime.get_prototype_of(&error).unwrap().map(Value::Object),
+            Some(prototype)
+        );
+        let stack = caller
+            .get_property(&error, &runtime.intern_property_key("stack").unwrap())
+            .unwrap();
+        assert!(
+            matches!(stack, Value::String(ref text) if text.to_string().contains("getPrototypeOf (native)")),
+            "{stack:?}"
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn owned_native_prototype_pending_call_keeps_extra_arguments_until_abandonment() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let mut context = runtime.new_context();
+        let callable = runtime
+            .callable_from_value(context.eval("Object.getPrototypeOf").unwrap())
+            .unwrap();
+        let object = context
+            .eval("new Proxy({}, {getPrototypeOf(){return null}})")
+            .unwrap();
+        let extra = runtime.new_object(None).unwrap();
+        let extra_id = extra.object_id();
+        let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
+        let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+        let id = push_frame(&mut execution, entry).unwrap();
+        assert!(matches!(
+            super::super::proxy_get_driver::start_native_call(
+                &runtime,
+                &mut execution,
+                id,
+                callable,
+                Value::Undefined,
+                vec![object, Value::Object(extra)],
+                false,
+                0
+            )
+            .unwrap(),
+            CallStep::Entered
+        ));
+        assert_ne!(execution.frames.current_id(), Some(id));
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(extra_id).is_ok());
+        drop(execution);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(extra_id).is_err());
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+        drop(context);
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
     fn owned_proxy_prototypes_preserve_order_and_identity() {
         use crate::engine::object::ProxyPrototypeKind;
         // `expected` is evaluated outside the measured owned query.
@@ -5889,7 +6140,7 @@ mod tests {
                 "var trace=0;var p={x:42};var key={toString(){trace++;Object.setPrototypeOf(o,{x:0});return 'x'}};var o={__proto__:p,read(){return super[key]}};o",
                 "return o.read()",
                 1,
-                1,
+                0,
             ),
             (
                 "var trace=0;var key={toString(){trace=trace*10+2;return 'x'}};var rhs=function(){trace=trace*10+1;return 42};({__proto__:null,write(){super[key]=rhs()}})",

@@ -30,8 +30,10 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         self.assertEqual(self.scan(), [])
 
     def test_bad_boundaries_are_rejected(self):
-        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype = ordinary_properties.FILES
+        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype, builtin_prototype, object_builtin = ordinary_properties.FILES
         mutations = [
+            (builtin_prototype, "let target = arguments", "runtime.internal_get_prototype_of(); let target = arguments"),
+            (object_builtin, "if self.is_proxy_object(object)? {", "self.internal_set_prototype_of(); if self.is_proxy_object(object)? {"),
             (proxy_prototype, "let name = match &kind {", "runtime.internal_get_prototype_of(); let name = match &kind {"),
             (proxy_prototype, "if value != prototype {", "runtime.internal_set_prototype_of(); if value != prototype {"),
             (proxy_boolean, "let step = MethodStep::start(runtime, realm, object, name)?;", "runtime.internal_prevent_extensions(); let step = MethodStep::start(runtime, realm, object, name)?;"),

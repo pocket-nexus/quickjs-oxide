@@ -18,6 +18,8 @@ use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, Type
 use crate::engine::object::{ProxyPrototypeResume, ProxyPrototypeStep};
 
 pub(super) enum Resume {
+    Identity,
+    BuiltinPrototype(crate::engine::builtins::BuiltinPrototypeResume),
     Prototype(ProxyPrototypeResume),
     PrototypeGetReply(Box<Resume>),
     PrototypeSetReply(Box<Resume>),
@@ -581,6 +583,7 @@ impl Resume {
             } => runtime
                 .finish_property_delete(result, strict_delete)
                 .map(Step::Complete),
+            Self::BuiltinPrototype(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Prototype(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Own(resume) => resume.extensible(result).map(Into::into),
             Self::Boolean(resume) => resume.boolean(runtime, result).map(Into::into),
@@ -597,6 +600,12 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::Identity => Ok(Step::Complete(completion)),
+            Self::BuiltinPrototype(_) => {
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "prototype builtin received an untyped reply",
+                ))
+            }
             Self::Prototype(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::PrototypeGetReply(resume) => {
                 let result = match completion {
@@ -886,10 +895,33 @@ impl Resume {
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::BuiltinPrototype(resume) => resume.prototype(result).map(Into::into),
             Self::Prototype(resume) => resume.prototype(runtime, result).map(Into::into),
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "prototype result has no matching continuation",
             )),
+        }
+    }
+}
+
+impl From<crate::engine::builtins::BuiltinPrototypeStep> for Step {
+    fn from(step: crate::engine::builtins::BuiltinPrototypeStep) -> Self {
+        use crate::engine::builtins::BuiltinPrototypeStep;
+        match step {
+            BuiltinPrototypeStep::Complete(result) => Self::Complete(result),
+            BuiltinPrototypeStep::Get { object, resume } => Self::GetPrototype {
+                object,
+                resume: Resume::BuiltinPrototype(resume),
+            },
+            BuiltinPrototypeStep::Set {
+                object,
+                prototype,
+                resume,
+            } => Self::SetPrototype {
+                object,
+                prototype,
+                resume: Resume::BuiltinPrototype(resume),
+            },
         }
     }
 }

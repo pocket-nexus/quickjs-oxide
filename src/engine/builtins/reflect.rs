@@ -510,16 +510,16 @@ impl Runtime {
         realm: ContextId,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let object = match self.reflect_object_argument(realm, arguments)? {
-            NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        Ok(match self.internal_get_prototype_of(realm, &object)? {
-            NativeConversion::Value(prototype) => {
-                Completion::Return(prototype.map_or(Value::Null, Value::Object))
-            }
-            NativeConversion::Throw(value) => Completion::Throw(value),
-        })
+        super::object::prototype::finish(
+            self,
+            realm,
+            super::object::prototype::BuiltinPrototypeStep::start(
+                self,
+                realm,
+                super::object::prototype::BuiltinPrototypeKind::ReflectGet,
+                arguments,
+            )?,
+        )
     }
 
     fn call_reflect_has(
@@ -625,26 +625,15 @@ impl Runtime {
         realm: ContextId,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let object = match self.reflect_object_argument(realm, arguments)? {
-            NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let prototype = match &arguments.readable[1] {
-            Value::Object(prototype) => Some(prototype),
-            Value::Null => None,
-            _ => {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not an object",
-                )?));
-            }
-        };
-        Ok(
-            match self.internal_set_prototype_of(realm, &object, prototype)? {
-                NativeConversion::Value(accepted) => Completion::Return(Value::Bool(accepted)),
-                NativeConversion::Throw(value) => Completion::Throw(value),
-            },
+        super::object::prototype::finish(
+            self,
+            realm,
+            super::object::prototype::BuiltinPrototypeStep::start(
+                self,
+                realm,
+                super::object::prototype::BuiltinPrototypeKind::ReflectSet,
+                arguments,
+            )?,
         )
     }
 }

@@ -20,6 +20,8 @@ use crate::engine::value::{JsString, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
 
+pub(super) mod prototype;
+
 #[cfg(test)]
 mod tests;
 
@@ -1107,26 +1109,16 @@ impl Runtime {
                 "Object.getPrototypeOf did not receive a generic invocation",
             ));
         };
-        let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
-            "Object.getPrototypeOf argv was not padded",
-        ))?;
-        if matches!(value, Value::Null | Value::Undefined) {
-            return Ok(Completion::Throw(self.new_native_error(
+        prototype::finish(
+            self,
+            realm,
+            prototype::BuiltinPrototypeStep::start(
+                self,
                 realm,
-                NativeErrorKind::Type,
-                "not an object",
-            )?));
-        }
-        let object = match self.native_to_object(realm, value.clone())? {
-            NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        Ok(match self.internal_get_prototype_of(realm, &object)? {
-            NativeConversion::Value(prototype) => {
-                Completion::Return(prototype.map_or(Value::Null, Value::Object))
-            }
-            NativeConversion::Throw(value) => Completion::Throw(value),
-        })
+                prototype::BuiltinPrototypeKind::ObjectGet,
+                arguments,
+            )?,
+        )
     }
 
     fn set_prototype_or_throw(
@@ -1135,7 +1127,20 @@ impl Runtime {
         object: &ObjectRef,
         prototype: Option<&ObjectRef>,
     ) -> Result<Option<Value>, RuntimeError> {
-        match self.internal_set_prototype_of(realm, object, prototype)? {
+        self.finish_set_prototype_or_throw(
+            realm,
+            object,
+            self.internal_set_prototype_of(realm, object, prototype)?,
+        )
+    }
+
+    fn finish_set_prototype_or_throw(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        result: NativeConversion<bool>,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match result {
             NativeConversion::Value(true) => return Ok(None),
             NativeConversion::Throw(value) => return Ok(Some(value)),
             NativeConversion::Value(false) => {}
@@ -1177,37 +1182,16 @@ impl Runtime {
                 "Object.setPrototypeOf did not receive a generic invocation",
             ));
         };
-        let target = arguments.readable.first().ok_or(RuntimeError::Invariant(
-            "Object.setPrototypeOf target argv was not padded",
-        ))?;
-        if matches!(target, Value::Undefined | Value::Null) {
-            return Ok(Completion::Throw(self.new_native_error(
+        prototype::finish(
+            self,
+            realm,
+            prototype::BuiltinPrototypeStep::start(
+                self,
                 realm,
-                NativeErrorKind::Type,
-                "not an object",
-            )?));
-        }
-        let prototype = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
-            "Object.setPrototypeOf prototype argv was not padded",
-        ))?;
-        let prototype = match prototype {
-            Value::Object(prototype) => Some(prototype),
-            Value::Null => None,
-            _ => {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not an object",
-                )?));
-            }
-        };
-        let Value::Object(target_object) = target else {
-            return Ok(Completion::Return(target.clone()));
-        };
-        if let Some(value) = self.set_prototype_or_throw(realm, target_object, prototype)? {
-            return Ok(Completion::Throw(value));
-        }
-        Ok(Completion::Return(target.clone()))
+                prototype::BuiltinPrototypeKind::ObjectSet,
+                arguments,
+            )?,
+        )
     }
 
     fn property_define_rejection(

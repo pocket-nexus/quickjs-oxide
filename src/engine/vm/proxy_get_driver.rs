@@ -26,17 +26,76 @@ use request::{Resume, Step};
 
 pub(super) struct PendingProxyGet {
     identity: u64,
-    parents: Vec<Resume>,
+    query: Query,
     resume: Resume,
-    finish: Finish,
 }
 
 impl PendingProxyGet {
     pub(super) fn continuation_depth(&self) -> usize {
-        // The pending reply itself is accounted for by its installed child
-        // frame; the parent domain operations have no bytecode frame.
-        self.parents.len()
+        self.query.continuation_depth()
     }
+}
+
+struct Query {
+    realm: crate::engine::heap::ContextId,
+    parents: Vec<Resume>,
+    natives: Vec<NativeScope>,
+    finish: Option<Finish>,
+}
+struct NativeScope {
+    call: super::call::PreparedNativeCall,
+    parents: Vec<Resume>,
+    resume: Resume,
+    parent_realm: crate::engine::heap::ContextId,
+}
+impl Query {
+    fn continuation_depth(&self) -> usize {
+        self.natives
+            .iter()
+            .fold(self.parents.len(), |depth, scope| {
+                depth.saturating_add(1 + scope.parents.len())
+            })
+    }
+    fn finish_native(
+        &mut self,
+        runtime: &Runtime,
+        result: Result<Completion, Error>,
+    ) -> Result<Step, Error> {
+        let scope = self
+            .natives
+            .pop()
+            .ok_or_else(|| Error::internal("native result has no scope"))?;
+        self.parents = scope.parents;
+        self.realm = scope.parent_realm;
+        let result = scope
+            .call
+            .activation
+            .finish(
+                result
+                    .map(super::call::NativeInvokeOutcome::Completion)
+                    .map_err(crate::engine::api::runtime_error::RuntimeError::Engine),
+            )
+            .and_then(Runtime::ordinary_native_completion)
+            .map_err(runtime_error_to_vm_error)?;
+        scope
+            .resume
+            .resume(runtime, result)
+            .map_err(runtime_error_to_vm_error)
+    }
+}
+impl Drop for Query {
+    fn drop(&mut self) {
+        // Native diagnostic frames must leave in LIFO order on abandonment too.
+        while self.natives.pop().is_some() {}
+    }
+}
+
+enum Next {
+    Done(Progress),
+    Call {
+        entry: super::frame::FrameEntry,
+        resume: Resume,
+    },
 }
 
 enum Finish {
@@ -289,6 +348,85 @@ pub(super) fn start_call(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_native_call(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    callable: crate::engine::object::CallableRef,
+    receiver: Value,
+    arguments: Vec<Value>,
+    tail: bool,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    match start_owned_callback(
+        runtime,
+        execution,
+        frame,
+        callable,
+        receiver,
+        arguments,
+        Finish::Call { depth, tail },
+    )? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("native call returned a conversion")),
+    }
+}
+
+pub(super) fn start_native_conversion_call(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    callable: crate::engine::object::CallableRef,
+    receiver: Value,
+    arguments: Vec<Value>,
+    wait: super::conversion_driver::ConversionWait,
+) -> Result<Progress, Error> {
+    start_owned_callback(
+        runtime,
+        execution,
+        frame,
+        callable,
+        receiver,
+        arguments,
+        Finish::Conversion(wait),
+    )
+}
+
+fn start_owned_callback(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    callable: crate::engine::object::CallableRef,
+    receiver: Value,
+    arguments: Vec<Value>,
+    finish: Finish,
+) -> Result<Progress, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    let realm = parent.executable.realm;
+    let result = advance(
+        runtime,
+        execution,
+        frame,
+        identity,
+        Vec::new(),
+        Step::Call {
+            target: DirectCallTarget::Callable(callable),
+            receiver,
+            arguments,
+            resume: Resume::Identity,
+        },
+        finish,
+    );
+    finish_error(runtime, realm, result)
+}
+
 pub(super) fn start_conversion_call(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -407,21 +545,18 @@ pub(super) fn reply(
         ));
     }
     let realm = parent.executable.realm;
-    let result = (|| {
-        let step = pending
-            .resume
-            .resume(runtime, completion)
-            .map_err(runtime_error_to_vm_error)?;
-        advance(
-            runtime,
-            execution,
-            target.frame,
-            pending.identity,
-            pending.parents,
-            step,
-            pending.finish,
-        )
-    })();
+    let step = pending
+        .resume
+        .resume(runtime, completion)
+        .map_err(runtime_error_to_vm_error);
+    let result = drive(
+        runtime,
+        execution,
+        target.frame,
+        pending.identity,
+        pending.query,
+        step,
+    );
     finish_error(runtime, realm, result)
 }
 
@@ -444,28 +579,109 @@ fn advance(
     execution: &mut RunningExecution,
     frame: FrameId,
     identity: u64,
-    mut parents: Vec<Resume>,
-    mut step: Step,
+    parents: Vec<Resume>,
+    step: Step,
     finish: Finish,
 ) -> Result<Progress, Error> {
     let realm = execution.frames.current_mut(frame)?.executable.realm;
+    drive(
+        runtime,
+        execution,
+        frame,
+        identity,
+        Query {
+            realm,
+            parents,
+            natives: Vec::new(),
+            finish: Some(finish),
+        },
+        Ok(step),
+    )
+}
+
+fn drive(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    identity: u64,
+    mut query: Query,
+    mut step: Result<Step, Error>,
+) -> Result<Progress, Error> {
     loop {
+        let result = step
+            .and_then(|step| advance_inner(runtime, execution, frame, identity, &mut query, step));
+        match result {
+            Ok(Next::Done(result)) => return Ok(result),
+            Ok(Next::Call { entry, resume }) => {
+                let parent = execution.frames.current_mut(frame)?;
+                if parent.cold.property_wait.is_some() {
+                    return Err(Error::internal(
+                        "property operation overwrote a pending reply",
+                    ));
+                }
+                parent.cold.property_wait = Some(Box::new(PendingProxyGet {
+                    identity,
+                    query,
+                    resume,
+                }));
+                match push_frame(execution, entry) {
+                    Ok(_) => return Ok(Progress::Call(CallStep::Entered)),
+                    Err(error) => {
+                        let pending = execution
+                            .frames
+                            .current_mut(frame)?
+                            .cold
+                            .property_wait
+                            .take()
+                            .ok_or_else(|| Error::internal("failed child entry lost its query"))?;
+                        query = pending.query;
+                        step = Err(error);
+                    }
+                }
+            }
+            Err(error) if !query.natives.is_empty() => {
+                // The native frame and all argv roots are still owned here.
+                step = query.finish_native(runtime, Err(error));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn advance_inner(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    identity: u64,
+    query: &mut Query,
+    mut step: Step,
+) -> Result<Next, Error> {
+    loop {
+        let realm = query.realm;
         let (target, receiver, arguments, resume) = match step {
             Step::Complete(completion) => {
-                if let Some(parent) = parents.pop() {
+                if let Some(parent) = query.parents.pop() {
                     step = parent
                         .resume(runtime, completion)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                let (_depth, push) = match finish {
+                if !query.natives.is_empty() {
+                    step = query.finish_native(runtime, Ok(completion))?;
+                    continue;
+                }
+                let (_depth, push) = match query
+                    .finish
+                    .take()
+                    .ok_or_else(|| Error::internal("query lost its final continuation"))?
+                {
                     Finish::Write { depth, .. } => (depth, false),
                     Finish::PropertyRead(depth) => (depth, true),
                     Finish::Call { depth, tail } => {
                         if tail {
                             #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_instruction(depth);
-                            return Ok(Progress::Call(CallStep::Complete(completion)));
+                            return Ok(Next::Done(Progress::Call(CallStep::Complete(completion))));
                         }
                         (depth, true)
                     }
@@ -473,7 +689,8 @@ fn advance(
                         return super::conversion_driver::ConversionTask::from_wait(
                             runtime, frame, wait, completion,
                         )
-                        .map(Progress::Conversion);
+                        .map(Progress::Conversion)
+                        .map(Next::Done);
                     }
                 };
                 return match completion {
@@ -488,9 +705,9 @@ fn advance(
                             .ok_or_else(|| Error::internal("property resume PC overflow"))?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_instruction(_depth);
-                        Ok(Progress::Call(CallStep::Entered))
+                        Ok(Next::Done(Progress::Call(CallStep::Entered)))
                     }
-                    completion => Ok(Progress::Call(CallStep::Complete(completion))),
+                    completion => Ok(Next::Done(Progress::Call(CallStep::Complete(completion)))),
                 };
             }
             Step::SetContinue(resume) => {
@@ -501,20 +718,22 @@ fn advance(
                 continue;
             }
             Step::SetLength { value, resume } => {
-                parents
+                query
+                    .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                parents.push(Resume::SetLength(resume));
+                query.parents.push(Resume::SetLength(resume));
                 step = crate::engine::object::ArrayLengthStep::start(runtime, Some(realm), value)
                     .map_err(runtime_error_to_vm_error)?
                     .into();
                 continue;
             }
             Step::Number { value, resume } => {
-                parents
+                query
+                    .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                parents.push(Resume::LengthNumber(resume));
+                query.parents.push(Resume::LengthNumber(resume));
                 step = crate::engine::value::conversion::number::NumberStep::start(
                     runtime, realm, value,
                 )
@@ -523,7 +742,7 @@ fn advance(
                 continue;
             }
             Step::NumberComplete(result) => {
-                let Some(Resume::LengthNumber(resume)) = parents.pop() else {
+                let Some(Resume::LengthNumber(resume)) = query.parents.pop() else {
                     return Err(Error::internal(
                         "ToNumber result has no matching continuation",
                     ));
@@ -535,7 +754,8 @@ fn advance(
                 continue;
             }
             Step::LengthComplete(result) => {
-                let resume = parents
+                let resume = query
+                    .parents
                     .pop()
                     .ok_or_else(|| Error::internal("Array length result has no parent"))?;
                 step = resume
@@ -561,10 +781,10 @@ fn advance(
                             .into()
                     }
                     Some(request) => {
-                        parents.try_reserve(1).map_err(|_| {
+                        query.parents.try_reserve(1).map_err(|_| {
                             Error::internal("property continuation allocation failed")
                         })?;
-                        parents.push(Resume::SetTyped(resume));
+                        query.parents.push(Resume::SetTyped(resume));
                         step = request.into();
                     }
                 }
@@ -575,17 +795,18 @@ fn advance(
                 value,
                 resume,
             } => {
-                parents
+                query
+                    .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                parents.push(Resume::TypedElement(resume));
+                query.parents.push(Resume::TypedElement(resume));
                 step = crate::engine::builtins::ElementStep::start(runtime, realm, element, value)
                     .map_err(runtime_error_to_vm_error)?
                     .into();
                 continue;
             }
             Step::ElementComplete(result) => {
-                let Some(Resume::TypedElement(resume)) = parents.pop() else {
+                let Some(Resume::TypedElement(resume)) = query.parents.pop() else {
                     return Err(Error::internal(
                         "element result has no matching continuation",
                     ));
@@ -597,7 +818,8 @@ fn advance(
                 continue;
             }
             Step::TypedComplete(result) => {
-                let resume = parents
+                let resume = query
+                    .parents
                     .pop()
                     .ok_or_else(|| Error::internal("TypedArray result has no parent"))?;
                 step = resume
@@ -620,13 +842,13 @@ fn advance(
                     };
                     continue;
                 }
-                if let Some(resume) = parents.pop() {
+                if let Some(resume) = query.parents.pop() {
                     step = resume
                         .set(runtime, action)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                let Finish::Write { key, strict, .. } = &finish else {
+                let Some(Finish::Write { key, strict, .. }) = query.finish.as_ref() else {
                     return Err(Error::internal("Set result has no assignment owner"));
                 };
                 step = Step::Complete(
@@ -647,7 +869,10 @@ fn advance(
                 receiver,
                 resume,
             } => {
-                if !execution.frames.can_push_with_continuations(parents.len()) {
+                if !execution
+                    .frames
+                    .can_push_with_continuations(query.continuation_depth())
+                {
                     let Completion::Throw(value) = overflow(runtime, realm)? else {
                         unreachable!()
                     };
@@ -659,10 +884,11 @@ fn advance(
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                parents
+                query
+                    .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                parents.push(resume);
+                query.parents.push(resume);
                 step = crate::engine::object::SetStep::start(
                     runtime,
                     Some(realm),
@@ -682,7 +908,10 @@ fn advance(
                 receiver,
                 resume,
             } => {
-                if !execution.frames.can_push_with_continuations(parents.len()) {
+                if !execution
+                    .frames
+                    .can_push_with_continuations(query.continuation_depth())
+                {
                     let Completion::Throw(value) = overflow(runtime, realm)? else {
                         unreachable!()
                     };
@@ -694,10 +923,11 @@ fn advance(
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                parents
+                query
+                    .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                parents.push(resume);
+                query.parents.push(resume);
                 step = crate::engine::object::ProxySetStep::start(
                     runtime, realm, object, key, value, receiver,
                 )
@@ -706,7 +936,8 @@ fn advance(
                 continue;
             }
             Step::Defined(result) => {
-                let resume = parents
+                let resume = query
+                    .parents
                     .pop()
                     .ok_or_else(|| Error::internal("Define result has no parent"))?;
                 step = resume
@@ -724,7 +955,10 @@ fn advance(
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                    if !execution
+                        .frames
+                        .can_push_with_continuations(query.continuation_depth())
+                    {
                         let Completion::Throw(value) = overflow(runtime, realm)? else {
                             unreachable!()
                         };
@@ -733,10 +967,11 @@ fn advance(
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(resume);
+                    query.parents.push(resume);
                     step = crate::engine::object::ProxyDefineStep::start(
                         runtime, realm, object, key, descriptor,
                     )
@@ -748,10 +983,11 @@ fn advance(
                     .prepare_array_length_definition(Some(realm), &object, &key, &descriptor)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(Resume::DefineLength {
+                    query.parents.push(Resume::DefineLength {
                         object,
                         key,
                         descriptor,
@@ -764,10 +1000,11 @@ fn advance(
                     .prepare_typed_array_definition(&object, &key, &descriptor)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(Resume::DefineTyped {
+                    query.parents.push(Resume::DefineTyped {
                         object,
                         _descriptor: descriptor,
                         resume: Box::new(resume),
@@ -784,7 +1021,8 @@ fn advance(
                 continue;
             }
             Step::OwnComplete(descriptor) => {
-                let parent = parents
+                let parent = query
+                    .parents
                     .pop()
                     .ok_or_else(|| Error::internal("descriptor reply has no parent operation"))?;
                 step = parent
@@ -793,7 +1031,8 @@ fn advance(
                 continue;
             }
             Step::BooleanComplete(result) => {
-                let resume = parents
+                let resume = query
+                    .parents
                     .pop()
                     .ok_or_else(|| Error::internal("boolean reply has no parent operation"))?;
                 step = resume
@@ -806,7 +1045,10 @@ fn advance(
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                    if !execution
+                        .frames
+                        .can_push_with_continuations(query.continuation_depth())
+                    {
                         let Completion::Throw(value) = overflow(runtime, realm)? else {
                             unreachable!()
                         };
@@ -815,10 +1057,13 @@ fn advance(
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(Resume::PrototypeGetReply(Box::new(resume)));
+                    query
+                        .parents
+                        .push(Resume::PrototypeGetReply(Box::new(resume)));
                     step =
                         ProxyPrototypeStep::start(runtime, realm, object, ProxyPrototypeKind::Get)
                             .map_err(runtime_error_to_vm_error)?
@@ -842,7 +1087,10 @@ fn advance(
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                    if !execution
+                        .frames
+                        .can_push_with_continuations(query.continuation_depth())
+                    {
                         let Completion::Throw(value) = overflow(runtime, realm)? else {
                             unreachable!()
                         };
@@ -851,10 +1099,13 @@ fn advance(
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(Resume::PrototypeSetReply(Box::new(resume)));
+                    query
+                        .parents
+                        .push(Resume::PrototypeSetReply(Box::new(resume)));
                     step = ProxyPrototypeStep::start(
                         runtime,
                         realm,
@@ -882,7 +1133,10 @@ fn advance(
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                    if !execution
+                        .frames
+                        .can_push_with_continuations(query.continuation_depth())
+                    {
                         let Completion::Throw(value) = overflow(runtime, realm)? else {
                             unreachable!()
                         };
@@ -891,10 +1145,11 @@ fn advance(
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(resume);
+                    query.parents.push(resume);
                     step = ProxyBooleanStep::start(
                         runtime,
                         realm,
@@ -918,7 +1173,10 @@ fn advance(
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                    if !execution
+                        .frames
+                        .can_push_with_continuations(query.continuation_depth())
+                    {
                         let Completion::Throw(value) = overflow(runtime, realm)? else {
                             unreachable!()
                         };
@@ -927,10 +1185,11 @@ fn advance(
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(resume);
+                    query.parents.push(resume);
                     step = ProxyBooleanStep::start(
                         runtime,
                         realm,
@@ -954,10 +1213,11 @@ fn advance(
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(resume);
+                    query.parents.push(resume);
                     step = ProxyBooleanStep::start(
                         runtime,
                         realm,
@@ -977,17 +1237,18 @@ fn advance(
                 continue;
             }
             Step::Convert { value, resume } => {
-                parents
+                query
+                    .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                parents.push(Resume::Own(resume));
+                query.parents.push(Resume::Own(resume));
                 step = DescriptorStep::start(runtime, realm, value)
                     .map_err(runtime_error_to_vm_error)?
                     .into();
                 continue;
             }
             Step::Converted(result) => {
-                let Some(Resume::Own(resume)) = parents.pop() else {
+                let Some(Resume::Own(resume)) = query.parents.pop() else {
                     return Err(Error::internal(
                         "converted descriptor has no matching property operation",
                     ));
@@ -1013,10 +1274,10 @@ fn advance(
                             .map_err(runtime_error_to_vm_error)?
                     }
                     PreparedHas::Proxy(object) => {
-                        parents.try_reserve(1).map_err(|_| {
+                        query.parents.try_reserve(1).map_err(|_| {
                             Error::internal("property continuation allocation failed")
                         })?;
-                        parents.push(resume);
+                        query.parents.push(resume);
                         step = ProxyBooleanStep::start(
                             runtime,
                             realm,
@@ -1057,16 +1318,19 @@ fn advance(
                     OrdinaryRead::Special {
                         object, receiver, ..
                     } => {
-                        if !execution.frames.can_push_with_continuations(parents.len()) {
+                        if !execution
+                            .frames
+                            .can_push_with_continuations(query.continuation_depth())
+                        {
                             step = resume
                                 .resume(runtime, overflow(runtime, realm)?)
                                 .map_err(runtime_error_to_vm_error)?;
                             continue;
                         }
-                        parents.try_reserve(1).map_err(|_| {
+                        query.parents.try_reserve(1).map_err(|_| {
                             Error::internal("property continuation allocation failed")
                         })?;
-                        parents.push(resume);
+                        query.parents.push(resume);
                         step = ProxyGetStep::start(runtime, realm, object, key, receiver)
                             .map_err(runtime_error_to_vm_error)?
                             .into();
@@ -1089,10 +1353,11 @@ fn advance(
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
                 {
-                    parents
+                    query
+                        .parents
                         .try_reserve(1)
                         .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                    parents.push(resume);
+                    query.parents.push(resume);
                     step = ProxyOwnStep::start(runtime, realm, object, key)
                         .map_err(runtime_error_to_vm_error)?
                         .into();
@@ -1110,16 +1375,20 @@ fn advance(
         let callable = match target {
             DirectCallTarget::Callable(callable) => callable,
             DirectCallTarget::NonCallableProxy(proxy) => {
-                if !execution.frames.can_push_with_continuations(parents.len()) {
+                if !execution
+                    .frames
+                    .can_push_with_continuations(query.continuation_depth())
+                {
                     step = resume
                         .resume(runtime, overflow(runtime, realm)?)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                parents
+                query
+                    .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                parents.push(resume);
+                query.parents.push(resume);
                 step = crate::engine::object::ProxyCallStep::start(
                     runtime, realm, proxy, receiver, arguments,
                 )
@@ -1143,22 +1412,82 @@ fn advance(
             }
         };
         if matches!(classification, CallableExecution::Proxy) {
-            if !execution.frames.can_push_with_continuations(parents.len()) {
+            if !execution
+                .frames
+                .can_push_with_continuations(query.continuation_depth())
+            {
                 step = resume
                     .resume(runtime, overflow(runtime, realm)?)
                     .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
-            parents
+            query
+                .parents
                 .try_reserve(1)
                 .map_err(|_| Error::internal("property continuation allocation failed"))?;
-            parents.push(resume);
+            query.parents.push(resume);
             step = crate::engine::object::ProxyCallStep::start(
                 runtime,
                 realm,
                 callable.as_object().clone(),
                 receiver,
                 arguments,
+            )
+            .map_err(runtime_error_to_vm_error)?
+            .into();
+            continue;
+        }
+        if let CallableExecution::Native {
+            target,
+            realm: defining_realm,
+            min_readable_args,
+        } = classification
+            && let Some(kind) = crate::engine::builtins::BuiltinPrototypeKind::for_target(target)
+        {
+            if !execution
+                .frames
+                .can_push_with_continuations(query.continuation_depth())
+            {
+                step = resume
+                    .resume(runtime, overflow(runtime, realm)?)
+                    .map_err(runtime_error_to_vm_error)?;
+                continue;
+            }
+            query
+                .natives
+                .try_reserve(1)
+                .map_err(|_| Error::internal("native continuation allocation failed"))?;
+            let native_realm = if target.uses_calling_realm() {
+                realm
+            } else {
+                defining_realm
+            };
+            let call = runtime
+                .prepare_native_invocation(
+                    &callable,
+                    native_realm,
+                    target,
+                    min_readable_args,
+                    super::call::NativeInvocation::Call {
+                        this_value: receiver,
+                    },
+                    &arguments,
+                    super::call::NativeInvokeMode::Ordinary,
+                )
+                .map_err(runtime_error_to_vm_error)?;
+            query.natives.push(NativeScope {
+                call,
+                parents: std::mem::take(&mut query.parents),
+                resume,
+                parent_realm: realm,
+            });
+            query.realm = native_realm;
+            let native = query.natives.last().expect("native scope was installed");
+            step = crate::engine::builtins::BuiltinPrototypeStep::start(
+                runtime,
+                native_realm,
+                kind,
+                &native.call.activation.arguments,
             )
             .map_err(runtime_error_to_vm_error)?
             .into();
@@ -1179,7 +1508,9 @@ fn advance(
                 .metadata
                 .function_kind;
             if kind == FunctionKind::Normal {
-                if !execution.frames.can_push_with_continuations(parents.len())
+                if !execution
+                    .frames
+                    .can_push_with_continuations(query.continuation_depth())
                     || runtime.bytecode_call_would_overflow()
                 {
                     let completion = runtime
@@ -1206,20 +1537,7 @@ fn advance(
                     },
                 };
                 let entry = request.prepare(runtime)?;
-                let parent = execution.frames.current_mut(frame)?;
-                if parent.cold.property_wait.is_some() {
-                    return Err(Error::internal(
-                        "property operation overwrote a pending reply",
-                    ));
-                }
-                parent.cold.property_wait = Some(Box::new(PendingProxyGet {
-                    identity,
-                    parents,
-                    resume,
-                    finish,
-                }));
-                push_frame(execution, entry)?;
-                return Ok(Progress::Call(CallStep::Entered));
+                return Ok(Next::Call { entry, resume });
             }
         }
         #[cfg(feature = "profiling")]
@@ -1243,4 +1561,107 @@ fn overflow(runtime: &Runtime, realm: crate::engine::heap::ContextId) -> Result<
             )
             .map_err(runtime_error_to_vm_error)?,
     ))
+}
+
+#[cfg(test)]
+mod native_scope_tests {
+    use super::*;
+    use crate::engine::api::{Context, ErrorKind};
+
+    fn prepare(
+        runtime: &Runtime,
+        context: &mut Context,
+        name: &str,
+    ) -> super::super::call::PreparedNativeCall {
+        let callable = runtime
+            .callable_from_value(context.eval(name).unwrap())
+            .unwrap();
+        let CallableExecution::Native {
+            target,
+            realm,
+            min_readable_args,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("expected native")
+        };
+        runtime
+            .prepare_native_invocation(
+                &callable,
+                realm,
+                target,
+                min_readable_args,
+                super::super::call::NativeInvocation::Call {
+                    this_value: Value::Undefined,
+                },
+                &[],
+                super::super::call::NativeInvokeMode::Ordinary,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn nested_native_scope_errors_keep_frames_until_capture_and_restore_parent_realm() {
+        let runtime = Runtime::new();
+        let mut caller = runtime.new_context();
+        let mut outer = runtime.new_context();
+        let mut inner = runtime.new_context();
+        let prototype = inner.eval("TypeError.prototype").unwrap();
+        let first = prepare(&runtime, &mut outer, "Object.getPrototypeOf");
+        let second = prepare(&runtime, &mut inner, "Reflect.setPrototypeOf");
+        let mut query = Query {
+            realm: inner.realm,
+            parents: Vec::new(),
+            natives: vec![
+                NativeScope {
+                    call: first,
+                    parents: Vec::new(),
+                    resume: Resume::Identity,
+                    parent_realm: caller.realm,
+                },
+                NativeScope {
+                    call: second,
+                    parents: Vec::new(),
+                    resume: Resume::Identity,
+                    parent_realm: outer.realm,
+                },
+            ],
+            finish: Some(Finish::PropertyRead(0)),
+        };
+        assert_eq!(query.continuation_depth(), 2);
+        let step = query
+            .finish_native(
+                &runtime,
+                Err(Error::new(ErrorKind::Type, "nested native failure")),
+            )
+            .unwrap();
+        assert_eq!(query.realm, outer.realm);
+        assert_eq!(runtime.0.state.borrow().active_frames.len(), 1);
+        let Step::Complete(Completion::Throw(Value::Object(error))) = step else {
+            panic!("expected captured error")
+        };
+        assert_eq!(
+            runtime.get_prototype_of(&error).unwrap().map(Value::Object),
+            Some(prototype)
+        );
+        let stack = caller
+            .get_property(&error, &runtime.intern_property_key("stack").unwrap())
+            .unwrap();
+        let Value::String(stack) = stack else {
+            panic!("expected stack")
+        };
+        let stack = stack.to_string();
+        assert!(stack.contains("getPrototypeOf (native)"), "{stack}");
+        assert!(stack.contains("setPrototypeOf (native)"), "{stack}");
+        let step = query
+            .finish_native(
+                &runtime,
+                Ok(Completion::Throw(Value::Object(error.clone()))),
+            )
+            .unwrap();
+        assert!(
+            matches!(step, Step::Complete(Completion::Throw(Value::Object(value))) if value == error)
+        );
+        assert_eq!(query.realm, caller.realm);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
 }

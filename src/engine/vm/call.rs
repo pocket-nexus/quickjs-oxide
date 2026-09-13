@@ -6,6 +6,8 @@ pub(in crate::engine::vm) use request::{
 };
 
 mod native;
+#[cfg(feature = "stack-vm")]
+pub(in crate::engine::vm) use native::PreparedNativeCall;
 
 mod prepare;
 pub(in crate::engine::vm) use prepare::PreparedBytecodeFrame;

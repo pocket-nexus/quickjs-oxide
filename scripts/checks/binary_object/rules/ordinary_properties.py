@@ -22,6 +22,8 @@ FILES = (
     "src/engine/builtins/array_buffer/typed_array/element.rs",
     "src/engine/builtins/array_buffer/typed_array/write.rs",
     "src/engine/object/internal_methods/prototype.rs",
+    "src/engine/builtins/object/prototype.rs",
+    "src/engine/builtins/object.rs",
 )
 
 
@@ -37,7 +39,7 @@ def check(ctx):
             ctx.fail("ordinary-property-source", f"missing regular source: {relative}")
             return
         sources.append(ctx.rust_code_only(path.read_text()))
-    storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype = sources
+    storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype, builtin_prototype, object_builtin = sources
     compact = lambda text: re.sub(r"\s+", "", text)
     requirements = [
         (not re.search(r"pub(?:\([^)]*\))?\s+struct\s+OwnSlot", storage), "slot positions must remain private to the storage owner"),
@@ -63,6 +65,8 @@ def check(ctx):
     has, _, _ = ctx.unique_braced_item(dispatch, re.compile(r"fn\s+prepare_has_property\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-has", "prepared HasProperty")
     requirements.append(("PreparedHas::Proxy(current.clone())" in compact(has) and "self.validate_object_and_key(object,key)?" in compact(has), "prepared Has must validate its domain and return unresolved Proxy nodes"))
     protocols = (
+        (builtin_prototype, ("start", "prototype", "boolean")),
+        (object_builtin, ("finish_set_prototype_or_throw",)),
         (proxy_prototype, ("start", "method", "resume", "boolean", "prototype")),
         (proxy_get, ("start", "method", "resume", "descriptor")),
         (proxy_method, ("start", "read", "resume")),

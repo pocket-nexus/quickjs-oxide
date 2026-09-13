@@ -451,20 +451,31 @@ fn invoke(
             }));
         }
     };
-    if matches!(classification, CallableExecution::Proxy) {
-        return match super::proxy_get_driver::start_conversion_call(
-            runtime,
-            execution,
-            frame,
-            callable.as_object().clone(),
-            receiver,
-            arguments,
-            ConversionWait {
-                finish,
-                identity,
-                resume,
-            },
-        )? {
+    let is_proxy = matches!(classification, CallableExecution::Proxy);
+    let is_owned_native = matches!(&classification, CallableExecution::Native { target, .. }
+        if crate::engine::builtins::BuiltinPrototypeKind::for_target(*target).is_some());
+    if is_proxy || is_owned_native {
+        let wait = ConversionWait {
+            finish,
+            identity,
+            resume,
+        };
+        let progress = if is_proxy {
+            super::proxy_get_driver::start_conversion_call(
+                runtime,
+                execution,
+                frame,
+                callable.as_object().clone(),
+                receiver,
+                arguments,
+                wait,
+            )?
+        } else {
+            super::proxy_get_driver::start_native_conversion_call(
+                runtime, execution, frame, callable, receiver, arguments, wait,
+            )?
+        };
+        return match progress {
             super::proxy_get_driver::Progress::Conversion(task) => Ok(Progress::Ready(task)),
             super::proxy_get_driver::Progress::Call(super::driver::CallStep::Entered) => {
                 Ok(Progress::Entered)
@@ -473,7 +484,7 @@ fn invoke(
                 completion,
             )) => Ok(Progress::Complete(completion)),
             super::proxy_get_driver::Progress::Call(super::driver::CallStep::Bridge) => {
-                Err(Error::internal("conversion Proxy call attempted replay"))
+                Err(Error::internal("conversion callback attempted replay"))
             }
         };
     }
