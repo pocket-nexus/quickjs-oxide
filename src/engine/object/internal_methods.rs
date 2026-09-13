@@ -32,6 +32,10 @@ use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarg
 use std::collections::HashSet;
 
 mod boolean;
+mod prototype;
+#[cfg(feature = "stack-vm")]
+pub(crate) use prototype::ProxyPrototypeResume;
+pub(crate) use prototype::{ProxyPrototypeKind, ProxyPrototypeStep};
 mod define;
 mod set;
 #[cfg(feature = "stack-vm")]
@@ -598,47 +602,18 @@ impl Runtime {
         let Some(_) = self.proxy_snapshot_if_any(object)? else {
             return self.get_prototype_of(object).map(NativeConversion::Value);
         };
-        let (rooted, method) = match self.proxy_method(realm, object, "getPrototypeOf")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_get_prototype_of(realm, &rooted.target);
-        };
-        let result = match self.call_proxy_trap(
+        match prototype::finish(
+            self,
             realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone())],
+            ProxyPrototypeStep::start(self, realm, object.clone(), ProxyPrototypeKind::Get)?,
         )? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let result = match result {
-            Value::Object(prototype) => Some(prototype),
-            Value::Null => None,
-            _ => {
-                return Ok(NativeConversion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "proxy: inconsistent prototype",
-                )?));
-            }
-        };
-        let extensible = match self.internal_is_extensible(realm, &rooted.target)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !extensible {
-            let target = match self.internal_get_prototype_of(realm, &rooted.target)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            };
-            if target != result {
-                return self.proxy_invariant_throw(realm, "prototype");
-            }
+            Completion::Return(Value::Object(object)) => Ok(NativeConversion::Value(Some(object))),
+            Completion::Return(Value::Null) => Ok(NativeConversion::Value(None)),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+            _ => Err(RuntimeError::Invariant(
+                "GetPrototypeOf completed with an invalid value",
+            )),
         }
-        Ok(NativeConversion::Value(result))
     }
 
     pub(crate) fn internal_set_prototype_of(
@@ -652,40 +627,22 @@ impl Runtime {
                 .set_prototype_of(object, prototype)
                 .map(NativeConversion::Value);
         };
-        let (rooted, method) = match self.proxy_method(realm, object, "setPrototypeOf")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_set_prototype_of(realm, &rooted.target, prototype);
-        };
-        let prototype_value = prototype.cloned().map_or(Value::Null, Value::Object);
-        let accepted = match self.call_proxy_trap(
+        match prototype::finish(
+            self,
             realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone()), prototype_value],
+            ProxyPrototypeStep::start(
+                self,
+                realm,
+                object.clone(),
+                ProxyPrototypeKind::Set(prototype.cloned()),
+            )?,
         )? {
-            Completion::Return(value) => self.value_to_boolean(&value)?,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !accepted {
-            return Ok(NativeConversion::Value(false));
+            Completion::Return(Value::Bool(value)) => Ok(NativeConversion::Value(value)),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+            _ => Err(RuntimeError::Invariant(
+                "SetPrototypeOf completed with an invalid value",
+            )),
         }
-        let extensible = match self.internal_is_extensible(realm, &rooted.target)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !extensible {
-            let target = match self.internal_get_prototype_of(realm, &rooted.target)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            };
-            if target.as_ref() != prototype {
-                return self.proxy_invariant_throw(realm, "prototype");
-            }
-        }
-        Ok(NativeConversion::Value(true))
     }
 
     pub(crate) fn internal_is_extensible(

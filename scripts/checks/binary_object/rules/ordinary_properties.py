@@ -21,6 +21,7 @@ FILES = (
     "src/engine/value/conversion/number.rs",
     "src/engine/builtins/array_buffer/typed_array/element.rs",
     "src/engine/builtins/array_buffer/typed_array/write.rs",
+    "src/engine/object/internal_methods/prototype.rs",
 )
 
 
@@ -36,7 +37,7 @@ def check(ctx):
             ctx.fail("ordinary-property-source", f"missing regular source: {relative}")
             return
         sources.append(ctx.rust_code_only(path.read_text()))
-    storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write = sources
+    storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype = sources
     compact = lambda text: re.sub(r"\s+", "", text)
     requirements = [
         (not re.search(r"pub(?:\([^)]*\))?\s+struct\s+OwnSlot", storage), "slot positions must remain private to the storage owner"),
@@ -52,7 +53,7 @@ def check(ctx):
     published = body.find("replace_retained_object_slot")
     requirements.append((0 <= retained < published, "replacement edges must be retained before publication"))
     read, _, _ = ctx.unique_braced_item(ordinary, re.compile(r"fn\s+prepare_ordinary_read\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", "prepared property read")
-    requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|typed_array_convert_element|native_to_bigint|internal_delete_property|internal_prevent_extensions)\s*\(", read), "prepared property reads must return callbacks without invoking JavaScript"))
+    requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|typed_array_convert_element|native_to_bigint|internal_delete_property|internal_prevent_extensions|internal_get_prototype_of|internal_set_prototype_of)\s*\(", read), "prepared property reads must return callbacks without invoking JavaScript"))
     requirements.append(("self.validate_object_and_key(object,key)?" in compact(read) and "self.validate_value_domain(&receiver," in compact(read), "prepared property reads must validate object, key and receiver domains"))
     for name in ("prepare_value_property_read", "prepare_string_property_read"):
         prepared, _, _ = ctx.unique_braced_item(access, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", name)
@@ -62,6 +63,7 @@ def check(ctx):
     has, _, _ = ctx.unique_braced_item(dispatch, re.compile(r"fn\s+prepare_has_property\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-has", "prepared HasProperty")
     requirements.append(("PreparedHas::Proxy(current.clone())" in compact(has) and "self.validate_object_and_key(object,key)?" in compact(has), "prepared Has must validate its domain and return unresolved Proxy nodes"))
     protocols = (
+        (proxy_prototype, ("start", "method", "resume", "boolean", "prototype")),
         (proxy_get, ("start", "method", "resume", "descriptor")),
         (proxy_method, ("start", "read", "resume")),
         (proxy_own, ("start", "method", "resume", "descriptor", "extensible", "converted")),
@@ -80,7 +82,7 @@ def check(ctx):
     for source, names in protocols:
         for name in names:
             phase, _, _ = ctx.unique_braced_item(source, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "proxy-property-step", name)
-            requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|call_proxy|proxy_method|internal_get|internal_get_own_property|internal_has_property|internal_is_extensible|native_to_property_descriptor|internal_set|proxy_set|internal_define_own_property|try_special_set|prepare_set_array_length|define_own_property_in_realm|native_to_number|array_length_to_number|to_array_length|to_primitive|get_property_in_realm|typed_array_convert_element|native_to_bigint|internal_delete_property|internal_prevent_extensions)\s*\(", phase), "property and descriptor phases must yield observable requests to their driver"))
+            requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|call_proxy|proxy_method|internal_get|internal_get_own_property|internal_has_property|internal_is_extensible|native_to_property_descriptor|internal_set|proxy_set|internal_define_own_property|try_special_set|prepare_set_array_length|define_own_property_in_realm|native_to_number|array_length_to_number|to_array_length|to_primitive|get_property_in_realm|typed_array_convert_element|native_to_bigint|internal_delete_property|internal_prevent_extensions|internal_get_prototype_of|internal_set_prototype_of)\s*\(", phase), "property and descriptor phases must yield observable requests to their driver"))
     for accepted, message in requirements:
         if not accepted:
             ctx.fail("ordinary-property-contract", message)

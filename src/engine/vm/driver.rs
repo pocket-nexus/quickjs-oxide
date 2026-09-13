@@ -5573,6 +5573,252 @@ mod tests {
     }
 
     #[test]
+    fn owned_proxy_prototypes_preserve_order_and_identity() {
+        use crate::engine::object::ProxyPrototypeKind;
+        // `expected` is evaluated outside the measured owned query.
+        for (setup, setting, expected, trace) in [
+            (
+                "var trace=0;new Proxy({}, {getPrototypeOf(){trace++;return null}})",
+                false,
+                Some("null"),
+                1,
+            ),
+            (
+                "var trace=0;new Proxy({}, {getPrototypeOf(){trace++;return 1}})",
+                false,
+                None,
+                1,
+            ),
+            (
+                "var trace=0;var p={};new Proxy({}, {getPrototypeOf(){trace++;return p}})",
+                false,
+                Some("p"),
+                1,
+            ),
+            (
+                "var trace=0;var p={};var t=Object.preventExtensions(Object.create(p));new Proxy(new Proxy(t,{isExtensible(){trace=trace*10+2;return false},getPrototypeOf(){trace=trace*10+3;return p}}),{getPrototypeOf(){trace=trace*10+1;return p}})",
+                false,
+                Some("p"),
+                123,
+            ),
+            (
+                "var trace=0;var p={};var t=Object.preventExtensions(Object.create(p));new Proxy(new Proxy(t,{isExtensible(){trace=trace*10+2;return false},getPrototypeOf(){trace=trace*10+3;return p}}),{getPrototypeOf(){trace=trace*10+1;return null}})",
+                false,
+                None,
+                123,
+            ),
+            (
+                "var trace=0;new Proxy(new Proxy({}, {isExtensible(){trace=trace*10+2;return true}}),{getPrototypeOf(){trace=trace*10+1;return 1}})",
+                false,
+                None,
+                1,
+            ),
+            (
+                "var trace=0;new Proxy(new Proxy({}, {getPrototypeOf(){trace=trace*10+2;return null}}),{get getPrototypeOf(){trace=trace*10+1;return undefined}})",
+                false,
+                Some("null"),
+                12,
+            ),
+            (
+                "var trace=0;new Proxy(new Proxy({}, {isExtensible(){trace=trace*10+2;return true}}),{setPrototypeOf(){trace=trace*10+1;return false}})",
+                true,
+                Some("false"),
+                1,
+            ),
+            (
+                "var trace=0;new Proxy({}, {setPrototypeOf(t,p){trace++;return p===null}})",
+                true,
+                Some("true"),
+                1,
+            ),
+            (
+                "var trace=0;var t=Object.preventExtensions(Object.create(null));new Proxy(new Proxy(t,{isExtensible(){trace=trace*10+2;return false},getPrototypeOf(){trace=trace*10+3;return null}}),{setPrototypeOf(){trace=trace*10+1;return true}})",
+                true,
+                Some("true"),
+                123,
+            ),
+            (
+                "var trace=0;var t=Object.preventExtensions({});new Proxy(new Proxy(t,{isExtensible(){trace=trace*10+2;return false},getPrototypeOf(){trace=trace*10+3;return Object.prototype}}),{setPrototypeOf(){trace=trace*10+1;return true}})",
+                true,
+                None,
+                123,
+            ),
+            (
+                "var trace=0;new Proxy(new Proxy({}, {setPrototypeOf(){trace=trace*10+2;return false}}),{get setPrototypeOf(){trace=trace*10+1;return null}})",
+                true,
+                Some("false"),
+                12,
+            ),
+            (
+                "var trace=0;var r=Proxy.revocable({},{});r.revoke();r.proxy",
+                false,
+                None,
+                0,
+            ),
+            (
+                "var trace=0;var r=Proxy.revocable({},{});r.revoke();r.proxy",
+                true,
+                None,
+                0,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let Value::Object(object) = context.eval(setup).unwrap() else {
+                panic!("expected Proxy")
+            };
+            let expected = expected.map(|source| context.eval(source).unwrap());
+            let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let profile = CostProfile::start();
+            let result = match super::super::proxy_get_driver::start_prototype(
+                &runtime,
+                &mut execution,
+                id,
+                object,
+                if setting {
+                    ProxyPrototypeKind::Set(None)
+                } else {
+                    ProxyPrototypeKind::Get
+                },
+            )
+            .unwrap()
+            {
+                CallStep::Entered => super::run_frames(&runtime, execution)
+                    .unwrap()
+                    .finish(runtime.clone())
+                    .unwrap(),
+                CallStep::Complete(result) => {
+                    drop(execution);
+                    result
+                }
+                CallStep::Bridge => panic!("prototype query attempted handoff"),
+            };
+            match expected {
+                Some(expected) => assert!(
+                    matches!(result, Completion::Return(ref value) if value == &expected),
+                    "{setup}: {result:?}"
+                ),
+                None => assert!(
+                    matches!(result, Completion::Throw(_)),
+                    "{setup}: {result:?}"
+                ),
+            }
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            drop(profile);
+            assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_proxy_prototypes_preserve_thrown_values_at_each_request() {
+        use crate::engine::object::ProxyPrototypeKind;
+        for setting in [false, true] {
+            for stage in ["method", "trap", "extensible", "prototype"] {
+                let runtime = Runtime::new();
+                let mut context = runtime.new_context();
+                let name = if setting {
+                    "setPrototypeOf"
+                } else {
+                    "getPrototypeOf"
+                };
+                let source = format!(
+                    r#"var trace=0, sentinel={{}};
+                    var t=new Proxy(Object.preventExtensions(Object.create(null)),{{
+                        isExtensible(){{trace=trace*10+3;{extensible}return false}},
+                        getPrototypeOf(){{trace=trace*10+4;{prototype}return null}}
+                    }});
+                    new Proxy(t,{{get {name}(){{trace=trace*10+1;{method}
+                        return function(){{trace=trace*10+2;{trap}return {result}}}
+                    }}}})"#,
+                    extensible = if stage == "extensible" {
+                        "throw sentinel;"
+                    } else {
+                        ""
+                    },
+                    prototype = if stage == "prototype" {
+                        "throw sentinel;"
+                    } else {
+                        ""
+                    },
+                    method = if stage == "method" {
+                        "throw sentinel;"
+                    } else {
+                        ""
+                    },
+                    trap = if stage == "trap" {
+                        "throw sentinel;"
+                    } else {
+                        ""
+                    },
+                    result = if setting { "true" } else { "null" },
+                );
+                let Value::Object(object) = context.eval(&source).unwrap() else {
+                    panic!("expected Proxy")
+                };
+                let sentinel = context.eval("sentinel").unwrap();
+                let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
+                let mut execution =
+                    RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+                let id = push_frame(&mut execution, entry).unwrap();
+                let profile = CostProfile::start();
+                let result = match super::super::proxy_get_driver::start_prototype(
+                    &runtime,
+                    &mut execution,
+                    id,
+                    object,
+                    if setting {
+                        ProxyPrototypeKind::Set(None)
+                    } else {
+                        ProxyPrototypeKind::Get
+                    },
+                )
+                .unwrap()
+                {
+                    CallStep::Entered => super::run_frames(&runtime, execution)
+                        .unwrap()
+                        .finish(runtime.clone())
+                        .unwrap(),
+                    CallStep::Complete(result) => {
+                        drop(execution);
+                        result
+                    }
+                    CallStep::Bridge => panic!("prototype query attempted handoff"),
+                };
+                assert!(
+                    matches!(result, Completion::Throw(ref value) if value == &sentinel),
+                    "{source}: {result:?}"
+                );
+                let cost = profile.snapshot();
+                assert_eq!(cost.legacy_dispatches, 0, "{source}");
+                assert_eq!(cost.owned_bridge_exits, 0, "{source}");
+                assert_eq!(cost.owned_sync_call_bridges, 0, "{source}");
+                drop(profile);
+                let trace = match stage {
+                    "method" => 1,
+                    "trap" => 12,
+                    "extensible" => 123,
+                    _ => 1234,
+                };
+                assert_eq!(
+                    context.eval("trace").unwrap(),
+                    Value::Int(trace),
+                    "{source}"
+                );
+                assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+                assert!(runtime.0.state.borrow().active_frames.is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn super_lookup_keeps_frozen_base_independent_of_getter_receiver() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);

@@ -19,6 +19,8 @@ use crate::engine::object::{
 use crate::engine::value::conversion::descriptor::{DescriptorResume, DescriptorStep};
 use crate::engine::value::{Value, conversion::NativeConversion};
 
+use crate::engine::object::{ProxyPrototypeKind, ProxyPrototypeStep};
+
 mod request;
 use request::{Resume, Step};
 
@@ -185,6 +187,47 @@ pub(super) fn start_boolean(
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
         Progress::Conversion(_) => Err(Error::internal("boolean query returned a conversion")),
+    }
+}
+
+/// The query entry is also used to validate the protocol before native entry migration.
+#[cfg(test)]
+pub(super) fn start_prototype(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    object: ObjectRef,
+    kind: ProxyPrototypeKind,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    let realm = parent.executable.realm;
+    let result = (|| {
+        let mut parents = Vec::new();
+        parents
+            .try_reserve(1)
+            .map_err(|_| Error::internal("property continuation allocation failed"))?;
+        parents.push(Resume::ReadOwner(object.clone()));
+        let step = ProxyPrototypeStep::start(runtime, realm, object, kind)
+            .map_err(runtime_error_to_vm_error)?;
+        advance(
+            runtime,
+            execution,
+            frame,
+            identity,
+            parents,
+            step.into(),
+            Finish::PropertyRead(0),
+        )
+    })();
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("prototype query returned a conversion")),
     }
 }
 
@@ -756,6 +799,78 @@ fn advance(
                 step = resume
                     .boolean(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
+                continue;
+            }
+            Step::GetPrototype { object, resume } => {
+                if runtime
+                    .is_proxy_object(&object)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                        let Completion::Throw(value) = overflow(runtime, realm)? else {
+                            unreachable!()
+                        };
+                        step = resume
+                            .prototype(runtime, NativeConversion::Throw(value))
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    parents
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                    parents.push(Resume::PrototypeGetReply(Box::new(resume)));
+                    step =
+                        ProxyPrototypeStep::start(runtime, realm, object, ProxyPrototypeKind::Get)
+                            .map_err(runtime_error_to_vm_error)?
+                            .into();
+                } else {
+                    let result = runtime
+                        .get_prototype_of(&object)
+                        .map_err(runtime_error_to_vm_error)?;
+                    step = resume
+                        .prototype(runtime, NativeConversion::Value(result))
+                        .map_err(runtime_error_to_vm_error)?;
+                }
+                continue;
+            }
+            Step::SetPrototype {
+                object,
+                prototype,
+                resume,
+            } => {
+                if runtime
+                    .is_proxy_object(&object)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                        let Completion::Throw(value) = overflow(runtime, realm)? else {
+                            unreachable!()
+                        };
+                        step = resume
+                            .boolean(runtime, NativeConversion::Throw(value))
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    parents
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                    parents.push(Resume::PrototypeSetReply(Box::new(resume)));
+                    step = ProxyPrototypeStep::start(
+                        runtime,
+                        realm,
+                        object,
+                        ProxyPrototypeKind::Set(prototype),
+                    )
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                } else {
+                    let result = runtime
+                        .set_prototype_of(&object, prototype.as_ref())
+                        .map_err(runtime_error_to_vm_error)?;
+                    step = resume
+                        .boolean(runtime, NativeConversion::Value(result))
+                        .map_err(runtime_error_to_vm_error)?;
+                }
                 continue;
             }
             Step::Delete {

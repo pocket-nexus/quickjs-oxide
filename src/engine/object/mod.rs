@@ -789,3 +789,6 @@ mod array_length;
 #[cfg(feature = "stack-vm")]
 pub(crate) use array_length::ArrayLengthResume;
 pub(crate) use array_length::ArrayLengthStep;
+
+#[cfg(feature = "stack-vm")]
+pub(crate) use internal_methods::{ProxyPrototypeKind, ProxyPrototypeResume, ProxyPrototypeStep};

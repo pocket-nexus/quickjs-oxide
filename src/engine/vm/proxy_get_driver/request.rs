@@ -15,7 +15,12 @@ use crate::engine::value::conversion::number::{NumberResume, NumberStep};
 use crate::engine::builtins::native::TypedArrayElementKind;
 use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, TypedWriteStep};
 
+use crate::engine::object::{ProxyPrototypeResume, ProxyPrototypeStep};
+
 pub(super) enum Resume {
+    Prototype(ProxyPrototypeResume),
+    PrototypeGetReply(Box<Resume>),
+    PrototypeSetReply(Box<Resume>),
     BooleanResult {
         _object: ObjectRef,
         _key: Option<PropertyKey>,
@@ -51,6 +56,15 @@ pub(super) enum Resume {
 }
 
 pub(super) enum Step {
+    GetPrototype {
+        object: ObjectRef,
+        resume: Resume,
+    },
+    SetPrototype {
+        object: ObjectRef,
+        prototype: Option<ObjectRef>,
+        resume: Resume,
+    },
     Delete {
         object: ObjectRef,
         key: PropertyKey,
@@ -567,6 +581,7 @@ impl Resume {
             } => runtime
                 .finish_property_delete(result, strict_delete)
                 .map(Step::Complete),
+            Self::Prototype(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Own(resume) => resume.extensible(result).map(Into::into),
             Self::Boolean(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Conversion(resume) => resume.has(runtime, result).map(Into::into),
@@ -582,6 +597,34 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::Prototype(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::PrototypeGetReply(resume) => {
+                let result = match completion {
+                    Completion::Return(Value::Object(object)) => {
+                        NativeConversion::Value(Some(object))
+                    }
+                    Completion::Return(Value::Null) => NativeConversion::Value(None),
+                    Completion::Throw(value) => NativeConversion::Throw(value),
+                    _ => {
+                        return Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                            "invalid GetPrototypeOf reply",
+                        ));
+                    }
+                };
+                resume.prototype(runtime, result)
+            }
+            Self::PrototypeSetReply(resume) => {
+                let result = match completion {
+                    Completion::Return(Value::Bool(value)) => NativeConversion::Value(value),
+                    Completion::Throw(value) => NativeConversion::Throw(value),
+                    _ => {
+                        return Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                            "invalid SetPrototypeOf reply",
+                        ));
+                    }
+                };
+                resume.boolean(runtime, result)
+            }
             Self::ProxySet(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Define(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Setter => Ok(Step::SetComplete(match completion {
@@ -785,6 +828,67 @@ impl Resume {
             }
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "TypedArray result has no matching continuation",
+            )),
+        }
+    }
+}
+
+impl From<ProxyPrototypeStep> for Step {
+    fn from(step: ProxyPrototypeStep) -> Self {
+        match step {
+            ProxyPrototypeStep::Complete(result) => Self::Complete(result),
+            ProxyPrototypeStep::Read {
+                object,
+                key,
+                receiver,
+                resume,
+            } => Self::Read {
+                object,
+                key,
+                receiver,
+                resume: Resume::Prototype(resume),
+            },
+            ProxyPrototypeStep::Call {
+                target,
+                receiver,
+                arguments,
+                resume,
+            } => Self::Call {
+                target,
+                receiver,
+                arguments,
+                resume: Resume::Prototype(resume),
+            },
+            ProxyPrototypeStep::Get { object, resume } => Self::GetPrototype {
+                object,
+                resume: Resume::Prototype(resume),
+            },
+            ProxyPrototypeStep::Set {
+                object,
+                prototype,
+                resume,
+            } => Self::SetPrototype {
+                object,
+                prototype,
+                resume: Resume::Prototype(resume),
+            },
+            ProxyPrototypeStep::Extensible { object, resume } => Self::Extensible {
+                object,
+                resume: Resume::Prototype(resume),
+            },
+        }
+    }
+}
+impl Resume {
+    pub(super) fn prototype(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<Option<ObjectRef>>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::Prototype(resume) => resume.prototype(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "prototype result has no matching continuation",
             )),
         }
     }
