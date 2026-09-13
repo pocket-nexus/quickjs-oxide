@@ -1,4 +1,30 @@
-use super::*;
+use crate::engine::api::error::Error;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::metadata::ClassInitializerKind;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::compiler::lexer::LexContext;
+use crate::engine::compiler::lexer::LexicalGoal;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::TemplatePartKind;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::function::FunctionIrOptions;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
+use crate::engine::compiler::model::ir::function::ParentLink;
+use crate::engine::compiler::model::ir::function::SuperCapabilities;
+use crate::engine::compiler::parser::builder::FunctionBuilder;
+use crate::engine::compiler::parser::context::AnonymousFunctionDefinition;
+use crate::engine::compiler::parser::context::ForHeadDelimiter;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::validate_identifier;
+use crate::engine::compiler::parser::tokens::for_head_regexp_allowed_after;
+use crate::source::SourceOffset;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ArrowHead {

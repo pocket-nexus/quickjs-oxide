@@ -17,8 +17,8 @@ use crate::engine::object::{
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, Value};
+use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
-use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 #[cfg(test)]
 mod tests;
@@ -33,40 +33,6 @@ impl Runtime {
     /// QuickJS `JS_ToPrimitive(..., HINT_FORCE_ORDINARY)`: probe the ordinary
     /// conversion methods without consulting `Symbol.toPrimitive`. Date's
     /// standard exotic method delegates here after translating its hint.
-    pub(crate) fn ordinary_to_primitive(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        hint: ToPrimitiveHint,
-    ) -> Result<Completion, RuntimeError> {
-        let methods = match hint {
-            ToPrimitiveHint::String => ["toString", "valueOf"],
-            ToPrimitiveHint::Number | ToPrimitiveHint::Default => ["valueOf", "toString"],
-        };
-        for name in methods {
-            let key = self.intern_property_key(name)?;
-            let method = match self.get_property_in_realm(realm, object, &key)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(Completion::Throw(value)),
-            };
-            let Value::Object(method_object) = method else {
-                continue;
-            };
-            let Some(method) = self.as_callable(&method_object)? else {
-                continue;
-            };
-            match self.call_internal(realm, &method, Value::Object(object.clone()), &[])? {
-                Completion::Return(Value::Object(_)) => {}
-                completion => return Ok(completion),
-            }
-        }
-        Ok(Completion::Throw(self.new_native_error(
-            realm,
-            NativeErrorKind::Type,
-            "toPrimitive",
-        )?))
-    }
-
     /// QuickJS `js_object_groupBy(..., is_map = 0)`.
     ///
     /// The upstream routine deliberately closes the iterator only after an

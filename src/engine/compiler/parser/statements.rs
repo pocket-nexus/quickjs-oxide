@@ -1,37 +1,37 @@
 //! Statement and declaration-list grammar.
 
-use crate::engine::compiler::source_span;
-use crate::engine::compiler::model::bindings::BindingKind;
-use crate::engine::compiler::model::bindings::BindingStorage;
-use crate::engine::compiler::BreakControlKind;
-use crate::engine::code::function::metadata::ClassInitializerKind;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
-use crate::engine::compiler::ForAssignmentDeclaration;
-use crate::engine::compiler::FunctionKind;
-use crate::engine::compiler::model::ir::IdentifierAccess;
-use crate::engine::compiler::IdentifierContext;
-use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
-use crate::engine::compiler::InMode;
 use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::metadata::ClassInitializerKind;
+use crate::engine::compiler::MAX_LOCAL_VARIABLES;
+use crate::engine::compiler::WITH_OBJECT_LOCAL_NAME;
+use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::bindings::BindingKind;
+use crate::engine::compiler::model::bindings::BindingStorage;
+use crate::engine::compiler::model::bindings::SyntheticLocalKind;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::compiler::model::ir::IrOp;
-use crate::engine::value::JsString;
-use crate::engine::compiler::lexer::Keyword;
-use crate::engine::compiler::MAX_LOCAL_VARIABLES;
-use crate::engine::compiler::ModuleDeclarationExport;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::lexer::Punctuator;
-use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::model::ir::SpannedIrOp;
-use crate::engine::compiler::StatementCompletion;
-use crate::engine::compiler::StatementPosition;
-use crate::engine::compiler::model::bindings::SyntheticLocalKind;
-use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::scope::ScopeKind;
+use crate::engine::compiler::parser::context::BreakControlKind;
+use crate::engine::compiler::parser::context::ForAssignmentDeclaration;
+use crate::engine::compiler::parser::context::InMode;
+use crate::engine::compiler::parser::context::ModuleDeclarationExport;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::context::StatementCompletion;
+use crate::engine::compiler::parser::context::StatementPosition;
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
+use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::WITH_OBJECT_LOCAL_NAME;
-use crate::engine::compiler::source_offset;
-use crate::engine::compiler::validate_identifier_reservation;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn parse_script_body(&mut self) -> Result<(), Error> {
@@ -211,7 +211,8 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         if self
             .current_ir()
-            .context.break_controls
+            .context
+            .break_controls
             .iter()
             .any(|control| control.label_name.as_deref() == Some(label_name.as_str()))
         {
@@ -267,7 +268,10 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub(in crate::engine::compiler) fn parse_block_statement(&mut self, completion: StatementCompletion) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_block_statement(
+        &mut self,
+        completion: StatementCompletion,
+    ) -> Result<(), Error> {
         self.advance()?;
         if self.is_punctuator(Punctuator::RightBrace) {
             return self.advance();
@@ -284,7 +288,10 @@ impl<'source> Parser<'source> {
     /// is evaluated outside the new scope, then its `ToObject` result is stored
     /// in one unspellable local owned by that scope.  Keeping the binding typed
     /// is what lets publication reject forged dynamic-environment operands.
-    pub(in crate::engine::compiler) fn parse_with_statement(&mut self, completion: StatementCompletion) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_with_statement(
+        &mut self,
+        completion: StatementCompletion,
+    ) -> Result<(), Error> {
         let with_span = self.current().span;
         if self.current_ir().strict {
             return Err(Error::syntax(
@@ -328,7 +335,10 @@ impl<'source> Parser<'source> {
         self.pop_scope(scope)
     }
 
-    pub(in crate::engine::compiler) fn parse_if_statement(&mut self, completion: StatementCompletion) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_if_statement(
+        &mut self,
+        completion: StatementCompletion,
+    ) -> Result<(), Error> {
         self.advance()?;
         let scope = self.push_scope(ScopeKind::If);
         if matches!(completion, StatementCompletion::Eval) {
@@ -379,7 +389,10 @@ impl<'source> Parser<'source> {
     /// behind the previous body's fallthrough jump; all consecutive matching
     /// clauses join the same body. The final failed test is patched either to
     /// the recorded default body or to the shared break/drop tail.
-    pub(in crate::engine::compiler) fn parse_switch_statement(&mut self, completion: StatementCompletion) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_switch_statement(
+        &mut self,
+        completion: StatementCompletion,
+    ) -> Result<(), Error> {
         let outer_depth = self.current_ir().context.stack_depth;
         self.advance()?;
         if matches!(completion, StatementCompletion::Eval) {
@@ -486,7 +499,10 @@ impl<'source> Parser<'source> {
     /// empty `Ret` subroutine: abrupt break/continue/return code can therefore
     /// be emitted while the parser is still unaware whether a source finally
     /// clause follows.
-    pub(in crate::engine::compiler) fn parse_try_statement(&mut self, completion: StatementCompletion) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_try_statement(
+        &mut self,
+        completion: StatementCompletion,
+    ) -> Result<(), Error> {
         let entry_depth = self.current_ir().context.stack_depth;
         if matches!(completion, StatementCompletion::Eval) {
             self.set_eval_ret_undefined()?;
@@ -686,7 +702,10 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn parse_expression_statement(&mut self, completion: StatementCompletion) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_expression_statement(
+        &mut self,
+        completion: StatementCompletion,
+    ) -> Result<(), Error> {
         // QuickJS seeds `emit_source_pos` from the first token before
         // `js_parse_expr`. A more specific marker emitted by the expression at
         // the same first opcode wins; otherwise synthetic operations (notably
@@ -773,7 +792,10 @@ impl<'source> Parser<'source> {
         self.consume_statement_terminator()
     }
 
-    pub(in crate::engine::compiler) fn parse_lexical_declarations_with_in(&mut self, mode: InMode) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_lexical_declarations_with_in(
+        &mut self,
+        mode: InMode,
+    ) -> Result<(), Error> {
         self.with_in_mode(mode, Self::parse_lexical_declarations)
     }
 
@@ -864,7 +886,10 @@ impl<'source> Parser<'source> {
         self.consume_statement_terminator()
     }
 
-    pub(in crate::engine::compiler) fn parse_var_declarations_with_in(&mut self, mode: InMode) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_var_declarations_with_in(
+        &mut self,
+        mode: InMode,
+    ) -> Result<(), Error> {
         self.with_in_mode(mode, Self::parse_var_declarations)
     }
 
@@ -954,5 +979,4 @@ impl<'source> Parser<'source> {
         }
         Ok(())
     }
-
 }

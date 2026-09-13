@@ -267,3 +267,9 @@ pub(in crate::engine::compiler) struct IrProgramAnnexFunction {
     pub(in crate::engine::compiler) constant: u32,
     pub(in crate::engine::compiler) authored_closure: usize,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::engine::compiler) struct ResolvedBinding {
+    pub(in crate::engine::compiler) storage: BindingStorage,
+    pub(in crate::engine::compiler) kind: BindingKind,
+}

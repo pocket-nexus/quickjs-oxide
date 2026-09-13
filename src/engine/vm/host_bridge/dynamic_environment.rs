@@ -5,11 +5,16 @@
 //! Selection and action remain separate because QuickJS deliberately repeats
 //! `HasProperty` after observable `Symbol.unscopables` and RHS evaluation.
 
-use super::{FrameBinding, RuntimeVmHost, read_frame_binding, runtime_error_to_vm_error};
+#[cfg(test)]
+use super::FrameBinding;
+use super::{RuntimeVmHost, runtime_error_to_vm_error};
 use crate::engine::api::{Error, ErrorKind};
 use crate::engine::code::bytecode::{DynamicEnvironmentSource, WithObjectSource};
+#[cfg(test)]
+use crate::engine::code::function::metadata::ClosureVariable;
+#[cfg(test)]
 use crate::engine::code::function::metadata::{
-    ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName,
+    ClosureSource, ClosureVariableKind, ClosureVariableName,
 };
 use crate::engine::heap::RawValue;
 use crate::engine::object::{ObjectRef, PropertyKey, WellKnownSymbol};
@@ -23,75 +28,13 @@ enum PropertyPresence {
 
 impl RuntimeVmHost {
     fn with_object(&self, source: WithObjectSource) -> Result<ObjectRef, Error> {
-        let value = match source {
-            WithObjectSource::Local(index) => {
-                let definition = self.local_definition(index)?;
-                if definition.kind != ClosureVariableKind::WithObject
-                    || definition.is_lexical
-                    || definition.is_const
-                {
-                    return Err(Error::internal(
-                        "dynamic with opcode referenced a non-with local",
-                    ));
-                }
-                let binding = self
-                    .locals
-                    .get(usize::from(index))
-                    .ok_or_else(|| Error::internal("with-object local index is out of bounds"))?;
-                if let FrameBinding::Captured(root) = binding {
-                    self.runtime
-                        .validate_var_ref_metadata(
-                            root,
-                            ClosureVariable {
-                                source: ClosureSource::ParentLocal(index),
-                                name: definition
-                                    .name
-                                    .map_or(ClosureVariableName::None, ClosureVariableName::Atom),
-                                is_lexical: definition.is_lexical,
-                                is_const: definition.is_const,
-                                kind: definition.kind,
-                            },
-                        )
-                        .map_err(runtime_error_to_vm_error)?;
-                }
-                read_frame_binding(&self.runtime, binding)?
-            }
-            WithObjectSource::Closure(index) => {
-                let descriptor = self
-                    .executable
-                    .closure_variables
-                    .get(usize::from(index))
-                    .copied()
-                    .ok_or_else(|| Error::internal("with-object closure index is out of bounds"))?;
-                if descriptor.kind != ClosureVariableKind::WithObject
-                    || descriptor.is_lexical
-                    || descriptor.is_const
-                {
-                    return Err(Error::internal(
-                        "dynamic with opcode referenced a non-with closure",
-                    ));
-                }
-                let root = self
-                    .closure_slots
-                    .get(usize::from(index))
-                    .ok_or_else(|| Error::internal("with-object closure slot is out of bounds"))?;
-                self.runtime
-                    .validate_var_ref_metadata(root, descriptor)
-                    .map_err(runtime_error_to_vm_error)?;
-                self.runtime
-                    .read_var_ref(root)
-                    .map_err(runtime_error_to_vm_error)?
-            }
-        };
-        let Value::Object(object) = value else {
-            return Err(Error::internal(
-                "with-object binding did not contain an Object",
-            ));
-        };
-        if !object.belongs_to(&self.runtime) {
-            return Err(Error::internal("with object belongs to another runtime"));
-        }
-        Ok(object)
+        crate::engine::vm::environment_bindings::with_object(
+            &self.runtime,
+            &self.executable,
+            source,
+            |index| self.locals.get(usize::from(index)),
+            &self.closure_slots,
+        )
     }
 
     fn dynamic_object(&self, source: DynamicEnvironmentSource) -> Result<ObjectRef, Error> {
@@ -227,85 +170,20 @@ impl RuntimeVmHost {
     /// script can install a same-name global lexical binding after this
     /// bytecode was published, and that live lexical VarRef must win.
     pub(crate) fn global_reference_impl(&mut self, index: u16) -> Result<Completion, Error> {
-        let descriptor = self
-            .executable
-            .closure_variables
-            .get(usize::from(index))
-            .copied()
-            .ok_or_else(|| Error::internal("global reference closure index is out of bounds"))?;
-        if !matches!(
-            descriptor.source,
-            ClosureSource::GlobalDeclaration
-                | ClosureSource::Global
-                | ClosureSource::ParentGlobal(_)
-        ) || !matches!(
-            descriptor.kind,
-            ClosureVariableKind::Normal | ClosureVariableKind::GlobalFunction
-        ) {
-            return Err(Error::internal(
-                "global reference opcode referenced a non-global closure",
-            ));
-        }
-        let ClosureVariableName::Atom(atom) = descriptor.name else {
-            return Err(Error::internal(
-                "published global reference descriptor has no name atom",
-            ));
+        let (global_object, key) = match super::super::environment_bindings::global_reference(
+            &self.runtime,
+            self.current_realm,
+            &self.executable,
+            &self.closure_slots,
+            index,
+        )? {
+            super::super::environment_bindings::GlobalReference::Lexical(object) => {
+                return Ok(Completion::Return(Value::Object(object)));
+            }
+            super::super::environment_bindings::GlobalReference::Object { object, key } => {
+                (object, key)
+            }
         };
-        let root = self
-            .closure_slots
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("global reference closure slot is out of bounds"))?;
-        if !root.belongs_to(&self.runtime) {
-            return Err(Error::internal(
-                "global reference closure belongs to another runtime",
-            ));
-        }
-
-        let key = PropertyKey::from_borrowed_atom(self.runtime.clone(), atom)
-            .map_err(|error| Error::internal(error.to_string()))?;
-        let global_var_object = {
-            let state = self.runtime.0.state.borrow();
-            state
-                .heap
-                .context(self.current_realm)
-                .map_err(|error| Error::internal(error.to_string()))?
-                .global_var_object
-        };
-        let global_var_object =
-            ObjectRef::from_borrowed_handle(self.runtime.clone(), global_var_object)
-                .map_err(|error| Error::internal(error.to_string()))?;
-        if let Some(root) = self
-            .runtime
-            .own_var_ref_root(&global_var_object, &key)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            let cell = self
-                .runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .var_ref(root.id())
-                .map_err(|error| Error::internal(error.to_string()))?
-                .clone();
-            if !cell.is_lexical || cell.kind != ClosureVariableKind::Normal {
-                return Err(Error::internal(
-                    "global lexical object contained a non-lexical VarRef",
-                ));
-            }
-            if matches!(cell.value, RawValue::Uninitialized) {
-                return Err(self.dynamic_lexical_uninitialized_error(atom)?);
-            }
-            if cell.is_const {
-                return Err(self.lexical_read_only_error(Some(atom))?);
-            }
-            return Ok(Completion::Return(Value::Object(global_var_object)));
-        }
-
-        let global_object = self
-            .runtime
-            .global_object_for_realm(self.current_realm)
-            .map_err(runtime_error_to_vm_error)?;
         match self.property_presence(&global_object, &key)? {
             PropertyPresence::Present(true) => Ok(Completion::Return(Value::Object(global_object))),
             PropertyPresence::Present(false) => Ok(Completion::Return(Value::Undefined)),

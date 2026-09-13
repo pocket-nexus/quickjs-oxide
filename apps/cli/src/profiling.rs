@@ -40,7 +40,7 @@ impl Options {
 
 pub(crate) fn help() {
     println!("  -q, --quit        initialize and exit without evaluating a script");
-    println!("  -d, --dump        memory snapshot; with -q, lifecycle timing");
+    println!("  -d, --dump        memory and compile/VM diagnostics; with -q, lifecycle timing");
     println!("  -T, --trace       partial arena backing-storage allocation trace");
     println!("      --profile-json       emit versioned JSON Lines diagnostics");
     println!("      --profile-output PATH write diagnostics to a new file (default stderr)");
@@ -78,7 +78,7 @@ pub(crate) use enabled::*;
 mod enabled {
     use super::*;
     use quickjs_oxide::engine::api::profiling::{
-        AllocationEventKind, AllocationTrace, MemorySnapshot,
+        AllocationEventKind, AllocationTrace, CostProfile, CostSnapshot, MemorySnapshot,
     };
     use std::cell::{Cell, RefCell};
     use std::io::{self, Write};
@@ -93,6 +93,7 @@ mod enabled {
         event_limit: usize,
         iterations: usize,
         trace: Option<AllocationTrace>,
+        costs: Option<CostProfile>,
     }
 
     impl Session {
@@ -119,6 +120,7 @@ mod enabled {
                 event_limit: options.events.unwrap_or(65_536),
                 iterations: options.iterations.unwrap_or(100),
                 trace: None,
+                costs: options.dump.then(CostProfile::start),
             })
         }
 
@@ -232,6 +234,16 @@ mod enabled {
 
     impl Drop for Session {
         fn drop(&mut self) {
+            if let Some(costs) = &self.costs {
+                let snapshot = costs.snapshot();
+                if snapshot.parse.attempts != 0
+                    || snapshot.legacy_dispatches != 0
+                    || snapshot.owned_instructions != 0
+                    || snapshot.owned_bridge_exits != 0
+                {
+                    self.write(|out| write_costs(out, &snapshot, self.json));
+                }
+            }
             let Some(trace) = &self.trace else {
                 return;
             };
@@ -272,6 +284,152 @@ mod enabled {
         fn drop(&mut self) {
             self.session.memory(self.runtime, self.phase.get());
         }
+    }
+
+    fn write_costs(out: &mut dyn Write, costs: &CostSnapshot, json: bool) -> io::Result<()> {
+        if !json {
+            writeln!(
+                out,
+                "Oxide compile/VM costs: scope=thread-interval, execution=see-owned-and-legacy-counters, timing=inclusive-wall-ns (not additive); IR capacities=partial boundary snapshots"
+            )?;
+            writeln!(
+                out,
+                "parse={:?} resolution={:?} lowering={:?}",
+                costs.parse, costs.resolution, costs.lowering
+            )?;
+            writeln!(
+                out,
+                "lowered_functions={} instructions={} code_inline_bytes={} maximum_verified_stack={}",
+                costs.lowered_functions,
+                costs.code_instructions,
+                costs.code_inline_bytes,
+                costs.maximum_verified_stack
+            )?;
+            writeln!(
+                out,
+                "owned_instructions={} bridge_exits={} max_operand_depth={}",
+                costs.owned_instructions, costs.owned_bridge_exits, costs.owned_max_operand_depth
+            )?;
+            writeln!(
+                out,
+                "owned_storage={:?} (partial; per-store peaks; logical transfers)",
+                costs.owned_storage
+            )?;
+            return writeln!(
+                out,
+                "legacy_dispatches={} pc_publications={} max_operand_depth={}; all-call allocations and total retain/release accounting unavailable",
+                costs.legacy_dispatches,
+                costs.legacy_pc_publications,
+                costs.legacy_max_operand_depth
+            );
+        }
+        write!(
+            out,
+            "{{\"schema\":\"oxide-compile-vm-cost-v1\",\"metadata\":"
+        )?;
+        metadata(out)?;
+        write!(
+            out,
+            ",\"owned_storage\":{{\"coverage\":\"partial\",\"basis\":\"per-store-Vec-capacity-peaks-and-logical-owner-transfers; excludes bridge containers, cold payloads and primitive Rc events\""
+        )?;
+        for (name, value) in [
+            (
+                "slot_capacity_growths",
+                costs.owned_storage.slot_capacity_growths as u64,
+            ),
+            (
+                "maximum_slot_capacity",
+                costs.owned_storage.maximum_slot_capacity as u64,
+            ),
+            (
+                "frame_capacity_growths",
+                costs.owned_storage.frame_capacity_growths as u64,
+            ),
+            (
+                "maximum_frame_capacity",
+                costs.owned_storage.maximum_frame_capacity as u64,
+            ),
+            ("frames_pushed", costs.owned_storage.frames_pushed as u64),
+            (
+                "maximum_frame_depth",
+                costs.owned_storage.maximum_frame_depth as u64,
+            ),
+            (
+                "slots_initialized",
+                costs.owned_storage.slots_initialized as u64,
+            ),
+            (
+                "maximum_reserved_slots",
+                costs.owned_storage.maximum_reserved_slots as u64,
+            ),
+            (
+                "maximum_live_slots",
+                costs.owned_storage.maximum_live_slots as u64,
+            ),
+            ("slot_moves", costs.owned_storage.slot_moves as u64),
+            ("slot_clears", costs.owned_storage.slot_clears as u64),
+            ("value_copies", costs.owned_storage.value_copies as u64),
+            (
+                "copied_heap_roots",
+                costs.owned_storage.copied_heap_roots as u64,
+            ),
+            (
+                "hot_value_releases",
+                costs.owned_storage.hot_value_releases as u64,
+            ),
+            (
+                "hot_heap_root_releases",
+                costs.owned_storage.hot_heap_root_releases as u64,
+            ),
+        ] {
+            write!(out, ",\"{}\":{}", name, value)?;
+        }
+        write!(out, "}}")?;
+
+        write!(
+            out,
+            ",\"scope\":\"thread-interval-innermost-collector\",\"execution_path\":\"{}\",\"timer\":\"inclusive-monotonic-wall-ns\",\"phase_totals_additive\":false,\"phases\":{{",
+            if costs.owned_instructions != 0 || costs.owned_bridge_exits != 0 {
+                "owned-stack-with-legacy-bridge"
+            } else {
+                "legacy"
+            }
+        )?;
+        for (index, (name, phase)) in [
+            ("parse", costs.parse),
+            ("resolution", costs.resolution),
+            ("lowering", costs.lowering),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(
+                out,
+                "\"{}\":{{\"attempts\":{},\"inclusive_ns\":{},\"storage_samples\":{},\"maximum_observed_ir_capacity_bytes\":{}}}",
+                name,
+                phase.attempts,
+                phase.inclusive_ns,
+                phase.storage_samples,
+                phase.maximum_observed_ir_capacity_bytes
+            )?;
+        }
+        writeln!(
+            out,
+            "}},\"lowered_functions\":{},\"code_instructions\":{},\"code_inline_bytes\":{},\"maximum_verified_stack\":{},\"legacy_dispatches\":{},\"legacy_pc_publications\":{},\"legacy_max_operand_depth\":{},\"owned_instructions\":{},\"owned_bridge_exits\":{},\"owned_max_operand_depth\":{},\"code_bytes_basis\":\"typed-instruction-inline-storage-excludes-boxed-operands-and-metadata\",\"ir_capacity_basis\":\"phase-boundary-owned-Vec-buffers-excludes-payloads-source-hash-tables-worklists\",\"unavailable\":[\"compile-peak-memory\",\"all-call-allocations\",\"primitive-rc-reference-events\",\"all-retain-release\"]}}",
+            costs.lowered_functions,
+            costs.code_instructions,
+            costs.code_inline_bytes,
+            costs.maximum_verified_stack,
+            costs.legacy_dispatches,
+            costs.legacy_pc_publications,
+            costs.legacy_max_operand_depth,
+            costs.owned_instructions,
+            costs.owned_bridge_exits,
+            costs.owned_max_operand_depth
+        )
     }
 
     fn event_kind(kind: AllocationEventKind) -> &'static str {

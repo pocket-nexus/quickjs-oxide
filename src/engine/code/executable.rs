@@ -51,6 +51,16 @@ impl std::ops::Deref for PublishedFunctionSnapshot {
 }
 
 impl PublishedFunctionSnapshot {
+    /// Borrow every static binding classification from this rooted owner.
+    pub(crate) fn frame_layout(&self) -> crate::engine::code::function::layout::FrameLayout<'_> {
+        crate::engine::code::function::layout::FrameLayout::new(
+            &self.metadata,
+            &self.argument_definitions,
+            &self.local_definitions,
+            &self.closure_variables,
+        )
+    }
+
     /// One checked projection for all constant consumers. The opcode still
     /// chooses the kind-specific operation; this view owns no extra roots.
     #[inline]

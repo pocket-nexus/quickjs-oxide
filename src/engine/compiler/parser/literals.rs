@@ -1,34 +1,38 @@
 //! Primary expressions and array literals.
 
-use crate::engine::compiler::strict_reserved_identifier;
-use crate::engine::compiler::source_span;
-use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
-use crate::engine::code::function::metadata::EvalKind;
-use crate::engine::compiler::FunctionKind;
-use crate::engine::compiler::model::ir::IdentifierAccess;
-use crate::engine::compiler::IdentifierContext;
+use crate::engine::api::error::NativeErrorMessage;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::compiler::model::ir::IrConstant;
-use crate::engine::value::JsString;
+use crate::engine::code::function::metadata::EvalKind;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexicalGoal;
-use crate::engine::api::error::NativeErrorMessage;
 use crate::engine::compiler::lexer::NumberKind;
-use crate::engine::compiler::Parser;
 use crate::engine::compiler::lexer::Punctuator;
-use std::rc::Rc;
 use crate::engine::compiler::lexer::Span;
-use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
 use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use num_traits::ToPrimitive;
+
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::strict_reserved_identifier;
+use crate::engine::compiler::parser::diagnostics::validate_identifier;
+use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
+use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::parse_number;
-use crate::engine::compiler::source_offset;
-use crate::engine::compiler::validate_identifier;
+use std::rc::Rc;
 
 impl<'source> Parser<'source> {
-    pub(in crate::engine::compiler) fn parse_primary(&mut self, import_call_allowed: bool) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_primary(
+        &mut self,
+        import_call_allowed: bool,
+    ) -> Result<(), Error> {
         // QuickJS initially tokenizes a leading slash as `/` or `/=`, then
         // rewinds from `js_parse_postfix_expr` once the grammar has proved
         // that the current position requires a PrimaryExpression.  Keep the
@@ -264,7 +268,11 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn reject_forbidden_identifier_reference(&self, name: &str, span: Span) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn reject_forbidden_identifier_reference(
+        &self,
+        name: &str,
+        span: Span,
+    ) -> Result<(), Error> {
         if name == "arguments" && self.current_ir().arguments_forbidden {
             return Err(Error::syntax(
                 "'arguments' identifier is not allowed in class field initializer",
@@ -392,5 +400,63 @@ impl<'source> Parser<'source> {
         self.anonymous_function_definition = None;
         Ok(())
     }
+}
 
+use crate::engine::compiler::lexer::NumericRadix;
+use crate::engine::value::bigint::JsBigInt;
+use num_bigint::BigUint;
+
+pub(in crate::engine::compiler) fn parse_number(
+    number: &crate::engine::compiler::lexer::NumberLiteral<'_>,
+) -> Result<Value, String> {
+    let raw = number.raw.replace('_', "");
+    if let NumberKind::BigInt(radix) = number.kind {
+        let literal = raw
+            .strip_suffix('n')
+            .ok_or_else(|| "BigInt literal is missing its suffix".to_owned())?;
+        let (digits, base) = match radix {
+            NumericRadix::Binary => (literal.get(2..).unwrap_or_default(), 2),
+            NumericRadix::Octal => (literal.get(2..).unwrap_or_default(), 8),
+            NumericRadix::Decimal => (literal, 10),
+            NumericRadix::Hexadecimal => (literal.get(2..).unwrap_or_default(), 16),
+        };
+        return JsBigInt::parse_radix(digits, base)
+            .map(Value::BigInt)
+            .map_err(|error| error.to_string());
+    }
+
+    let value = match number.kind {
+        NumberKind::Integer(radix) => parse_radix_literal(&raw, radix)?,
+        NumberKind::Float | NumberKind::LegacyDecimal => raw
+            .parse::<f64>()
+            .map_err(|_| format!("invalid numeric literal '{raw}'"))?,
+        NumberKind::LegacyOctal => parse_digits(&raw, 8)?,
+        NumberKind::BigInt(_) => unreachable!("handled above"),
+    };
+    Ok(Value::number(value))
+}
+
+/// Mirrors the token switch in QuickJS 2026-06-04 `js_parse_directives`.
+/// Its observable ASI behavior is intentionally narrower than a generic
+/// "can this token continue an expression" test.
+pub(in crate::engine::compiler) fn parse_radix_literal(
+    raw: &str,
+    radix: NumericRadix,
+) -> Result<f64, String> {
+    let (digits, base) = match radix {
+        NumericRadix::Binary => (raw.get(2..).unwrap_or_default(), 2),
+        NumericRadix::Octal => (raw.get(2..).unwrap_or_default(), 8),
+        NumericRadix::Decimal => (raw, 10),
+        NumericRadix::Hexadecimal => (raw.get(2..).unwrap_or_default(), 16),
+    };
+    parse_digits(digits, base)
+}
+
+pub(in crate::engine::compiler) fn parse_digits(digits: &str, radix: u32) -> Result<f64, String> {
+    if digits.is_empty() {
+        return Err("numeric literal has no digits".to_owned());
+    }
+    let value = BigUint::parse_bytes(digits.as_bytes(), radix)
+        .ok_or_else(|| format!("invalid base-{radix} numeric literal"))?;
+    Ok(value.to_f64().unwrap_or(f64::INFINITY))
 }

@@ -1,28 +1,31 @@
 //! Token lookahead, lexical goals and diagnostic cursor.
 
-use crate::engine::compiler::source_span;
 use crate::engine::api::error::Error;
 use crate::engine::code::function::metadata::EvalKind;
-use crate::engine::compiler::ForHeadDelimiter;
-use crate::engine::compiler::ForIterationKind;
-use crate::engine::compiler::FunctionKind;
+
 use crate::engine::compiler::lexer::Identifier;
 use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexicalGoal;
-use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
-use crate::engine::compiler::Parser;
 use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::TemplatePartKind;
 use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::lexer::TokenKind;
-use crate::engine::compiler::for_head_regexp_allowed_after;
-use crate::engine::compiler::lex_error;
-use crate::engine::compiler::quickjs_directive_asi_token;
 use crate::engine::compiler::lexer::quickjs_simple_lookahead_is_of;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::parser::context::ForHeadDelimiter;
+use crate::engine::compiler::parser::context::ForIterationKind;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::lex_error;
+use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
+
+use crate::engine::compiler::parser::diagnostics::source_span;
 
 impl<'source> Parser<'source> {
-    pub(in crate::engine::compiler) fn expect_punctuator(&mut self, punctuator: Punctuator) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn expect_punctuator(
+        &mut self,
+        punctuator: Punctuator,
+    ) -> Result<(), Error> {
         if self.consume_punctuator(punctuator)? {
             Ok(())
         } else {
@@ -30,7 +33,10 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub(in crate::engine::compiler) fn consume_punctuator(&mut self, punctuator: Punctuator) -> Result<bool, Error> {
+    pub(in crate::engine::compiler) fn consume_punctuator(
+        &mut self,
+        punctuator: Punctuator,
+    ) -> Result<bool, Error> {
         if self.is_punctuator(punctuator) {
             self.advance()?;
             Ok(true)
@@ -270,7 +276,10 @@ impl<'source> Parser<'source> {
     /// statement parser chooses declaration or expression grammar. In
     /// particular, `let [` is always lexical and must never silently execute
     /// as a member assignment while destructuring remains an explicit boundary.
-    pub(in crate::engine::compiler) fn lexical_declaration_ahead(&self, allow_line_terminated_other: bool) -> Result<bool, Error> {
+    pub(in crate::engine::compiler) fn lexical_declaration_ahead(
+        &self,
+        allow_line_terminated_other: bool,
+    ) -> Result<bool, Error> {
         if matches!(
             self.current().kind,
             TokenKind::Keyword(Keyword::Let | Keyword::Const)
@@ -431,7 +440,10 @@ impl<'source> Parser<'source> {
         self.advance_with_goal(goal)
     }
 
-    pub(in crate::engine::compiler) fn advance_with_goal(&mut self, goal: LexicalGoal) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn advance_with_goal(
+        &mut self,
+        goal: LexicalGoal,
+    ) -> Result<(), Error> {
         if !self.at_eof() {
             self.cursor += 1;
             self.ensure_token_with_goal(self.cursor, goal)?;
@@ -443,7 +455,11 @@ impl<'source> Parser<'source> {
         self.ensure_token_with_goal(index, LexicalGoal::Div)
     }
 
-    pub(in crate::engine::compiler) fn ensure_token_with_goal(&mut self, index: usize, goal: LexicalGoal) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn ensure_token_with_goal(
+        &mut self,
+        index: usize,
+        goal: LexicalGoal,
+    ) -> Result<(), Error> {
         while self.tokens.len() <= index {
             let token = self.lexer.next_token_with_goal(goal).map_err(lex_error)?;
             self.tokens.push(token);
@@ -455,7 +471,10 @@ impl<'source> Parser<'source> {
     /// goal.  Seeking to the token itself intentionally avoids committing a
     /// lexer heuristic; preserve the already-observed trivia bit because the
     /// rescan starts after that trivia rather than before it.
-    pub(in crate::engine::compiler) fn relex_current_with_goal(&mut self, goal: LexicalGoal) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn relex_current_with_goal(
+        &mut self,
+        goal: LexicalGoal,
+    ) -> Result<(), Error> {
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.tokens.truncate(self.cursor);
@@ -465,7 +484,10 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn relex_current_with_strict(&mut self, strict: bool) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn relex_current_with_strict(
+        &mut self,
+        strict: bool,
+    ) -> Result<(), Error> {
         let mut context = self.lexer.context();
         context.strict = strict;
         self.relex_current_with_context(context)
@@ -475,7 +497,10 @@ impl<'source> Parser<'source> {
     /// function lexical context. Function nesting must restore all of strict,
     /// module, generator and async state; changing only `strict` leaks a
     /// parent's contextual `yield`/`await` classification into its child.
-    pub(in crate::engine::compiler) fn relex_current_with_context(&mut self, context: LexContext) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn relex_current_with_context(
+        &mut self,
+        context: LexContext,
+    ) -> Result<(), Error> {
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.tokens.truncate(self.cursor);
@@ -546,8 +571,83 @@ impl<'source> Parser<'source> {
         Error::syntax(message, source_span(self.current().span))
     }
 
-    pub(in crate::engine::compiler) fn unsupported_here(&self, message: impl Into<String>) -> Error {
+    pub(in crate::engine::compiler) fn unsupported_here(
+        &self,
+        message: impl Into<String>,
+    ) -> Error {
         Error::unsupported(message, source_span(self.current().span))
     }
+}
 
+pub(in crate::engine::compiler) fn quickjs_directive_asi_token(kind: &TokenKind<'_>) -> bool {
+    matches!(
+        kind,
+        TokenKind::Number(_)
+            | TokenKind::String(_)
+            | TokenKind::Template(_)
+            | TokenKind::Identifier(_)
+            | TokenKind::RegExp(_)
+            | TokenKind::Punctuator(Punctuator::Decrement | Punctuator::Increment)
+            | TokenKind::Keyword(
+                Keyword::Null
+                    | Keyword::False
+                    | Keyword::True
+                    | Keyword::If
+                    | Keyword::Return
+                    | Keyword::Var
+                    | Keyword::This
+                    | Keyword::Delete
+                    | Keyword::Typeof
+                    | Keyword::New
+                    | Keyword::Do
+                    | Keyword::While
+                    | Keyword::For
+                    | Keyword::Switch
+                    | Keyword::Throw
+                    | Keyword::Try
+                    | Keyword::Function
+                    | Keyword::Debugger
+                    | Keyword::With
+                    | Keyword::Class
+                    | Keyword::Const
+                    | Keyword::Enum
+                    | Keyword::Export
+                    | Keyword::Import
+                    | Keyword::Super
+                    | Keyword::Interface
+                    | Keyword::Let
+                    | Keyword::Package
+                    | Keyword::Private
+                    | Keyword::Protected
+                    | Keyword::Public
+                    | Keyword::Static
+            )
+    )
+}
+
+/// QuickJS `is_regexp_allowed`, used only by the non-committing `for`-head
+/// probe. The real parser still owns the eventual lexical goal and diagnostic.
+pub(in crate::engine::compiler) fn for_head_regexp_allowed_after(kind: &TokenKind<'_>) -> bool {
+    if matches!(
+        kind,
+        TokenKind::Identifier(identifier)
+            if !identifier.has_escape && matches!(identifier.value.as_str(), "of" | "yield")
+    ) {
+        return true;
+    }
+    !matches!(
+        kind,
+        TokenKind::Number(_)
+            | TokenKind::String(_)
+            | TokenKind::RegExp(_)
+            | TokenKind::Identifier(_)
+            | TokenKind::Keyword(Keyword::Null | Keyword::False | Keyword::True | Keyword::This)
+            | TokenKind::Punctuator(
+                Punctuator::RightParen
+                    | Punctuator::RightBracket
+                    | Punctuator::RightBrace
+                    | Punctuator::Increment
+                    | Punctuator::Decrement
+            )
+    )
 }

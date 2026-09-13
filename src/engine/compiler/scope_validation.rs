@@ -3,17 +3,34 @@ use crate::engine::compiler::model::bindings::{
     BindingKind, BindingStorage, IrAnnexBinding, SyntheticLocalKind,
     binding_kind_from_closure_flags, binding_kinds_compatible,
 };
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionTree;
+use crate::engine::compiler::model::ir::function::ParentLink;
 use crate::engine::compiler::model::ir::{IdentifierAccess, IrConstant, IrOp, SpannedIrOp};
 use crate::engine::compiler::model::scope::{ScopeId, ScopeKind};
 
 use super::{
-    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, ArgumentsKind, BytecodeFunctionKind, ClassInitializerKind,
-    ClosureSource, ClosureVariableKind, ClosureVariableName, EVAL_RET_LOCAL_NAME,
-    EVAL_VARIABLE_OBJECT_LOCAL_NAME, Error, ErrorKind, EvalCallerVariableTarget, EvalKind,
-    EvalScopeKind, FINALLY_EVAL_RET_LOCAL_NAME, FunctionKind, FunctionTree, Instruction,
-    ParameterDefaultSource, ParentLink, PseudoBinding, THIS_LOCAL_NAME, Value,
-    WITH_OBJECT_LOCAL_NAME, function_owns_pseudo_binding, ordered_hoisted_functions,
+    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, EVAL_RET_LOCAL_NAME, EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+    FINALLY_EVAL_RET_LOCAL_NAME, WITH_OBJECT_LOCAL_NAME,
 };
+use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
+use crate::engine::code::bytecode::ArgumentsKind;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::metadata::ClassInitializerKind;
+use crate::engine::code::function::metadata::ClosureSource;
+use crate::engine::code::function::metadata::ClosureVariableKind;
+use crate::engine::code::function::metadata::ClosureVariableName;
+use crate::engine::code::function::metadata::EvalCallerVariableTarget;
+use crate::engine::code::function::metadata::EvalKind;
+use crate::engine::code::function::metadata::EvalScopeKind;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::code::function::metadata::ParameterDefaultSource;
+use crate::engine::compiler::pseudo_binding::PseudoBinding;
+use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
+use crate::engine::compiler::pseudo_binding::function_owns_pseudo_binding;
+use crate::engine::compiler::resolution::ordered_hoisted_functions;
+use crate::engine::value::PrimitiveValue as Value;
 
 pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
     for (function_id, function) in tree.functions.iter().enumerate() {

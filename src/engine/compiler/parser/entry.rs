@@ -1,37 +1,40 @@
 //! Root compilation and consuming parser completion.
 
-use crate::engine::compiler::ModuleImportAttributeChecker;
-use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
 use crate::engine::code::function::metadata::EvalCallerProfile;
 use crate::engine::code::function::metadata::EvalCallerVariableTarget;
-use crate::engine::compiler::EvalCompileContext;
 use crate::engine::code::function::metadata::EvalKind;
 use crate::engine::code::function::metadata::EvalRootBinding;
-use crate::engine::compiler::parser::builder::FunctionBuilder;
-use crate::engine::compiler::FunctionIrOptions;
-use crate::engine::compiler::FunctionKind;
-use crate::engine::compiler::FunctionSourceInfo;
-use crate::engine::compiler::FunctionTree;
-use crate::engine::compiler::InMode;
-use crate::engine::value::JsString;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::compiler::EvalCompileContext;
+use crate::engine::compiler::ModuleCompileFailure;
+use crate::engine::compiler::ModuleImportAttributeChecker;
+
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::Lexer;
 use crate::engine::compiler::lexer::LexerOptions;
-use crate::engine::compiler::ModuleCompileFailure;
-use crate::engine::compiler::ModuleDeclarationExport;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::RootCompileContext;
+use crate::engine::compiler::model::ir::function::FunctionIrOptions;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
+use crate::engine::compiler::model::ir::function::FunctionTree;
+use crate::engine::compiler::model::ir::function::SuperCapabilities;
+use crate::engine::compiler::module;
+use crate::engine::compiler::parser::builder::FunctionBuilder;
+use crate::engine::compiler::parser::context::InMode;
+use crate::engine::compiler::parser::context::ModuleDeclarationExport;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::context::RootCompileContext;
+use crate::engine::compiler::parser::diagnostics::lex_error;
+use crate::engine::compiler::validate_source_length;
+use crate::engine::value::JsString;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
-use crate::engine::compiler::SuperCapabilities;
-use crate::engine::compiler::install_eval_external_bindings;
-use crate::engine::compiler::lex_error;
-use crate::engine::compiler::module;
-use crate::engine::compiler::validate_source_length;
 
 impl<'source> Parser<'source> {
-    pub(in crate::engine::compiler) fn parse(source: &'source str, filename: JsString) -> Result<FunctionTree, Error> {
+    pub(in crate::engine::compiler) fn parse(
+        source: &'source str,
+        filename: JsString,
+    ) -> Result<FunctionTree, Error> {
         Self::parse_root(source, None, filename, RootCompileContext::Script, None)
             .map_err(ModuleCompileFailure::into_engine_without_checker)
     }
@@ -110,6 +113,10 @@ impl<'source> Parser<'source> {
         context: RootCompileContext,
         mut module_attribute_checker: Option<&mut dyn ModuleImportAttributeChecker>,
     ) -> Result<FunctionTree, ModuleCompileFailure> {
+        #[cfg(feature = "profiling")]
+        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Parse,
+        );
         validate_source_length(source.len())?;
         let is_module = matches!(&context, RootCompileContext::Module);
         let (
@@ -259,8 +266,18 @@ impl<'source> Parser<'source> {
         } else {
             parser.parse_script_body()?;
         }
+        #[cfg(feature = "profiling")]
+        crate::engine::compiler::diagnostics::sample_ir_storage(
+            crate::engine::api::profiling::CompilePhase::Parse,
+            crate::engine::compiler::diagnostics::arena_bytes(&parser.functions),
+            parser.functions.iter().map(|builder| &builder.ir),
+        );
         Ok(FunctionTree {
-            functions: parser.functions.into_iter().map(FunctionBuilder::finish).collect::<Result<_, _>>()?,
+            functions: parser
+                .functions
+                .into_iter()
+                .map(FunctionBuilder::finish)
+                .collect::<Result<_, _>>()?,
             source: source_text
                 .cloned()
                 .unwrap_or_else(|| SourceText::from_utf8(source)),
@@ -269,5 +286,169 @@ impl<'source> Parser<'source> {
             pending_unsupported: parser.pending_unsupported,
         })
     }
+}
 
+use crate::engine::api::error::ErrorKind;
+use crate::engine::code::function::metadata::ClosureSource;
+use crate::engine::code::function::metadata::ClosureVariable;
+use crate::engine::code::function::metadata::ClosureVariableKind;
+use crate::engine::code::function::metadata::ClosureVariableName;
+use crate::engine::code::function::metadata::EvalScopeKind;
+use crate::engine::compiler::ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME;
+use crate::engine::compiler::EVAL_VARIABLE_OBJECT_LOCAL_NAME;
+use crate::engine::compiler::WITH_OBJECT_LOCAL_NAME;
+use crate::engine::compiler::model::bindings::BindingStorage;
+use crate::engine::compiler::model::bindings::binding_kind_from_closure_flags;
+use crate::engine::compiler::model::ir::function::FunctionIr;
+use crate::engine::compiler::resolution::ensure_string_constant;
+use crate::engine::compiler::resolution::push_closure_variable;
+
+pub(in crate::engine::compiler) fn install_eval_external_bindings(
+    function: &mut FunctionIr,
+    bindings: Box<[EvalRootBinding<JsString>]>,
+    caller_profile: EvalCallerProfile,
+    caller_strict: bool,
+) -> Result<(), Error> {
+    let FunctionKind::Eval(kind) = function.kind else {
+        return Err(Error::internal(
+            "eval caller bindings escaped a synthetic eval root",
+        ));
+    };
+    if kind == EvalKind::Indirect && !bindings.is_empty() {
+        return Err(Error::internal(
+            "indirect eval root received external caller bindings",
+        ));
+    }
+    if !function.closure_variables.is_empty() || !function.external_bindings.is_empty() {
+        return Err(Error::internal(
+            "eval caller bindings were installed more than once",
+        ));
+    }
+    if bindings.iter().any(|binding| {
+        let Some(&scope_kind) = caller_profile.scope_kinds.get(usize::from(binding.scope)) else {
+            return true;
+        };
+        (binding.is_catch_parameter && scope_kind != EvalScopeKind::Catch)
+            || (binding.kind == ClosureVariableKind::WithObject)
+                != (scope_kind == EvalScopeKind::With)
+    }) || caller_profile
+        .scope_kinds
+        .iter()
+        .enumerate()
+        .any(|(scope, kind)| {
+            *kind == EvalScopeKind::With
+                && bindings
+                    .iter()
+                    .filter(|binding| usize::from(binding.scope) == scope)
+                    .count()
+                    != 1
+        })
+    {
+        return Err(Error::internal(
+            "eval caller bindings disagree with their scope profile",
+        ));
+    }
+    let has_variable_object = bindings.iter().any(|binding| {
+        matches!(
+            binding.kind,
+            ClosureVariableKind::EvalVariableObject | ClosureVariableKind::ArgEvalVariableObject
+        )
+    });
+    match (caller_strict, caller_profile.variable_target) {
+        (false, EvalCallerVariableTarget::Global) if !has_variable_object => {}
+        (true, EvalCallerVariableTarget::StrictLocal) if kind == EvalKind::Direct => {}
+        (false, EvalCallerVariableTarget::ExternalBinding(index))
+            if bindings.get(usize::from(index)).is_some_and(|binding| {
+                matches!(
+                    binding.kind,
+                    ClosureVariableKind::EvalVariableObject
+                        | ClosureVariableKind::ArgEvalVariableObject
+                ) && !binding.is_lexical
+                    && !binding.is_const
+                    && !binding.is_catch_parameter
+            }) => {}
+        _ => {
+            return Err(Error::internal(
+                "eval caller variable target is not authenticated",
+            ));
+        }
+    }
+
+    for (index, binding) in bindings.iter().enumerate() {
+        let index = u16::try_from(index)
+            .map_err(|_| Error::new(ErrorKind::JsInternal, "too many closure variables"))?;
+        let name = String::from_utf16(&binding.name.utf16_units().collect::<Vec<_>>())
+            .map_err(|_| Error::internal("eval caller binding name is not well formed"))?;
+        let name = ensure_string_constant(function, &name)?;
+        let descriptor = ClosureVariable {
+            source: ClosureSource::EvalEnvironment(index),
+            name: ClosureVariableName::Constant(name),
+            is_lexical: binding.is_lexical,
+            is_const: binding.is_const,
+            kind: binding.kind,
+        };
+        let installed = push_closure_variable(function, descriptor)?;
+        if installed != index {
+            return Err(Error::internal(
+                "eval caller closure indices are not contiguous",
+            ));
+        }
+    }
+
+    // Scope bindings are searched newest-first. Install outer-to-inner so the
+    // innermost exact descriptor wins for duplicate names while every closure
+    // slot remains available to the specialized publication verifier. The
+    // `<var>` remains unspellable source metadata, but it must still have a
+    // binding identity in the synthetic root.  QuickJS relays the same hidden
+    // closure VarRef when eval source itself contains a direct eval; retaining
+    // it here lets that later call authenticate the exact variable target.
+    for (index, binding) in bindings.iter().enumerate().rev() {
+        let index = u16::try_from(index)
+            .map_err(|_| Error::new(ErrorKind::JsInternal, "too many closure variables"))?;
+        if binding.kind == ClosureVariableKind::EvalVariableObject
+            && (binding.is_lexical
+                || binding.is_const
+                || binding.is_catch_parameter
+                || binding.name.to_utf8_lossy() != EVAL_VARIABLE_OBJECT_LOCAL_NAME)
+        {
+            return Err(Error::internal(
+                "eval variable object binding metadata is malformed",
+            ));
+        }
+        if binding.kind == ClosureVariableKind::ArgEvalVariableObject
+            && (binding.is_lexical
+                || binding.is_const
+                || binding.is_catch_parameter
+                || binding.name.to_utf8_lossy() != ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME)
+        {
+            return Err(Error::internal(
+                "argument eval variable object binding metadata is malformed",
+            ));
+        }
+        if binding.kind == ClosureVariableKind::WithObject
+            && (binding.is_lexical
+                || binding.is_const
+                || binding.is_catch_parameter
+                || binding.name.to_utf8_lossy() != WITH_OBJECT_LOCAL_NAME)
+        {
+            return Err(Error::internal("with object binding metadata is malformed"));
+        }
+        let name = String::from_utf16(&binding.name.utf16_units().collect::<Vec<_>>())
+            .map_err(|_| Error::internal("eval caller binding name is not well formed"))?;
+        let kind =
+            binding_kind_from_closure_flags(binding.kind, binding.is_lexical, binding.is_const)
+                .ok_or_else(|| Error::internal("eval caller binding flags are inconsistent"))?;
+        let installed = function.add_binding(
+            function.var_scope,
+            function.var_scope,
+            name,
+            BindingStorage::External(index),
+            kind,
+            None,
+        );
+        function.bindings[installed.0].is_catch_parameter = binding.is_catch_parameter;
+    }
+    function.external_bindings = bindings.into_vec();
+    function.eval_caller_profile = caller_profile;
+    Ok(())
 }

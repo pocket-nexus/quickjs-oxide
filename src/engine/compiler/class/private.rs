@@ -7,7 +7,24 @@
 //! side's brand. Aggregate initializer children install the corresponding
 //! brand or consume field identities through `DefinePrivateField`.
 
-use super::super::*;
+use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::compiler::MAX_LOCAL_VARIABLES;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::model::bindings::BindingKind;
+use crate::engine::compiler::model::bindings::BindingStorage;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::PrivateFieldAccess;
+use crate::engine::compiler::model::scope::ScopeKind;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::private_reference;
+use crate::engine::value::JsString;
+use crate::engine::value::PrimitiveValue as Value;
+
 use super::{ClassElementState, ClassMethodFlavor};
 use crate::engine::code::bytecode::DefineMethodKind;
 
@@ -286,6 +303,20 @@ impl<'source> Parser<'source> {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::engine::compiler::lexer::Lexer;
+
+    use crate::engine::compiler::model::ir::function::FunctionIrOptions;
+    use crate::engine::compiler::model::ir::function::FunctionKind;
+    use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
+    use crate::engine::compiler::model::ir::function::SuperCapabilities;
+
+    use crate::engine::compiler::parser::builder::FunctionBuilder;
+    use crate::engine::compiler::parser::context::InMode;
+    use crate::engine::compiler::parser::context::ModuleDeclarationExport;
+
+    use crate::source::SourceOffset;
+
     use super::*;
 
     fn private_accessor_parser(source: &str) -> Parser<'_> {

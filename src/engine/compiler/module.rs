@@ -5,7 +5,37 @@
 //! while this parser-owned record retains source-order request and export
 //! tables until those slots have been seeded and linked.
 
-use super::*;
+use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
+use crate::engine::api::error::NativeErrorMessage;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::UnlinkedFunction;
+use crate::engine::code::module::ModuleImportAttribute;
+use crate::engine::compiler::ModuleCompileFailure;
+use crate::engine::compiler::ModuleImportAttributeChecker;
+use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::bindings::BindingKind;
+use crate::engine::compiler::model::bindings::BindingStorage;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionTree;
+use crate::engine::compiler::model::scope::ScopeId;
+use crate::engine::compiler::parser::context::ModuleDeclarationExport;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::context::StatementCompletion;
+use crate::engine::compiler::parser::context::StatementPosition;
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use crate::engine::compiler::parser::diagnostics::lex_error;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
+use crate::engine::value::JsString;
+use crate::engine::value::PrimitiveValue as Value;
+use std::collections::HashMap;
+
 use crate::engine::code::module::{
     MODULE_DEFAULT_BINDING_NAME, MODULE_IMPORT_META_BINDING_NAME, ModuleExport, ModuleExportTarget,
     ModuleImport, ModuleImportAttributes, ModuleImportCollision, ModuleImportCollisionDeclaration,
@@ -714,8 +744,10 @@ impl<'source> Parser<'source> {
             ));
         }
         self.module_declaration_export = export;
-        self.module_declaration_export_target =
-            Some((self.current_function, self.current_ir().context.current_scope));
+        self.module_declaration_export_target = Some((
+            self.current_function,
+            self.current_ir().context.current_scope,
+        ));
         let result = parse(self);
         self.module_declaration_export = ModuleDeclarationExport::None;
         self.module_declaration_export_target = None;
@@ -724,7 +756,10 @@ impl<'source> Parser<'source> {
 
     pub(super) fn current_module_declaration_export(&self) -> ModuleDeclarationExport {
         if self.module_declaration_export_target
-            == Some((self.current_function, self.current_ir().context.current_scope))
+            == Some((
+                self.current_function,
+                self.current_ir().context.current_scope,
+            ))
         {
             self.module_declaration_export
         } else {

@@ -49,7 +49,7 @@ fn locate(
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum SpecialKind {
+pub(crate) enum SpecialKind {
     Proxy,
     TypedArray,
     ModuleNamespace,
@@ -239,9 +239,11 @@ impl Runtime {
                 return Ok(ReadProbe::Special(special_kind(data)));
             } else {
                 match locate(&state, id, key.atom())? {
-                    // A miss may still be a non-immediate dense index. Leave
-                    // exotic misses to the complete Array lookup algorithm.
-                    None if is_array => return Ok(ReadProbe::Special(SpecialKind::Other)),
+                    // Numeric misses may still select non-immediate dense indices.
+                    // Named/symbol misses have ordinary prototype lookup and need no exotic call.
+                    None if is_array && state.atoms.array_index(key.atom())?.is_some() => {
+                        return Ok(ReadProbe::Special(SpecialKind::Other));
+                    }
                     None => Selected::Missing(state.heap.shape(data.shape)?.prototype()),
                     Some(slot) => match &data.slots[slot.index] {
                         PropertySlot::Data(value) => Selected::Value(value.clone()),

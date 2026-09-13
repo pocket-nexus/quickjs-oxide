@@ -137,8 +137,8 @@ expect_full_rewrite_rejected stage3c-publisher-alias-tail-bypass \
     $'    use OrdinaryLeafOp as O;\n    if let O::TailCall(argument_count) = &operation {\n        return Ok(Instruction::Call(*argument_count));\n    }\n    let instruction = match operation {\n        OrdinaryLeafOp::Nop => Instruction::Nop,\n        OrdinaryLeafOp::Object => Instruction::Object,\n        OrdinaryLeafOp::ToObject => Instruction::ToObject,\n        OrdinaryLeafOp::ToPropKey => Instruction::ToPropKey,\n        OrdinaryLeafOp::PushThis => Instruction::PushThis,\n        OrdinaryLeafOp::PushI32(value) => Instruction::PushI32(value),'
 expect_full_rewrite_rejected stage3c-stack-effect-guarded-bypass \
     stage3c-tail-verifier src/engine/code/bytecode.rs \
-    $'    pub const fn stack_effect(&self) -> (usize, usize) {\n        match self {' \
-    $'    pub const fn stack_effect(&self) -> (usize, usize) {\n        if let Self::TailCall(0) | Self::TailCallMethod(0) = self {\n            return (1, 1);\n        }\n        match self {'
+    $'    const fn nominal_stack_effect(&self) -> (usize, usize) {\n        match self {' \
+    $'    const fn nominal_stack_effect(&self) -> (usize, usize) {\n        if let Self::TailCall(0) | Self::TailCallMethod(0) = self {\n            return (1, 1);\n        }\n        match self {'
 expect_full_rewrite_rejected stage3c-verifier-alias-fallthrough \
     stage3c-tail-verifier src/engine/code/bytecode.rs \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses' \
@@ -184,3 +184,21 @@ expect_full_rewrite_rejected stage3c-required-test-macro-shadow \
     stage3c-runtime-evidence src/engine/heap/runtime/tests.rs \
     $'fn trusted_quickjs_ordinary_tail_invocations_use_exact_bc5_wires_and_semantics() {\n    assert_eq!(QUICKJS_ORDINARY_TAIL_CALL_BC5.len(), 57);' \
     $'fn trusted_quickjs_ordinary_tail_invocations_use_exact_bc5_wires_and_semantics() {\n    macro_rules! assert_eq { ($($tokens:tt)*) => {}; }\n    assert_eq!(QUICKJS_ORDINARY_TAIL_CALL_BC5.len(), 57);'
+
+expect_full_rewrite_rejected instruction-description-stack-bypass published-instruction-contract \
+    src/engine/code/instruction.rs \
+    'let (popped, pushed) = self.nominal_stack_effect();' \
+    'let (popped, pushed) = (0, 0);'
+
+expect_full_rewrite_rejected instruction-description-callback-bypass published-instruction-contract \
+    src/engine/code/instruction.rs \
+    'may_call_js: self.may_call_js(),' \
+    'may_call_js: false,'
+expect_full_rewrite_rejected instruction-description-state-bypass published-instruction-contract \
+    src/engine/code/instruction.rs \
+    'state: self.stack_state_effect(),' \
+    'state: StackStateEffect::ConsumeSuperCall,'
+expect_full_rewrite_rejected instruction-description-static-name-bypass published-instruction-contract \
+    src/engine/code/instruction.rs \
+    $'pub(crate) const fn static_name(self) -> Option<u32> {\n        let mut index = 0;' \
+    $'pub(crate) const fn static_name(self) -> Option<u32> {\n        return None;\n        let mut index = 0;'

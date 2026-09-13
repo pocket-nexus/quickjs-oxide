@@ -31,6 +31,8 @@ use crate::engine::code::function::metadata::{EvalBinding, EvalScope, ParameterA
 
 mod buffers;
 mod gc;
+#[cfg(feature = "stack-vm")]
+mod slot_ownership;
 #[cfg(test)]
 use gc::object_atoms;
 pub(crate) use gc::{FinalizationJobSink, PreparedFinalizationJob};
@@ -42,6 +44,8 @@ use gc::{
     raw_module_record_edges, raw_value_atom, raw_value_edges, raw_value_matches_weak_key,
     shape_edges, var_ref_edges,
 };
+#[cfg(feature = "stack-vm")]
+pub(crate) use slot_ownership::SlotReleaseReadiness;
 mod collection_index;
 mod collection_records;
 mod collections;

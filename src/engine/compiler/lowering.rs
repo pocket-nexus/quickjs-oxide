@@ -1,5 +1,8 @@
 //! Lower resolved IR to verified bytecode and source debug information.
 use crate::engine::compiler::model::bindings::{BindingKind, BindingStorage};
+use crate::engine::compiler::model::ir::function::FunctionIr;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionTree;
 use crate::engine::compiler::model::ir::{
     CallArguments, IdentifierAccess, IdentifierReferenceAccess, IrConstant, IrOp, SpannedIrOp,
 };
@@ -9,19 +12,47 @@ use crate::source::coordinates::QuickJsSourceIndex;
 
 #[cfg(test)]
 use super::DetachedBytecode;
-use super::{
-    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, BytecodeFunctionKind, ClosureSource, ClosureVariableKind,
-    ClosureVariableName, ConstructorKind, DebugInfoMode, DynamicEnvironmentSource,
-    EVAL_VARIABLE_OBJECT_LOCAL_NAME, Error, ErrorKind, EvalBindingSource, EvalKind, FunctionIr,
-    FunctionKind, FunctionMetadata, FunctionTree, Instruction, JsString, JsStringError,
-    MAX_BYTECODE_STACK, ParameterArgumentCell, ParameterBodyStorage, ParameterEnvironmentLayout,
-    ParameterPatternCopy, Pc2LineEntry, Pc2LineTable, QuickJsSourceLocator, Range, SourceOffset,
-    SourceText, UnlinkedConstant, UnlinkedFunction, UnlinkedFunctionDebug,
-    UnlinkedVariableDefinition, apply_quickjs_late_throw_sites,
-    quickjs_copies_defined_argument_count, unlinked_primitive, verify_parts,
-};
+use super::{ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, EVAL_VARIABLE_OBJECT_LOCAL_NAME};
+use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
 #[cfg(test)]
-use super::{AtomTable, HashMap, Value};
+use crate::engine::atom::AtomTable;
+use crate::engine::code::bytecode::DynamicEnvironmentSource;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::bytecode_validation::quickjs_copies_defined_argument_count;
+use crate::engine::code::debug::DebugInfoMode;
+use crate::engine::code::debug::Pc2LineEntry;
+use crate::engine::code::debug::Pc2LineTable;
+use crate::engine::code::function::UnlinkedConstant;
+use crate::engine::code::function::UnlinkedFunction;
+use crate::engine::code::function::UnlinkedFunctionDebug;
+use crate::engine::code::function::UnlinkedVariableDefinition;
+use crate::engine::code::function::metadata::ClosureSource;
+use crate::engine::code::function::metadata::ClosureVariableKind;
+use crate::engine::code::function::metadata::ClosureVariableName;
+use crate::engine::code::function::metadata::ConstructorKind;
+use crate::engine::code::function::metadata::EvalBindingSource;
+use crate::engine::code::function::metadata::EvalKind;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::code::function::metadata::FunctionMetadata;
+use crate::engine::code::function::metadata::ParameterArgumentCell;
+use crate::engine::code::function::metadata::ParameterBodyStorage;
+use crate::engine::code::function::metadata::ParameterEnvironmentLayout;
+use crate::engine::code::function::metadata::ParameterPatternCopy;
+use crate::engine::compiler::flow::verify_lowered_max_stack;
+use crate::engine::compiler::optimize::{
+    apply_quickjs_late_throw_sites, fold_quickjs_constant_branches,
+};
+use crate::engine::compiler::relocation::relocate_lowered_instruction;
+use crate::engine::value::JsString;
+use crate::engine::value::JsStringError;
+use crate::engine::value::PrimitiveValue as Value;
+use crate::source::QuickJsSourceLocator;
+use crate::source::SourceOffset;
+use crate::source::text::SourceText;
+#[cfg(test)]
+use std::collections::HashMap;
+use std::ops::Range;
 
 #[derive(Debug, Default)]
 struct ScopeLifecycle {
@@ -223,6 +254,11 @@ pub(super) fn lower_unlinked_tree(
     tree: FunctionTree,
     debug_info: DebugInfoMode,
 ) -> Result<UnlinkedFunction, Error> {
+    #[cfg(feature = "profiling")]
+    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Lowering,
+    );
+
     let FunctionTree {
         functions: tree_functions,
         source,
@@ -239,6 +275,12 @@ pub(super) fn lower_unlinked_tree(
                 .map_err(|error| Error::internal(error.to_string()))?,
         )
     };
+    #[cfg(feature = "profiling")]
+    crate::engine::compiler::diagnostics::sample_ir_storage(
+        crate::engine::api::profiling::CompilePhase::Lowering,
+        crate::engine::compiler::diagnostics::arena_bytes(&tree_functions),
+        tree_functions.iter(),
+    );
     let function_count = tree_functions.len();
     let captured_locals = captured_locals_by_function(&tree_functions)?;
     // A descendant eval descriptor names bindings owned by each ancestor and
@@ -586,6 +628,8 @@ pub(super) fn lower_unlinked_tree(
             )?),
             DebugInfoMode::StripDebug => None,
         };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_lowered_function(&code, max_stack);
         let unlinked = UnlinkedFunction::new(
             code,
             constants,
@@ -606,22 +650,6 @@ pub(super) fn lower_unlinked_tree(
     lowered[0]
         .take()
         .ok_or_else(|| Error::internal("root function was not lowered"))
-}
-
-fn verify_lowered_max_stack(code: &[Instruction], constant_count: usize) -> Result<u16, Error> {
-    verify_parts(code, constant_count, MAX_BYTECODE_STACK as u16)
-        .map(|verified| verified.max_stack)
-        .map_err(|error| {
-            if matches!(
-                error.message(),
-                "declared maximum stack is smaller than required"
-                    | "bytecode stack exceeds u16::MAX"
-            ) {
-                Error::new(ErrorKind::JsInternal, "stack overflow")
-            } else {
-                error
-            }
-        })
 }
 
 struct LoweredOps {
@@ -1141,16 +1169,6 @@ fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<
     }
     offsets.push(code_len);
 
-    let remap_target = |target: u32| -> Result<u32, Error> {
-        let old = usize::try_from(target)
-            .map_err(|_| Error::internal("jump target did not fit usize"))?;
-        let new = offsets
-            .get(old)
-            .copied()
-            .ok_or_else(|| Error::internal("jump target is out of bounds"))?;
-        u32::try_from(new).map_err(|_| Error::new(ErrorKind::JsInternal, "stack overflow"))
-    };
-
     let mut code = Vec::with_capacity(code_len);
     let mut pc_sites = Vec::with_capacity(code_len);
     let mut parameter_initialization_end = None;
@@ -1214,27 +1232,8 @@ fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<
                 code.push(Instruction::Nop);
                 pc_sites.push(None);
             }
-            IrOp::Bytecode(Instruction::Goto(target)) => {
-                code.push(Instruction::Goto(remap_target(target)?));
-                pc_sites.push(pc_site);
-            }
-            IrOp::Bytecode(Instruction::IfFalse(target)) => {
-                code.push(Instruction::IfFalse(remap_target(target)?));
-                pc_sites.push(pc_site);
-            }
-            IrOp::Bytecode(Instruction::IfTrue(target)) => {
-                code.push(Instruction::IfTrue(remap_target(target)?));
-                pc_sites.push(pc_site);
-            }
-            IrOp::Bytecode(Instruction::Catch(target)) => {
-                code.push(Instruction::Catch(remap_target(target)?));
-                pc_sites.push(pc_site);
-            }
-            IrOp::Bytecode(Instruction::Gosub(target)) => {
-                code.push(Instruction::Gosub(remap_target(target)?));
-                pc_sites.push(pc_site);
-            }
-            IrOp::Bytecode(instruction) => {
+            IrOp::Bytecode(mut instruction) => {
+                relocate_lowered_instruction(&mut instruction, &offsets)?;
                 code.push(instruction);
                 pc_sites.push(pc_site);
             }
@@ -1350,52 +1349,6 @@ fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<
         pc_sites,
         parameter_initialization_end,
     })
-}
-
-/// QuickJS `resolve_labels` folds this deliberately narrow constant set before
-/// `compute_stack_size`. Keep instruction slots stable with Nops so existing
-/// IR-index jump remapping and debug PCs remain valid.
-fn fold_quickjs_constant_branches(code: &mut [Instruction]) {
-    let mut targeted = vec![false; code.len()];
-    for instruction in code.iter() {
-        if let Instruction::Goto(target)
-        | Instruction::IfFalse(target)
-        | Instruction::IfTrue(target)
-        | Instruction::Catch(target)
-        | Instruction::Gosub(target) = instruction
-            && let Ok(target) = usize::try_from(*target)
-            && let Some(targeted) = targeted.get_mut(target)
-        {
-            *targeted = true;
-        }
-    }
-
-    for pc in 0..code.len().saturating_sub(1) {
-        // A hostile or hand-built control-flow edge may enter the conditional
-        // without executing its adjacent constant. Compiler-generated QuickJS
-        // patterns never do, but skipping preserves the verifier trust boundary.
-        if targeted[pc + 1] {
-            continue;
-        }
-        let truthy = match code[pc] {
-            Instruction::Undefined | Instruction::Null | Instruction::PushFalse => false,
-            Instruction::PushTrue => true,
-            Instruction::PushI32(value) => value != 0,
-            Instruction::PushAtomValueIndex(_) => true,
-            _ => continue,
-        };
-        let (branch_on_true, target) = match code[pc + 1] {
-            Instruction::IfFalse(target) => (false, target),
-            Instruction::IfTrue(target) => (true, target),
-            _ => continue,
-        };
-        code[pc] = if truthy == branch_on_true {
-            Instruction::Goto(target)
-        } else {
-            Instruction::Nop
-        };
-        code[pc + 1] = Instruction::Nop;
-    }
 }
 
 fn build_unlinked_debug(
@@ -1532,4 +1485,14 @@ mod tests {
                 .contains("strict function retained a local with object")
         );
     }
+}
+
+pub(in crate::engine::compiler) fn unlinked_primitive(
+    value: Value,
+) -> Result<UnlinkedConstant, Error> {
+    UnlinkedConstant::primitive(value).map_err(|error| {
+        Error::internal(format!(
+            "compiler emitted a runtime-bound constant into an unlinked function: {error}"
+        ))
+    })
 }

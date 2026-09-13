@@ -1,3 +1,5 @@
+pub(crate) mod primitive;
+
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
@@ -505,47 +507,8 @@ impl Runtime {
         value: Value,
         hint: ToPrimitiveHint,
     ) -> Result<Completion, RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(Completion::Return(value));
-        };
-        let to_primitive = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToPrimitive));
-        let exotic = match self.get_property_in_realm(realm, &object, &to_primitive)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        if !matches!(exotic, Value::Undefined | Value::Null) {
-            let Value::Object(exotic_object) = exotic else {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not a function",
-                )?));
-            };
-            let Some(exotic) = self.as_callable(&exotic_object)? else {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not a function",
-                )?));
-            };
-            return match self.call_internal(
-                realm,
-                &exotic,
-                Value::Object(object),
-                &[Value::String(JsString::from_static(match hint {
-                    ToPrimitiveHint::String => "string",
-                    ToPrimitiveHint::Number => "number",
-                    ToPrimitiveHint::Default => "default",
-                }))],
-            )? {
-                Completion::Return(Value::Object(_)) => Ok(Completion::Throw(
-                    self.new_native_error(realm, NativeErrorKind::Type, "toPrimitive")?,
-                )),
-                completion => Ok(completion),
-            };
-        }
-
-        self.ordinary_to_primitive(realm, &object, hint)
+        let step = primitive::PrimitiveResume::start(self, realm, value, hint);
+        self.finish_primitive_steps(realm, step)
     }
 
     pub(crate) fn native_to_object(

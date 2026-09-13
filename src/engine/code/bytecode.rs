@@ -720,248 +720,20 @@ impl Instruction {
     /// Publication links these operands once, including unreachable code.
     #[must_use]
     pub(crate) const fn constant_property_key_index(&self) -> Option<u32> {
-        match self {
-            Self::SetName(index)
-            | Self::ThrowReadOnly(index)
-            | Self::ThrowRedeclaration(index)
-            | Self::GetField(index)
-            | Self::GetField2(index)
-            | Self::PutField(index)
-            | Self::DefineField(index)
-            | Self::DefineMethod { key: index, .. }
-            | Self::DefineClass { name: index, .. }
-            | Self::HasEvalVariable { name: index, .. }
-            | Self::GetEvalVariable { name: index, .. }
-            | Self::PutEvalVariable { name: index, .. }
-            | Self::DeleteEvalVariable { name: index, .. }
-            | Self::DefineEvalVariable { name: index, .. }
-            | Self::HasDynamicBinding { name: index, .. }
-            | Self::GetDynamicBinding { name: index, .. }
-            | Self::PutDynamicBinding { name: index, .. }
-            | Self::DeleteDynamicBinding { name: index, .. }
-            | Self::GetRefValue(index)
-            | Self::GetRefValueUndef(index)
-            | Self::PutRefValue(index) => Some(*index),
-            _ => None,
-        }
+        self.info().operands.static_name()
     }
 
     #[must_use]
     pub const fn stack_effect(&self) -> (usize, usize) {
-        match self {
-            Self::Nop
-            | Self::CheckCtor
-            | Self::Goto(_)
-            | Self::Gosub(_)
-            | Self::ReturnUndefined
-            | Self::ThrowRedeclaration(_)
-            | Self::ThrowReadOnly(_)
-            | Self::ThrowIteratorMissingThrow
-            | Self::SetLocalUninitialized(_)
-            | Self::CloseLocal(_)
-            | Self::InitialYield => (0, 0),
-            // The verifier models this marker in its conceptual stack even
-            // though runtime execution stores it in private handler metadata.
-            Self::Catch(_) => (0, 1),
-            Self::ForOfStart | Self::ForAwaitOfStart => (1, 3),
-            Self::IteratorStart | Self::AsyncIteratorStart => (1, 3),
-            Self::ForOfNext(_) => (3, 5),
-            Self::ForAwaitOfNext => (3, 4),
-            Self::IteratorGetValueDone => (2, 3),
-            Self::IteratorNext => (4, 4),
-            Self::IteratorCall(_) => (4, 5),
-            Self::ForInStart => (1, 1),
-            Self::ForInNext => (1, 3),
-            Self::PushI32(_)
-            | Self::PushAtomValueIndex(_)
-            | Self::PushConst(_)
-            | Self::FClosure(_)
-            | Self::RegExp(_)
-            | Self::Undefined
-            | Self::Null
-            | Self::PushFalse
-            | Self::PushTrue
-            | Self::PushThis
-            | Self::PushActiveFunction
-            | Self::PushHomeObject
-            | Self::PushNewTarget
-            | Self::InitDerivedConstructor
-            | Self::Arguments(_)
-            | Self::Rest(_)
-            | Self::VariableEnvironment
-            | Self::HasEvalVariable { .. }
-            | Self::GetEvalVariable { .. }
-            | Self::DeleteEvalVariable { .. }
-            | Self::HasDynamicBinding { .. }
-            | Self::GetDynamicBinding { .. }
-            | Self::DeleteDynamicBinding { .. }
-            | Self::DynamicEnvironmentObject(_)
-            | Self::GlobalReference(_)
-            | Self::GetLocal(_)
-            | Self::GetLocalCheck(_)
-            | Self::GetArg(_)
-            | Self::GetVarRef(_)
-            | Self::GetVarRefCheck(_)
-            | Self::GetVar(_)
-            | Self::GetVarUndef(_)
-            | Self::DeleteVar(_) => (0, 1),
-            Self::InitializePrivateName(_) => (0, 0),
-            Self::InitializePrivateMethod(_) | Self::InitializePrivateAccessor(_) => (2, 1),
-            Self::SetName(_) | Self::ToObject | Self::IteratorCheckObject => (1, 1),
-            Self::MarkSuperCall => (2, 2),
-            Self::GetRefValue(_) | Self::GetRefValueUndef(_) => (1, 2),
-            Self::GetField(_) | Self::GetPrivateField(_) | Self::PrivateIn(_) => (1, 1),
-            Self::GetField2(_) => (1, 2),
-            Self::GetPrivateField2(_) => (1, 2),
-            Self::GetArrayEl => (2, 1),
-            Self::GetArrayEl2 => (2, 2),
-            Self::GetArrayEl3 => (2, 3),
-            Self::GetSuper => (1, 1),
-            Self::GetSuperValue => (3, 1),
-            Self::GetSuperValueForCall => (3, 2),
-            Self::ArrayFrom(element_count) => (*element_count as usize, 1),
-            Self::Object => (0, 1),
-            Self::ToPropKey => (1, 1),
-            Self::Insert2 => (2, 3),
-            Self::Insert3 => (3, 4),
-            Self::Dup3 => (3, 6),
-            Self::Insert4 => (4, 5),
-            Self::Perm3 => (3, 3),
-            Self::Perm4 => (4, 4),
-            Self::Perm5 => (5, 5),
-            Self::Rot4Left => (4, 4),
-            Self::PutField(_) => (2, 0),
-            Self::PutPrivateField(_) => (2, 0),
-            Self::PutArrayEl => (3, 0),
-            Self::PutSuperValue => (4, 0),
-            Self::DefineField(_) | Self::DefinePrivateField(_) | Self::DefineMethod { .. } => {
-                (2, 1)
-            }
-            Self::DefineFieldComputed | Self::DefineMethodComputed { .. } => (3, 1),
-            Self::DefineClass { .. } => (2, 2),
-            Self::InstallClassInstanceInitializer => (3, 2),
-            Self::CallClassInstanceInitializer => (2, 1),
-            Self::RunClassStaticInitializer => (2, 1),
-            Self::CallClassStaticBlock => (1, 0),
-            Self::DefineArrayEl | Self::Append => (3, 2),
-            Self::SetNameComputed => (2, 2),
-            Self::SetProto | Self::CopyDataProperties => (2, 1),
-            Self::CopyDataPropertiesExcluded {
-                target_depth,
-                source_depth,
-                excluded_depth,
-            } => {
-                let mut maximum = *target_depth;
-                if *source_depth > maximum {
-                    maximum = *source_depth;
-                }
-                if *excluded_depth > maximum {
-                    maximum = *excluded_depth;
-                }
-                let required = maximum as usize + 1;
-                (required, required)
-            }
-            Self::Delete => (2, 1),
-            Self::Import => (2, 1),
-            Self::Call(argument_count) | Self::Eval { argument_count, .. } => {
-                (*argument_count as usize + 1, 1)
-            }
-            Self::TailCall(argument_count) => (*argument_count as usize + 1, 0),
-            Self::CallMethod(argument_count) => (*argument_count as usize + 2, 1),
-            Self::TailCallMethod(argument_count) => (*argument_count as usize + 2, 0),
-            Self::Construct(argument_count) | Self::ConstructSuper(argument_count) => {
-                (*argument_count as usize + 2, 1)
-            }
-            Self::Apply(_) | Self::ApplySuper => (3, 1),
-            Self::ApplyEval { .. } => (2, 1),
-            Self::Drop
-            | Self::PutEvalVariable { .. }
-            | Self::DefineEvalVariable { .. }
-            | Self::PutDynamicBinding { .. }
-            | Self::PutLocal(_)
-            | Self::InitializeLocal(_)
-            | Self::InitializeDerivedLocal(_)
-            | Self::PutLocalCheck(_)
-            | Self::PutArg(_)
-            | Self::PutVarRef(_)
-            | Self::PutVarRefCheck(_)
-            | Self::InitializeVarRef(_)
-            | Self::InitializeModuleImportCollision(_)
-            | Self::InitializeDerivedVarRef(_)
-            | Self::PutVar(_)
-            | Self::PutVarInit(_)
-            | Self::DropCatch
-            | Self::DropGosub
-            | Self::IfFalse(_)
-            | Self::IfTrue(_)
-            | Self::Return
-            | Self::ReturnDerived(_)
-            | Self::Throw => (1, 0),
-            Self::PutRefValue(_) => (2, 0),
-            Self::ThrowDeleteSuper => (3, 1),
-            Self::Nip => (2, 1),
-            Self::Swap => (2, 2),
-            // The verifier replaces this nominal value-preserving effect with
-            // the active handler's recorded entry depth.
-            Self::NipCatch | Self::IteratorClosePreserve | Self::IteratorDropPreserve => (1, 1),
-            // The verifier replaces this nominal completion-to-completion-plus-
-            // iterator effect with the active region's dynamic record base.
-            Self::IteratorDetachPreserve => (1, 2),
-            Self::IteratorClose => (3, 0),
-            Self::Await => (1, 1),
-            Self::Yield | Self::YieldStar | Self::AsyncYieldStar => (1, 2),
-            Self::SetLocal(_) | Self::SetLocalCheck(_) | Self::SetArg(_) | Self::SetVarRef(_) => {
-                (1, 1)
-            }
-            Self::Dup => (1, 2),
-            Self::Dup1 => (2, 3),
-            Self::Neg
-            | Self::Plus
-            | Self::Inc
-            | Self::Dec
-            | Self::BitNot
-            | Self::Not
-            | Self::TypeOf
-            | Self::IsUndefinedOrNull
-            | Self::IsUndefined
-            | Self::IsNull
-            | Self::TypeOfIsUndefined
-            | Self::TypeOfIsFunction => (1, 1),
-            Self::PostInc | Self::PostDec => (1, 2),
-            Self::Add
-            | Self::Sub
-            | Self::Mul
-            | Self::Div
-            | Self::Mod
-            | Self::Pow
-            | Self::Shl
-            | Self::Sar
-            | Self::Shr
-            | Self::BitAnd
-            | Self::BitXor
-            | Self::BitOr
-            | Self::Eq
-            | Self::StrictEq
-            | Self::Neq
-            | Self::StrictNeq
-            | Self::Lt
-            | Self::Lte
-            | Self::Gt
-            | Self::Gte
-            | Self::In
-            | Self::InstanceOf => (2, 1),
-            Self::Ret => (1, 0),
-        }
+        let effect = self.info().stack;
+        (effect.popped, effect.pushed)
     }
 
     /// Return the linked direct-eval environment carried by either fixed- or
     /// spread-argument eval bytecode.
     #[must_use]
     pub const fn eval_environment(&self) -> Option<u16> {
-        match self {
-            Self::Eval { environment, .. } | Self::ApplyEval { environment } => Some(*environment),
-            _ => None,
-        }
+        self.info().operands.eval_environment()
     }
 }
 
@@ -1211,7 +983,11 @@ pub fn verify_parts(
         *slot = Some(state.clone());
 
         let instruction = &code[pc];
-        let (popped, pushed) = instruction.stack_effect();
+        let crate::engine::code::instruction::StackEffect {
+            popped,
+            pushed,
+            state: stack_state,
+        } = instruction.info().stack;
         let remaining_depth = state
             .depth
             .checked_sub(popped)
@@ -1223,14 +999,7 @@ pub fn verify_parts(
         let mut next_return_addresses = state.return_addresses.clone();
         let mut next_super_call_bases = state.super_call_bases.clone();
 
-        if !matches!(
-            instruction,
-            Instruction::ConstructSuper(_)
-                | Instruction::ApplySuper
-                | Instruction::ForOfNext(_)
-                | Instruction::ForAwaitOfNext
-                | Instruction::IteratorGetValueDone
-        ) {
+        if stack_state.preserves_super_pair() {
             verify_super_call_pair_untouched(&state, remaining_depth, popped)?;
         }
 

@@ -5,7 +5,21 @@
 //! one chain-end label. Parser-only metadata preserves the few Reference
 //! rewrites which can still happen outside a parenthesized chain.
 
-use super::*;
+use crate::engine::api::error::Error;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::PrivateFieldAccess;
+use crate::engine::compiler::model::ir::SpannedIrOp;
+use crate::engine::compiler::parser::builder::FunctionBuilder;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::private_reference;
+use crate::engine::value::JsString;
+use crate::engine::value::PrimitiveValue as Value;
 
 /// One nullish edge in a parser-owned optional chain.
 ///
@@ -193,14 +207,16 @@ pub(super) fn pad_grouped_method_receiver(
     terminal_get: Option<usize>,
 ) -> Result<(), Error> {
     if function
-        .context.last_optional_chain
+        .context
+        .last_optional_chain
         .as_ref()
         .is_none_or(|chain| chain.terminal_member_get != terminal_get)
     {
         return Ok(());
     }
     let chain = function
-        .context.last_optional_chain
+        .context
+        .last_optional_chain
         .take()
         .ok_or_else(|| Error::internal("optional chain marker disappeared"))?;
     for short_circuit in chain.short_circuits {

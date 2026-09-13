@@ -134,20 +134,34 @@ def check(ctx):
     if ctx.bytecode_code.count("Self::Apply(_) | Self::ApplySuper => (3, 1),") != 1:
         ctx.fail("stage3b-apply-stack", "Apply must retain its exact three-pop/one-push verifier effect")
 
+    # The descriptor and compatibility adapter must consume the same model.
+    ctx.require_normalized_code_sha256(
+        "published-instruction-contract",
+        "instruction descriptions must preserve stack, control and JS exception facts",
+        ctx.rust_code_only(ctx.read_source("src/engine/code/instruction.rs")),
+        "b3f1a9fe0e3fdd46ec6a0a89f24b6403fd79802663ea0e4e8032d5992bcf4289",
+    )
+    ctx.require_normalized_code_sha256(
+        "published-instruction-stack-adapter",
+        "the public stack tuple must project the shared descriptor",
+        ctx.stage3b_function("src/engine/code/bytecode.rs", "stack_effect", "published-instruction-stack-adapter"),
+        "86b1606b6e1ea2a8508f9020fd988ebd651175fe51bf44bad398501001263bcb",
+    )
+
     tail_stack_effects = (
         "Self::TailCall(argument_count) => (*argument_count as usize + 1, 0),",
         "Self::TailCallMethod(argument_count) => (*argument_count as usize + 2, 0),",
     )
 
     stack_effect_item = ctx.stage3b_function(
-        "src/engine/code/bytecode.rs", "stack_effect", "stage3c-tail-verifier"
+        "src/engine/code/instruction.rs", "nominal_stack_effect", "stage3c-tail-verifier"
     )
 
     ctx.require_normalized_code_sha256(
         "stage3c-tail-verifier",
-        "Instruction::stack_effect must remain the reviewed alias-free exhaustive stack model",
+        "The shared nominal stack contract must remain the reviewed exhaustive model",
         stack_effect_item,
-        "a6b0111cc4ec1e4316e8206d6cd75ccc66d7e910c248015b02de358894454538",
+        "7fa361fbe20e888631a7c8330138fc00ad162c05f8cbcca476d1b235149dd957",
     )
 
     normalized_stack_effect = " ".join(stack_effect_item.split())
@@ -340,6 +354,9 @@ def check(ctx):
         "src/engine/vm/mod.rs", "execute_inner", "stage3c-tail-vm"
     )
 
+    # Includes the two profiling-only counters around PC publication. The
+    # reviewed call/throw routing remains unchanged; the whole corridor is
+    # authenticated, including the feature guards (not stripped from the hash).
     normalized_execute_inner = " ".join(execute_inner_item.split())
 
     call_route = deepcopy(evidence.CALL_ROUTE)
@@ -357,7 +374,7 @@ def check(ctx):
             "stage3c-tail-vm",
             "the execute_inner prefix through call-family routing must not intercept, alias, or remove tail completion",
             normalized_execute_inner[:call_route_end],
-            "35d38d833ed12acd0dfd6de284398e2df696ba0abb7f0046ebe47fdfa6c39210",
+            "399b6021647d5ce770d3b6b3c501673a4d4dc58f07787807ebfbef91bcbc1ede",
         )
 
     capability_relative = "src/engine/code/binary_object/function_translate/capability.rs"
@@ -578,7 +595,7 @@ def check(ctx):
         "stage3d-throw-verifier",
         "the full typed verifier must keep Throw terminal without a guarded or aliased fallthrough path",
         verify_parts_item,
-        "dc38a575344a31719e9923b1cf0412c01d3b2932d954d5243a93e826a97e5c8d",
+        "ef9fe333359c127175f3a83bd4c20996702ca11d581096a205ffeb4e30fafe41",
     )
 
     if normalized_verify_parts.count(tail_terminal_dispatch) != 1:
@@ -767,7 +784,7 @@ def check(ctx):
         "stage3d-throw-critical-route",
         "execute_inner must carry raw48 from fetch through the hot dispatcher without a guarded completion alias",
         execute_inner_item,
-        "cc82cb84b962afef73b2141002623e6802c0c047a008eea157c178cfbeb9da3a",
+        "7f8a719df96ad6a1e35d766de3b6021172bcab83a8e77419a7822d21f3b62314",
     )
 
     ctx.require_normalized_code_sha256(
@@ -793,7 +810,7 @@ def check(ctx):
         "published-frame-owner",
         "Activation code and metadata must come from the same sealed host snapshot",
         ctx.stage3b_function(runtime_vm_host_relative, "new_activation", "published-frame-owner"),
-        "88806b84077ca2ffc8bb4691e5dc30e344f95241ae30a1ead4ed3092df0e7022",
+        "ddee5efcf239cc57ac6bd59495e34703e02a9c5c1c1c23413755daf5d4e81551",
     )
 
 
@@ -814,11 +831,11 @@ def check(ctx):
 
     ctx.require_normalized_corridor_sha256(
         "stage3d-throw-critical-route",
-        "the normal bytecode bridge must finish its frame and return execute_published without completion remapping",
+        "both configured ordinary bytecode routes must finish the active frame and preserve their completion",
         execute_bytecode_callable_item,
         "FunctionKind::Normal => {}",
         "result.map_err(RuntimeError::Engine) }",
-        "4c6141e7e3aaabf76b78abf7274c2db6864a7feb516ed02c56bac8ebf6af2b60",
+        "8c41860ef4400fe7aa2d4af5bfcc23ce7b14ca0c1683c1e428e7308a8fad94c6",
     )
 
     call_internal_item = ctx.stage3b_function(

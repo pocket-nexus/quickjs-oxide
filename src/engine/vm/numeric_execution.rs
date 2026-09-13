@@ -3,25 +3,9 @@ use super::*;
 /// Number-tag updates cannot call JavaScript and preserve an existing Float
 /// tag, including signed zero. Int32 overflow promotes exactly once to Float64.
 fn updated_number(value: &Value, increment: bool) -> Option<Value> {
-    match value {
-        Value::Int(old) => {
-            let next = if increment {
-                old.checked_add(1)
-            } else {
-                old.checked_sub(1)
-            };
-            Some(next.map_or_else(
-                || Value::Float(f64::from(*old) + if increment { 1.0 } else { -1.0 }),
-                Value::Int,
-            ))
-        }
-        Value::Float(old) => Some(Value::Float(if increment {
-            *old + 1.0
-        } else {
-            *old - 1.0
-        })),
-        _ => None,
-    }
+    value
+        .as_number_repr()
+        .map(|number| number.update(increment).into())
 }
 
 impl VmActivation {
@@ -33,13 +17,14 @@ impl VmActivation {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(OperationOutcome::Throw(value)),
         };
+        if let Some(number) = operand.as_number_repr() {
+            self.stack.push(number.negate().into());
+            return Ok(OperationOutcome::Value(()));
+        }
         match operand {
             Value::BigInt(value) => self
                 .stack
                 .push(Value::BigInt(value.neg().map_err(bigint_error)?)),
-            // QuickJS uses __JS_NewFloat64 for a Float64 operand, retaining
-            // the Float tag even when the result has an integral value.
-            Value::Float(value) => self.stack.push(Value::Float(-value)),
             value => self.stack.push(Value::number(-value.to_number()?)),
         }
         Ok(OperationOutcome::Value(()))
@@ -256,33 +241,8 @@ impl VmActivation {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(OperationOutcome::Throw(value)),
         };
-        if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
-            let left = match left {
-                Value::String(value) => value,
-                value => value.to_js_string()?,
-            };
-            let right = match right {
-                Value::String(value) => value,
-                value => value.to_js_string()?,
-            };
-            self.stack
-                .push(Value::String(left.try_concat(&right).map_err(Error::from)?));
-        } else {
-            let left = to_numeric_primitive(left)?;
-            let right = to_numeric_primitive(right)?;
-            match (left, right) {
-                (NumericValue::BigInt(left), NumericValue::BigInt(right)) => self
-                    .stack
-                    .push(Value::BigInt(left.add(&right).map_err(bigint_error)?)),
-                (NumericValue::BigInt(_), NumericValue::Number(_))
-                | (NumericValue::Number(_), NumericValue::BigInt(_)) => {
-                    return Err(mixed_numeric_type_error());
-                }
-                (NumericValue::Number(left), NumericValue::Number(right)) => {
-                    self.stack.push(Value::number(left + right));
-                }
-            }
-        }
+        self.stack
+            .push(super::numeric::add_primitives(left, right)?);
         Ok(OperationOutcome::Value(()))
     }
 }

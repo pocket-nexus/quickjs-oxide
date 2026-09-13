@@ -1,4 +1,36 @@
-use super::*;
+use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::compiler::lexer::Identifier;
+use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::LexicalGoal;
+use crate::engine::compiler::lexer::NumberKind;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::TemplatePartKind;
+use crate::engine::compiler::lexer::Token;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::PrivateFieldAccess;
+use crate::engine::compiler::parser::context::ForAssignmentDeclaration;
+use crate::engine::compiler::parser::context::ForAssignmentTargetInfo;
+use crate::engine::compiler::parser::context::ForHeadDelimiter;
+use crate::engine::compiler::parser::context::ForIterationKind;
+use crate::engine::compiler::parser::context::IdentifierReference;
+use crate::engine::compiler::parser::context::MemberReference;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::validate_identifier;
+use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
+use crate::engine::compiler::parser::literals::parse_number;
+use crate::engine::compiler::parser::tokens::for_head_regexp_allowed_after;
+use crate::engine::value::JsString;
+use crate::engine::value::PrimitiveValue as Value;
+use crate::source::SourceOffset;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BindingSite {
@@ -2471,7 +2503,8 @@ impl<'source> Parser<'source> {
         // linearly emitted false edge has already consumed its value.
         self.current_ir_mut().context.stack_depth = self
             .current_ir()
-            .context.stack_depth
+            .context
+            .stack_depth
             .checked_add(1)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         self.emit_instruction(Instruction::Drop)?;

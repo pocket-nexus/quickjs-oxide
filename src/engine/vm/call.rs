@@ -1,3 +1,11 @@
+#[cfg(feature = "stack-vm")]
+mod request;
+#[cfg(feature = "stack-vm")]
+pub(in crate::engine::vm) use request::BytecodeCallRequest;
+
+mod prepare;
+pub(in crate::engine::vm) use prepare::PreparedBytecodeFrame;
+
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;

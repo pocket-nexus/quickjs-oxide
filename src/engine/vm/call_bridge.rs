@@ -1,0 +1,78 @@
+//! Temporary single-call boundary for callable families awaiting S05/S06 continuations.
+//! The caller stays owned; no completed prefix is replayed by handing off its whole frame.
+use super::{
+    Completion, driver::CallStep, exception::runtime_error_to_vm_error,
+    execution::RunningExecution, frame::FrameId,
+};
+use crate::engine::{
+    api::{Error, runtime::Runtime},
+    value::Value,
+};
+
+#[inline(never)]
+pub(super) fn invoke(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    count: usize,
+    method: bool,
+    tail: bool,
+    overflow: Option<crate::engine::code::rooted::FunctionBytecodeRef>,
+) -> Result<CallStep, Error> {
+    let frame = execution.frames.current_mut(id)?;
+    let realm = frame.executable.realm;
+    let callable = runtime
+        .callable_from_value(execution.slots.peek(&frame.window, count)?.clone())
+        .map_err(runtime_error_to_vm_error)?;
+    let mut arguments = Vec::new();
+    arguments
+        .try_reserve_exact(count)
+        .map_err(|_| Error::internal("call boundary arguments allocation failed"))?;
+    #[cfg(feature = "profiling")]
+    let depth = execution.slots.depth(&frame.window);
+    for _ in 0..count {
+        arguments.push(execution.slots.pop(&mut frame.window)?);
+    }
+    arguments.reverse();
+    execution.slots.pop(&mut frame.window)?;
+    let receiver = if method {
+        execution.slots.pop(&mut frame.window)?
+    } else {
+        Value::Undefined
+    };
+    // There are no live slot or heap borrows across this selected synchronous call.
+    let completion = match overflow {
+        Some(bytecode) => runtime.bytecode_stack_overflow_completion(realm, &bytecode),
+        None => runtime.call_internal(realm, &callable, receiver, &arguments),
+    };
+    let completion = match completion {
+        Ok(completion) => completion,
+        Err(error) => {
+            let error = runtime_error_to_vm_error(error);
+            let Some(kind) =
+                crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
+            else {
+                return Err(error);
+            };
+            Completion::Throw(
+                runtime
+                    .new_native_error_from_error(realm, kind, &error)
+                    .map_err(runtime_error_to_vm_error)?,
+            )
+        }
+    };
+    match completion {
+        Completion::Return(value) if !tail => {
+            let frame = execution.frames.current_mut(id)?;
+            execution.slots.push(&mut frame.window, value)?;
+            frame.resume_pc = frame
+                .fault_pc
+                .checked_add(1)
+                .ok_or_else(|| Error::internal("call boundary resume PC overflow"))?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_instruction(depth);
+            Ok(CallStep::Entered)
+        }
+        completion => Ok(CallStep::Complete(completion)),
+    }
+}

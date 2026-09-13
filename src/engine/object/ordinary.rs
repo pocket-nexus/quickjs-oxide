@@ -270,28 +270,68 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
-        use crate::engine::object::ordinary_storage::ReadProbe;
         use crate::engine::vm::Completion;
+        match self.prepare_ordinary_read(object, key, receiver)? {
+            OrdinaryRead::Complete(value) => Ok(NativeConversion::Value(value)),
+            OrdinaryRead::Call { getter, receiver } => {
+                Ok(match self.call_internal(realm, &getter, receiver, &[])? {
+                    Completion::Return(value) => NativeConversion::Value(Some(value)),
+                    Completion::Throw(value) => NativeConversion::Throw(value),
+                })
+            }
+            OrdinaryRead::Special {
+                kind,
+                object,
+                receiver,
+            } => self.get_special_or_missing(kind, realm, &object, key, receiver),
+        }
+    }
+
+    /// Finish ordinary lookup without invoking an accessor or exotic method.
+    /// Every returned owner remains valid after the lookup borrows end; a
+    /// caller can schedule the selected getter without repeating the lookup.
+    pub(crate) fn prepare_ordinary_read(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        receiver: Value,
+    ) -> Result<OrdinaryRead, RuntimeError> {
+        use crate::engine::object::ordinary_storage::ReadProbe;
         let mut prototype = None;
         loop {
             let current = prototype.as_ref().unwrap_or(object);
             match self.ordinary_read_probe(current, key)? {
-                ReadProbe::Value(value) => return Ok(NativeConversion::Value(Some(value))),
+                ReadProbe::Value(value) => return Ok(OrdinaryRead::Complete(Some(value))),
                 ReadProbe::Getter(None) => {
-                    return Ok(NativeConversion::Value(Some(Value::Undefined)));
+                    return Ok(OrdinaryRead::Complete(Some(Value::Undefined)));
                 }
                 ReadProbe::Getter(Some(getter)) => {
-                    return Ok(match self.call_internal(realm, &getter, receiver, &[])? {
-                        Completion::Return(value) => NativeConversion::Value(Some(value)),
-                        Completion::Throw(value) => NativeConversion::Throw(value),
-                    });
+                    return Ok(OrdinaryRead::Call { getter, receiver });
                 }
                 ReadProbe::Missing(Some(next)) => prototype = Some(next),
-                ReadProbe::Missing(None) => return Ok(NativeConversion::Value(None)),
+                ReadProbe::Missing(None) => return Ok(OrdinaryRead::Complete(None)),
                 ReadProbe::Special(kind) => {
-                    return self.get_special_or_missing(kind, realm, current, key, receiver);
+                    return Ok(OrdinaryRead::Special {
+                        kind,
+                        object: current.clone(),
+                        receiver,
+                    });
                 }
             }
         }
     }
+}
+
+/// A rooted ordinary lookup result, ready for an explicit caller to consume.
+pub(crate) enum OrdinaryRead {
+    Complete(Option<Value>),
+    Call {
+        getter: crate::engine::object::CallableRef,
+        receiver: Value,
+    },
+    Special {
+        kind: SpecialKind,
+        object: ObjectRef,
+        receiver: Value,
+    },
 }

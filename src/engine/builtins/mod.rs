@@ -9,11 +9,11 @@ use crate::engine::code::bytecode_publish;
 use crate::engine::code::function::UnlinkedFunction;
 use crate::source::QuickJsSourceLocator;
 
+use crate::engine::api::compile::Compilation;
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariableKind, ClosureVariableName,
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
-use crate::engine::code::runtime::Compilation;
 use crate::engine::compiler::DEFAULT_EVAL_FILENAME;
 use crate::engine::heap::roots::VarRefRoot;
 
@@ -41,6 +41,8 @@ pub(crate) use array_buffer::typed_array::CanonicalNumericIndex;
 pub(crate) mod date;
 mod error;
 mod eval;
+#[cfg(feature = "stack-vm")]
+pub(crate) use eval::DirectEvalPreparation;
 mod iterator;
 mod json;
 mod map;

@@ -82,3 +82,48 @@ fn profiling_lifecycle_and_overflow_are_labelled() {
     assert!(report.contains("\"complete_within_scope\":false"));
     assert!(report.contains("\"events\":[]"));
 }
+
+#[cfg(feature = "profiling")]
+#[test]
+fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
+    let output = run(&[
+        "-d",
+        "--profile-json",
+        "-e",
+        "print((function(x){return x+1})(41))",
+    ]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    let report = String::from_utf8(output.stderr).unwrap();
+    let costs = report
+        .lines()
+        .find(|line| line.contains("oxide-compile-vm-cost-v1"))
+        .unwrap();
+    if cfg!(feature = "stack-vm") {
+        assert!(costs.contains("\"execution_path\":\"owned-stack-with-legacy-bridge\""));
+        assert!(!costs.contains("\"owned_instructions\":0"));
+        assert!(!costs.contains("\"owned_bridge_exits\":0"));
+        assert!(!costs.contains("\"frames_pushed\":0"));
+        assert!(!costs.contains("\"slot_capacity_growths\":0"));
+    } else {
+        assert!(costs.contains("\"execution_path\":\"legacy\""));
+        assert!(costs.contains("\"owned_instructions\":0"));
+        assert!(costs.contains("\"owned_bridge_exits\":0"));
+        assert!(costs.contains("\"frames_pushed\":0"));
+        assert!(costs.contains("\"slot_capacity_growths\":0"));
+    }
+    assert!(costs.contains("\"owned_storage\":{\"coverage\":\"partial\""));
+    assert!(costs.contains("\"maximum_live_slots\":"));
+    assert!(costs.contains("\"lowered_functions\":2"));
+    assert!(costs.contains("\"phase_totals_additive\":false"));
+    assert!(!costs.contains("\"legacy_dispatches\":0"));
+    let failed = run(&["-d", "--profile-json", "-e", "let = ;"]);
+    assert!(!failed.status.success());
+    let report = String::from_utf8(failed.stderr).unwrap();
+    let costs = report
+        .lines()
+        .find(|line| line.contains("oxide-compile-vm-cost-v1"))
+        .unwrap();
+    assert!(costs.contains("\"parse\":{\"attempts\":1,"));
+    assert!(costs.contains("\"lowered_functions\":0"));
+}

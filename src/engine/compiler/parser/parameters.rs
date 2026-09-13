@@ -1,25 +1,25 @@
 //! Formal parameter bindings and initializer environments.
 
-use crate::engine::compiler::source_span;
-use crate::engine::compiler::model::bindings::BindingKind;
-use crate::engine::compiler::model::bindings::BindingStorage;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
-use crate::engine::compiler::FunctionKind;
 use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::metadata::ParameterDefaultSource;
+use crate::engine::compiler::MAX_LOCAL_VARIABLES;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::model::bindings::BindingKind;
+use crate::engine::compiler::model::bindings::BindingStorage;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::compiler::model::ir::IrOp;
-use crate::engine::compiler::IrParameterPatternBinding;
+use crate::engine::compiler::model::ir::SpannedIrOp;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::IrParameterPatternBinding;
 use crate::engine::compiler::model::scope::IrScope;
-use crate::engine::value::JsString;
-use crate::engine::compiler::MAX_LOCAL_VARIABLES;
-use crate::engine::code::function::metadata::ParameterDefaultSource;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
-use crate::engine::compiler::lexer::Span;
-use crate::engine::compiler::model::ir::SpannedIrOp;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 
 impl<'source> Parser<'source> {
@@ -27,7 +27,11 @@ impl<'source> Parser<'source> {
     /// resolve. A later default may promote every source binding to the
     /// independent parameter environment while retaining these slots as the
     /// call-frame input ABI.
-    pub(in crate::engine::compiler) fn append_identifier_parameter(&mut self, name: String, span: Span) -> Result<u16, Error> {
+    pub(in crate::engine::compiler) fn append_identifier_parameter(
+        &mut self,
+        name: String,
+        span: Span,
+    ) -> Result<u16, Error> {
         let function = self.current_ir_mut();
         if function.parameter_scope.is_some()
             && function
@@ -64,7 +68,10 @@ impl<'source> Parser<'source> {
     /// BindingPattern. Its BoundNames are registered separately as ordinary
     /// function-root variables while the raw call input remains inaccessible
     /// after the entry destructuring phase.
-    pub(in crate::engine::compiler) fn append_pattern_parameter(&mut self, span: Span) -> Result<u16, Error> {
+    pub(in crate::engine::compiler) fn append_pattern_parameter(
+        &mut self,
+        span: Span,
+    ) -> Result<u16, Error> {
         let function = self.current_ir_mut();
         if function.parameters.len() >= MAX_LOCAL_VARIABLES {
             return Err(Error::new(ErrorKind::JsInternal, "too many arguments")
@@ -82,7 +89,9 @@ impl<'source> Parser<'source> {
     /// QuickJS evaluates these patterns in FunctionRoot: body `var` bindings
     /// exist as undefined, while body lexicals and function initializers have
     /// not been installed yet.
-    pub(in crate::engine::compiler) fn activate_pattern_parameter_initialization(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn activate_pattern_parameter_initialization(
+        &mut self,
+    ) -> Result<(), Error> {
         let function = self.current_ir_mut();
         if function.pattern_parameter_initialization {
             return Ok(());
@@ -162,7 +171,11 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn allocate_parameter_binding_local(&mut self, name: String, span: Span) -> Result<u16, Error> {
+    pub(in crate::engine::compiler) fn allocate_parameter_binding_local(
+        &mut self,
+        name: String,
+        span: Span,
+    ) -> Result<u16, Error> {
         let function = self.current_ir_mut();
         let parameter_scope = function
             .parameter_scope
@@ -201,7 +214,11 @@ impl<'source> Parser<'source> {
         Ok(local)
     }
 
-    pub(in crate::engine::compiler) fn allocate_parameter_local(&mut self, argument: u16, span: Span) -> Result<u16, Error> {
+    pub(in crate::engine::compiler) fn allocate_parameter_local(
+        &mut self,
+        argument: u16,
+        span: Span,
+    ) -> Result<u16, Error> {
         let argument_index = usize::from(argument);
         let name = self
             .current_ir()
@@ -427,7 +444,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn register_rest_pattern_parameter(&mut self) -> Result<u16, Error> {
+    pub(in crate::engine::compiler) fn register_rest_pattern_parameter(
+        &mut self,
+    ) -> Result<u16, Error> {
         let function = self.current_ir_mut();
         if !function.pattern_parameter_initialization
             || function.rest_parameter.is_some()
@@ -469,7 +488,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn allocate_parameter_pattern_body_bindings(&mut self) -> Result<Vec<(u16, u16)>, Error> {
+    pub(in crate::engine::compiler) fn allocate_parameter_pattern_body_bindings(
+        &mut self,
+    ) -> Result<Vec<(u16, u16)>, Error> {
         let function = self.current_ir_mut();
         let mut copies = Vec::with_capacity(function.parameter_pattern_bindings.len());
         for binding_index in 0..function.parameter_pattern_bindings.len() {
@@ -512,7 +533,9 @@ impl<'source> Parser<'source> {
         Ok(copies)
     }
 
-    pub(in crate::engine::compiler) fn finish_identifier_parameter_environment(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn finish_identifier_parameter_environment(
+        &mut self,
+    ) -> Result<(), Error> {
         if let Some(parameter_scope) = self.current_ir().parameter_scope {
             if self.current_ir().context.current_scope != parameter_scope
                 || self.current_ir().context.stack_depth != 0
@@ -563,5 +586,4 @@ impl<'source> Parser<'source> {
         }
         Ok(())
     }
-
 }

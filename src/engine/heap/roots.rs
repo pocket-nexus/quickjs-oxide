@@ -5,7 +5,7 @@ use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKi
 use crate::engine::heap::{HeapError, RawValue, VarRefData, VarRefId};
 use crate::engine::object::{ObjectRef, SymbolRef};
 use crate::engine::value::Value;
-use crate::engine::vm::host_bridge as vm_host;
+use crate::engine::vm::bindings::closure_view_matches_cell;
 
 impl Runtime {
     pub(crate) fn new_var_ref(
@@ -147,7 +147,7 @@ impl Runtime {
         }
         let var_ref = self.0.state.borrow();
         let var_ref = var_ref.heap.var_ref(root.id())?;
-        if !vm_host::closure_view_matches_cell(
+        if !closure_view_matches_cell(
             (var_ref.is_lexical, var_ref.is_const, var_ref.kind),
             descriptor,
         ) {

@@ -4,6 +4,12 @@
 //! runtime's object, call, iterator, realm and captured-variable machinery.
 
 use super::frames::ActiveFrameToken;
+use crate::engine::vm::bindings::{
+    FrameBinding, capture_frame_binding, close_frame_binding, is_private_callable_kind,
+    read_frame_binding, write_frame_binding,
+};
+use crate::engine::vm::exception::runtime_error_to_vm_error;
+
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
@@ -15,13 +21,11 @@ use crate::engine::code::bytecode::{
     Instruction, PrivateNameSource,
 };
 use crate::engine::code::function::metadata::{
-    ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName, EvalBinding,
-    EvalBindingSource, EvalEnvironment, FunctionKind, FunctionMetadata, VariableDefinition,
+    ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName, EvalBindingSource,
+    EvalEnvironment, FunctionKind, VariableDefinition,
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
-use crate::engine::code::runtime::{
-    PublishedEvalEnvironment, PublishedFunctionData, PublishedFunctionSnapshot,
-};
+use crate::engine::code::runtime::{PublishedFunctionData, PublishedFunctionSnapshot};
 use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
@@ -39,6 +43,8 @@ use crate::engine::object::{
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, Value};
+#[cfg(test)]
+use crate::engine::vm::bindings::closure_view_matches_cell;
 use crate::engine::vm::call::{CallableExecution, NativeInvokeOutcome};
 use crate::engine::vm::frames::ActiveFrameGuard;
 use crate::engine::vm::{
@@ -48,6 +54,9 @@ use crate::engine::vm::{
     VmResume, VmSuspendKind, VmSuspension,
 };
 use std::rc::Rc;
+
+#[cfg(feature = "stack-vm")]
+pub(super) mod owned;
 
 mod dynamic_environment;
 mod eval_validation;
@@ -68,226 +77,7 @@ pub(crate) const TYPEOF_STATIC_ATOMS: [&str; 8] = [
     "bigint",
 ];
 
-/// Validated caller state retained while primitive-String eval is compiled.
-///
-/// No frame binding has been converted to a VarRef yet. This preserves
-/// QuickJS's ordering: parse/publish errors occur before closure capture.
-pub(crate) struct PreparedEvalEnvironment {
-    pub(crate) index: u16,
-    pub(crate) descriptor: PublishedEvalEnvironment,
-}
-
-/// Live cells paired with one immutable caller-environment descriptor.
-///
-/// Roots are flattened in the descriptor's scope/binding order. The
-/// descriptor itself preserves the lexical boundaries and declaration target
-/// authenticated by the eval compiler, while the roots keep the caller's
-/// actual cells live for the instantiation/execution interval.
-pub(crate) struct MaterializedEvalEnvironment {
-    pub(crate) index: u16,
-    pub(crate) descriptor: PublishedEvalEnvironment,
-    pub(crate) roots: Box<[VarRefRoot]>,
-}
-
-enum FrameBinding {
-    Direct(Value),
-    Private(PrivateNameRef),
-    PrivateCallable(CallableRef),
-    Uninitialized,
-    Captured(VarRefRoot),
-}
-
-const fn is_private_callable_kind(kind: ClosureVariableKind) -> bool {
-    matches!(
-        kind,
-        ClosureVariableKind::PrivateMethod
-            | ClosureVariableKind::PrivateGetter
-            | ClosureVariableKind::PrivateSetter
-            | ClosureVariableKind::PrivateGetterSetter
-    )
-}
-
-/// QuickJS keeps access flags on each closure descriptor rather than on the
-/// shared VarRef. Its ordinary direct-eval prepass may therefore expose one
-/// FunctionName cell through a mutable Normal descriptor. A module import is
-/// likewise an immutable lexical view of the exporter's original mutable or
-/// immutable ordinary cell, and nested closures/eval relay that immutable
-/// view after the original `ModuleImport` source tag is no longer present.
-/// Publication authenticates where these view-only metadata differences enter
-/// the closure chain.
-pub(crate) fn closure_view_matches_cell(
-    cell: (bool, bool, ClosureVariableKind),
-    descriptor: ClosureVariable,
-) -> bool {
-    cell == (descriptor.is_lexical, descriptor.is_const, descriptor.kind)
-        || (descriptor.is_lexical
-            && descriptor.is_const
-            && descriptor.kind == ClosureVariableKind::ModuleImportView
-            && cell.2 == ClosureVariableKind::Normal)
-        || (cell.0 == descriptor.is_lexical
-            && !cell.0
-            && cell.2 == ClosureVariableKind::FunctionName
-            && !descriptor.is_const
-            && descriptor.kind == ClosureVariableKind::Normal)
-}
-
-#[inline]
-fn read_frame_binding(runtime: &Runtime, binding: &FrameBinding) -> Result<Value, Error> {
-    match binding {
-        FrameBinding::Direct(value) => Ok(value.clone()),
-        FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => Err(Error::internal(
-            "ordinary local read reached a private-element binding",
-        )),
-        FrameBinding::Uninitialized => Err(Error::internal(
-            "unchecked local read reached an uninitialized lexical binding",
-        )),
-        FrameBinding::Captured(root) => runtime
-            .read_var_ref(root)
-            .map_err(|error| Error::internal(error.to_string())),
-    }
-}
-
-#[inline]
-fn write_frame_binding(
-    runtime: &Runtime,
-    binding: &mut FrameBinding,
-    value: Value,
-) -> Result<(), Error> {
-    match binding {
-        FrameBinding::Direct(slot) => {
-            *slot = value;
-            Ok(())
-        }
-        FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => Err(Error::internal(
-            "ordinary local write reached a private-element binding",
-        )),
-        FrameBinding::Uninitialized => Err(Error::internal(
-            "unchecked local write reached an uninitialized lexical binding",
-        )),
-        FrameBinding::Captured(root) => runtime
-            .write_var_ref(root, value)
-            .map_err(|error| Error::internal(error.to_string())),
-    }
-}
-
-fn capture_frame_binding(
-    runtime: &Runtime,
-    binding: &mut FrameBinding,
-    descriptor: ClosureVariable,
-) -> Result<VarRefRoot, Error> {
-    match binding {
-        FrameBinding::Direct(value) => {
-            if descriptor.kind.is_private() {
-                return Err(Error::internal(
-                    "private-name capture reached an ordinary frame value",
-                ));
-            }
-            let root = runtime
-                .new_var_ref(
-                    value.clone(),
-                    descriptor.is_lexical,
-                    descriptor.is_const,
-                    descriptor.kind,
-                )
-                .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
-            Ok(root)
-        }
-        FrameBinding::Private(name) => {
-            if descriptor.kind != ClosureVariableKind::PrivateField
-                || !descriptor.is_lexical
-                || !descriptor.is_const
-            {
-                return Err(Error::internal(
-                    "private-field frame cell used an incompatible closure descriptor",
-                ));
-            }
-            let root = runtime
-                .new_private_var_ref(name)
-                .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
-            Ok(root)
-        }
-        FrameBinding::PrivateCallable(callable) => {
-            if !is_private_callable_kind(descriptor.kind)
-                || !descriptor.is_lexical
-                || !descriptor.is_const
-            {
-                return Err(Error::internal(
-                    "private-callable frame cell used an incompatible closure descriptor",
-                ));
-            }
-            let root = runtime
-                .new_private_callable_var_ref(callable, descriptor.kind)
-                .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
-            Ok(root)
-        }
-        FrameBinding::Uninitialized => {
-            let root = runtime
-                .new_uninitialized_captured_var_ref(
-                    descriptor.is_lexical,
-                    descriptor.is_const,
-                    descriptor.kind,
-                )
-                .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
-            Ok(root)
-        }
-        FrameBinding::Captured(root) => reuse_frame_capture(runtime, root, descriptor),
-    }
-}
-
-/// Reuse a live cell through a publication-authenticated descriptor view.
-/// This checks actual cell metadata without redispatching its frame storage.
-fn reuse_frame_capture(
-    runtime: &Runtime,
-    root: &VarRefRoot,
-    descriptor: ClosureVariable,
-) -> Result<VarRefRoot, Error> {
-    runtime
-        .validate_var_ref_metadata(root, descriptor)
-        .map_err(|error| Error::internal(error.to_string()))?;
-    Ok(root.clone())
-}
-
-fn close_frame_binding(
-    runtime: &Runtime,
-    binding: &mut FrameBinding,
-    kind: ClosureVariableKind,
-) -> Result<(), Error> {
-    let FrameBinding::Captured(root) = binding else {
-        return Ok(());
-    };
-    let raw = runtime
-        .raw_var_ref_value(root)
-        .map_err(|error| Error::internal(error.to_string()))?;
-    let detached = match raw {
-        RawValue::Uninitialized => FrameBinding::Uninitialized,
-        RawValue::Private(_) if kind == ClosureVariableKind::PrivateField => FrameBinding::Private(
-            runtime
-                .private_name_from_raw_var_ref(root)
-                .map_err(runtime_error_to_vm_error)?,
-        ),
-        RawValue::Object(_) if is_private_callable_kind(kind) => FrameBinding::PrivateCallable(
-            runtime
-                .private_callable_from_raw_var_ref(root, kind)
-                .map_err(runtime_error_to_vm_error)?,
-        ),
-        _ if kind.is_private() => {
-            return Err(Error::internal(
-                "captured private-element cell contains an incompatible value",
-            ));
-        }
-        raw => FrameBinding::Direct(
-            runtime
-                .root_raw_value(&raw)
-                .map_err(runtime_error_to_vm_error)?,
-        ),
-    };
-    *binding = detached;
-    Ok(())
-}
+pub(crate) use super::eval_bindings::{MaterializedEvalEnvironment, PreparedEvalEnvironment};
 
 fn encode_generator_frame_binding(
     runtime: &Runtime,
@@ -413,13 +203,6 @@ fn decode_generator_frame_binding(
     Ok(binding)
 }
 
-fn runtime_error_to_vm_error(error: RuntimeError) -> Error {
-    match error {
-        RuntimeError::Engine(error) => error,
-        error => Error::internal(error.to_string()),
-    }
-}
-
 pub(crate) struct RuntimeVmHost {
     runtime: Runtime,
     active_frame_token: ActiveFrameToken,
@@ -505,9 +288,6 @@ pub(crate) struct RootedVmActivation {
     suspend_kind: VmSuspendKind,
     suspension: VmSuspension,
     host: RuntimeVmHost,
-    bytecode: FunctionBytecodeRef,
-    code: Rc<[crate::engine::code::bytecode::Instruction]>,
-    metadata: FunctionMetadata,
     saved_pc: usize,
 }
 
@@ -536,11 +316,17 @@ impl RootedVmActivation {
             suspend_kind,
             suspension,
             mut host,
-            bytecode,
-            code,
-            metadata,
             saved_pc,
         } = self;
+        let bytecode = host
+            .executable
+            .root()
+            .ok_or(RuntimeError::Invariant(
+                "resumable host has no published executable root",
+            ))?
+            .clone();
+        let code = host.executable.code.clone();
+        let strict = host.executable.frame_layout().is_strict();
         let function = host
             .current_function
             .as_ref()
@@ -548,12 +334,8 @@ impl RootedVmActivation {
                 "resumable host has no current function root",
             ))?
             .clone();
-        let active_frame = runtime.push_bytecode_active_frame(
-            function,
-            bytecode,
-            host.current_realm,
-            metadata.strict,
-        )?;
+        let active_frame =
+            runtime.push_bytecode_active_frame(function, bytecode, host.current_realm, strict)?;
         host.set_resumable_active_frame_token(active_frame.token());
         runtime.update_active_bytecode_pc(
             active_frame.token(),
@@ -638,7 +420,7 @@ impl RuntimeVmHost {
             .ok_or_else(|| Error::internal("published frame has no current function"))?
             .clone();
         let activation = VmActivation::new_in_realm(
-            metadata,
+            self.executable.frame_layout(),
             self.caller_realm,
             self.current_realm,
             function,
@@ -695,7 +477,6 @@ impl RuntimeVmHost {
         let PublishedFunctionData {
             argument_definitions,
             local_definitions,
-            closure_variables,
             realm,
             ..
         } = &*executable;
@@ -707,7 +488,7 @@ impl RuntimeVmHost {
         }
         if arguments.len() != argument_definitions.len()
             || locals.len() != local_definitions.len()
-            || closure_slots.len() != closure_variables.len()
+            || closure_slots.len() != executable.frame_layout().closures().len()
         {
             return Err(RuntimeError::Invariant(
                 "test eval frame slots disagree with bytecode metadata",
@@ -838,26 +619,20 @@ impl RuntimeVmHost {
             FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), data.bytecode)?;
         let executable = runtime.snapshot_function_bytecode(&bytecode_probe)?;
         let PublishedFunctionData {
-            code,
             argument_definitions,
             local_definitions,
-            closure_variables,
             metadata,
             realm,
             ..
         } = &*executable;
         let metadata = *metadata;
         let realm = *realm;
-        let root = executable
-            .root()
-            .expect("runtime snapshot owns bytecode")
-            .clone();
         drop(bytecode_probe);
         if metadata.function_kind != expected_function_kind
             || realm != data.vm.callee_realm
             || metadata.strict != data.vm.strict
-            || data.arguments.len() < argument_definitions.len()
-            || data.locals.len() != local_definitions.len()
+            || data.arguments.len() < executable.frame_layout().arguments().len()
+            || data.locals.len() != executable.frame_layout().locals().len()
             || data.reusable_captured_locals.len() != data.locals.len()
             || data.actual_argument_count > data.arguments.len()
         {
@@ -886,7 +661,7 @@ impl RuntimeVmHost {
                 ));
             }
         };
-        if closure_slots.len() != closure_variables.len() {
+        if closure_slots.len() != executable.frame_layout().closures().len() {
             return Err(RuntimeError::Invariant(
                 "resumable closure slot count disagrees with bytecode metadata",
             ));
@@ -933,7 +708,6 @@ impl RuntimeVmHost {
             callee_global: Some(callee_global),
         };
         let suspension = VmSuspension::from_parts(kind, parts).map_err(RuntimeError::Engine)?;
-        let code = code.clone();
         let host = RuntimeVmHost {
             runtime,
             active_frame_token: ActiveFrameToken(0),
@@ -951,9 +725,6 @@ impl RuntimeVmHost {
             suspend_kind: kind,
             suspension,
             host,
-            bytecode: root,
-            code,
-            metadata,
             saved_pc: data.vm.pc,
         })
     }
@@ -989,7 +760,8 @@ impl RuntimeVmHost {
 
     fn local_definition(&self, index: u16) -> Result<VariableDefinition, Error> {
         self.executable
-            .local_definitions
+            .frame_layout()
+            .locals()
             .get(usize::from(index))
             .copied()
             .ok_or_else(|| Error::internal("local definition index is out of bounds"))
@@ -1041,31 +813,6 @@ impl RuntimeVmHost {
         Ok(())
     }
 
-    fn eval_capture_descriptor(binding: &EvalBinding<Atom>) -> ClosureVariable {
-        let source = match binding.source {
-            EvalBindingSource::Local(index) => ClosureSource::ParentLocal(index),
-            EvalBindingSource::Argument(index) => ClosureSource::ParentArgument(index),
-            EvalBindingSource::Closure(index) => ClosureSource::ParentClosure(index),
-        };
-        ClosureVariable {
-            source,
-            name: ClosureVariableName::Atom(binding.name),
-            is_lexical: binding.is_lexical,
-            is_const: binding.is_const,
-            kind: binding.kind,
-        }
-    }
-
-    fn eval_variable_object_local_kind(&self, index: u16) -> Option<ClosureVariableKind> {
-        if self.executable.metadata.eval_variable_object_local == Some(index) {
-            return Some(ClosureVariableKind::EvalVariableObject);
-        }
-        if self.executable.arg_eval_variable_object_local == Some(index) {
-            return Some(ClosureVariableKind::ArgEvalVariableObject);
-        }
-        None
-    }
-
     fn prepare_direct_eval_environment(
         &self,
         index: u16,
@@ -1085,49 +832,22 @@ impl RuntimeVmHost {
         &mut self,
         prepared: PreparedEvalEnvironment,
     ) -> Result<MaterializedEvalEnvironment, Error> {
-        let PreparedEvalEnvironment { index, descriptor } = prepared;
-        let binding_count = descriptor
-            .scopes
-            .iter()
-            .map(|scope| scope.bindings.len())
-            .sum();
-        let mut roots = Vec::with_capacity(binding_count);
-        for scope in &descriptor.scopes {
-            for eval_binding in &scope.bindings {
-                let root = match eval_binding.source {
-                    EvalBindingSource::Local(binding_index) => {
-                        let descriptor = Self::eval_capture_descriptor(eval_binding);
-                        let binding =
-                            self.locals
-                                .get_mut(usize::from(binding_index))
-                                .ok_or_else(|| {
-                                    Error::internal("eval local binding index is out of bounds")
-                                })?;
-                        capture_frame_binding(&self.runtime, binding, descriptor)?
-                    }
-                    EvalBindingSource::Argument(binding_index) => {
-                        let descriptor = Self::eval_capture_descriptor(eval_binding);
-                        let binding = self
-                            .arguments
-                            .get_mut(usize::from(binding_index))
-                            .ok_or_else(|| {
-                                Error::internal("eval argument binding index is out of bounds")
-                            })?;
-                        capture_frame_binding(&self.runtime, binding, descriptor)?
-                    }
-                    EvalBindingSource::Closure(binding_index) => self
-                        .closure_slots
-                        .get(usize::from(binding_index))
-                        .ok_or_else(|| Error::internal("eval closure slot index is out of bounds"))?
-                        .clone(),
-                };
-                roots.push(root);
-            }
-        }
-        Ok(MaterializedEvalEnvironment {
-            index,
-            descriptor,
-            roots: roots.into_boxed_slice(),
+        super::eval_bindings::materialize(prepared, &self.closure_slots, |source, descriptor| {
+            let binding = match source {
+                EvalBindingSource::Local(index) => self
+                    .locals
+                    .get_mut(usize::from(index))
+                    .ok_or_else(|| Error::internal("eval local binding index is out of bounds"))?,
+                EvalBindingSource::Argument(index) => {
+                    self.arguments.get_mut(usize::from(index)).ok_or_else(|| {
+                        Error::internal("eval argument binding index is out of bounds")
+                    })?
+                }
+                EvalBindingSource::Closure(_) => {
+                    return Err(Error::internal("eval closure reached frame capture"));
+                }
+            };
+            capture_frame_binding(&self.runtime, binding, descriptor)
         })
     }
 
@@ -1136,34 +856,7 @@ impl RuntimeVmHost {
         name: Option<Atom>,
         name_visible: bool,
     ) -> Result<Error, Error> {
-        let Some(name) = name else {
-            return Ok(Error::new(
-                ErrorKind::Reference,
-                "lexical variable is not initialized",
-            ));
-        };
-        if !name_visible {
-            return Ok(Error::new(
-                ErrorKind::Reference,
-                "lexical variable is not initialized",
-            ));
-        }
-        // Compiler-only pseudo names must not leak into observable diagnostics.
-        // QuickJS stores this identity as JS_ATOM_this and therefore reports
-        // `this`, while this typed compiler uses the unspellable `<this>` name
-        // to keep it distinct from authored bindings.
-        let hidden_this = self
-            .runtime
-            .intern_property_key("<this>")
-            .map_err(|error| Error::internal(error.to_string()))?;
-        if hidden_this.atom() == name {
-            return Ok(Error::new(ErrorKind::Reference, "this is not initialized"));
-        }
-        let key = PropertyKey::from_borrowed_atom(self.runtime.clone(), name)
-            .map_err(|error| Error::internal(error.to_string()))?;
-        self.runtime
-            .native_atom_error(ErrorKind::Reference, "", &key, " is not initialized")
-            .map_err(runtime_error_to_vm_error)
+        crate::engine::vm::bindings::lexical_uninitialized_error(&self.runtime, name, name_visible)
     }
 
     /// Dynamic/global environment records diagnose the resolved property atom
@@ -1184,53 +877,8 @@ impl RuntimeVmHost {
         )
     }
 
-    fn closure_lexical_uninitialized_error(
-        &self,
-        source: ClosureSource,
-        name: Option<Atom>,
-    ) -> Result<Error, Error> {
-        let semantic_name = matches!(
-            source,
-            ClosureSource::GlobalDeclaration
-                | ClosureSource::Global
-                | ClosureSource::ParentGlobal(_)
-                | ClosureSource::ModuleDeclaration
-                | ClosureSource::ModuleImport
-                | ClosureSource::ModuleImportCollision
-                | ClosureSource::ModuleImportMeta
-        );
-        self.lexical_uninitialized_error_with_visibility(
-            name,
-            semantic_name || !self.executable.metadata.strip_variable_debug,
-        )
-    }
-
     fn lexical_read_only_error(&self, name: Option<Atom>) -> Result<Error, Error> {
-        let Some(name) = name else {
-            return Ok(Error::new(ErrorKind::Type, "lexical variable is read-only"));
-        };
-        let key = PropertyKey::from_borrowed_atom(self.runtime.clone(), name)
-            .map_err(|error| Error::internal(error.to_string()))?;
-        self.runtime
-            .native_atom_error(ErrorKind::Type, "'", &key, "' is read-only")
-            .map_err(runtime_error_to_vm_error)
-    }
-
-    fn closure_name(&self, index: u16) -> Result<Option<Atom>, Error> {
-        let descriptor = self
-            .executable
-            .closure_variables
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        Ok(match descriptor.name {
-            ClosureVariableName::Atom(name) => Some(name),
-            ClosureVariableName::None => None,
-            ClosureVariableName::Constant(_) => {
-                return Err(Error::internal(
-                    "published closure descriptor retained an unlinked name constant",
-                ));
-            }
-        })
+        crate::engine::vm::bindings::lexical_read_only_error(&self.runtime, name)
     }
 
     fn constant_property_key(&self, index: u32) -> Result<PropertyKey, Error> {
@@ -1268,92 +916,13 @@ impl RuntimeVmHost {
     }
 
     fn eval_variable_object(&self, source: EvalVariableSource) -> Result<ObjectRef, Error> {
-        let value = match source {
-            EvalVariableSource::Local(index) => {
-                let Some(expected_kind) = self.eval_variable_object_local_kind(index) else {
-                    return Err(Error::internal(
-                        "eval variable opcode referenced an unauthenticated local",
-                    ));
-                };
-                let definition = self.local_definition(index)?;
-                if definition.kind != expected_kind {
-                    return Err(Error::internal(
-                        "eval variable opcode referenced a non-variable-object local",
-                    ));
-                }
-                let binding = self.locals.get(usize::from(index)).ok_or_else(|| {
-                    Error::internal("eval variable-object local index is out of bounds")
-                })?;
-                if let FrameBinding::Captured(root) = binding {
-                    self.runtime
-                        .validate_var_ref_metadata(
-                            root,
-                            ClosureVariable {
-                                source: ClosureSource::ParentLocal(index),
-                                name: definition
-                                    .name
-                                    .map_or(ClosureVariableName::None, ClosureVariableName::Atom),
-                                is_lexical: definition.is_lexical,
-                                is_const: definition.is_const,
-                                kind: definition.kind,
-                            },
-                        )
-                        .map_err(runtime_error_to_vm_error)?;
-                }
-                read_frame_binding(&self.runtime, binding)?
-            }
-            EvalVariableSource::Closure(index) => {
-                let descriptor = self
-                    .executable
-                    .closure_variables
-                    .get(usize::from(index))
-                    .copied()
-                    .ok_or_else(|| {
-                        Error::internal("eval variable-object closure index is out of bounds")
-                    })?;
-                if !descriptor.kind.is_eval_variable_object() {
-                    return Err(Error::internal(
-                        "eval variable opcode referenced a non-variable-object closure",
-                    ));
-                }
-                let root = self.closure_slots.get(usize::from(index)).ok_or_else(|| {
-                    Error::internal("eval variable-object closure slot is out of bounds")
-                })?;
-                self.runtime
-                    .validate_var_ref_metadata(root, descriptor)
-                    .map_err(runtime_error_to_vm_error)?;
-                self.runtime
-                    .read_var_ref(root)
-                    .map_err(runtime_error_to_vm_error)?
-            }
-        };
-        let Value::Object(object) = value else {
-            return Err(Error::internal(
-                "eval variable-object binding did not contain an Object",
-            ));
-        };
-        if !object.belongs_to(&self.runtime) {
-            return Err(Error::internal(
-                "eval variable object belongs to another runtime",
-            ));
-        }
-        let state = self.runtime.0.state.borrow();
-        let object_data = state
-            .heap
-            .object(object.object_id())
-            .map_err(|error| Error::internal(error.to_string()))?;
-        // Creation and publication authenticate an ordinary null-prototype
-        // object. Once a syntactic-with method call exposes that receiver,
-        // QuickJS lets user code mutate its prototype; later eval lookup must
-        // therefore retain Ordinary branding without reasserting the initial
-        // prototype shape.
-        if !matches!(&object_data.payload, ObjectPayload::Ordinary) {
-            return Err(Error::internal(
-                "eval variable-object binding did not contain an ordinary Object",
-            ));
-        }
-        drop(state);
-        Ok(object)
+        super::environment_bindings::eval_variable_object(
+            &self.runtime,
+            &self.executable,
+            source,
+            |index| self.locals.get(usize::from(index)),
+            &self.closure_slots,
+        )
     }
 
     /// QuickJS `JS_ValueToAtom` / `JS_ToPropertyKey` at the VM/runtime
@@ -1404,36 +973,7 @@ impl RuntimeVmHost {
     /// Convert the authenticated output of `ToPropKey` without invoking any
     /// user-observable coercion a second time.
     fn canonical_property_key_from_value(&self, value: &Value) -> Result<PropertyKey, Error> {
-        if let Some(key) = self.runtime.immediate_numeric_property_key(value) {
-            return Ok(key);
-        }
-        match value {
-            Value::Symbol(symbol) => {
-                if !symbol.belongs_to(&self.runtime) {
-                    return Err(Error::internal(
-                        "computed method symbol belongs to another runtime",
-                    ));
-                }
-                PropertyKey::from_borrowed_atom(self.runtime.clone(), symbol.atom())
-                    .map_err(|error| Error::internal(error.to_string()))
-            }
-            Value::String(string) => self
-                .runtime
-                .intern_property_key_js_string(string)
-                .map_err(|error| Error::internal(error.to_string())),
-            Value::Int(value) => self
-                .runtime
-                .intern_property_key_js_string(&Value::Int(*value).to_js_string()?)
-                .map_err(|error| Error::internal(error.to_string())),
-            Value::Undefined
-            | Value::Null
-            | Value::Bool(_)
-            | Value::Float(_)
-            | Value::BigInt(_)
-            | Value::Object(_) => Err(Error::internal(
-                "computed property key was not canonicalized by ToPropKey",
-            )),
-        }
+        super::property_keys::canonical(&self.runtime, value)
     }
 
     fn finish_internal_set(
@@ -1701,75 +1241,21 @@ impl RuntimeVmHost {
         value: &Value,
         expected: NativeFunctionId,
     ) -> Result<bool, Error> {
-        let Value::Object(object) = value else {
-            return Ok(false);
-        };
-        if !object.belongs_to(&self.runtime) {
-            return Err(Error::internal(
-                "append iterator method belongs to another runtime",
-            ));
-        }
-        let state = self.runtime.0.state.borrow();
-        let object = state
-            .heap
-            .object(object.object_id())
-            .map_err(|error| Error::internal(error.to_string()))?;
-        Ok(matches!(
-            &object.payload,
-            ObjectPayload::NativeFunction { data, .. } if data.target == expected
-        ))
+        super::iterator_support::is_direct_native_target(&self.runtime, value, expected)
     }
 
-    /// Snapshot the exact values used by QuickJS's `js_append_enumerate`
-    /// fast branch. Named properties may be interleaved in our shape, so the
-    /// shared fast Array/Arguments storage reader reconstructs numeric order
-    /// rather than slicing physical slots.
     fn append_fast_array_values(
         &self,
         source: &Value,
         next_method: &Value,
         builtin_values_probe: bool,
     ) -> Result<Option<Vec<Value>>, Error> {
-        if !builtin_values_probe
-            || !self.is_direct_native_target(next_method, NativeFunctionId::ArrayIteratorNext)?
-        {
-            return Ok(None);
-        }
-        let Value::Object(source) = source else {
-            return Ok(None);
-        };
-        let is_array = {
-            let state = self.runtime.0.state.borrow();
-            matches!(
-                &state
-                    .heap
-                    .object(source.object_id())
-                    .map_err(|error| Error::internal(error.to_string()))?
-                    .payload,
-                ObjectPayload::Array { .. }
-            )
-        };
-        if !is_array {
-            return Ok(None);
-        }
-        let fast_len = self
-            .runtime
-            .array_fast_len(source)
-            .map_err(runtime_error_to_vm_error)?;
-        let Some(fast_len) = fast_len else {
-            return Ok(None);
-        };
-        let (length, _) = self
-            .runtime
-            .array_length_state(source)
-            .map_err(runtime_error_to_vm_error)?;
-        if length != fast_len {
-            return Ok(None);
-        }
-
-        self.runtime
-            .fast_array_like_values(source, fast_len)
-            .map_err(runtime_error_to_vm_error)
+        super::iterator_support::append_fast_array_values(
+            &self.runtime,
+            source,
+            next_method,
+            builtin_values_probe,
+        )
     }
 
     fn call_iterator_method(
@@ -1835,45 +1321,15 @@ impl Runtime {
         if self.bytecode_call_would_overflow() {
             return self.bytecode_stack_overflow_completion(caller_realm, &bytecode);
         }
-        let executable = self.snapshot_function_bytecode(&bytecode)?;
-        let PublishedFunctionData {
-            local_definitions,
-            metadata,
-            realm,
-            ..
-        } = &*executable;
-        let metadata = *metadata;
-        let realm = *realm;
-        let callee_global = self.global_object_for_realm(realm)?;
-        let active_frame = self.push_bytecode_active_frame(
-            callable.as_object().clone(),
-            bytecode,
-            realm,
-            metadata.strict,
-        )?;
-        let argument_slots = arguments.len().max(usize::from(metadata.argument_count));
-        let mut frame_arguments = Vec::with_capacity(argument_slots);
-        frame_arguments.extend(arguments.iter().cloned().map(FrameBinding::Direct));
-        frame_arguments.resize_with(argument_slots, || FrameBinding::Direct(Value::Undefined));
-        let mut frame_locals = local_definitions
-            .iter()
-            .map(|definition| {
-                if definition.is_lexical {
-                    FrameBinding::Uninitialized
-                } else {
-                    FrameBinding::Direct(Value::Undefined)
-                }
-            })
-            .collect::<Vec<_>>();
-        if let Some(index) = metadata.function_name_local {
-            let binding =
-                frame_locals
-                    .get_mut(usize::from(index))
-                    .ok_or(RuntimeError::Invariant(
-                        "function-name local is outside the frame",
-                    ))?;
-            *binding = FrameBinding::Direct(Value::Object(callable.as_object().clone()));
-        }
+        let crate::engine::vm::call::PreparedBytecodeFrame {
+            executable,
+            active_frame,
+            input,
+            arguments: frame_arguments,
+            locals: frame_locals,
+        } = self.prepare_bytecode_frame(callable, this_value, new_target, arguments, bytecode)?;
+        let metadata = executable.metadata;
+        let realm = executable.realm;
         let frame_local_count = frame_locals.len();
         let mut host = RuntimeVmHost {
             runtime: self.clone(),
@@ -1888,12 +1344,7 @@ impl Runtime {
             locals: frame_locals,
             reusable_captured_locals: vec![false; frame_local_count],
         };
-        let is_module_link_entry = metadata.is_module && this_value == Value::Bool(true);
-        let input = CallInput {
-            this_value,
-            new_target,
-            callee_global,
-        };
+        let is_module_link_entry = metadata.is_module && input.this_value == Value::Bool(true);
         // A module callable is deliberately an ordinary hidden function
         // object even though its root bytecode is Async. QuickJS invokes the
         // canonical `this = true` prefix synchronously during linking and
@@ -1929,6 +1380,9 @@ impl Runtime {
             }
             FunctionKind::Normal => {}
         }
+        #[cfg(feature = "stack-vm")]
+        let result = owned::execute(host, input, arguments);
+        #[cfg(not(feature = "stack-vm"))]
         let result = Vm::new().execute_published(input, &mut host);
         active_frame.finish()?;
         result.map_err(RuntimeError::Engine)
@@ -2502,28 +1956,18 @@ impl VmHost for RuntimeVmHost {
                         .locals
                         .get_mut(usize::from(index))
                         .ok_or_else(|| Error::internal("captured local index is out of bounds"))?;
-                    // Existing cells already own canonical metadata. Validate
-                    // the child's authenticated view against that actual cell;
-                    // only a new cell needs the parent's definition. In
-                    // particular, do not recreate FunctionName view metadata.
-                    if let FrameBinding::Captured(root) = binding {
-                        reuse_frame_capture(&self.runtime, root, descriptor)?
-                    } else {
-                        let definition = self
+                    crate::engine::vm::bindings::capture_local_binding(
+                        &self.runtime,
+                        binding,
+                        *self
                             .executable
                             .local_definitions
                             .get(usize::from(index))
                             .ok_or_else(|| {
                                 Error::internal("local definition index is out of bounds")
-                            })?;
-                        let capture = ClosureVariable {
-                            is_lexical: definition.is_lexical,
-                            is_const: definition.is_const,
-                            kind: definition.kind,
-                            ..descriptor
-                        };
-                        capture_frame_binding(&self.runtime, binding, capture)?
-                    }
+                            })?,
+                        descriptor,
+                    )?
                 }
                 ClosureSource::ParentArgument(index) => {
                     #[cfg(test)]
@@ -2598,27 +2042,7 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn set_function_name_computed(&mut self, value: &Value, key: &Value) -> Result<(), Error> {
-        // `OP_to_propkey` has already canonicalized this operand. In
-        // particular, do not execute object conversion a second time here.
-        let name = match key {
-            Value::Int(_) => key.to_js_string()?,
-            Value::String(name) => name.clone(),
-            Value::Symbol(symbol) => match self
-                .runtime
-                .symbol_description(symbol)
-                .map_err(runtime_error_to_vm_error)?
-            {
-                None => JsString::from_static(""),
-                Some(description) => JsString::from_static("[")
-                    .try_concat(&description)?
-                    .try_concat(&JsString::from_static("]"))?,
-            },
-            _ => {
-                return Err(Error::internal(
-                    "computed function name was not a canonical property key",
-                ));
-            }
-        };
+        let name = super::property_keys::computed_name(&self.runtime, key)?;
         self.runtime
             .define_object_name(value, &name)
             .map_err(runtime_error_to_vm_error)
@@ -3263,40 +2687,15 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn delete_global_var(&mut self, index: u16) -> Result<Completion, Error> {
-        let descriptor = *self
-            .executable
-            .closure_variables
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("global closure index is out of bounds"))?;
-        if descriptor.kind.is_private() {
-            return Err(Error::internal(
-                "global delete referenced a private-name binding",
-            ));
-        }
-        let ClosureVariableName::Atom(atom) = descriptor.name else {
-            return Err(Error::internal(
-                "published global closure descriptor has no name atom",
-            ));
-        };
-        let root = self
-            .closure_slots
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("global closure slot is out of bounds"))?;
-        let is_lexical = self
-            .runtime
-            .0
-            .state
-            .borrow()
-            .heap
-            .var_ref(root.id())
-            .map_err(|error| Error::internal(error.to_string()))?
-            .is_lexical;
-        if is_lexical {
+        let Some(key) = super::environment_bindings::prepare_global_delete(
+            &self.runtime,
+            &self.executable,
+            &self.closure_slots,
+            index,
+        )?
+        else {
             return Ok(Completion::Return(Value::Bool(false)));
-        }
-
-        let key = PropertyKey::from_borrowed_atom(self.runtime.clone(), atom)
-            .map_err(|error| Error::internal(error.to_string()))?;
+        };
         let global_object = self
             .runtime
             .global_object_for_realm(self.current_realm)
@@ -3330,77 +2729,21 @@ impl VmHost for RuntimeVmHost {
         initialize: bool,
         strict: bool,
     ) -> Result<Completion, Error> {
-        let descriptor = *self
-            .executable
-            .closure_variables
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("global closure index is out of bounds"))?;
-        if descriptor.kind.is_private() {
-            return Err(Error::internal(
-                "global write referenced a private-name binding",
-            ));
-        }
-        let ClosureVariableName::Atom(atom) = descriptor.name else {
-            return Err(Error::internal(
-                "published global closure descriptor has no name atom",
-            ));
+        let key = match super::environment_bindings::prepare_global_write(
+            &self.runtime,
+            &self.executable,
+            &self.closure_slots,
+            index,
+            initialize,
+        )? {
+            super::environment_bindings::GlobalWrite::Cell(root) => {
+                self.runtime
+                    .write_var_ref(&root, value)
+                    .map_err(runtime_error_to_vm_error)?;
+                return Ok(Completion::Return(Value::Undefined));
+            }
+            super::environment_bindings::GlobalWrite::Property(key) => key,
         };
-        let root = self
-            .closure_slots
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("global closure slot is out of bounds"))?;
-        let cell = self
-            .runtime
-            .0
-            .state
-            .borrow()
-            .heap
-            .var_ref(root.id())
-            .map_err(|error| Error::internal(error.to_string()))?
-            .clone();
-        // QuickJS's hoisted-definition pass uses a raw VarRef write for both
-        // lexical declarations and Program function declarations. The
-        // verifier limits `PutVarInit` on an ordinary descriptor to either
-        // a GlobalFunction prologue or the first normal declaration slot for a
-        // same-name masked Program lexical. The latter slot has been promoted
-        // to the lexical VarRef during declaration instantiation, so this raw
-        // initialization cannot be reached by an ordinary source assignment.
-        if initialize {
-            self.runtime
-                .write_var_ref(root, value)
-                .map_err(runtime_error_to_vm_error)?;
-            return Ok(Completion::Return(Value::Undefined));
-        }
-        let key = PropertyKey::from_borrowed_atom(self.runtime.clone(), atom)
-            .map_err(|error| Error::internal(error.to_string()))?;
-        if cell.is_lexical {
-            if matches!(cell.value, RawValue::Uninitialized) {
-                let error = self
-                    .runtime
-                    .native_atom_error(ErrorKind::Reference, "", &key, " is not initialized")
-                    .map_err(runtime_error_to_vm_error)?;
-                return Err(error);
-            }
-            if cell.is_const {
-                let error = self
-                    .runtime
-                    .native_atom_error(ErrorKind::Type, "'", &key, "' is read-only")
-                    .map_err(runtime_error_to_vm_error)?;
-                return Err(error);
-            }
-            self.runtime
-                .write_var_ref(root, value)
-                .map_err(runtime_error_to_vm_error)?;
-            return Ok(Completion::Return(Value::Undefined));
-        }
-
-        if !matches!(cell.value, RawValue::Uninitialized) && !cell.is_const {
-            self.runtime
-                .write_var_ref(root, value)
-                .map_err(runtime_error_to_vm_error)?;
-            return Ok(Completion::Return(Value::Undefined));
-        }
-
         let global_object = self
             .runtime
             .global_object_for_realm(self.current_realm)
@@ -4061,33 +3404,13 @@ impl VmHost for RuntimeVmHost {
             .get_mut(usize::from(index))
             .ok_or_else(|| Error::internal("local index is out of bounds"))?;
         if let FrameBinding::Captured(root) = binding {
-            let raw = self
-                .runtime
-                .raw_var_ref_value(root)
-                .map_err(runtime_error_to_vm_error)?;
-            if matches!(raw, RawValue::Uninitialized) {
-                // QuickJS creates direct FunctionBody declaration closures
-                // before expanding the body scope's lexical TDZ entries. A
-                // child may therefore capture this first uninitialized cell
-                // before SetLocalUninitialized reaches it; entering that same
-                // initial lifetime is a no-op. A live initialized capture still
-                // proves that a later lifetime skipped CloseLocal.
-                return Ok(());
-            }
-            if reusable {
-                // QuickJS resets the existing VarRef in place when an abrupt
-                // completion skipped CloseLocal. Escaped closures therefore
-                // observe the next lifetime initialized at this same scope
-                // site, including its next private field/method identity.
-                self.runtime
-                    .reset_var_ref_uninitialized(root)
-                    .map_err(runtime_error_to_vm_error)?;
-                return Ok(());
-            }
-            return Err(Error::internal(
-                "captured local entered a new lexical lifetime before CloseLocal",
-            ));
+            return crate::engine::vm::bindings::reset_captured_binding(
+                &self.runtime,
+                root,
+                reusable,
+            );
         }
+
         *binding = FrameBinding::Uninitialized;
         Ok(())
     }
@@ -4153,94 +3476,27 @@ impl VmHost for RuntimeVmHost {
                 ));
             }
         }
-        if definition.kind == ClosureVariableKind::WithObject {
-            let Value::Object(object) = &value else {
-                return Err(Error::internal(
-                    "with-object initialization did not receive an Object",
-                ));
-            };
-            if !object.belongs_to(&self.runtime) {
-                return Err(Error::internal(
-                    "with-object initialization received a cross-runtime Object",
-                ));
-            }
-        }
         let binding = self
             .locals
             .get_mut(usize::from(index))
             .ok_or_else(|| Error::internal("local index is out of bounds"))?;
-        match binding {
-            FrameBinding::Direct(slot) => {
-                *slot = value;
-                Ok(())
-            }
-            FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => Err(Error::internal(
-                "ordinary lexical initialization reached a private-element frame cell",
-            )),
-            FrameBinding::Uninitialized => {
-                *binding = FrameBinding::Direct(value);
-                Ok(())
-            }
-            FrameBinding::Captured(root) => self
-                .runtime
-                .write_var_ref(root, value)
-                .map_err(runtime_error_to_vm_error),
-        }
+        crate::engine::vm::bindings::initialize_local_binding(
+            &self.runtime,
+            definition.kind,
+            binding,
+            value,
+        )
     }
 
     fn initialize_derived_local(&mut self, index: u16, value: Value) -> Result<(), Error> {
-        let definition = self.local_definition(index)?;
-        if !definition.is_lexical
-            || definition.is_const
-            || definition.kind != ClosureVariableKind::Normal
-        {
-            return Err(Error::internal(
-                "derived this initialization referenced a non-mutable lexical local",
-            ));
+        if let Some(binding) = crate::engine::vm::bindings::initialize_derived_binding(
+            &self.runtime,
+            self.local_definition(index)?,
+            self.locals.get(usize::from(index)),
+            value,
+        )? {
+            self.locals[usize::from(index)] = binding;
         }
-        if !matches!(value, Value::Object(_)) {
-            return Err(Error::internal(
-                "derived this initialization did not receive an Object",
-            ));
-        }
-
-        let captured = match self
-            .locals
-            .get(usize::from(index))
-            .ok_or_else(|| Error::internal("local index is out of bounds"))?
-        {
-            FrameBinding::Uninitialized => None,
-            FrameBinding::Captured(root) => Some(root.clone()),
-            FrameBinding::Direct(_)
-            | FrameBinding::Private(_)
-            | FrameBinding::PrivateCallable(_) => {
-                return Err(Error::new(
-                    ErrorKind::Reference,
-                    "'this' can be initialized only once",
-                ));
-            }
-        };
-        if let Some(root) = captured {
-            let raw = self
-                .runtime
-                .raw_var_ref_value(&root)
-                .map_err(runtime_error_to_vm_error)?;
-            if !matches!(raw, RawValue::Uninitialized) {
-                return Err(Error::new(
-                    ErrorKind::Reference,
-                    "'this' can be initialized only once",
-                ));
-            }
-            return self
-                .runtime
-                .write_var_ref(&root, value)
-                .map_err(runtime_error_to_vm_error);
-        }
-        let binding = self
-            .locals
-            .get_mut(usize::from(index))
-            .ok_or_else(|| Error::internal("local index is out of bounds"))?;
-        *binding = FrameBinding::Direct(value);
         Ok(())
     }
 
@@ -4430,24 +3686,12 @@ impl VmHost for RuntimeVmHost {
             .closure_slots
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        let raw = self
-            .runtime
-            .raw_var_ref_value(root)
-            .map_err(runtime_error_to_vm_error)?;
-        if matches!(raw, RawValue::Uninitialized) {
-            let descriptor = self
-                .executable
-                .closure_variables
-                .get(usize::from(index))
-                .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-            return Err(self.closure_lexical_uninitialized_error(
-                descriptor.source,
-                self.closure_name(index)?,
-            )?);
-        }
-        self.runtime
-            .root_raw_value(&raw)
-            .map_err(runtime_error_to_vm_error)
+        crate::engine::vm::bindings::read_checked_closure(
+            &self.runtime,
+            root,
+            self.executable.closure_variables[usize::from(index)],
+            self.executable.metadata.strip_variable_debug,
+        )
     }
 
     fn put_var_ref_checked(&mut self, index: u16, value: Value) -> Result<(), Error> {
@@ -4474,27 +3718,13 @@ impl VmHost for RuntimeVmHost {
             .closure_slots
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        let (uninitialized, is_const) = {
-            let state = self.runtime.0.state.borrow();
-            let cell = state
-                .heap
-                .var_ref(root.id())
-                .map_err(|error| Error::internal(error.to_string()))?;
-            (matches!(cell.value, RawValue::Uninitialized), cell.is_const)
-        };
-        if uninitialized {
-            let descriptor = self.executable.closure_variables[usize::from(index)];
-            return Err(self.closure_lexical_uninitialized_error(
-                descriptor.source,
-                self.closure_name(index)?,
-            )?);
-        }
-        if is_const {
-            return Err(self.lexical_read_only_error(self.closure_name(index)?)?);
-        }
-        self.runtime
-            .write_var_ref(root, value)
-            .map_err(runtime_error_to_vm_error)
+        crate::engine::vm::bindings::write_checked_closure(
+            &self.runtime,
+            root,
+            self.executable.closure_variables[usize::from(index)],
+            self.executable.metadata.strip_variable_debug,
+            value,
+        )
     }
 
     fn initialize_var_ref(&mut self, index: u16, value: Value) -> Result<(), Error> {
@@ -4600,78 +3830,13 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn return_derived(&mut self, index: u16, value: Value) -> Result<Completion, Error> {
-        let definition = self.local_definition(index)?;
-        if !definition.is_lexical
-            || definition.is_const
-            || definition.kind != ClosureVariableKind::Normal
-        {
-            return Err(Error::internal(
-                "derived return referenced a non-mutable lexical this local",
-            ));
-        }
-        match value {
-            value @ Value::Object(_) => Ok(Completion::Return(value)),
-            Value::Undefined => {
-                let binding = self
-                    .locals
-                    .get(usize::from(index))
-                    .ok_or_else(|| Error::internal("local index is out of bounds"))?;
-                let this_value = match binding {
-                    FrameBinding::Direct(value) => value.clone(),
-                    FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => {
-                        return Err(Error::internal(
-                            "derived this local contains a private-element identity",
-                        ));
-                    }
-                    FrameBinding::Uninitialized => {
-                        return self
-                            .runtime
-                            .new_native_error(
-                                self.caller_realm,
-                                NativeErrorKind::Reference,
-                                "this is not initialized",
-                            )
-                            .map(Completion::Throw)
-                            .map_err(runtime_error_to_vm_error);
-                    }
-                    FrameBinding::Captured(root) => {
-                        let raw = self
-                            .runtime
-                            .raw_var_ref_value(root)
-                            .map_err(runtime_error_to_vm_error)?;
-                        if matches!(raw, RawValue::Uninitialized) {
-                            return self
-                                .runtime
-                                .new_native_error(
-                                    self.caller_realm,
-                                    NativeErrorKind::Reference,
-                                    "this is not initialized",
-                                )
-                                .map(Completion::Throw)
-                                .map_err(runtime_error_to_vm_error);
-                        }
-                        self.runtime
-                            .root_raw_value(&raw)
-                            .map_err(runtime_error_to_vm_error)?
-                    }
-                };
-                if !matches!(this_value, Value::Object(_)) {
-                    return Err(Error::internal(
-                        "initialized derived this binding did not contain an Object",
-                    ));
-                }
-                Ok(Completion::Return(this_value))
-            }
-            _ => self
-                .runtime
-                .new_native_error(
-                    self.caller_realm,
-                    NativeErrorKind::Type,
-                    "derived class constructor must return an object or undefined",
-                )
-                .map(Completion::Throw)
-                .map_err(runtime_error_to_vm_error),
-        }
+        crate::engine::vm::bindings::finish_derived_return(
+            &self.runtime,
+            self.caller_realm,
+            self.local_definition(index)?,
+            self.locals.get(usize::from(index)),
+            value,
+        )
     }
 }
 

@@ -16,3 +16,7 @@ code 连接编译、外部代码输入和执行，拥有指令、常量、函数
 格式的读取和准入，通过独立发布桥进入同一验证、发布流程。
 [栈 VM 实施设计](../../../docs/primitive-vm-implementation-plan.md)
 记录后续布局与验证流程的调整。
+
+`verify/` 拥有只读草稿验证及 `VerifiedFunction`；`bytecode_publish.rs`
+和其私有绑定子模块负责链接与展平，`runtime.rs` 负责 Atom/heap 发布事务。
+编译请求和源码错误边界由 `api/compile.rs` 编排。

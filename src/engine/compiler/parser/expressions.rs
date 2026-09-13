@@ -1,39 +1,41 @@
 //! Expression precedence, references and assignments.
 
-use crate::engine::code::bytecode::ApplyKind;
-use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
-use crate::engine::compiler::model::ir::CallArguments;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
+use crate::engine::code::bytecode::ApplyKind;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::CallArguments;
 use crate::engine::compiler::model::ir::FunctionId;
 use crate::engine::compiler::model::ir::IdentifierAccess;
-use crate::engine::compiler::IdentifierReference;
 use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
-use crate::engine::compiler::InMode;
-use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::compiler::model::ir::IrOp;
-use crate::engine::value::JsString;
-use crate::engine::compiler::lexer::Keyword;
-use crate::engine::compiler::LogicalAssignment;
-use crate::engine::compiler::MemberReference;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::optional_chain::PendingOptionalChain;
-use crate::engine::compiler::PowerMode;
 use crate::engine::compiler::model::ir::PrivateFieldAccess;
-use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
-use crate::engine::compiler::lexer::Span;
-use crate::engine::compiler::model::ir::SpannedIrOp;
-use crate::engine::compiler::lexer::TokenKind;
-use crate::engine::value::PrimitiveValue as Value;
 use crate::engine::compiler::optional_chain;
+use crate::engine::compiler::optional_chain::PendingOptionalChain;
+use crate::engine::compiler::parser::context::IdentifierReference;
+use crate::engine::compiler::parser::context::InMode;
+use crate::engine::compiler::parser::context::LogicalAssignment;
+use crate::engine::compiler::parser::context::MemberReference;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::context::PowerMode;
+use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::private_reference;
-use crate::engine::compiler::source_offset;
+use crate::engine::value::JsString;
+use crate::engine::value::PrimitiveValue as Value;
 
 impl<'source> Parser<'source> {
-    pub(in crate::engine::compiler) fn consume_statement_terminator(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn consume_statement_terminator(
+        &mut self,
+    ) -> Result<(), Error> {
         if self.consume_punctuator(Punctuator::Semicolon)?
             || self.at_eof()
             || self.is_punctuator(Punctuator::RightBrace)
@@ -369,7 +371,10 @@ impl<'source> Parser<'source> {
     /// as QuickJS `js_parse_assign_expr2`. The kept member Reference is used
     /// only by the assignment branch; the short-circuit branch removes its
     /// base/key operands with `Nip` and returns the original property value.
-    pub(in crate::engine::compiler) fn parse_logical_member_assignment(&mut self, logical: LogicalAssignment) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_logical_member_assignment(
+        &mut self,
+        logical: LogicalAssignment,
+    ) -> Result<(), Error> {
         let Some(target) = self.promote_tail_member_get_for_compound()? else {
             // As with every other assignment operator, QuickJS advances to
             // the RHS before get_lvalue rejects a non-Reference left side.
@@ -664,7 +669,10 @@ impl<'source> Parser<'source> {
         self.parse_unary_with_power(PowerMode::Allowed)
     }
 
-    pub(in crate::engine::compiler) fn parse_unary_with_power(&mut self, power_mode: PowerMode) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_unary_with_power(
+        &mut self,
+        power_mode: PowerMode,
+    ) -> Result<(), Error> {
         if matches!(
             self.current().kind,
             TokenKind::Punctuator(Punctuator::Increment | Punctuator::Decrement)
@@ -732,10 +740,15 @@ impl<'source> Parser<'source> {
             // retain metadata for the Delete-specific branch rewrite.
             let terminal_optional_chain = {
                 let function = self.current_ir_mut();
-                if function.context.last_optional_chain.as_ref().is_some_and(|chain| {
-                    chain.terminal_member_get == function.context.last_member_reference
-                        && chain.terminal_member_get == function.ops.len().checked_sub(1)
-                }) {
+                if function
+                    .context
+                    .last_optional_chain
+                    .as_ref()
+                    .is_some_and(|chain| {
+                        chain.terminal_member_get == function.context.last_member_reference
+                            && chain.terminal_member_get == function.ops.len().checked_sub(1)
+                    })
+                {
                     function.context.last_optional_chain.take()
                 } else {
                     None
@@ -827,7 +840,10 @@ impl<'source> Parser<'source> {
         self.parse_power_suffix(power_mode)
     }
 
-    pub(in crate::engine::compiler) fn parse_power_suffix(&mut self, power_mode: PowerMode) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_power_suffix(
+        &mut self,
+        power_mode: PowerMode,
+    ) -> Result<(), Error> {
         if !self.is_punctuator(Punctuator::Exponent) {
             return Ok(());
         }
@@ -868,7 +884,9 @@ impl<'source> Parser<'source> {
 
     /// Parse the LeftHandSideExpression subset shared by assignment and a
     /// for-of assignment target, deliberately stopping before postfix update.
-    pub(in crate::engine::compiler) fn parse_left_hand_side_expression(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_left_hand_side_expression(
+        &mut self,
+    ) -> Result<(), Error> {
         self.parse_primary(true)?;
         let mut optional_chain: Option<PendingOptionalChain> = None;
         loop {
@@ -1105,7 +1123,9 @@ impl<'source> Parser<'source> {
     /// proves that its Reference is being called. The keep form leaves the
     /// original base below the function so `CallMethod` receives the exact
     /// receiver without re-evaluating either base or computed key.
-    pub(in crate::engine::compiler) fn promote_last_member_get_for_call(&mut self) -> Result<bool, Error> {
+    pub(in crate::engine::compiler) fn promote_last_member_get_for_call(
+        &mut self,
+    ) -> Result<bool, Error> {
         let function = self.current_ir_mut();
         if function.context.last_member_reference != function.ops.len().checked_sub(1) {
             return Ok(false);
@@ -1138,7 +1158,8 @@ impl<'source> Parser<'source> {
         };
         if promoted {
             function.context.stack_depth = function
-                .context.stack_depth
+                .context
+                .stack_depth
                 .checked_add(1)
                 .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
             optional_chain::pad_grouped_method_receiver(function, terminal_get)?;
@@ -1197,7 +1218,8 @@ impl<'source> Parser<'source> {
                 access: reference_access,
             };
             function.context.stack_depth = function
-                .context.stack_depth
+                .context
+                .stack_depth
                 .checked_add(1)
                 .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         }
@@ -1235,7 +1257,9 @@ impl<'source> Parser<'source> {
     /// getter itself deliberately remains an ordinary Identifier operation so
     /// `EvalCall` retains QuickJS's undefined-receiver fallback when the
     /// resolved function is not the realm's original `%eval%`.
-    pub(in crate::engine::compiler) fn take_direct_eval_scope(&mut self) -> Result<Option<ScopeId>, Error> {
+    pub(in crate::engine::compiler) fn take_direct_eval_scope(
+        &mut self,
+    ) -> Result<Option<ScopeId>, Error> {
         let function = self.current_ir_mut();
         if function.context.last_identifier_reference != function.ops.len().checked_sub(1) {
             return Ok(None);
@@ -1267,7 +1291,9 @@ impl<'source> Parser<'source> {
     /// Both operations push one abstract value, so no stack-depth correction
     /// is needed while the late resolver decides whether that value is a
     /// selected object or the static `undefined` sentinel.
-    pub(in crate::engine::compiler) fn take_tail_identifier_reference(&mut self) -> Result<Option<IdentifierReference>, Error> {
+    pub(in crate::engine::compiler) fn take_tail_identifier_reference(
+        &mut self,
+    ) -> Result<Option<IdentifierReference>, Error> {
         let function_id = self.current_function;
         let function = self.current_ir();
         if function.context.last_identifier_reference != function.ops.len().checked_sub(1) {
@@ -1314,9 +1340,10 @@ impl<'source> Parser<'source> {
                 .ops
                 .pop()
                 .ok_or_else(|| Error::internal("identifier Reference operation disappeared"))?;
-            function.context.stack_depth = function.context.stack_depth.checked_sub(1).ok_or_else(|| {
-                Error::internal("identifier lvalue removal underflowed the stack")
-            })?;
+            function.context.stack_depth =
+                function.context.stack_depth.checked_sub(1).ok_or_else(|| {
+                    Error::internal("identifier lvalue removal underflowed the stack")
+                })?;
         }
         Ok(Some(reference))
     }
@@ -1324,7 +1351,9 @@ impl<'source> Parser<'source> {
     /// Remove the final getter while leaving its already-evaluated base/key
     /// operands on the abstract stack. This mirrors QuickJS `get_lvalue` and
     /// is shared by assignment and `delete` rewrites.
-    pub(in crate::engine::compiler) fn take_tail_member_reference(&mut self) -> Result<Option<MemberReference>, Error> {
+    pub(in crate::engine::compiler) fn take_tail_member_reference(
+        &mut self,
+    ) -> Result<Option<MemberReference>, Error> {
         let function = self.current_ir_mut();
         if function.context.last_member_reference != function.ops.len().checked_sub(1) {
             return Ok(None);
@@ -1343,7 +1372,8 @@ impl<'source> Parser<'source> {
                 // Removing a 2 -> 1 getter restores the raw `[base, key]`
                 // operands produced by the preceding IR.
                 function.context.stack_depth = function
-                    .context.stack_depth
+                    .context
+                    .stack_depth
                     .checked_add(1)
                     .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
                 Ok(Some(MemberReference::Computed { site }))
@@ -1352,7 +1382,8 @@ impl<'source> Parser<'source> {
                 // Removing a 3 -> 1 getter restores the authenticated method
                 // receiver, frozen super base, and raw property key.
                 function.context.stack_depth = function
-                    .context.stack_depth
+                    .context
+                    .stack_depth
                     .checked_add(2)
                     .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
                 Ok(Some(MemberReference::Super { site }))
@@ -1377,7 +1408,9 @@ impl<'source> Parser<'source> {
     /// Keep both the lvalue operands and the old value for compound
     /// assignment. The computed form also retains the already-converted key,
     /// exactly matching QuickJS `get_array_el3`.
-    pub(in crate::engine::compiler) fn promote_tail_member_get_for_compound(&mut self) -> Result<Option<MemberReference>, Error> {
+    pub(in crate::engine::compiler) fn promote_tail_member_get_for_compound(
+        &mut self,
+    ) -> Result<Option<MemberReference>, Error> {
         let super_site = {
             let function = self.current_ir();
             if function.context.last_member_reference == function.ops.len().checked_sub(1) {
@@ -1403,7 +1436,8 @@ impl<'source> Parser<'source> {
                 // Replacing 3 -> 1 with 1 -> 1 restores the three Reference
                 // operands before QuickJS's dup3/get_super_value keep form.
                 function.context.stack_depth = function
-                    .context.stack_depth
+                    .context
+                    .stack_depth
                     .checked_add(2)
                     .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
             }
@@ -1460,13 +1494,17 @@ impl<'source> Parser<'source> {
             }
         };
         function.context.stack_depth = function
-            .context.stack_depth
+            .context
+            .stack_depth
             .checked_add(extra_depth)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         Ok(Some(target))
     }
 
-    pub(in crate::engine::compiler) fn emit_member_put(&mut self, target: MemberReference) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn emit_member_put(
+        &mut self,
+        target: MemberReference,
+    ) -> Result<(), Error> {
         match target {
             MemberReference::Field { key, .. } => {
                 self.emit_instruction(Instruction::Insert2)?;
@@ -1501,7 +1539,10 @@ impl<'source> Parser<'source> {
 
     /// QuickJS `PUT_LVALUE_KEEP_SECOND`: move the old numeric value below the
     /// kept member Reference, then consume the Reference and replacement.
-    pub(in crate::engine::compiler) fn emit_member_post_put(&mut self, target: MemberReference) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn emit_member_post_put(
+        &mut self,
+        target: MemberReference,
+    ) -> Result<(), Error> {
         match target {
             MemberReference::Field { key, .. } => {
                 self.emit_instruction(Instruction::Perm3)?;
@@ -1533,5 +1574,4 @@ impl<'source> Parser<'source> {
         }
         Ok(())
     }
-
 }

@@ -1,34 +1,34 @@
 //! For, while and do iteration grammar.
 
-use crate::engine::compiler::source_span;
-use crate::engine::compiler::BreakControlKind;
-use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
-use crate::engine::compiler::ForAssignmentDeclaration;
-use crate::engine::compiler::ForAssignmentTargetInfo;
-use crate::engine::compiler::ForIterationKind;
-use crate::engine::compiler::model::ir::IdentifierAccess;
-use crate::engine::compiler::IdentifierContext;
-use crate::engine::compiler::IdentifierReference;
-use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
-use crate::engine::compiler::InMode;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::compiler::lexer::Keyword;
-use crate::engine::compiler::MemberReference;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::model::ir::PrivateFieldAccess;
 use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::PrivateFieldAccess;
+use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
-use crate::engine::compiler::model::ir::SpannedIrOp;
-use crate::engine::compiler::StatementCompletion;
-use crate::engine::compiler::StatementPosition;
-use crate::engine::compiler::lexer::TokenKind;
-use crate::engine::compiler::relocate_ir_fragment;
-use crate::engine::compiler::source_offset;
-use crate::engine::compiler::validate_identifier_reservation;
+use crate::engine::compiler::parser::context::BreakControlKind;
+use crate::engine::compiler::parser::context::ForAssignmentDeclaration;
+use crate::engine::compiler::parser::context::ForAssignmentTargetInfo;
+use crate::engine::compiler::parser::context::ForIterationKind;
+use crate::engine::compiler::parser::context::IdentifierReference;
+use crate::engine::compiler::parser::context::InMode;
+use crate::engine::compiler::parser::context::MemberReference;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::context::StatementCompletion;
+use crate::engine::compiler::parser::context::StatementPosition;
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
+use crate::engine::compiler::relocation::relocate_ir_fragment;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn parse_while_statement(
@@ -645,9 +645,10 @@ impl<'source> Parser<'source> {
                         "for-in/of identifier target lost its prepared Reference",
                     ));
                 };
-                function.context.stack_depth = function.context.stack_depth.checked_sub(1).ok_or_else(|| {
-                    Error::internal("for-in/of identifier Reference underflowed the stack")
-                })?;
+                function.context.stack_depth =
+                    function.context.stack_depth.checked_sub(1).ok_or_else(|| {
+                        Error::internal("for-in/of identifier Reference underflowed the stack")
+                    })?;
             }
             self.emit_identifier_inherited(
                 target.name,
@@ -676,7 +677,10 @@ impl<'source> Parser<'source> {
     /// without introducing a forgeable temporary. `Insert2; Drop` is the
     /// existing typed bytecode's two-value swap; `Perm3` first rotates the
     /// computed form into position.
-    pub(in crate::engine::compiler) fn emit_for_of_member_put(&mut self, target: MemberReference) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn emit_for_of_member_put(
+        &mut self,
+        target: MemberReference,
+    ) -> Result<(), Error> {
         match target {
             MemberReference::Field { key, site } => {
                 self.emit_instruction(Instruction::Insert2)?;
@@ -712,5 +716,4 @@ impl<'source> Parser<'source> {
         }
         Ok(())
     }
-
 }

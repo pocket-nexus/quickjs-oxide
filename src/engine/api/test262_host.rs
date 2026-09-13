@@ -5,12 +5,12 @@
 //! object returned by `createRealm` keeps the child context alive after the
 //! temporary Rust [`Context`] handle is dropped.
 
+use crate::engine::api::compile::Compilation;
 use crate::engine::api::context::Context;
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::NativeFunctionId;
-use crate::engine::code::runtime::Compilation;
 use crate::engine::heap::ContextId;
 
 use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};

@@ -1,22 +1,25 @@
 //! Abrupt completion and parser control regions.
 
-use crate::engine::compiler::BreakControlContext;
-use crate::engine::compiler::BreakControlKind;
-use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::compiler::model::ir::IrConstant;
-use crate::engine::value::JsString;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::model::scope::ScopeId;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::scope::ScopeId;
+use crate::engine::compiler::parser::context::BreakControlContext;
+use crate::engine::compiler::parser::context::BreakControlKind;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::source_offset;
 
 impl<'source> Parser<'source> {
-    pub(in crate::engine::compiler) fn parse_loop_jump_statement(&mut self, is_continue: bool) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_loop_jump_statement(
+        &mut self,
+        is_continue: bool,
+    ) -> Result<(), Error> {
         self.advance()?;
 
         let label_name = if self.current().line_terminator_before {
@@ -30,7 +33,8 @@ impl<'source> Parser<'source> {
         };
         let target = self
             .current_ir()
-            .context.break_controls
+            .context
+            .break_controls
             .iter()
             .rposition(|control| match label_name.as_deref() {
                 Some(label_name) if is_continue => {
@@ -153,7 +157,8 @@ impl<'source> Parser<'source> {
         let jump = self.emit_instruction(Instruction::Goto(u32::MAX))?;
         let control = self
             .current_ir_mut()
-            .context.break_controls
+            .context
+            .break_controls
             .get_mut(target)
             .ok_or_else(|| Error::internal("break control disappeared while emitting jump"))?;
         if is_continue {
@@ -172,7 +177,11 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn push_loop_control(&mut self, entry_depth: usize, label_name: Option<String>) {
+    pub(in crate::engine::compiler) fn push_loop_control(
+        &mut self,
+        entry_depth: usize,
+        label_name: Option<String>,
+    ) {
         self.push_break_control(BreakControlKind::Loop, label_name, entry_depth, 0);
     }
 
@@ -188,7 +197,8 @@ impl<'source> Parser<'source> {
             .checked_add(1)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         self.current_ir_mut()
-            .context.break_controls
+            .context
+            .break_controls
             .push(BreakControlContext {
                 kind: BreakControlKind::ForIn,
                 label_name,
@@ -216,7 +226,8 @@ impl<'source> Parser<'source> {
             .checked_add(3)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         self.current_ir_mut()
-            .context.break_controls
+            .context
+            .break_controls
             .push(BreakControlContext {
                 kind: BreakControlKind::ForOf,
                 label_name,
@@ -230,7 +241,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn push_destructuring_iterator_control(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn push_destructuring_iterator_control(
+        &mut self,
+    ) -> Result<(), Error> {
         let record_depth = self.current_ir().context.stack_depth;
         if record_depth < 3 {
             return Err(Error::internal(
@@ -246,7 +259,10 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn push_for_of_assignment_fragment_control(&mut self, entry_depth: usize) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn push_for_of_assignment_fragment_control(
+        &mut self,
+        entry_depth: usize,
+    ) -> Result<(), Error> {
         let record_depth = entry_depth
             .checked_add(3)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
@@ -265,7 +281,10 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn pop_for_of_assignment_fragment_control(&mut self, entry_depth: usize) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn pop_for_of_assignment_fragment_control(
+        &mut self,
+        entry_depth: usize,
+    ) -> Result<(), Error> {
         let record_depth = entry_depth
             .checked_add(3)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
@@ -285,14 +304,17 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn pop_destructuring_iterator_control(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn pop_destructuring_iterator_control(
+        &mut self,
+    ) -> Result<(), Error> {
         let control = self.pop_break_control()?;
         if control.kind != BreakControlKind::DestructuringIterator
             || control.label_name.is_some()
             || control.entry_depth
                 != self
                     .current_ir()
-                    .context.stack_depth
+                    .context
+                    .stack_depth
                     .checked_add(3)
                     .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?
             || control.drop_count != 3
@@ -316,7 +338,8 @@ impl<'source> Parser<'source> {
     ) {
         let scope = self.current_ir().context.current_scope;
         self.current_ir_mut()
-            .context.break_controls
+            .context
+            .break_controls
             .push(BreakControlContext {
                 kind,
                 label_name,
@@ -329,14 +352,21 @@ impl<'source> Parser<'source> {
             });
     }
 
-    pub(in crate::engine::compiler) fn pop_break_control(&mut self) -> Result<BreakControlContext, Error> {
+    pub(in crate::engine::compiler) fn pop_break_control(
+        &mut self,
+    ) -> Result<BreakControlContext, Error> {
         self.current_ir_mut()
-            .context.break_controls
+            .context
+            .break_controls
             .pop()
             .ok_or_else(|| Error::internal("break control stack underflow"))
     }
 
-    pub(in crate::engine::compiler) fn require_stack_depth(&self, expected: usize, construct: &str) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn require_stack_depth(
+        &self,
+        expected: usize,
+        construct: &str,
+    ) -> Result<(), Error> {
         if self.current_ir().context.stack_depth == expected {
             Ok(())
         } else {
@@ -372,12 +402,17 @@ impl<'source> Parser<'source> {
         }
         let async_iterator_return =
             if self.current_ir().execution_kind == BytecodeFunctionKind::AsyncGenerator
-                && self.current_ir().context.break_controls.iter().any(|control| {
-                    matches!(
-                        control.kind,
-                        BreakControlKind::DestructuringIterator | BreakControlKind::ForOf
-                    )
-                })
+                && self
+                    .current_ir()
+                    .context
+                    .break_controls
+                    .iter()
+                    .any(|control| {
+                        matches!(
+                            control.kind,
+                            BreakControlKind::DestructuringIterator | BreakControlKind::ForOf
+                        )
+                    })
             {
                 Some(self.add_constant(IrConstant::Primitive(Value::String(
                     JsString::from_static("return"),
@@ -391,7 +426,8 @@ impl<'source> Parser<'source> {
         // throws, and is also required for the VM's nested unwind regions.
         let unwind_controls = self
             .current_ir()
-            .context.break_controls
+            .context
+            .break_controls
             .iter()
             .enumerate()
             .rev()
@@ -505,5 +541,4 @@ impl<'source> Parser<'source> {
         self.emit_instruction_at(instruction, source_offset(return_span)?)?;
         Ok(())
     }
-
 }

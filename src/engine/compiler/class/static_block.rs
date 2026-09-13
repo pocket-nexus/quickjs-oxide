@@ -5,7 +5,21 @@
 //! lexical environment while the typed call preserves class `this`, super
 //! HomeObject, abrupt completion, and source ordering.
 
-use super::super::*;
+use crate::engine::api::error::Error;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::function::FunctionIrOptions;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
+use crate::engine::compiler::model::ir::function::ParentLink;
+use crate::engine::compiler::model::ir::function::SuperCapabilities;
+use crate::engine::compiler::parser::builder::FunctionBuilder;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+
 use super::ClassElementState;
 use crate::engine::code::function::metadata::ClassInitializerKind;
 

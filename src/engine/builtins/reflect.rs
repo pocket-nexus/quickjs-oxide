@@ -201,6 +201,62 @@ impl Runtime {
     /// two Reflect call/construct paths. Nullish exceptions remain a caller
     /// decision: this kernel always requires an object, as upstream does once
     /// it has entered `build_arg_list`.
+    /// Classify an Array argument carrier without invoking length or index getters.
+    /// None leaves the caller free to choose an explicit property-reading protocol.
+    pub(crate) fn prepare_fast_array_arguments(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+    ) -> Result<Option<NativeConversion<Vec<Value>>>, RuntimeError> {
+        if !object.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("object"));
+        }
+        let array = {
+            let state = self.0.state.borrow();
+            let data = state.heap.object(object.object_id())?;
+            matches!(
+                (data.kind, &data.payload),
+                (
+                    crate::engine::heap::ObjectKind::Array,
+                    ObjectPayload::Array { .. }
+                )
+            )
+        };
+        if !array {
+            return Ok(None);
+        }
+        let key = self.intern_property_key("length")?;
+        let Some(crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data { value, .. }) =
+            self.get_own_property(object, &key)?
+        else {
+            return Err(RuntimeError::Invariant(
+                "Array argument carrier has no data length",
+            ));
+        };
+        let length = match value {
+            Value::Int(value) if value >= 0 => u64::try_from(value).unwrap(),
+            Value::Float(value)
+                if value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 =>
+            {
+                value as u64
+            }
+            _ => {
+                return Err(RuntimeError::Invariant(
+                    "Array argument carrier has an invalid length",
+                ));
+            }
+        };
+        if length > MAX_APPLY_ARGUMENTS {
+            return Ok(Some(NativeConversion::Throw(self.new_native_error(
+                realm,
+                NativeErrorKind::Range,
+                "too many arguments in function call (only 65534 allowed)",
+            )?)));
+        }
+        self.fast_array_like_values(object, length as u32)
+            .map(|values| values.map(NativeConversion::Value))
+    }
+
     pub(crate) fn build_array_like_argument_list(
         &self,
         realm: ContextId,
@@ -213,6 +269,10 @@ impl Runtime {
                 "not a object",
             )?));
         };
+
+        if let Some(prepared) = self.prepare_fast_array_arguments(realm, array_like)? {
+            return Ok(prepared);
+        }
 
         let length_key = self.intern_property_key("length")?;
         let length_value = match self.get_property_in_realm(realm, array_like, &length_key)? {
@@ -586,5 +646,51 @@ impl Runtime {
                 NativeConversion::Throw(value) => Completion::Throw(value),
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod argument_preparation_tests {
+    use super::*;
+
+    #[test]
+    fn array_argument_preflight_keeps_getters_out_of_the_fast_path() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for source in [
+            "({get length(){throw 99}})",
+            "Object.defineProperty([1],'0',{get(){throw 99}})",
+            "Object.assign(Object.create({get 0(){throw 99}}),{length:1})",
+        ] {
+            let Value::Object(object) = context.eval(source).unwrap() else {
+                panic!("expected carrier")
+            };
+            assert!(
+                runtime
+                    .prepare_fast_array_arguments(context.realm, &object)
+                    .unwrap()
+                    .is_none(),
+                "{source}"
+            );
+        }
+        let Value::Object(object) = context.eval("[40,2]").unwrap() else {
+            panic!("expected array")
+        };
+        let Some(NativeConversion::Value(values)) = runtime
+            .prepare_fast_array_arguments(context.realm, &object)
+            .unwrap()
+        else {
+            panic!("expected snapshot")
+        };
+        assert_eq!(values, vec![Value::Int(40), Value::Int(2)]);
+        let Value::Object(oversized) = context.eval("Array(65535)").unwrap() else {
+            panic!("expected array")
+        };
+        assert!(matches!(
+            runtime
+                .prepare_fast_array_arguments(context.realm, &oversized)
+                .unwrap(),
+            Some(NativeConversion::Throw(_))
+        ));
     }
 }

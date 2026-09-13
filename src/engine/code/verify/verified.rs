@@ -1,9 +1,15 @@
 //! Owned verification result. The draft cannot change between authentication
 //! and publication, and callers cannot substitute a different function.
 
-use super::*;
+use super::{
+    EvalPublicationCapabilities, verify_unlinked_eval_tree_with_profile_and_arguments,
+    verify_unlinked_module_tree, verify_unlinked_ordinary_leaf, verify_unlinked_tree,
+};
+use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::code::function::UnlinkedFunction;
+use crate::engine::code::function::publication::EvalPublicationInput;
+use crate::engine::code::module::UnlinkedModule;
 use crate::engine::code::module::UnlinkedModuleParts;
-use crate::engine::compiler::EvalCompileContext;
 
 pub(crate) struct VerifiedFunction(UnlinkedFunction);
 
@@ -22,14 +28,14 @@ impl VerifiedFunction {
 
     pub(crate) fn eval(
         function: UnlinkedFunction,
-        expected: &EvalCompileContext,
+        expected: EvalPublicationInput<'_>,
     ) -> Result<Self, RuntimeError> {
         verify_unlinked_eval_tree_with_profile_and_arguments(
             &function,
             expected.kind,
             expected.caller_strict,
-            &expected.bindings,
-            &expected.caller_profile,
+            expected.bindings,
+            expected.caller_profile,
             EvalPublicationCapabilities {
                 super_call_allowed: expected.super_call_allowed,
                 super_allowed: expected.super_allowed,

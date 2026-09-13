@@ -1,11 +1,27 @@
-use super::{
-    AnonymousFunctionDefinition, BytecodeFunctionKind, Error, FunctionBuilder, FunctionIrOptions,
-    FunctionKind, FunctionSourceInfo, Identifier, IdentifierContext, LexContext, ParentLink,
-    Parser, Punctuator, SourceOffset, Span, SuperCapabilities, TokenKind, insert_hoist_fragment,
-    source_offset, source_span, validate_identifier,
-};
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::validate_identifier;
+
+use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::{DefineMethodKind, Instruction};
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::compiler::lexer::Identifier;
+use crate::engine::compiler::lexer::LexContext;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::function::FunctionIrOptions;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
+use crate::engine::compiler::model::ir::function::ParentLink;
+use crate::engine::compiler::model::ir::function::SuperCapabilities;
 use crate::engine::compiler::model::ir::{FunctionId, IrConstant, IrOp, SpannedIrOp};
+use crate::engine::compiler::parser::builder::FunctionBuilder;
+use crate::engine::compiler::parser::context::AnonymousFunctionDefinition;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::relocation::insert_hoist_fragment;
+use crate::source::SourceOffset;
 
 pub(super) struct ParsedFunctionDefinition {
     pub(super) constant: u32,

@@ -11,7 +11,10 @@
 //! any future opcode that observes or truncates either stack must be modeled in
 //! both the shape builder and the summary analysis below.
 
-use super::*;
+use crate::engine::api::error::Error;
+use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::code::function::metadata::ClosureSource;
+use crate::engine::code::module::{ModuleImportCollisionDeclaration, UnlinkedModule};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::engine::code::bytecode::Instruction;
@@ -327,73 +330,6 @@ fn apply_call_summary(
     Ok(())
 }
 
-// These operations cannot create a catchable ECMAScript abrupt completion.
-// Allocation failure and violated publication invariants remain engine errors,
-// not JavaScript throws which may enter an authored Catch handler.
-fn may_throw_js(instruction: &Instruction) -> bool {
-    !matches!(
-        instruction,
-        Instruction::Nop
-            | Instruction::PushI32(_)
-            | Instruction::PushAtomValueIndex(_)
-            | Instruction::PushConst(_)
-            | Instruction::FClosure(_)
-            | Instruction::RegExp(_)
-            | Instruction::Undefined
-            | Instruction::Null
-            | Instruction::PushFalse
-            | Instruction::PushTrue
-            | Instruction::PushThis
-            | Instruction::PushActiveFunction
-            | Instruction::PushHomeObject
-            | Instruction::PushNewTarget
-            | Instruction::Arguments(_)
-            | Instruction::Rest(_)
-            | Instruction::VariableEnvironment
-            | Instruction::GetLocal(_)
-            | Instruction::PutLocal(_)
-            | Instruction::SetLocal(_)
-            | Instruction::SetLocalUninitialized(_)
-            | Instruction::InitializeLocal(_)
-            | Instruction::GetArg(_)
-            | Instruction::PutArg(_)
-            | Instruction::SetArg(_)
-            | Instruction::GetVarRef(_)
-            | Instruction::PutVarRef(_)
-            | Instruction::SetVarRef(_)
-            | Instruction::InitializeVarRef(_)
-            | Instruction::InitializeModuleImportCollision(_)
-            | Instruction::CloseLocal(_)
-            | Instruction::InitializePrivateName(_)
-            | Instruction::ArrayFrom(_)
-            | Instruction::Object
-            | Instruction::Insert2
-            | Instruction::Insert3
-            | Instruction::Dup3
-            | Instruction::Insert4
-            | Instruction::Perm3
-            | Instruction::Perm4
-            | Instruction::Perm5
-            | Instruction::Rot4Left
-            | Instruction::Drop
-            | Instruction::Nip
-            | Instruction::Swap
-            | Instruction::Dup
-            | Instruction::Dup1
-            | Instruction::Not
-            | Instruction::TypeOf
-            | Instruction::IsUndefinedOrNull
-            | Instruction::IsUndefined
-            | Instruction::IsNull
-            | Instruction::TypeOfIsUndefined
-            | Instruction::TypeOfIsFunction
-            | Instruction::StrictEq
-            | Instruction::StrictNeq
-            | Instruction::MarkSuperCall
-            | Instruction::InitialYield
-    )
-}
-
 fn flow_error() -> RuntimeError {
     internal("module lexical initializer is not a one-shot control-flow cut")
 }
@@ -619,7 +555,9 @@ fn analyze(
             }
             _ => {
                 let frame = frames.last_mut().expect("analysis frame remains present");
-                if may_throw_js(instruction) {
+                if instruction.info().effects.javascript_exception
+                    == crate::engine::code::instruction::JsExceptionEffect::MayThrow
+                {
                     route_exception(frame, after, shapes)?;
                 }
                 route(
@@ -696,7 +634,10 @@ mod tests {
             Instruction::TypeOfIsUndefined,
             Instruction::TypeOfIsFunction,
         ] {
-            assert!(!may_throw_js(&instruction));
+            assert!(
+                instruction.info().effects.javascript_exception
+                    == crate::engine::code::instruction::JsExceptionEffect::None
+            );
         }
     }
 }

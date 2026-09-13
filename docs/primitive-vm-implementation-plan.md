@@ -1,6 +1,6 @@
 # 栈 VM 实施设计：模块、数据、算法与维护契约
 
-状态：2026-09-12，计划稿，尚未实施。执行表示已确定为栈 VM；本轮使用线性栈 IR、轻量控制流分析与有限融合。目标见[架构计划](primitive-vm-plan.md)，实施顺序合并为[10 个 commit](primitive-vm-commit-plan.md)，完整能力见[迁移清单](primitive-vm-migration.md)。
+状态：2026-09-12，S01–S03 阶段验收通过，原语栈核心已交付，完整执行迁移尚未完成。执行表示已确定为栈 VM；本轮使用线性栈 IR、轻量控制流分析与有限融合。目标见[架构计划](primitive-vm-plan.md)，实施顺序合并为[10 个 commit](primitive-vm-commit-plan.md)，完整能力见[迁移清单](primitive-vm-migration.md)。
 
 本文让实现者能够从一个指令或语义问题定位到唯一状态所有者，写出完整的调用/错误/恢复流程，并给审查者提供检查不变量。下面的类型与目录是目标设计，不是现有生产 API。
 
@@ -357,6 +357,8 @@ generator、async、async generator 共用 frame/stack/control 布局和 freeze/
 
 ### 15.1 编译入口、共享模型与解析状态分别归属
 
+下述行数和混合职责描述是实施前基线；当前归属和验证进度见 architecture.md 与逐 commit 计划的实施记录。
+
 当前 [compiler/mod.rs](../src/engine/compiler/mod.rs) 共 9,481 行，包含编译入口、Binding/Scope/IR 类型、FunctionIr、Parser、语句/表达式解析及 IR 片段重定位。resolution、lowering、scope_validation 已有独立实现，应复用。
 
 目标结构中，mod.rs 仅组织入口与导出。model/ir、model/bindings、model/scope 按共同使用的数据分组；parser 中按语法职责组织函数，context/builder 集中管理解析游标和发射状态。已有 class、destructuring 等算法继续使用，不另写子集 parser，也不把所有类型搬成新的巨型 model.rs。
@@ -386,7 +388,7 @@ FunctionIr 目前同时含 `last_member_reference`、`last_identifier_reference`
 
 ### 15.3 发布验证的大函数改成显式流程与命名状态
 
-[verify_unlinked_tree_with_root](../src/engine/code/bytecode_publish.rs) 从约 2,138 行延续至 4,757 行，混合根角色、参数、闭包来源、eval/super、指令布局和子函数遍历等检查。该文件总计 11,793 行，其中约 6,872 行位于内联 tests 模块；应分别看待生产流程和测试导航负担。
+实施前的 verify_unlinked_tree_with_root 从约 2,138 行延续至 4,757 行，混合根角色、参数、闭包来源、eval/super、指令布局和子函数遍历等检查。该文件总计 11,793 行，其中约 6,872 行位于内联 tests 模块；应分别看待生产流程和测试导航负担。
 
 保留一个明确组织验证顺序的入口，按参数/绑定、控制流、私有状态、模块和函数树规则分出有具体输入输出的检查。树遍历仍迭代推进；工作项的八元素 tuple 改为有字段名的 PublicationWorkItem，闭包来源数组组合为命名状态。跨函数检查共享必要索引和上下文，不能每拆一个规则就重扫整棵树或复制全部分析状态。
 
@@ -396,7 +398,7 @@ FunctionIr 目前同时含 `last_member_reference`、`last_identifier_reference`
 
 ### 15.4 解除 code 对编译器配置的反向依赖
 
-[bytecode_publish/verified.rs](../src/engine/code/bytecode_publish/verified.rs) 直接使用 compiler::EvalCompileContext；[code/runtime.rs](../src/engine/code/runtime.rs) 同时有编译入口调用和发布事务。compiler 又依赖 code 的指令与布局，这使共享数据和上层请求编排的位置不清楚。
+实施前 VerifiedFunction 直接使用 compiler::EvalCompileContext，code/runtime.rs 同时有编译入口调用和发布事务。当前验证所有者见 [verify/verified.rs](../src/engine/code/verify/verified.rs)，请求编排见 [api/compile.rs](../src/engine/api/compile.rs)。compiler 又依赖 code 的指令与布局，这使共享数据和上层请求编排的位置不清楚。
 
 在 code/function 中定义发布验证所需的只读输入视图，由编译请求入口从现有 eval 上下文提供；不把解析选项或 Parser 类型传给验证器。请求编排移到 api 的编译入口，code 接受草稿/验证结果。移动原方法的责任归属，不新增转发 Runtime，也不复制验证上下文和完整绑定数组。
 
@@ -408,7 +410,7 @@ VM 的 protocol、activation、frame_execution、dispatch、numeric 等文件通
 
 生产模块从实际所有者显式导入，相关共享类型放进小型 model/protocol；模块入口只显式导出消费者需要的名称。保留一个 crate 与当前公有 API 边界，不为整理目录引入 trait 注入层，也不以扩大 pub 可见性换取任意访问。单元测试中的 `use super::*` 和局部 enum variant 导入不做机械禁止。
 
-当前 [value/number.rs](../src/engine/value/number.rs) 已有 pow、ToInt32、float16 与完整格式化算法；vm/numeric 也已经转调用其中部分函数。扩展 Number 快路时按 operations/integer/format/float16 组织同一模块，复用现有纯算法。对象 ToPrimitive/ToNumeric 属于 value/conversion，栈 pop/push 属于 run/stack。源码中的 numeric、numeric_execution、dispatch 不再让调用者猜测同一操作究竟在哪层完成；必要的冷函数仍保留，最终机器码帧大小另行测量。
+[value/number](../src/engine/value/number/mod.rs) 的既有 pow、ToInt32、float16 与完整格式化算法已在 S03 按 operations/integer/format/float16 拆分，原入口和测试保留；vm/numeric 继续调用同一纯算法。普通槽和 Number 主循环已在非默认 `stack-vm` 配置接入，S03 已验收；显式调用和其余领域协议仍按 S04–S07 迁移。对象 ToPrimitive/ToNumeric 属于 value/conversion，栈 pop/push 属于 run/stack。源码中的 numeric、numeric_execution、dispatch 不再让调用者猜测同一操作究竟在哪层完成；必要的冷函数仍保留，最终机器码帧大小另行测量。
 
 **提交：S01–S03；S10 清理。验收：**从 imports 和类型归属能识别依赖；新增 Number 运算不增加一层转发或在格式化文件中混入 VM 状态。
 

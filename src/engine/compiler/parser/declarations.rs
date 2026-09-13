@@ -1,36 +1,36 @@
 //! Ordered declaration registration and hoisting grammar.
 
-use crate::engine::compiler::source_span;
+use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
+use crate::engine::code::bytecode::EvalVariableSource;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::metadata::ClosureVariableKind;
+use crate::engine::code::function::metadata::EvalCallerVariableTarget;
+use crate::engine::code::function::metadata::EvalKind;
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::compiler::MAX_LOCAL_VARIABLES;
+use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::bindings::BindingId;
 use crate::engine::compiler::model::bindings::BindingKind;
 use crate::engine::compiler::model::bindings::BindingStorage;
-use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
-use crate::engine::code::function::metadata::ClosureVariableKind;
-use crate::engine::api::error::Error;
-use crate::engine::api::error::ErrorKind;
-use crate::engine::code::function::metadata::EvalCallerVariableTarget;
 use crate::engine::compiler::model::bindings::EvalDeclarationMode;
 use crate::engine::compiler::model::bindings::EvalDeclarationTarget;
 use crate::engine::compiler::model::bindings::EvalDeclarationValue;
-use crate::engine::code::function::metadata::EvalKind;
-use crate::engine::code::bytecode::EvalVariableSource;
-use crate::engine::compiler::FunctionKind;
-use crate::engine::compiler::model::ir::IdentifierAccess;
-use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::model::bindings::IrAnnexBinding;
 use crate::engine::compiler::model::bindings::IrEvalDeclaration;
 use crate::engine::compiler::model::bindings::IrGlobalDeclaration;
 use crate::engine::compiler::model::bindings::IrHoistedFunction;
-use crate::engine::compiler::model::ir::IrOp;
 use crate::engine::compiler::model::bindings::IrProgramAnnexFunction;
 use crate::engine::compiler::model::bindings::IrScopedFunction;
-use crate::engine::compiler::MAX_LOCAL_VARIABLES;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::PreparedScopedFunction;
-use crate::engine::compiler::model::scope::ScopeKind;
-use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::bindings::binding_kind_from_closure_flags;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::module;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::context::PreparedScopedFunction;
+use crate::engine::compiler::parser::diagnostics::source_span;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn register_var_binding(
@@ -210,7 +210,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn current_eval_declaration_mode(&self) -> Result<EvalDeclarationMode, Error> {
+    pub(in crate::engine::compiler) fn current_eval_declaration_mode(
+        &self,
+    ) -> Result<EvalDeclarationMode, Error> {
         let function = self.current_ir();
         let FunctionKind::Eval(kind) = function.kind else {
             return Err(Error::internal(
@@ -302,7 +304,9 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let mode = self.current_eval_declaration_mode()?;
         let function = self.current_ir();
-        if let Some((_, binding)) = function.binding_id_from_scope(function.context.current_scope, name) {
+        if let Some((_, binding)) =
+            function.binding_id_from_scope(function.context.current_scope, name)
+        {
             let binding = &function.bindings[binding.0];
             if matches!(binding.kind, BindingKind::Lexical { .. })
                 && !matches!(binding.storage, BindingStorage::External(_))
@@ -666,7 +670,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn parse_program_function_declaration(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_program_function_declaration(
+        &mut self,
+    ) -> Result<(), Error> {
         let parsed = self.parse_function_definition(true, false)?;
         let (name, declaration_span) = parsed
             .name
@@ -705,7 +711,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn parse_eval_program_function_declaration(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_eval_program_function_declaration(
+        &mut self,
+    ) -> Result<(), Error> {
         let parsed = self.parse_function_definition(true, false)?;
         let (name, declaration_span) = parsed
             .name
@@ -812,7 +820,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn parse_function_body_declaration(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_function_body_declaration(
+        &mut self,
+    ) -> Result<(), Error> {
         let parsed = self.parse_function_definition(true, false)?;
         let (name, declaration_span) = parsed
             .name
@@ -858,7 +868,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn parse_annex_b_function_declaration(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_annex_b_function_declaration(
+        &mut self,
+    ) -> Result<(), Error> {
         let function = self.current_ir();
         let program_body = matches!(function.kind, FunctionKind::Script)
             && function.context.current_scope == function.body_scope
@@ -873,7 +885,9 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub(in crate::engine::compiler) fn parse_program_annex_b_function_declaration(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_program_annex_b_function_declaration(
+        &mut self,
+    ) -> Result<(), Error> {
         let header = self.parse_function_definition_header(true)?;
         let (name, declaration_span) = header
             .name
@@ -952,7 +966,9 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn parse_scoped_function_declaration(&mut self) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_scoped_function_declaration(
+        &mut self,
+    ) -> Result<(), Error> {
         let header = self.parse_function_definition_header(true)?;
         let (name, declaration_span) = header
             .name
@@ -1033,7 +1049,10 @@ impl<'source> Parser<'source> {
         })
     }
 
-    pub(in crate::engine::compiler) fn scoped_function_is_annex_b_eligible(&self, name: &str) -> bool {
+    pub(in crate::engine::compiler) fn scoped_function_is_annex_b_eligible(
+        &self,
+        name: &str,
+    ) -> bool {
         let function = self.current_ir();
         if function.strict {
             return false;
@@ -1268,5 +1287,4 @@ impl<'source> Parser<'source> {
         );
         Ok(IrAnnexBinding::Static(binding))
     }
-
 }

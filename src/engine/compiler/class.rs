@@ -7,7 +7,39 @@
 //! async-generator methods are supported.
 
 use super::function::ParsedFunctionDefinition;
-use super::*;
+use crate::engine::api::error::Error;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::NumberKind;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::Token;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::FunctionId;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::function::FunctionIrOptions;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
+use crate::engine::compiler::model::ir::function::ParentLink;
+use crate::engine::compiler::model::ir::function::SuperCapabilities;
+use crate::engine::compiler::model::scope::ScopeKind;
+use crate::engine::compiler::parser::builder::FunctionBuilder;
+use crate::engine::compiler::parser::context::AnonymousFunctionDefinition;
+use crate::engine::compiler::parser::context::ModuleDeclarationExport;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::IdentifierContext;
+use crate::engine::compiler::parser::diagnostics::lex_error;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
+use crate::engine::compiler::parser::literals::parse_number;
+use crate::engine::compiler::private_reference;
+use crate::engine::value::JsString;
+use crate::engine::value::PrimitiveValue as Value;
+use crate::source::SourceOffset;
+
 use crate::engine::code::bytecode::DefineMethodKind;
 use crate::engine::compiler::lexer::quickjs_simple_lookahead_has_line_terminator;
 

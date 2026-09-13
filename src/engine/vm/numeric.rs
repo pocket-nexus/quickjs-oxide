@@ -167,3 +167,28 @@ pub(in crate::engine::vm) fn bigint_error(error: BigIntError) -> Error {
     };
     Error::new(ErrorKind::Range, message)
 }
+
+/// Addition after both operands have completed ToPrimitive, in order.
+pub(in crate::engine::vm) fn add_primitives(left: Value, right: Value) -> Result<Value, Error> {
+    if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
+        let left = match left {
+            Value::String(value) => value,
+            value => value.to_js_string()?,
+        };
+        let right = match right {
+            Value::String(value) => value,
+            value => value.to_js_string()?,
+        };
+        return Ok(Value::String(left.try_concat(&right).map_err(Error::from)?));
+    }
+    match (to_numeric_primitive(left)?, to_numeric_primitive(right)?) {
+        (NumericValue::BigInt(left), NumericValue::BigInt(right)) => {
+            Ok(Value::BigInt(left.add(&right).map_err(bigint_error)?))
+        }
+        (NumericValue::BigInt(_), NumericValue::Number(_))
+        | (NumericValue::Number(_), NumericValue::BigInt(_)) => Err(mixed_numeric_type_error()),
+        (NumericValue::Number(left), NumericValue::Number(right)) => {
+            Ok(Value::number(left + right))
+        }
+    }
+}

@@ -1,10 +1,13 @@
-use super::{
-    BytecodeFunctionKind, Error, Parser, Punctuator, TokenKind, insert_hoist_fragment,
-    source_offset,
-};
+use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::{Instruction, IteratorCallKind};
+use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::TokenKind;
 use crate::engine::compiler::model::ir::{IrOp, SpannedIrOp};
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::relocation::insert_hoist_fragment;
 use crate::engine::value::{JsString, PrimitiveValue as Value};
 
 impl<'source> Parser<'source> {
@@ -131,7 +134,8 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let base_depth = self
             .current_ir()
-            .context.stack_depth
+            .context
+            .stack_depth
             .checked_sub(1)
             .ok_or_else(|| Error::internal("yield* has no delegate operand"))?;
         let yield_offset = source_offset(yield_span)?;

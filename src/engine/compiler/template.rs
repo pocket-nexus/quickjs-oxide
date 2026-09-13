@@ -5,7 +5,21 @@
 //! template-site data structural until runtime publication, where the two
 //! frozen realm-local Arrays become one stable bytecode constant identity.
 
-use super::*;
+use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::compiler::lexer::LexicalGoal;
+use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::TemplatePartKind;
+use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::value::JsString;
+use crate::engine::value::PrimitiveValue as Value;
 
 impl<'source> Parser<'source> {
     /// Lower an untagged template exactly like QuickJS `js_parse_template`:

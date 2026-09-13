@@ -1,27 +1,27 @@
 //! Call, constructor, super and import expression grammar.
 
-use crate::engine::compiler::source_span;
-use crate::engine::compiler::pseudo_binding::ACTIVE_FUNCTION_LOCAL_NAME;
-use crate::engine::code::bytecode::ApplyKind;
-use crate::engine::compiler::model::ir::CallArguments;
 use crate::engine::api::error::Error;
-use crate::engine::code::function::metadata::EvalKind;
-use crate::engine::compiler::FunctionKind;
-use crate::engine::compiler::pseudo_binding::HOME_OBJECT_LOCAL_NAME;
-use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::code::bytecode::ApplyKind;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::compiler::model::ir::IrConstant;
-use crate::engine::compiler::model::ir::IrOp;
-use crate::engine::value::JsString;
+use crate::engine::code::function::metadata::EvalKind;
 use crate::engine::compiler::MAX_CALL_ARGUMENTS;
-use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
-use crate::engine::compiler::Parser;
 use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Span;
-use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
 use crate::engine::compiler::lexer::TokenKind;
+use crate::engine::compiler::model::ir::CallArguments;
+use crate::engine::compiler::model::ir::IdentifierAccess;
+use crate::engine::compiler::model::ir::IrConstant;
+use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::parser::diagnostics::source_span;
+use crate::engine::compiler::pseudo_binding::ACTIVE_FUNCTION_LOCAL_NAME;
+use crate::engine::compiler::pseudo_binding::HOME_OBJECT_LOCAL_NAME;
+use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
+use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
+use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::source_offset;
 
 impl<'source> Parser<'source> {
     /// Parse the contents of an already-consumed call/construct `(`.
@@ -30,7 +30,9 @@ impl<'source> Parser<'source> {
     /// directly on the operand stack. The first spread converts the fixed
     /// prefix into a fresh dense Array plus a dynamic index; subsequent
     /// values use `DefineArrayEl` and subsequent spreads use `Append`.
-    pub(in crate::engine::compiler) fn parse_call_arguments(&mut self) -> Result<CallArguments, Error> {
+    pub(in crate::engine::compiler) fn parse_call_arguments(
+        &mut self,
+    ) -> Result<CallArguments, Error> {
         let mut argument_count = 0_usize;
         while !self.is_punctuator(Punctuator::RightParen) {
             // QuickJS accepts 65,535 encoded fixed arguments and only rejects
@@ -180,7 +182,10 @@ impl<'source> Parser<'source> {
     /// operand order as QuickJS: lexical `this` and HomeObject are fixed
     /// before a computed key expression begins. Arrows relay both authenticated
     /// pseudo bindings through ordinary closure slots.
-    pub(in crate::engine::compiler) fn parse_super_property(&mut self, super_span: Span) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn parse_super_property(
+        &mut self,
+        super_span: Span,
+    ) -> Result<(), Error> {
         self.advance()?;
         if self.is_punctuator(Punctuator::LeftParen) {
             if !self.current_ir().super_call_allowed {
@@ -356,5 +361,4 @@ impl<'source> Parser<'source> {
         self.anonymous_function_definition = None;
         Ok(())
     }
-
 }

@@ -250,3 +250,5 @@ impl IrOp {
         }
     }
 }
+
+pub(in crate::engine::compiler) mod function;

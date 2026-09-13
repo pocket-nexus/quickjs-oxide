@@ -1,8 +1,13 @@
 //! Own the single IR allocation during parsing and consume temporary state at finish.
+use crate::engine::compiler::model::ir::function::FunctionIr;
+use crate::engine::compiler::model::ir::function::FunctionIrOptions;
+use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
+use crate::engine::compiler::model::ir::function::ParentLink;
 
 use super::context::FunctionParseContext;
 use crate::engine::api::error::Error;
-use crate::engine::compiler::{FunctionIr, FunctionIrOptions, FunctionKind, FunctionSourceInfo, ParentLink};
+
 use std::ops::{Deref, DerefMut};
 
 #[derive(Debug)]
@@ -13,8 +18,10 @@ pub(in crate::engine::compiler) struct FunctionBuilder {
 
 impl FunctionBuilder {
     pub(in crate::engine::compiler) fn new(
-        parent: Option<ParentLink>, kind: FunctionKind,
-        source: FunctionSourceInfo, options: FunctionIrOptions,
+        parent: Option<ParentLink>,
+        kind: FunctionKind,
+        source: FunctionSourceInfo,
+        options: FunctionIrOptions,
     ) -> Result<Self, Error> {
         let ir = FunctionIr::new(parent, kind, source, options)?;
         let context = FunctionParseContext::new(ir.body_scope);
@@ -39,35 +46,42 @@ impl FunctionBuilder {
 // explicit through `context`. These borrows cannot outlive the builder.
 impl Deref for FunctionBuilder {
     type Target = FunctionIr;
-    fn deref(&self) -> &FunctionIr { &self.ir }
+    fn deref(&self) -> &FunctionIr {
+        &self.ir
+    }
 }
 impl DerefMut for FunctionBuilder {
-    fn deref_mut(&mut self) -> &mut FunctionIr { &mut self.ir }
+    fn deref_mut(&mut self) -> &mut FunctionIr {
+        &mut self.ir
+    }
 }
 
-use crate::engine::compiler::AnonymousFunctionDefinition;
 use crate::engine::api::error::ErrorKind;
+use crate::engine::code::bytecode::Instruction;
+use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::ir::IdentifierAccess;
 use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
-use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::compiler::model::ir::IrOp;
-use crate::engine::value::JsString;
-use crate::engine::compiler::Parser;
-use crate::engine::compiler::model::scope::ScopeId;
-use crate::source::SourceOffset;
-use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::ir::SpannedIrOp;
+use crate::engine::compiler::model::scope::ScopeId;
+use crate::engine::compiler::parser::context::AnonymousFunctionDefinition;
+use crate::engine::compiler::parser::context::Parser;
+use crate::engine::compiler::parser::diagnostics::source_offset;
+use crate::engine::compiler::relocation::insert_hoist_fragment;
+use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::compiler::resolution::insert_hoist_fragment;
-use crate::engine::compiler::source_offset;
+use crate::source::SourceOffset;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn emit_value(&mut self, value: Value) -> Result<(), Error> {
         self.emit_value_with_site(value, None)
     }
 
-    pub(in crate::engine::compiler) fn emit_atom_string(&mut self, value: JsString) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn emit_atom_string(
+        &mut self,
+        value: JsString,
+    ) -> Result<(), Error> {
         let index = self.add_constant(IrConstant::AtomString(value))?;
         self.emit(IrOp::PushConstant(index)).map(|_| ())
     }
@@ -87,15 +101,23 @@ impl<'source> Parser<'source> {
             .map(|_| ())
     }
 
-    pub(in crate::engine::compiler) fn add_constant(&mut self, constant: IrConstant) -> Result<u32, Error> {
+    pub(in crate::engine::compiler) fn add_constant(
+        &mut self,
+        constant: IrConstant,
+    ) -> Result<u32, Error> {
         self.current_ir_mut().append_constant(constant)
     }
 
-    pub(in crate::engine::compiler) fn emit_instruction(&mut self, instruction: Instruction) -> Result<usize, Error> {
+    pub(in crate::engine::compiler) fn emit_instruction(
+        &mut self,
+        instruction: Instruction,
+    ) -> Result<usize, Error> {
         self.emit(IrOp::Bytecode(instruction))
     }
 
-    pub(in crate::engine::compiler) fn take_anonymous_function_definition(&mut self) -> Option<AnonymousFunctionDefinition> {
+    pub(in crate::engine::compiler) fn take_anonymous_function_definition(
+        &mut self,
+    ) -> Option<AnonymousFunctionDefinition> {
         self.anonymous_function_definition.take()
     }
 
@@ -230,7 +252,11 @@ impl<'source> Parser<'source> {
         self.emit_with_site(operation, None)
     }
 
-    pub(in crate::engine::compiler) fn emit_at(&mut self, operation: IrOp, site: SourceOffset) -> Result<usize, Error> {
+    pub(in crate::engine::compiler) fn emit_at(
+        &mut self,
+        operation: IrOp,
+        site: SourceOffset,
+    ) -> Result<usize, Error> {
         self.emit_with_site(operation, Some(site))
     }
 
@@ -245,11 +271,13 @@ impl<'source> Parser<'source> {
         function.context.last_identifier_reference = None;
         function.context.last_optional_chain = None;
         function.context.stack_depth = function
-            .context.stack_depth
+            .context
+            .stack_depth
             .checked_sub(popped)
             .ok_or_else(|| Error::internal("compiler produced a stack underflow"))?;
         function.context.stack_depth = function
-            .context.stack_depth
+            .context
+            .stack_depth
             .checked_add(pushed)
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         let index = function.ops.len();
@@ -260,7 +288,11 @@ impl<'source> Parser<'source> {
         Ok(index)
     }
 
-    pub(in crate::engine::compiler) fn patch_jump(&mut self, instruction_index: usize, target: usize) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn patch_jump(
+        &mut self,
+        instruction_index: usize,
+        target: usize,
+    ) -> Result<(), Error> {
         let target = u32::try_from(target)
             .map_err(|_| Error::new(ErrorKind::JsInternal, "out of memory"))?;
         let operation = self
@@ -290,5 +322,48 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn current_ir_mut(&mut self) -> &mut FunctionBuilder {
         &mut self.functions[self.current_function]
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::{FunctionBuilder, FunctionParseContext};
+    use crate::engine::compiler::model::scope::ScopeId;
+    use crate::engine::compiler::parser::context::{BreakControlContext, BreakControlKind, Parser};
+    use crate::engine::value::JsString;
+
+    fn parsed_builder() -> FunctionBuilder {
+        let mut tree = Parser::parse("0;", JsString::from_static("<finish-contract>")).unwrap();
+        let ir = tree.functions.remove(0);
+        let context = FunctionParseContext::new(ir.body_scope);
+        FunctionBuilder { ir, context }
+    }
+
+    #[test]
+    fn unfinished_scope_cannot_enter_resolution() {
+        let mut builder = parsed_builder();
+        builder.context.current_scope = ScopeId(0);
+        assert_eq!(
+            builder.finish().unwrap_err().message(),
+            "function scope roots are malformed"
+        );
+    }
+
+    #[test]
+    fn pending_abrupt_targets_cannot_enter_resolution() {
+        let mut builder = parsed_builder();
+        builder.context.break_controls.push(BreakControlContext {
+            kind: BreakControlKind::Loop,
+            label_name: None,
+            scope: builder.ir.body_scope,
+            entry_depth: 0,
+            drop_count: 0,
+            break_jumps: vec![0],
+            continue_jumps: Vec::new(),
+            finally_gosubs: Vec::new(),
+        });
+        assert_eq!(
+            builder.finish().unwrap_err().message(),
+            "function parser controls are not closed"
+        );
+    }
 }

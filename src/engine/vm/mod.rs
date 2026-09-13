@@ -6,7 +6,6 @@ use crate::engine::code::bytecode::{
 };
 #[cfg(test)]
 use crate::engine::code::bytecode::{DetachedBytecode, TestConstant};
-use crate::engine::code::function::metadata::FunctionMetadata;
 use crate::engine::heap::ContextId;
 use crate::engine::object::ObjectRef;
 
@@ -33,6 +32,34 @@ pub(crate) mod for_in;
 pub(crate) mod generator;
 
 pub(crate) mod native_stack;
+
+#[cfg(feature = "stack-vm")]
+mod array_driver;
+pub(crate) mod bindings;
+mod environment_bindings;
+#[cfg(feature = "stack-vm")]
+mod environment_driver;
+mod eval_bindings;
+#[cfg(feature = "stack-vm")]
+mod eval_driver;
+mod property_keys;
+#[cfg(feature = "stack-vm")]
+mod with_driver;
+
+#[cfg(feature = "stack-vm")]
+mod construct_driver;
+#[cfg(feature = "stack-vm")]
+mod conversion_driver;
+#[cfg(feature = "stack-vm")]
+mod driver;
+#[cfg(feature = "stack-vm")]
+mod execution;
+#[cfg(feature = "stack-vm")]
+mod frame;
+#[cfg(feature = "stack-vm")]
+mod run;
+#[cfg(feature = "stack-vm")]
+mod stack;
 
 pub(crate) mod host_bridge;
 
@@ -66,3 +93,29 @@ mod unwind;
 
 #[cfg(test)]
 mod published_execution_tests;
+
+#[cfg(feature = "stack-vm")]
+mod arguments_driver;
+
+#[cfg(feature = "stack-vm")]
+mod closure_driver;
+
+mod private_bindings;
+
+#[cfg(feature = "stack-vm")]
+mod private_access;
+
+#[cfg(feature = "stack-vm")]
+mod iterator_driver;
+mod iterator_support;
+
+#[cfg(feature = "stack-vm")]
+mod apply_driver;
+
+#[cfg(feature = "stack-vm")]
+mod frame_exit;
+#[cfg(feature = "stack-vm")]
+mod frame_operations;
+
+#[cfg(feature = "stack-vm")]
+mod call_bridge;

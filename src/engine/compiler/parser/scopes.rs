@@ -1,13 +1,13 @@
 //! Parser scope entry, exit and closure emission.
 
 use crate::engine::api::error::Error;
-use std::collections::HashMap;
 use crate::engine::compiler::model::ir::IrOp;
+use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::compiler::model::scope::IrScope;
-use crate::engine::compiler::Parser;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
-use crate::engine::compiler::model::ir::SpannedIrOp;
+use crate::engine::compiler::parser::context::Parser;
+use std::collections::HashMap;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn push_scope(&mut self, kind: ScopeKind) -> ScopeId {
@@ -31,7 +31,10 @@ impl<'source> Parser<'source> {
         scope
     }
 
-    pub(in crate::engine::compiler) fn pop_scope(&mut self, expected: ScopeId) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn pop_scope(
+        &mut self,
+        expected: ScopeId,
+    ) -> Result<(), Error> {
         let function = self.current_ir_mut();
         if function.context.current_scope != expected {
             return Err(Error::internal("parser scope stack is unbalanced"));
@@ -49,7 +52,11 @@ impl<'source> Parser<'source> {
     /// Emit the runtime lexical exits which QuickJS's `close_scopes` inserts
     /// on an abrupt break/continue edge. Parser scope state is intentionally
     /// unchanged because parsing continues along the unreachable linear path.
-    pub(in crate::engine::compiler) fn emit_scope_closures(&mut self, mut scope: ScopeId, stop: ScopeId) -> Result<(), Error> {
+    pub(in crate::engine::compiler) fn emit_scope_closures(
+        &mut self,
+        mut scope: ScopeId,
+        stop: ScopeId,
+    ) -> Result<(), Error> {
         while scope != stop {
             let parent = self
                 .current_ir()
@@ -64,4 +71,5 @@ impl<'source> Parser<'source> {
             scope = parent;
         }
         Ok(())
-    }}
+    }
+}

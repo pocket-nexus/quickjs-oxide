@@ -811,6 +811,12 @@ impl JsString {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
+    /// A single decrement cannot destroy the string or any rope descendants.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn release_keeps_storage_alive(&self) -> bool {
+        Rc::strong_count(&self.0) > 1
+    }
+
     #[must_use]
     pub fn content_hash(&self) -> u32 {
         self.quickjs_hash(0)
@@ -1975,10 +1981,9 @@ impl PrimitiveValue {
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
     pub fn number(value: f64) -> Self {
-        if value == f64::from(value as i32) && !is_negative_zero(value) {
-            Self::Int(value as i32)
-        } else {
-            Self::Float(value)
+        match super::number::operations::Number::compact(value) {
+            super::number::operations::Number::Int(value) => Self::Int(value),
+            super::number::operations::Number::Float(value) => Self::Float(value),
         }
     }
 
