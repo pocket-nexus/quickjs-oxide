@@ -2,22 +2,20 @@
 mod regions;
 use super::{
     Completion,
-    call::{BytecodeCallRequest, CallableExecution, NativeInvokeOutcome},
-    driver::{CallStep, push_frame},
+    driver::CallStep,
     exception::runtime_error_to_vm_error,
     execution::RunningExecution,
-    frame::{FrameEntry, FrameId, OperationTarget, ReturnTarget, ReturnValue},
+    frame::{FrameId, OperationTarget, ReturnTarget},
 };
 use crate::engine::{
     api::{Error, ErrorKind, error::NativeErrorKind, runtime::Runtime},
-    builtins::native::{ArrayIteratorKind, NativeFunctionId, PrimitiveKind},
-    code::function::metadata::FunctionKind,
+    builtins::native::{ArrayIteratorKind, NativeFunctionId},
     heap::{ContextId, ObjectKind, ObjectPayload},
     object::{
-        CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, OrdinaryRead,
-        PropertyKey, WellKnownSymbol, operations::PropertyDefineOutcome,
+        CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
+        WellKnownSymbol, operations::PropertyDefineOutcome,
     },
-    value::{Value, conversion::NativeConversion},
+    value::Value,
 };
 pub(super) use regions::unwind;
 
@@ -31,8 +29,6 @@ enum Stage {
     Iterator,
     NextMethod,
     Next,
-    Result,
-    Done,
     Value,
     ReturnMethod,
     ReturnResult,
@@ -71,22 +67,25 @@ pub(super) struct PendingIterator {
     builtin_probe: bool,
     iterator: Value,
     next: Value,
-    result: Value,
     fast: Option<std::vec::IntoIter<Value>>,
     ready: bool,
     abrupt: Option<Value>,
 }
 
-enum Action {
+/// A query driver consumes these actions in its existing dispatch loop.
+pub(super) enum IteratorAction {
     Read(Value, PropertyKey),
     Call(CallableRef, Value),
-    Reply(Completion),
+    Next(CallableRef, Value),
     Finish,
 }
 
-enum Invocation {
-    Immediate(Completion),
-    Enter(FrameEntry),
+enum Action {
+    Read(Value, PropertyKey),
+    Call(CallableRef, Value),
+    Next(CallableRef, Value),
+    Reply(Completion),
+    Finish,
 }
 
 #[inline(never)]
@@ -137,7 +136,7 @@ pub(super) fn operation(
     operation: Operation,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let mut pending = match operation {
+    let pending = match operation {
         Operation::Start => {
             let mut pending = PendingIterator::new(frame, id, Mode::Start)?;
             pending.iterable = execution.slots.pop(&mut frame.window)?;
@@ -207,7 +206,6 @@ pub(super) fn operation(
         }
     };
     // These entries already have an iterator record; their first action has no prior JS reply.
-    pending.result = Value::Undefined;
     drive(
         runtime,
         execution,
@@ -242,7 +240,7 @@ fn close_unwind(
     )
 }
 
-fn finish(
+pub(super) fn finish(
     execution: &mut RunningExecution,
     mut pending: Box<PendingIterator>,
 ) -> Result<CallStep, Error> {
@@ -353,41 +351,95 @@ fn drive(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     mut pending: Box<PendingIterator>,
-    mut response: Option<Completion>,
+    response: Option<Completion>,
 ) -> Result<CallStep, Error> {
-    loop {
-        let action = match pending.advance(runtime, response.take()) {
-            Ok(action) => action,
-            Err(error) => {
-                response = Some(materialize(runtime, pending.realm, error)?);
-                continue;
-            }
-        };
-        let result = match action {
-            Action::Finish => return finish(execution, pending),
-            Action::Reply(completion) => Ok(Invocation::Immediate(completion)),
-            Action::Read(base, key) => read(runtime, execution, &pending, base, key),
-            Action::Call(callable, receiver) => {
-                invoke(runtime, execution, &pending, callable, receiver)
-            }
-        };
-        match result {
-            Ok(Invocation::Immediate(completion)) => response = Some(completion),
-            Ok(Invocation::Enter(entry)) => {
-                let frame = execution.frames.current_mut(pending.frame)?;
-                if frame.cold.iterator_wait.is_some() {
-                    return Err(Error::internal("iterator overwrote pending operation"));
-                }
-                frame.cold.iterator_wait = Some(pending);
-                push_frame(execution, entry)?;
-                return Ok(CallStep::Entered);
-            }
-            Err(error) => response = Some(materialize(runtime, pending.realm, error)?),
+    match pending.advance_query(runtime, response)? {
+        IteratorAction::Finish => finish(execution, pending),
+        IteratorAction::Read(base, key) => {
+            super::proxy_get_driver::start_iterator_read(runtime, execution, pending, base, key)
         }
+        IteratorAction::Call(callable, receiver) => super::proxy_get_driver::start_iterator_call(
+            runtime, execution, pending, callable, receiver,
+        ),
+        IteratorAction::Next(callable, receiver) => super::proxy_get_driver::start_iterator_next(
+            runtime, execution, pending, receiver, callable,
+        ),
     }
 }
 
 impl PendingIterator {
+    /// Fold pure iterator transitions and local errors without entering a query.
+    pub(super) fn advance_query(
+        &mut self,
+        runtime: &Runtime,
+        mut response: Option<Completion>,
+    ) -> Result<IteratorAction, Error> {
+        loop {
+            let action = match self.advance(runtime, response.take()) {
+                Ok(action) => action,
+                Err(error) => {
+                    response = Some(materialize(runtime, self.realm, error)?);
+                    continue;
+                }
+            };
+            match action {
+                Action::Reply(completion) => response = Some(completion),
+                Action::Finish => return Ok(IteratorAction::Finish),
+                Action::Read(base, key) => {
+                    if matches!(base, Value::Null | Value::Undefined) {
+                        response = Some(materialize(
+                            runtime,
+                            self.realm,
+                            Error::new(
+                                ErrorKind::Type,
+                                if matches!(base, Value::Null) {
+                                    "cannot read property of null"
+                                } else {
+                                    "cannot read property of undefined"
+                                },
+                            ),
+                        )?);
+                        continue;
+                    }
+                    return Ok(IteratorAction::Read(base, key));
+                }
+                Action::Call(callable, receiver) => {
+                    return Ok(IteratorAction::Call(callable, receiver));
+                }
+                Action::Next(callable, receiver) => {
+                    return Ok(IteratorAction::Next(callable, receiver));
+                }
+            }
+        }
+    }
+    pub(super) fn next_query(
+        &mut self,
+        runtime: &Runtime,
+        reply: crate::engine::builtins::ObjectIteratorStep,
+    ) -> Result<IteratorAction, Error> {
+        use crate::engine::builtins::ObjectIteratorStep;
+        match reply {
+            ObjectIteratorStep::Throw(value) => {
+                self.advance_query(runtime, Some(Completion::Throw(value)))
+            }
+            ObjectIteratorStep::Done => {
+                self.done = true;
+                Ok(IteratorAction::Finish)
+            }
+            ObjectIteratorStep::Yield(value) => {
+                self.stage = Stage::Value;
+                self.advance_query(runtime, Some(Completion::Return(value)))
+            }
+        }
+    }
+
+    pub(super) fn frame(&self) -> FrameId {
+        self.frame
+    }
+    pub(super) fn realm(&self) -> ContextId {
+        self.realm
+    }
+
     fn new(frame: &mut super::frame::Frame, id: FrameId, mode: Mode) -> Result<Box<Self>, Error> {
         frame.cold.iterator_generation = frame
             .cold
@@ -409,7 +461,6 @@ impl PendingIterator {
             builtin_probe: false,
             iterator: Value::Undefined,
             next: Value::Undefined,
-            result: Value::Undefined,
             fast: None,
             ready: false,
             abrupt: None,
@@ -433,7 +484,6 @@ impl PendingIterator {
                     return Ok(Action::Finish);
                 }
                 self.abrupt = Some(value);
-                self.result = Value::Undefined;
                 if !matches!(self.mode, Mode::Append) || !self.ready {
                     return Ok(Action::Finish);
                 }
@@ -527,56 +577,11 @@ impl PendingIterator {
                     return Ok(Action::Reply(Completion::Return(value)));
                 }
                 let next = callable(runtime, self.next.clone(), "not a function")?;
-                self.stage = Stage::Result;
-                match runtime
-                    .try_call_native_iterator_next_raw(self.realm, &next, self.iterator.clone())
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    Some(NativeInvokeOutcome::IteratorNextRaw { value, done }) => {
-                        if done {
-                            self.done = true;
-                            return Ok(Action::Finish);
-                        }
-                        self.stage = Stage::Value;
-                        Ok(Action::Reply(Completion::Return(value)))
-                    }
-                    Some(NativeInvokeOutcome::Completion(completion)) => {
-                        Ok(Action::Reply(completion))
-                    }
-                    None => Ok(Action::Call(next, self.iterator.clone())),
-                }
+                Ok(Action::Next(next, self.iterator.clone()))
             }
-            Stage::Result => {
-                if !matches!(value, Value::Object(_)) {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        "iterator must return an object",
-                    ));
-                }
-                self.result = value;
-                self.stage = Stage::Done;
-                Ok(Action::Read(
-                    self.result.clone(),
-                    self.key(runtime, "done")?,
-                ))
-            }
-            Stage::Done => {
-                if runtime
-                    .value_to_boolean(&value)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    self.done = true;
-                    return Ok(Action::Finish);
-                }
-                self.stage = Stage::Value;
-                Ok(Action::Read(
-                    self.result.clone(),
-                    self.key(runtime, "value")?,
-                ))
-            }
+
             Stage::Value => {
                 // The iterator-result object is no longer live when defining the element or closing.
-                self.result = Value::Undefined;
                 if matches!(self.mode, Mode::Next { .. }) {
                     self.yielded = value;
                     return Ok(Action::Finish);
@@ -642,138 +647,4 @@ fn callable(runtime: &Runtime, value: Value, message: &str) -> Result<CallableRe
         }
     }
     Err(Error::new(ErrorKind::Type, message))
-}
-
-fn read(
-    runtime: &Runtime,
-    execution: &RunningExecution,
-    pending: &PendingIterator,
-    base: Value,
-    key: PropertyKey,
-) -> Result<Invocation, Error> {
-    let object = match &base {
-        Value::Object(object) => object.clone(),
-        Value::Null | Value::Undefined => {
-            return Err(Error::new(
-                ErrorKind::Type,
-                if matches!(base, Value::Null) {
-                    "cannot read property of null"
-                } else {
-                    "cannot read property of undefined"
-                },
-            ));
-        }
-        _ => {
-            let kind = match base {
-                Value::Bool(_) => PrimitiveKind::Boolean,
-                Value::Int(_) | Value::Float(_) => PrimitiveKind::Number,
-                Value::BigInt(_) => PrimitiveKind::BigInt,
-                Value::Symbol(_) => PrimitiveKind::Symbol,
-                Value::String(_) => PrimitiveKind::String,
-                _ => unreachable!(),
-            };
-            // Only @@iterator is read on primitive sources; it has no string own property.
-            runtime
-                .primitive_prototype_for_realm(pending.realm, kind)
-                .map_err(runtime_error_to_vm_error)?
-        }
-    };
-    match runtime
-        .prepare_ordinary_read(&object, &key, base.clone())
-        .map_err(runtime_error_to_vm_error)?
-    {
-        OrdinaryRead::Complete(value) => Ok(Invocation::Immediate(Completion::Return(
-            value.unwrap_or(Value::Undefined),
-        ))),
-        OrdinaryRead::Call { getter, receiver } => {
-            invoke(runtime, execution, pending, getter, receiver)
-        }
-        OrdinaryRead::Special { .. } => runtime
-            .internal_get(pending.realm, &object, &key, base)
-            .map(Invocation::Immediate)
-            .map_err(runtime_error_to_vm_error),
-    }
-}
-
-fn invoke(
-    runtime: &Runtime,
-    execution: &RunningExecution,
-    pending: &PendingIterator,
-    original: CallableRef,
-    receiver: Value,
-) -> Result<Invocation, Error> {
-    let mut callable = original.clone();
-    let mut actual_receiver = receiver.clone();
-    let mut arguments = Vec::new();
-    loop {
-        match runtime
-            .bytecode_for_callable(&callable)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            CallableExecution::Bytecode {
-                bytecode,
-                closure_slots,
-            } => {
-                let normal = runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .function_bytecode(bytecode.bytecode_id())
-                    .map_err(|e| Error::internal(e.to_string()))?
-                    .metadata
-                    .function_kind
-                    == FunctionKind::Normal;
-                if !normal {
-                    break;
-                }
-                if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
-                    return runtime
-                        .bytecode_stack_overflow_completion(pending.realm, &bytecode)
-                        .map(Invocation::Immediate)
-                        .map_err(runtime_error_to_vm_error);
-                }
-                return BytecodeCallRequest {
-                    callable,
-                    receiver: actual_receiver,
-                    new_target: Value::Undefined,
-                    arguments,
-                    bytecode,
-                    closure_slots,
-                    caller_realm: pending.realm,
-                    return_to: ReturnTarget {
-                        value_use: ReturnValue::Push,
-                        frame: pending.frame,
-                        tail: false,
-                        operation: Some(OperationTarget::Iterator(pending.generation)),
-                    },
-                }
-                .prepare(runtime)
-                .map(Invocation::Enter);
-            }
-            CallableExecution::Bound {
-                target,
-                this_value,
-                arguments: bound,
-            } => {
-                arguments = match runtime
-                    .concatenate_bound_arguments(pending.realm, &bound, &arguments)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    NativeConversion::Value(arguments) => arguments,
-                    NativeConversion::Throw(value) => {
-                        return Ok(Invocation::Immediate(Completion::Throw(value)));
-                    }
-                };
-                callable = target;
-                actual_receiver = this_value;
-            }
-            _ => break,
-        }
-    }
-    // This selected native/exotic call remains synchronous until its domain migrates in S05.
-    runtime
-        .call_internal(pending.realm, &original, receiver, &[])
-        .map(Invocation::Immediate)
-        .map_err(runtime_error_to_vm_error)
 }

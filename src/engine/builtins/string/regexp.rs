@@ -1,15 +1,26 @@
 //! RegExp-backed String prototype methods.
 
-use super::*;
+#[cfg(feature = "stack-vm")]
+use crate::engine::builtins::native::NativeFunctionId;
+use crate::engine::{
+    api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
+    heap::ContextId,
+    object::{ObjectRef, PropertyKey, WellKnownSymbol},
+    value::{JsString, Value, conversion::NativeConversion},
+    vm::{
+        Completion, ToPrimitiveHint,
+        call::{ConstructorRef, DirectCallTarget, NativeArguments, NativeInvocation},
+    },
+};
 
 #[derive(Clone, Copy)]
-enum StringRegExpProtocol {
+pub(crate) enum StringProtocolKind {
     Match,
     MatchAll,
     Search,
 }
 
-impl StringRegExpProtocol {
+impl StringProtocolKind {
     const fn symbol(self) -> WellKnownSymbol {
         match self {
             Self::Match => WellKnownSymbol::Match,
@@ -42,7 +53,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.call_string_regexp_protocol(realm, invocation, arguments, StringRegExpProtocol::Match)
+        self.call_string_regexp_protocol(realm, invocation, arguments, StringProtocolKind::Match)
     }
 
     pub(crate) fn call_string_prototype_search(
@@ -51,7 +62,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.call_string_regexp_protocol(realm, invocation, arguments, StringRegExpProtocol::Search)
+        self.call_string_regexp_protocol(realm, invocation, arguments, StringProtocolKind::Search)
     }
 
     pub(crate) fn call_string_prototype_match_all(
@@ -60,12 +71,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.call_string_regexp_protocol(
-            realm,
-            invocation,
-            arguments,
-            StringRegExpProtocol::MatchAll,
-        )
+        self.call_string_regexp_protocol(realm, invocation, arguments, StringProtocolKind::MatchAll)
     }
 
     /// Rust port of the `Symbol.match`, `Symbol.matchAll`, and `Symbol.search`
@@ -82,140 +88,391 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
         arguments: &NativeArguments,
-        protocol: StringRegExpProtocol,
+        protocol: StringProtocolKind,
     ) -> Result<Completion, RuntimeError> {
+        finish(
+            self,
+            realm,
+            StringProtocolStep::start(self, realm, protocol, &invocation, arguments)?,
+        )
+    }
+}
+
+impl StringProtocolKind {
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
+        Some(match target {
+            NativeFunctionId::StringPrototypeMatch => Self::Match,
+            NativeFunctionId::StringPrototypeMatchAll => Self::MatchAll,
+            NativeFunctionId::StringPrototypeSearch => Self::Search,
+            _ => return None,
+        })
+    }
+}
+pub(crate) enum StringProtocolStep {
+    Complete(Completion),
+    Read {
+        object: ObjectRef,
+        key: PropertyKey,
+        resume: StringProtocolResume,
+    },
+    Primitive {
+        value: Value,
+        resume: StringProtocolResume,
+    },
+    Call {
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        resume: StringProtocolResume,
+    },
+    Construct {
+        constructor: ConstructorRef,
+        arguments: Vec<Value>,
+        resume: StringProtocolResume,
+    },
+}
+pub(crate) struct StringProtocolResume {
+    realm: ContextId,
+    kind: StringProtocolKind,
+    receiver: Value,
+    pattern: Value,
+    phase: ProtocolPhase,
+}
+enum ProtocolPhase {
+    Method,
+    Match(Value),
+    Flags(Value),
+    FlagsString(Value),
+    Source,
+    Constructed(JsString),
+    ConstructMethod { regexp: ObjectRef, source: JsString },
+    Called,
+}
+impl StringProtocolStep {
+    pub(crate) fn start(
+        runtime: &Runtime,
+        realm: ContextId,
+        kind: StringProtocolKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Self, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(protocol.invocation_invariant()));
+            return Err(RuntimeError::Invariant(kind.invocation_invariant()));
         };
-        if matches!(this_value, Value::Undefined | Value::Null) {
-            return Ok(Completion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "cannot convert to object",
-            )?));
+        if matches!(this_value, Value::Null | Value::Undefined) {
+            return Ok(Self::Complete(Completion::Throw(
+                runtime.new_native_error(
+                    realm,
+                    NativeErrorKind::Type,
+                    "cannot convert to object",
+                )?,
+            )));
         }
         let pattern = arguments
             .readable
             .first()
-            .ok_or(RuntimeError::Invariant(protocol.argument_invariant()))?;
-        let protocol_key = PropertyKey::from(self.well_known_symbol(protocol.symbol()));
-
-        if let Value::Object(pattern_object) = pattern {
-            let method = match self.get_property_in_realm(realm, pattern_object, &protocol_key)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(Completion::Throw(value)),
-            };
-            if matches!(protocol, StringRegExpProtocol::MatchAll)
-                && let Some(value) =
-                    self.check_string_match_all_global(realm, pattern_object, pattern)?
-            {
-                return Ok(Completion::Throw(value));
-            }
-            if !matches!(method, Value::Undefined | Value::Null) {
-                return self.call_string_regexp_method(
-                    realm,
-                    pattern_object.clone(),
-                    method,
-                    std::slice::from_ref(&this_value),
-                );
-            }
-        }
-
-        let source = match self.native_to_js_string(realm, &this_value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            .ok_or(RuntimeError::Invariant(kind.argument_invariant()))?
+            .clone();
+        let key = PropertyKey::from(runtime.well_known_symbol(kind.symbol()));
+        let resume = StringProtocolResume {
+            realm,
+            kind,
+            receiver: this_value.clone(),
+            pattern,
+            phase: ProtocolPhase::Method,
         };
-        let constructed = if matches!(protocol, StringRegExpProtocol::MatchAll) {
-            self.construct_intrinsic_regexp_with_flags(
-                realm,
-                pattern.clone(),
-                Value::String(JsString::from_static("g")),
-            )?
+        if let Value::Object(object) = &resume.pattern {
+            Ok(Self::Read {
+                object: object.clone(),
+                key,
+                resume,
+            })
         } else {
-            self.construct_intrinsic_regexp(realm, pattern.clone())?
-        };
-        let regexp = match constructed {
-            Completion::Return(Value::Object(value)) => value,
-            Completion::Return(_) => {
-                return Err(RuntimeError::Invariant(
-                    "intrinsic RegExp constructor returned a primitive",
-                ));
-            }
-            Completion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let method = match self.get_property_in_realm(realm, &regexp, &protocol_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        self.call_string_regexp_method(realm, regexp, method, &[Value::String(source)])
+            Ok(resume.source())
+        }
     }
-
-    /// Pinned QuickJS `check_regexp_g_flag`, called only after the
-    /// `Symbol.matchAll` method lookup has completed.
-    fn check_string_match_all_global(
-        &self,
-        realm: ContextId,
-        pattern_object: &ObjectRef,
-        pattern: &Value,
-    ) -> Result<Option<Value>, RuntimeError> {
-        let is_regexp = match self.native_is_regexp(realm, pattern)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Some(value)),
-        };
-        if !is_regexp {
-            return Ok(None);
+}
+impl StringProtocolResume {
+    fn source(self) -> StringProtocolStep {
+        StringProtocolStep::Primitive {
+            value: self.receiver.clone(),
+            resume: Self {
+                phase: ProtocolPhase::Source,
+                ..self
+            },
         }
-        let flags_key = self.intern_property_key("flags")?;
-        let flags = match self.get_property_in_realm(realm, pattern_object, &flags_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(Some(value)),
-        };
-        if matches!(flags, Value::Undefined | Value::Null) {
-            return Ok(Some(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "cannot convert to object",
-            )?));
-        }
-        let flags = match self.native_to_js_string(realm, &flags)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Some(value)),
-        };
-        if !flags.utf16_units().any(|unit| unit == u16::from(b'g')) {
-            return Ok(Some(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "regexp must have the 'g' flag",
-            )?));
-        }
-        Ok(None)
     }
-
-    pub(crate) fn call_string_regexp_method(
-        &self,
-        realm: ContextId,
-        receiver: ObjectRef,
+    fn selected(
+        self,
+        runtime: &Runtime,
         method: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<StringProtocolStep, RuntimeError> {
+        if matches!(method, Value::Undefined | Value::Null) {
+            return Ok(self.source());
+        }
+        let receiver = self.pattern.clone();
+        let argument = self.receiver.clone();
+        self.call(runtime, receiver, method, argument)
+    }
+    fn call(
+        self,
+        runtime: &Runtime,
+        receiver: Value,
+        method: Value,
+        argument: Value,
+    ) -> Result<StringProtocolStep, RuntimeError> {
         let callable = match method {
-            Value::Object(object) => self.as_callable(&object)?,
-            Value::Undefined
-            | Value::Null
-            | Value::Bool(_)
-            | Value::Int(_)
-            | Value::Float(_)
-            | Value::BigInt(_)
-            | Value::String(_)
-            | Value::Symbol(_) => None,
+            Value::Object(object) => runtime.as_callable(&object)?,
+            _ => None,
         };
         let Some(callable) = callable else {
-            return Ok(Completion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not a function",
-            )?));
+            return Ok(StringProtocolStep::Complete(Completion::Throw(
+                runtime.new_native_error(self.realm, NativeErrorKind::Type, "not a function")?,
+            )));
         };
-        self.call_internal(realm, &callable, Value::Object(receiver), arguments)
+        let mut arguments = Vec::new();
+        if arguments.try_reserve_exact(1).is_err() {
+            return protocol_oom(runtime, self.realm);
+        }
+        arguments.push(argument);
+        Ok(StringProtocolStep::Call {
+            target: DirectCallTarget::Callable(callable),
+            receiver,
+            arguments,
+            resume: Self {
+                phase: ProtocolPhase::Called,
+                ..self
+            },
+        })
+    }
+    pub(crate) fn resume(
+        self,
+        runtime: &Runtime,
+        result: Completion,
+    ) -> Result<StringProtocolStep, RuntimeError> {
+        let value = match result {
+            Completion::Return(value) => value,
+            Completion::Throw(value) => {
+                return Ok(StringProtocolStep::Complete(Completion::Throw(value)));
+            }
+        };
+        let realm = self.realm;
+        match self.phase {
+            ProtocolPhase::Method => {
+                if matches!(self.kind, StringProtocolKind::MatchAll) {
+                    let Value::Object(object) = &self.pattern else {
+                        return Err(RuntimeError::Invariant(
+                            "String matchAll check lost its pattern object",
+                        ));
+                    };
+                    Ok(StringProtocolStep::Read {
+                        object: object.clone(),
+                        key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)),
+                        resume: Self {
+                            phase: ProtocolPhase::Match(value),
+                            ..self
+                        },
+                    })
+                } else {
+                    self.selected(runtime, value)
+                }
+            }
+            ProtocolPhase::Match(method) => {
+                let Value::Object(object) = &self.pattern else {
+                    return Err(RuntimeError::Invariant(
+                        "String matchAll check lost its pattern object",
+                    ));
+                };
+                let regexp = runtime.is_regexp_from_match(object, &value)?;
+                if regexp {
+                    Ok(StringProtocolStep::Read {
+                        object: object.clone(),
+                        key: runtime.intern_property_key("flags")?,
+                        resume: Self {
+                            phase: ProtocolPhase::Flags(method),
+                            ..self
+                        },
+                    })
+                } else {
+                    Self {
+                        phase: ProtocolPhase::Called,
+                        ..self
+                    }
+                    .selected(runtime, method)
+                }
+            }
+            ProtocolPhase::Flags(method) => {
+                if matches!(value, Value::Undefined | Value::Null) {
+                    return Ok(StringProtocolStep::Complete(Completion::Throw(
+                        runtime.new_native_error(
+                            realm,
+                            NativeErrorKind::Type,
+                            "cannot convert to object",
+                        )?,
+                    )));
+                }
+                Ok(StringProtocolStep::Primitive {
+                    value,
+                    resume: Self {
+                        phase: ProtocolPhase::FlagsString(method),
+                        ..self
+                    },
+                })
+            }
+            ProtocolPhase::FlagsString(method) => {
+                let flags = match protocol_string(runtime, realm, value)? {
+                    NativeConversion::Value(value) => value,
+                    NativeConversion::Throw(value) => {
+                        return Ok(StringProtocolStep::Complete(Completion::Throw(value)));
+                    }
+                };
+                if !flags.utf16_units().any(|unit| unit == u16::from(b'g')) {
+                    return Ok(StringProtocolStep::Complete(Completion::Throw(
+                        runtime.new_native_error(
+                            realm,
+                            NativeErrorKind::Type,
+                            "regexp must have the 'g' flag",
+                        )?,
+                    )));
+                }
+                Self {
+                    phase: ProtocolPhase::Called,
+                    ..self
+                }
+                .selected(runtime, method)
+            }
+            ProtocolPhase::Source => {
+                let source = match protocol_string(runtime, realm, value)? {
+                    NativeConversion::Value(value) => value,
+                    NativeConversion::Throw(value) => {
+                        return Ok(StringProtocolStep::Complete(Completion::Throw(value)));
+                    }
+                };
+                let constructor = ObjectRef::from_borrowed_handle(
+                    runtime.clone(),
+                    runtime.regexp_realm_data(realm)?.constructor,
+                )?;
+                runtime
+                    .as_callable(&constructor)?
+                    .ok_or(RuntimeError::Invariant(
+                        "realm RegExp constructor root was not callable",
+                    ))?;
+                let mut arguments = Vec::new();
+                let all = matches!(self.kind, StringProtocolKind::MatchAll);
+                if arguments
+                    .try_reserve_exact(if all { 2 } else { 1 })
+                    .is_err()
+                {
+                    return protocol_oom(runtime, realm);
+                }
+                arguments.push(self.pattern.clone());
+                if all {
+                    arguments.push(Value::String(JsString::from_static("g")));
+                }
+                Ok(StringProtocolStep::Construct {
+                    constructor: ConstructorRef::from_validated_object(constructor),
+                    arguments,
+                    resume: Self {
+                        phase: ProtocolPhase::Constructed(source),
+                        ..self
+                    },
+                })
+            }
+            ProtocolPhase::Constructed(source) => {
+                let Value::Object(regexp) = value else {
+                    return Err(RuntimeError::Invariant(
+                        "intrinsic RegExp constructor returned a primitive",
+                    ));
+                };
+                Ok(StringProtocolStep::Read {
+                    object: regexp.clone(),
+                    key: PropertyKey::from(runtime.well_known_symbol(self.kind.symbol())),
+                    resume: Self {
+                        phase: ProtocolPhase::ConstructMethod { regexp, source },
+                        ..self
+                    },
+                })
+            }
+            ProtocolPhase::ConstructMethod { regexp, source } => Self {
+                phase: ProtocolPhase::Called,
+                ..self
+            }
+            .call(runtime, Value::Object(regexp), value, Value::String(source)),
+            ProtocolPhase::Called => Ok(StringProtocolStep::Complete(Completion::Return(value))),
+        }
+    }
+}
+fn protocol_string(
+    runtime: &Runtime,
+    realm: ContextId,
+    value: Value,
+) -> Result<NativeConversion<JsString>, RuntimeError> {
+    if matches!(value, Value::Object(_)) {
+        return Err(RuntimeError::Invariant(
+            "String protocol conversion returned an object",
+        ));
+    }
+    runtime.native_to_js_string(realm, &value)
+}
+fn protocol_oom(runtime: &Runtime, realm: ContextId) -> Result<StringProtocolStep, RuntimeError> {
+    Ok(StringProtocolStep::Complete(Completion::Throw(
+        runtime.new_native_error(realm, NativeErrorKind::Internal, "out of memory")?,
+    )))
+}
+fn finish(
+    runtime: &Runtime,
+    realm: ContextId,
+    mut step: StringProtocolStep,
+) -> Result<Completion, RuntimeError> {
+    loop {
+        step = match step {
+            StringProtocolStep::Complete(result) => return Ok(result),
+            StringProtocolStep::Read {
+                object,
+                key,
+                resume,
+            } => resume.resume(
+                runtime,
+                runtime.get_property_in_realm(realm, &object, &key)?,
+            )?,
+            StringProtocolStep::Primitive { value, resume } => {
+                let result = if matches!(value, Value::Object(_)) {
+                    runtime.to_primitive(realm, value, ToPrimitiveHint::String)?
+                } else {
+                    Completion::Return(value)
+                };
+                resume.resume(runtime, result)?
+            }
+            StringProtocolStep::Call {
+                target,
+                receiver,
+                arguments,
+                resume,
+            } => {
+                let DirectCallTarget::Callable(callable) = target else {
+                    return Err(RuntimeError::Invariant(
+                        "String protocol requested an invalid call target",
+                    ));
+                };
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                )?
+            }
+            StringProtocolStep::Construct {
+                constructor,
+                arguments,
+                resume,
+            } => resume.resume(
+                runtime,
+                runtime.construct_constructor_internal(
+                    realm,
+                    &constructor,
+                    &constructor,
+                    &arguments,
+                )?,
+            )?,
+        };
     }
 }

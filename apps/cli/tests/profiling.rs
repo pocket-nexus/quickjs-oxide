@@ -90,7 +90,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         "-d",
         "--profile-json",
         "-e",
-        // Keep an explicit unmigrated operation in this mixed-route probe.
+        // InstanceOf is owned; print retains the S07 host-call boundary.
         "[] instanceof Array; print((function(x){return x+1})(41))",
     ]);
     assert!(output.status.success());
@@ -103,13 +103,17 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     if cfg!(feature = "stack-vm") {
         assert!(costs.contains("\"execution_path\":\"owned-stack-with-legacy-bridge\""));
         assert!(!costs.contains("\"owned_instructions\":0"));
-        assert!(!costs.contains("\"owned_bridge_exits\":0"));
+        assert!(costs.contains("\"owned_bridge_exits\":0"));
+        assert!(costs.contains("\"legacy_dispatches\":0"));
+        assert!(costs.contains("\"owned_sync_call_bridges\":1,"));
         assert!(!costs.contains("\"frames_pushed\":0"));
         assert!(!costs.contains("\"slot_capacity_growths\":0"));
     } else {
         assert!(costs.contains("\"execution_path\":\"legacy\""));
         assert!(costs.contains("\"owned_instructions\":0"));
         assert!(costs.contains("\"owned_bridge_exits\":0"));
+        assert!(!costs.contains("\"legacy_dispatches\":0"));
+        assert!(costs.contains("\"owned_sync_call_bridges\":0,"));
         assert!(costs.contains("\"frames_pushed\":0"));
         assert!(costs.contains("\"slot_capacity_growths\":0"));
     }
@@ -123,7 +127,6 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     assert!(!costs.contains("\"parameter_value_copies\":0"));
     assert!(costs.contains("\"lowered_functions\":2"));
     assert!(costs.contains("\"phase_totals_additive\":false"));
-    assert!(!costs.contains("\"legacy_dispatches\":0"));
     let failed = run(&["-d", "--profile-json", "-e", "let = ;"]);
     assert!(!failed.status.success());
     let report = String::from_utf8(failed.stderr).unwrap();

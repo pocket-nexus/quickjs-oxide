@@ -21,6 +21,7 @@ pub(super) enum BindingSource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RunExit {
+    Pure(super::pure_operations::PureOperation),
     ApplyEval(u16),
     Apply(crate::engine::code::bytecode::ApplyKind),
     Eval {
@@ -94,6 +95,20 @@ pub(super) enum RunExit {
         access: super::private_access::Access,
     },
     StrictEquality(bool),
+    Numeric(super::numeric::operation::NumericKind),
+    ForIn(bool),
+    LogicalNot,
+    CopyData {
+        target: usize,
+        source: usize,
+        excluded: Option<usize>,
+    },
+    ReplaceBinding {
+        source: BindingSource,
+        index: u16,
+        keep: bool,
+        uninitialized: bool,
+    },
     ReleaseOperand {
         keep_top: bool,
     },
@@ -243,6 +258,27 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::InitializeDerivedLocal(index) => {
                 return Ok(RunExit::InitializeDerived(*index));
             }
+            Instruction::CopyDataProperties => {
+                return Ok(RunExit::CopyData {
+                    target: 1,
+                    source: 0,
+                    excluded: None,
+                });
+            }
+            Instruction::CopyDataPropertiesExcluded {
+                target_depth,
+                source_depth,
+                excluded_depth,
+            } => {
+                return Ok(RunExit::CopyData {
+                    target: usize::from(*target_depth),
+                    source: usize::from(*source_depth),
+                    excluded: Some(usize::from(*excluded_depth)),
+                });
+            }
+            Instruction::InstanceOf => {
+                return Ok(RunExit::Predicate(super::predicate_driver::Kind::Instance));
+            }
             Instruction::In => return Ok(RunExit::Predicate(super::predicate_driver::Kind::Has)),
             Instruction::Delete => {
                 return Ok(RunExit::Predicate(super::predicate_driver::Kind::Delete));
@@ -265,7 +301,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::ReturnDerived(index) => return Ok(RunExit::ReturnDerived(*index)),
-            Instruction::CheckCtor => !matches!(frame.cold.input.new_target, Value::Undefined),
+            Instruction::CheckCtor if !matches!(frame.cold.input.new_target, Value::Undefined) => {
+                true
+            }
+            Instruction::CheckCtor => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::ConstructorWithoutNew,
+                ));
+            }
             Instruction::PushActiveFunction => {
                 slots.push(window, Value::Object(frame.cold.function.clone()))?;
                 #[cfg(feature = "profiling")]
@@ -416,6 +459,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     },
                 ));
             }
+            Instruction::ForInStart => return Ok(RunExit::ForIn(false)),
+            Instruction::ForInNext => return Ok(RunExit::ForIn(true)),
             Instruction::ForOfStart
             | Instruction::ForOfNext(_)
             | Instruction::IteratorClose
@@ -528,6 +573,51 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 return Ok(RunExit::ClassInitializer(
                     super::construct_driver::InitializerKind::Block,
                 ));
+            }
+            Instruction::PushAtomValueIndex(value) => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::AtomValue(*value),
+                ));
+            }
+            Instruction::RegExp(index) => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::RegExp(*index),
+                ));
+            }
+            Instruction::ThrowDeleteSuper => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::DeleteSuper,
+                ));
+            }
+            Instruction::InitializeVarRef(index) | Instruction::InitializeDerivedVarRef(index) => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::InitializeClosure {
+                        index: *index,
+                        derived: matches!(instruction, Instruction::InitializeDerivedVarRef(_)),
+                    },
+                ));
+            }
+            Instruction::SetProto => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::SetPrototype,
+                ));
+            }
+            Instruction::TypeOf
+            | Instruction::IsUndefinedOrNull
+            | Instruction::IsUndefined
+            | Instruction::IsNull
+            | Instruction::TypeOfIsUndefined
+            | Instruction::TypeOfIsFunction => {
+                use super::pure_operations::PureOperation as P;
+                let kind = match instruction {
+                    Instruction::TypeOf => P::TypeOf,
+                    Instruction::IsUndefinedOrNull => P::IsUndefinedOrNull,
+                    Instruction::IsUndefined => P::IsUndefined,
+                    Instruction::IsNull => P::IsNull,
+                    Instruction::TypeOfIsUndefined => P::TypeOfIsUndefined,
+                    _ => P::TypeOfIsFunction,
+                };
+                return Ok(RunExit::Pure(kind));
             }
             Instruction::Nop | Instruction::MarkSuperCall => true,
             Instruction::PushI32(number) => {
@@ -743,7 +833,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         release_displaced(runtime, old)?;
                     }
                 }
-                ready
+                if !ready {
+                    return Ok(RunExit::ReplaceBinding {
+                        source: BindingSource::Local,
+                        index: *index,
+                        keep: false,
+                        uninitialized: true,
+                    });
+                }
+                true
             }
             Instruction::InitializeLocal(index) => {
                 let definition = frame.executable.local_definitions[usize::from(*index)];
@@ -774,6 +872,19 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         release_displaced(runtime, old)?;
                     }
                 }
+                if !ready
+                    && definition.is_lexical
+                    && definition.kind
+                        == crate::engine::code::function::metadata::ClosureVariableKind::Normal
+                    && matches!(slots.local(window, *index)?, FrameBinding::Direct(_))
+                {
+                    return Ok(RunExit::ReplaceBinding {
+                        source: BindingSource::Local,
+                        index: *index,
+                        keep: false,
+                        uninitialized: false,
+                    });
+                }
                 ready
             }
             Instruction::PutLocalCheck(index) | Instruction::SetLocalCheck(index)
@@ -798,6 +909,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     let old = slots.replace_local(window, *index, FrameBinding::Direct(next))?;
                     release_displaced(runtime, old)?;
                     true
+                } else if matches!(slots.local(window, *index)?, FrameBinding::Direct(_)) {
+                    return Ok(RunExit::ReplaceBinding {
+                        source: BindingSource::Local,
+                        index: *index,
+                        keep: matches!(
+                            instruction,
+                            Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
+                        ),
+                        uninitialized: false,
+                    });
                 } else {
                     false
                 }
@@ -823,6 +944,13 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         slots.replace_parameter(window, *index, FrameBinding::Direct(next))?;
                     release_displaced(runtime, old)?;
                     true
+                } else if matches!(slots.parameter(window, *index)?, FrameBinding::Direct(_)) {
+                    return Ok(RunExit::ReplaceBinding {
+                        source: BindingSource::Argument,
+                        index: *index,
+                        keep: matches!(instruction, Instruction::SetArg(_)),
+                        uninitialized: false,
+                    });
                 } else {
                     false
                 }
@@ -926,6 +1054,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::Eq => binary(slots, window, |a, b| Value::Bool(a.float() == b.float()))?,
             Instruction::Neq => binary(slots, window, |a, b| Value::Bool(a.float() != b.float()))?,
+            Instruction::Not => return Ok(RunExit::LogicalNot),
             Instruction::Neg
             | Instruction::Plus
             | Instruction::BitNot
@@ -966,6 +1095,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     next_pc = *target as usize;
                 }
                 true
+            }
+            Instruction::IfTrue(target) | Instruction::IfFalse(target) => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::Branch {
+                        target: *target,
+                        when: matches!(instruction, Instruction::IfTrue(_)),
+                    },
+                ));
             }
             Instruction::Catch(target) => return Ok(RunExit::Catch(*target)),
             Instruction::DropCatch => return Ok(RunExit::DropCatch),
@@ -1012,6 +1149,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             _ => false,
         };
         if !handled {
+            if let Some(kind) = super::numeric::operation::NumericKind::for_instruction(instruction)
+            {
+                return Ok(RunExit::Numeric(kind));
+            }
             return Ok(RunExit::Bridge);
         }
         #[cfg(feature = "profiling")]
@@ -1085,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn child_legacy_throw_propagates_through_owned_parent_once() {
+    fn child_throw_propagates_through_owned_parent_once() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let profile = CostProfile::start();
@@ -1093,8 +1234,8 @@ mod tests {
         assert_eq!(result, Value::Int(421));
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3, "{costs:?}");
-        assert!(costs.owned_bridge_exits > 0, "{costs:?}");
-        assert!(costs.legacy_dispatches > 0, "{costs:?}");
+        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
+        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -1124,6 +1265,36 @@ mod tests {
             costs.legacy_dispatches, 0,
             "the measured call must finish entirely in the owned core"
         );
+    }
+
+    #[test]
+    fn last_object_binding_replacement_releases_in_owned_cold_operations() {
+        for source in [
+            "(function(){var x=new ArrayBuffer(16);x=42;return x})",
+            "(function(){var x=new ArrayBuffer(16);return x=42})",
+            "(function(a){a=new ArrayBuffer(16);a=42;return a})",
+            "(function(a){a=new ArrayBuffer(16);return a=42})",
+            "(function(){for(var i=0;i<2;i++){let x=new ArrayBuffer(16);if(i===1)return 42}})",
+            "(function(){var x={child:new ArrayBuffer(16)};x=42;return x})",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let Value::Object(function) = context.eval(source).unwrap() else {
+                panic!("function expected")
+            };
+            let callable = runtime.as_callable(&function).unwrap().unwrap();
+            let profile = CostProfile::start();
+            assert_eq!(
+                context.call(&callable, Value::Undefined, &[]).unwrap(),
+                Value::Int(42),
+                "{source}"
+            );
+            let costs = profile.snapshot();
+            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 
     #[test]
@@ -1271,7 +1442,7 @@ mod tests {
     }
 
     #[test]
-    fn cold_conversion_handoff_preserves_operands_pc_and_one_callback() {
+    fn owned_conversion_preserves_operands_pc_and_one_callback() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let profile = CostProfile::start();
@@ -1279,8 +1450,8 @@ mod tests {
         assert_eq!(result, Value::Int(91));
         let costs = profile.snapshot();
         assert!(costs.owned_instructions > 0);
-        assert!(costs.owned_bridge_exits > 0);
-        assert!(costs.legacy_dispatches > 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
+        assert_eq!(costs.legacy_dispatches, 0);
     }
 }
 

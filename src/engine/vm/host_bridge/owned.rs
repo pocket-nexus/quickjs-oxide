@@ -75,9 +75,6 @@ fn prepare(
         executable,
         cold: Box::new(FrameCold {
             regions: Vec::new(),
-            constructor_wait: None,
-            class_wait: None,
-            has_binding_wait: None,
             iterator_wait: None,
             property_wait: None,
             property_generation: 0,
@@ -125,9 +122,6 @@ pub(in crate::engine::vm) fn execute_frame(
     } = entry;
     let FrameCold {
         regions,
-        constructor_wait,
-        class_wait,
-        has_binding_wait,
         iterator_wait,
         iterator_generation: _,
         property_wait,
@@ -147,9 +141,6 @@ pub(in crate::engine::vm) fn execute_frame(
     } = *cold;
     if property_wait.is_some()
         || conversion.is_some()
-        || constructor_wait.is_some()
-        || class_wait.is_some()
-        || has_binding_wait.is_some()
         || iterator_wait.is_some()
         || eval_arguments.is_some()
     {

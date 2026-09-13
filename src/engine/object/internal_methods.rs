@@ -12,7 +12,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::object::ordinary_storage::SpecialKind;
 
-use crate::engine::atom::{Atom, PropertyKeyKind};
+use crate::engine::atom::PropertyKeyKind;
 use crate::engine::builtins::CanonicalNumericIndex;
 use crate::engine::heap::{ContextId, ObjectPayload, ProxyData};
 use crate::engine::object::operations::{
@@ -29,7 +29,6 @@ use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarget};
-use std::collections::HashSet;
 
 mod boolean;
 mod prototype;
@@ -45,11 +44,15 @@ pub(crate) use define::ProxyDefineStep;
 pub(crate) use set::ProxySetResume;
 pub(crate) use set::ProxySetStep;
 mod call;
+mod construct;
 #[cfg(feature = "stack-vm")]
 pub(crate) use call::ProxyCallResume;
 pub(crate) use call::ProxyCallStep;
+#[cfg(feature = "stack-vm")]
+pub(crate) use construct::{ProxyConstructResume, ProxyConstructStep};
 mod get;
 mod method;
+mod own_keys;
 mod own_property;
 #[cfg(feature = "stack-vm")]
 pub(crate) use boolean::ProxyBooleanResume;
@@ -59,6 +62,8 @@ pub(crate) use get::ProxyGetResume;
 use get::ProxyGetStep;
 #[cfg(feature = "stack-vm")]
 pub(crate) use get::ProxyGetStep as OwnedProxyGetStep;
+#[cfg(feature = "stack-vm")]
+pub(crate) use own_keys::{KeysResume, KeysStep};
 #[cfg(feature = "stack-vm")]
 pub(crate) use own_property::ProxyOwnResume;
 pub(crate) use own_property::ProxyOwnStep;
@@ -74,11 +79,6 @@ struct RootedProxy {
 pub(crate) enum PreparedHas {
     Complete(bool),
     Proxy(ObjectRef),
-}
-
-struct ProxyOwnKeys {
-    keys: Vec<PropertyKey>,
-    key_atoms: HashSet<Atom>,
 }
 
 struct ProxyMethodStackGuard {
@@ -442,48 +442,6 @@ impl Runtime {
             PropertyKeyKind::Private => Err(RuntimeError::Invariant(
                 "private key escaped into an ECMAScript internal method",
             )),
-        }
-    }
-
-    /// Pinned QuickJS `get_proxy_method`.
-    ///
-    /// The snapshot and roots are established before handler property access.
-    /// `null`, like `undefined`, selects the target fallback in this release.
-    fn proxy_method(
-        &self,
-        realm: ContextId,
-        proxy: &ObjectRef,
-        name: &'static str,
-    ) -> Result<NativeConversion<(RootedProxy, Option<DirectCallTarget>)>, RuntimeError> {
-        let mut step = method::MethodStep::start(self, realm, proxy.clone(), name)?;
-        loop {
-            step = match step {
-                method::MethodStep::Complete(result) => return Ok(result),
-                method::MethodStep::Read {
-                    object,
-                    key,
-                    receiver,
-                    resume,
-                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
-            };
-        }
-    }
-
-    fn call_proxy_trap(
-        &self,
-        realm: ContextId,
-        rooted: &RootedProxy,
-        trap: &DirectCallTarget,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        let this_value = Value::Object(rooted.handler.clone());
-        match trap {
-            DirectCallTarget::Callable(trap) => {
-                self.call_internal(realm, trap, this_value, arguments)
-            }
-            DirectCallTarget::NonCallableProxy(trap) => {
-                self.call_proxy(realm, trap, this_value, arguments)
-            }
         }
     }
 
@@ -1234,129 +1192,11 @@ impl Runtime {
         let Some(_) = self.proxy_snapshot_if_any(object)? else {
             return self.own_property_keys(object).map(NativeConversion::Value);
         };
-        let (rooted, method) = match self.proxy_method(realm, object, "ownKeys")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_own_property_keys(realm, &rooted.target);
-        };
-        let result = match self.call_proxy_trap(
+        own_keys::finish(
+            self,
             realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone())],
-        )? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let ProxyOwnKeys {
-            keys,
-            mut key_atoms,
-        } = match self.proxy_own_keys_list(realm, result)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let extensible = match self.internal_is_extensible(realm, &rooted.target)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if self.proxy_is_revoked(&rooted.proxy)? {
-            return self.proxy_revoked_throw(realm);
-        }
-        let target_keys = match self.internal_own_property_keys(realm, &rooted.target)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        for target_key in target_keys {
-            if self.proxy_is_revoked(&rooted.proxy)? {
-                return self.proxy_revoked_throw(realm);
-            }
-            let descriptor =
-                match self.internal_get_own_property(realm, &rooted.target, &target_key)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-                };
-            let Some(descriptor) = descriptor else {
-                continue;
-            };
-            if !extensible {
-                if !key_atoms.remove(&target_key.atom()) {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "proxy: target property must be present in proxy ownKeys",
-                    )?));
-                }
-            } else if !descriptor.configurable() && !key_atoms.contains(&target_key.atom()) {
-                return Ok(NativeConversion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "proxy: target property must be present in proxy ownKeys",
-                )?));
-            }
-        }
-        if !extensible && !key_atoms.is_empty() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "proxy: property not present in target were returned by non extensible proxy",
-            )?));
-        }
-        Ok(NativeConversion::Value(keys))
-    }
-
-    fn proxy_own_keys_list(
-        &self,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<NativeConversion<ProxyOwnKeys>, RuntimeError> {
-        let length_key = self.intern_property_key("length")?;
-        let length = match self.get_value_property_in_realm(realm, value.clone(), &length_key)? {
-            Completion::Return(value) => {
-                let number = match self.native_to_number(realm, &value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(NativeConversion::Throw(value));
-                    }
-                };
-                Self::to_uint32_number(number)
-            }
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let capacity = usize::try_from(length)
-            .map_err(|_| RuntimeError::Invariant("Proxy ownKeys length does not fit usize"))?;
-        let mut keys = Vec::with_capacity(capacity);
-        for index in 0..length {
-            let key = self.intern_property_key(&index.to_string())?;
-            let value = match self.get_value_property_in_realm(realm, value.clone(), &key)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            };
-            let key = match value {
-                Value::String(value) => self.intern_property_key_js_string(&value)?,
-                Value::Symbol(value) => PropertyKey::from(value),
-                _ => {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "proxy: properties must be strings or symbols",
-                    )?));
-                }
-            };
-            keys.push(key);
-        }
-        let mut key_atoms = HashSet::with_capacity(keys.len());
-        for key in &keys {
-            if !key_atoms.insert(key.atom()) {
-                return Ok(NativeConversion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "proxy: duplicate property",
-                )?));
-            }
-        }
-        Ok(NativeConversion::Value(ProxyOwnKeys { keys, key_atoms }))
+            own_keys::KeysStep::start(self, realm, object.clone())?,
+        )
     }
 
     pub(crate) fn call_proxy(
@@ -1412,103 +1252,17 @@ impl Runtime {
         new_target: ConstructNewTarget,
         arguments: &[Value],
     ) -> Result<Completion, RuntimeError> {
-        if self.proxy_method_stack_would_overflow() {
-            return Ok(Completion::Throw(self.new_native_error(
+        construct::finish(
+            self,
+            realm,
+            construct::ProxyConstructStep::start(
+                self,
                 realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
-        }
-        let _stack_guard = ProxyMethodStackGuard::enter(self);
-        let key = self.intern_property_key("construct")?;
-        let chain_limit = self.proxy_method_chain_limit("construct");
-        let mut current = proxy.clone();
-        let mut depth = 0_usize;
-
-        loop {
-            if chain_limit.is_some_and(|limit| depth == limit) {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Internal,
-                    "stack overflow",
-                )?));
-            }
-            let data =
-                self.proxy_snapshot_if_any(current.as_object())?
-                    .ok_or(RuntimeError::Invariant(
-                        "Proxy construct dispatch reached an ordinary object",
-                    ))?;
-            if data.is_revoked {
-                return match self.proxy_revoked_throw(realm)? {
-                    NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
-                    NativeConversion::Value(()) => Err(RuntimeError::Invariant(
-                        "revoked Proxy construct returned a value",
-                    )),
-                };
-            }
-            let rooted = self.root_proxy_snapshot(current.as_object(), data)?;
-            let method = match self.internal_get(
-                realm,
-                &rooted.handler,
-                &key,
-                Value::Object(rooted.handler.clone()),
-            )? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(Completion::Throw(value)),
-            };
-
-            // Pinned js_proxy_call_constructor checks this layer's immediate
-            // target after the observable trap Get and before a missing-trap
-            // fallback reaches another Proxy layer.
-            let target =
-                match self.constructor_from_value(realm, Value::Object(rooted.target.clone()))? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-                };
-            if matches!(method, Value::Undefined | Value::Null) {
-                if self.is_proxy_object(target.as_object())? {
-                    current = target;
-                    depth = depth.saturating_add(1);
-                    continue;
-                }
-                return self
-                    .construct_internal_with_new_target(realm, &target, new_target, arguments);
-            }
-
-            // Upstream allocates the trap argv Array before JS_Call validates
-            // trap callability, so keep the raw method until this point.
-            let argument_array = self.new_array_from_values(realm, arguments.to_vec())?;
-            let method = match self.direct_call_target_from_value(method) {
-                Ok(method) => method,
-                Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
-                    return Ok(Completion::Throw(self.new_native_error_from_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        &error,
-                    )?));
-                }
-                Err(error) => return Err(error),
-            };
-            let result = self.call_proxy_trap(
-                realm,
-                &rooted,
-                &method,
-                &[
-                    Value::Object(rooted.target.clone()),
-                    Value::Object(argument_array),
-                    new_target.value(),
-                ],
-            )?;
-            return match result {
-                Completion::Return(value @ Value::Object(_)) => Ok(Completion::Return(value)),
-                Completion::Return(_) => Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not an object",
-                )?)),
-                Completion::Throw(value) => Ok(Completion::Throw(value)),
-            };
-        }
+                proxy.clone(),
+                new_target,
+                arguments.to_vec(),
+            )?,
+        )
     }
 }
 

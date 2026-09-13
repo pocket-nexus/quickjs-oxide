@@ -104,7 +104,7 @@ impl Runtime {
     /// JavaScript frame as equally expensive. Recursive execution is proven on
     /// a two-MiB host thread stack, including enough margin to materialize and
     /// catch the overflow error.
-    fn host_stack_would_overflow(&self) -> bool {
+    pub(super) fn host_stack_would_overflow(&self) -> bool {
         let current = current_host_stack_address();
         let active_frames = !self.0.state.borrow().active_frames.is_empty();
         let active_chain = active_frames
@@ -265,6 +265,9 @@ impl Runtime {
             .active_frames
             .iter()
             .filter_map(|frame| {
+                if frame.native_continuation {
+                    return None;
+                }
                 let ActiveFrameKind::Native { target, .. } = frame.kind else {
                     return None;
                 };
@@ -455,6 +458,9 @@ impl Runtime {
             .active_frames
             .iter()
             .filter(|frame| {
+                if frame.native_continuation {
+                    return false;
+                }
                 let ActiveFrameKind::Native { target, .. } = frame.kind else {
                     return false;
                 };

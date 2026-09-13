@@ -32,14 +32,24 @@ impl Runtime {
             realm,
             object,
             key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
+            &Self::public_class_field_descriptor(value),
         )?;
+        Self::finish_public_class_field_definition(outcome)
+    }
+
+    pub(crate) fn public_class_field_descriptor(value: Value) -> OrdinaryPropertyDescriptor {
+        OrdinaryPropertyDescriptor {
+            value: DescriptorField::Present(value),
+            writable: DescriptorField::Present(true),
+            enumerable: DescriptorField::Present(true),
+            configurable: DescriptorField::Present(true),
+            ..OrdinaryPropertyDescriptor::new()
+        }
+    }
+
+    pub(crate) fn finish_public_class_field_definition(
+        outcome: NativeConversion<InternalDefineResult>,
+    ) -> Result<PropertyDefineOutcome, RuntimeError> {
         match outcome {
             NativeConversion::Value(InternalDefineResult::Defined) => {
                 Ok(PropertyDefineOutcome::Defined(true))

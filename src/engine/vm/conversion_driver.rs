@@ -453,7 +453,7 @@ fn invoke(
     };
     let is_proxy = matches!(classification, CallableExecution::Proxy);
     let is_owned_native = matches!(&classification, CallableExecution::Native { target, .. }
-        if crate::engine::builtins::BuiltinPrototypeKind::for_target(*target).is_some());
+        if crate::engine::builtins::continuation::NativeOperation::for_target(*target).is_some());
     if is_proxy || is_owned_native {
         let wait = ConversionWait {
             finish,

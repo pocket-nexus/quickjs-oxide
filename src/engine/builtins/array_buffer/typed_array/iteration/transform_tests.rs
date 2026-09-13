@@ -624,3 +624,61 @@ fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
         "TypedArray map species TypeError did not use the method defining realm",
     );
 }
+
+#[test]
+fn pending_map_element_owns_source_target_callback_and_conversion_input() {
+    let runtime = Runtime::new();
+    let weak = std::rc::Rc::downgrade(&runtime.0);
+    let mut context = runtime.new_context();
+    let source = context.eval("new Uint8Array(2)").unwrap();
+    let mapped = context.eval("new Uint8Array(2)").unwrap();
+    let callback = context.eval("(function(x){return x})").unwrap();
+    let ids = [&source, &mapped, &callback].map(|value| match value {
+        Value::Object(object) => object.object_id(),
+        _ => panic!("expected object"),
+    });
+    let arguments = NativeArguments {
+        actual_arg_count: 1,
+        readable: vec![callback],
+    };
+    let invocation = NativeInvocation::Call { this_value: source };
+    let TypedIterationStep::Species { resume, .. } = TypedIterationStep::start(
+        &runtime,
+        context.realm,
+        ArrayIterationKind::Map,
+        &invocation,
+        &arguments,
+    )
+    .unwrap() else {
+        panic!("expected species request")
+    };
+    drop(invocation);
+    drop(arguments);
+    let Value::Object(mapped) = mapped else {
+        unreachable!()
+    };
+    let TypedIterationStep::Call { resume, .. } = resume
+        .species(&runtime, NativeConversion::Value(mapped))
+        .unwrap()
+    else {
+        panic!("expected callback")
+    };
+    let conversion = runtime.new_object(None).unwrap();
+    let conversion_id = conversion.object_id();
+    let step = resume
+        .resume(&runtime, Completion::Return(Value::Object(conversion)))
+        .unwrap();
+    assert!(matches!(step, TypedIterationStep::Element { .. }));
+    runtime.run_gc().unwrap();
+    for id in ids.into_iter().chain([conversion_id]) {
+        assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+    }
+    drop(step);
+    runtime.run_gc().unwrap();
+    for id in ids.into_iter().chain([conversion_id]) {
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+    }
+    drop(context);
+    drop(runtime);
+    assert!(weak.upgrade().is_none());
+}

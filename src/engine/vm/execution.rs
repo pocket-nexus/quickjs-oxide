@@ -211,6 +211,25 @@ pub(super) struct RunningExecution {
     _guard: ExecutionGuard,
 }
 
+impl Drop for RunningExecution {
+    fn drop(&mut self) {
+        drop(self.pending_call.take());
+        drop(self.pending.take());
+        while let Some(frame) = self.frames.pop_current() {
+            // Clear this child's captures and operands while its activation
+            // and every enclosing native query still own their roots.
+            if self.slots.clear_frame(frame.window).is_err() {
+                // A failed legacy handoff may have detached its Frame before
+                // an allocation failure. Release any remaining arena owners
+                // before unwinding parent native activations; never panic here.
+                self.slots = SlotStore::new(0);
+            }
+            drop(frame.cold);
+            drop(frame.executable);
+        }
+    }
+}
+
 impl RunningExecution {
     pub(super) fn new(runtime: &Runtime, limits: ExecutionLimits) -> Result<Self, Error> {
         let guard = ExecutionGuard::enter(runtime)?;

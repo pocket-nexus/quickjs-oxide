@@ -429,25 +429,30 @@ impl Runtime {
         Ok((bindings, caller_profile))
     }
 
-    fn execute_string_eval(
+    fn prepare_string_eval(
         &self,
         realm: ContextId,
         source: &JsString,
         context: EvalCompileContext,
         environment_roots: &[VarRefRoot],
         this_value: Value,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<DirectEvalPreparation, RuntimeError> {
         let source = Self::eval_source_text(source)?;
         let kind = context.kind;
         let bindings = context.bindings.clone();
         let function =
             match self.compile_eval_in_realm(realm, &source, DEFAULT_EVAL_FILENAME, context)? {
                 Compilation::Published(function) => function,
-                Compilation::Throw(value) => return Ok(Completion::Throw(value)),
+                Compilation::Throw(value) => {
+                    return Ok(DirectEvalPreparation::Complete(Completion::Throw(value)));
+                }
             };
         let callable =
             self.new_eval_bytecode_closure(realm, &function, kind, &bindings, environment_roots)?;
-        self.call_internal(realm, &callable, this_value, &[])
+        Ok(DirectEvalPreparation::Ready {
+            callable,
+            this_value,
+        })
     }
 
     /// Execute an ECMAScript String as QuickJS `JS_EVAL_TYPE_INDIRECT`.
@@ -458,8 +463,22 @@ impl Runtime {
         realm: ContextId,
         source: &JsString,
     ) -> Result<Completion, RuntimeError> {
+        match self.prepare_indirect_string_eval(realm, source)? {
+            DirectEvalPreparation::Complete(completion) => Ok(completion),
+            DirectEvalPreparation::Ready {
+                callable,
+                this_value,
+            } => self.call_internal(realm, &callable, this_value, &[]),
+        }
+    }
+
+    pub(crate) fn prepare_indirect_string_eval(
+        &self,
+        realm: ContextId,
+        source: &JsString,
+    ) -> Result<DirectEvalPreparation, RuntimeError> {
         let global_object = self.global_object_for_realm(realm)?;
-        self.execute_string_eval(
+        self.prepare_string_eval(
             realm,
             source,
             EvalCompileContext::indirect(),

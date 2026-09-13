@@ -12,7 +12,7 @@ class OrdinaryPropertyContracts(unittest.TestCase):
     def scan(self, edits=()):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for relative in ordinary_properties.FILES:
+            for relative in (*ordinary_properties.FILES, *ordinary_properties.S05_FILES):
                 source = (ROOT / relative).read_text()
                 for path, before, after in edits:
                     if path == relative:
@@ -28,10 +28,26 @@ class OrdinaryPropertyContracts(unittest.TestCase):
 
     def test_current_contracts(self):
         self.assertEqual(self.scan(), [])
+        # Both rustfmt's multiline trailing comma and the equivalent compact
+        # pattern retain exactly the same owned fields and typed reply route.
+        path = "src/engine/vm/proxy_get_driver/request/vm.rs"
+        self.assertEqual(self.scan([
+            (path, "T::Enumerable {\n                object,\n                key,\n                resume,\n            }", "T::Enumerable { object, key, resume }"),
+            (path, "T::Read {\n                object,\n                key,\n                receiver,\n                resume,\n            }", "T::Read { object, key, receiver, resume }"),
+            (path, "resume: Resume::ForIn(resume),", "resume: Resume::ForIn(resume)"),
+            (path, "resume: Resume::Environment(resume),", "resume: Resume::Environment(resume)"),
+        ]), [])
 
     def test_bad_boundaries_are_rejected(self):
-        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype, builtin_prototype, object_builtin = ordinary_properties.FILES
+        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype, builtin_prototype, object_builtin, builtin_property, proxy_keys, builtin_predicate, builtin_definitions, builtin_string = ordinary_properties.FILES
         mutations = [
+            (builtin_string, "let value = match result {", "runtime.call_internal(); let value = match result {"),
+            (builtin_definitions, "let mut selected = Vec::new();", "runtime.internal_get_own_property(); let mut selected = Vec::new();"),
+            (builtin_predicate, "let value = match result {", "runtime.internal_get_own_property(); let value = match result {"),
+            (builtin_property, "let object = match (kind, target) {", "runtime.internal_own_property_keys(); let object = match (kind, target) {"),
+            (builtin_property, "let key = match runtime.property_key_from_primitive", "runtime.to_primitive(); let key = match runtime.property_key_from_primitive"),
+            (proxy_keys, "let mut atoms = HashSet::new();", "runtime.internal_is_extensible(); let mut atoms = HashSet::new();"),
+            (proxy_keys, "if let Some(key) = state.remaining.next() {", "runtime.internal_get_own_property(); if let Some(key) = state.remaining.next() {"),
             (builtin_prototype, "let target = arguments", "runtime.internal_get_prototype_of(); let target = arguments"),
             (object_builtin, "if self.is_proxy_object(object)? {", "self.internal_set_prototype_of(); if self.is_proxy_object(object)? {"),
             (proxy_prototype, "let name = match &kind {", "runtime.internal_get_prototype_of(); let name = match &kind {"),
@@ -69,3 +85,40 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         for mutation in mutations:
             with self.subTest(mutation=mutation):
                 self.assertTrue(self.scan([mutation]))
+
+    def test_s05_owned_domains_and_consumers_are_connected(self):
+        mutations = [
+            ("src/engine/builtins/array/callback.rs", "enum CallbackStep", "enum MissingCallbackStep"),
+            ("src/engine/builtins/array/sort.rs", "struct SortResume", "struct MissingSortResume"),
+            ("src/engine/builtins/array.rs", "callback::finish(", "callback::legacy_finish("),
+            ("src/engine/vm/array_driver.rs", "LiteralDefinitionStep::start(", "LiteralDefinitionStep::legacy_start("),
+            ("src/engine/vm/with_driver.rs", "EnvironmentStep::has_binding(", "EnvironmentStep::legacy_has_binding("),
+            ("src/engine/vm/private_access.rs", "proxy_get_driver::start_vm_call(", "proxy_get_driver::legacy_vm_call("),
+            ("src/engine/vm/construct_driver.rs", "proxy_get_driver::start_class_parent(", "proxy_get_driver::legacy_class_parent("),
+            ("src/engine/vm/frame_operations.rs", "RunExit::Numeric(kind)", "RunExit::LegacyNumeric(kind)"),
+            ("src/engine/vm/proxy_get_driver/request/vm.rs", "Self::SnapshotEnumerable", "Self::OwnFlag"),
+            ("src/engine/vm/proxy_get_driver/request/vm.rs", "Self::Read {\n                receiver,", "Self::Read {\n                receiver: Value::Undefined,"),
+            ("src/engine/vm/proxy_get_driver/request/object.rs", "Self::DefineOrdinary {", "Self::Define {"),
+            ("src/engine/vm/proxy_get_driver/request/scalar.rs", "use super::", "fn regress(runtime: &Runtime) { runtime.call_internal(); }\nuse super::"),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.scan([mutation]))
+
+    def test_s05_phases_cannot_hide_a_synchronous_callback(self):
+        path = "src/engine/object/object_literal/element.rs"
+        for callback in ("call_internal", "to_primitive", "native_to_number", "internal_define_own_property", "define_own_property_in_realm"):
+            mutation = (path, "let resume = LiteralDefinitionResume::Key", f"runtime.{callback}(); let resume = LiteralDefinitionResume::Key")
+            with self.subTest(callback=callback):
+                self.assertTrue(self.scan([mutation]))
+        for fragment in (
+            "use super::*;",
+            "fn bad(runtime: &Runtime) { runtime.call_internal(); }",
+            # Test modules must not make later production code invisible.
+            "#[cfg(test)] mod ignored { fn local() {} }\nfn bad(runtime: &Runtime) { runtime.call_internal(); }",
+            # Only the real typed legacy consumer is exempt, not every finish.
+            "fn finish(runtime: &Runtime) { runtime.call_internal(); }",
+            "fn bad() { let fake: RuntimeVmHost; }",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertTrue(self.scan([(path, "pub(crate) enum LiteralDefinitionStep", fragment + "\npub(crate) enum LiteralDefinitionStep")]))

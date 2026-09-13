@@ -29,6 +29,20 @@ impl Runtime {
         } else {
             value
         };
+        self.property_key_from_primitive(realm, value)
+    }
+
+    /// Finish ToPropertyKey after the domain continuation has obtained a primitive.
+    pub(crate) fn property_key_from_primitive(
+        &self,
+        realm: ContextId,
+        value: Value,
+    ) -> Result<NativeConversion<PropertyKey>, RuntimeError> {
+        if matches!(value, Value::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "property key conversion received an object",
+            ));
+        }
         if let Some(key) = self.immediate_numeric_property_key(&value) {
             return Ok(NativeConversion::Value(key));
         }
@@ -99,6 +113,19 @@ impl Runtime {
         } else {
             value.clone()
         };
+        self.string_from_primitive(realm, &value)
+    }
+
+    pub(crate) fn string_from_primitive(
+        &self,
+        realm: ContextId,
+        value: &Value,
+    ) -> Result<NativeConversion<JsString>, RuntimeError> {
+        if matches!(value, Value::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "ToString primitive reply contained an object",
+            ));
+        }
         match value.to_js_string() {
             Ok(value) => Ok(NativeConversion::Value(value)),
             Err(error) => {
@@ -110,23 +137,6 @@ impl Runtime {
                 ))
             }
         }
-    }
-
-    /// QuickJS's `JS_ToStringCheckObject`: reject nullish receivers with its
-    /// dedicated diagnostic before running any observable ToString steps.
-    pub(crate) fn native_to_string_check_object(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<JsString>, RuntimeError> {
-        if matches!(value, Value::Null | Value::Undefined) {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "null or undefined are forbidden",
-            )?));
-        }
-        self.native_to_js_string(realm, value)
     }
 
     pub(crate) fn native_to_dynamic_source_fragment(
@@ -187,22 +197,16 @@ impl Runtime {
         }
     }
 
-    /// QuickJS's `%Number%` constructor uses `ToNumeric`, then converts a
-    /// BigInt result to binary64. Ordinary `ToNumber` deliberately remains
-    /// stricter and continues to reject BigInt everywhere else.
-    pub(crate) fn native_to_number_constructor_value(
+    pub(crate) fn number_constructor_from_primitive(
         &self,
         realm: ContextId,
         value: &Value,
     ) -> Result<NativeConversion<f64>, RuntimeError> {
-        let value = if matches!(value, Value::Object(_)) {
-            match self.to_primitive(realm, value.clone(), ToPrimitiveHint::Number)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            }
-        } else {
-            value.clone()
-        };
+        if matches!(value, Value::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "Number constructor primitive reply contained an object",
+            ));
+        }
         if let Value::BigInt(value) = &value {
             return Ok(NativeConversion::Value(value.to_f64()));
         }
@@ -305,22 +309,17 @@ impl Runtime {
         }
     }
 
-    /// BigInt constructor conversion differs from ordinary `ToBigInt` by
-    /// accepting integral Number values and by using the pinned capitalized
-    /// TypeError spelling for unsupported primitives.
-    pub(crate) fn native_to_bigint_constructor_value(
+    pub(crate) fn bigint_constructor_from_primitive(
         &self,
         realm: ContextId,
         value: &Value,
     ) -> Result<NativeConversion<crate::engine::value::bigint::JsBigInt>, RuntimeError> {
-        let value = if matches!(value, Value::Object(_)) {
-            match self.to_primitive(realm, value.clone(), ToPrimitiveHint::Number)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            }
-        } else {
-            value.clone()
-        };
+        if matches!(value, Value::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "BigInt constructor primitive reply contained an object",
+            ));
+        }
+        let value = value.clone();
         match value {
             Value::Int(value) => Ok(NativeConversion::Value(
                 crate::engine::value::bigint::JsBigInt::from(value),
@@ -368,11 +367,19 @@ impl Runtime {
         realm: ContextId,
         value: &Value,
     ) -> Result<NativeConversion<u64>, RuntimeError> {
-        const MAX_SAFE_INTEGER: i64 = (1_i64 << 53) - 1;
-        let value = match self.native_to_int64_sat(realm, value)? {
-            NativeConversion::Value(value) => value,
+        let number = match self.native_to_number(realm, value)? {
+            NativeConversion::Value(number) => number,
             NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
         };
+        self.index_from_number(realm, number)
+    }
+    pub(crate) fn index_from_number(
+        &self,
+        realm: ContextId,
+        number: f64,
+    ) -> Result<NativeConversion<u64>, RuntimeError> {
+        const MAX_SAFE_INTEGER: i64 = (1_i64 << 53) - 1;
+        let value = Self::int64_from_number(number);
         if !(0..=MAX_SAFE_INTEGER).contains(&value) {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
@@ -397,7 +404,11 @@ impl Runtime {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
         };
-        Ok(NativeConversion::Value(if number.is_nan() {
+        Ok(NativeConversion::Value(Self::int64_from_number(number)))
+    }
+
+    pub(crate) fn int64_from_number(number: f64) -> i64 {
+        if number.is_nan() {
             0
         } else if number < i64::MIN as f64 {
             i64::MIN
@@ -405,7 +416,7 @@ impl Runtime {
             i64::MAX
         } else {
             number as i64
-        }))
+        }
     }
 
     /// Pinned QuickJS `JS_ToInt64Clamp`, including its negative offset before
@@ -433,22 +444,23 @@ impl Runtime {
         realm: ContextId,
         value: &Value,
     ) -> Result<NativeConversion<u64>, RuntimeError> {
-        const MAX_SAFE_INTEGER: u64 = (1_u64 << 53) - 1;
+        match self.native_to_number(realm, value)? {
+            NativeConversion::Value(number) => {
+                Ok(NativeConversion::Value(Self::length_from_number(number)))
+            }
+            NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
+        }
+    }
 
-        let number = match self.native_to_number(realm, value)? {
-            NativeConversion::Value(number) => number,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let length = if number.is_nan() || number <= 0.0 {
+    pub(crate) fn length_from_number(number: f64) -> u64 {
+        const MAX_SAFE_INTEGER: u64 = (1_u64 << 53) - 1;
+        if number.is_nan() || number <= 0.0 {
             0
         } else if number >= MAX_SAFE_INTEGER as f64 {
             MAX_SAFE_INTEGER
         } else {
-            // This branch is finite, positive and below 2^53, so the
-            // truncating cast is the exact ToIntegerOrInfinity result.
             number as u64
-        };
-        Ok(NativeConversion::Value(length))
+        }
     }
 
     pub(crate) fn to_primitive(

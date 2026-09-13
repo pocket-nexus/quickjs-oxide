@@ -109,6 +109,7 @@ impl Runtime {
             let depth = state.active_frames.len();
             state.active_frames.push(ActiveFrameRecord {
                 token,
+                native_continuation: false,
                 function: function_root.object_id(),
                 realm,
                 flags,
@@ -408,6 +409,8 @@ pub(crate) enum ActiveCollectionRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveFrameRecord {
+    /// The native algorithm is an owned continuation, with no suspended Rust body.
+    pub(crate) native_continuation: bool,
     pub(crate) token: ActiveFrameToken,
     pub(crate) function: ObjectId,
     pub(crate) realm: ContextId,
@@ -484,6 +487,29 @@ pub(crate) struct BacktraceBarrierGuard {
 }
 
 impl ActiveFrameGuard {
+    #[cfg(feature = "stack-vm")]
+    pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
+        let mut state = self.runtime.0.state.borrow_mut();
+        let frame = state
+            .active_frames
+            .get_mut(self.depth)
+            .filter(|frame| {
+                self.active
+                    && frame.token == self.token
+                    && matches!(frame.kind, ActiveFrameKind::Native { .. })
+            })
+            .ok_or(RuntimeError::Invariant(
+                "native continuation has no matching active frame",
+            ))?;
+        if frame.native_continuation {
+            return Err(RuntimeError::Invariant(
+                "native continuation was registered twice",
+            ));
+        }
+        frame.native_continuation = true;
+        Ok(())
+    }
+
     pub(crate) const fn token(&self) -> ActiveFrameToken {
         self.token
     }

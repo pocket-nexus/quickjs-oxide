@@ -1,13 +1,12 @@
 //! Environment ownership and ordinary dynamic getter calls.
-use super::call::{BytecodeCallRequest, CallableExecution};
-use super::driver::{CallStep, push_frame};
-use super::frame::{ReturnTarget, ReturnValue};
+use super::driver::CallStep;
+use super::environment_bindings::operation::EnvironmentStep;
+use super::frame::ReturnValue;
 use super::{
     Completion, exception::runtime_error_to_vm_error, execution::RunningExecution, frame::FrameId,
 };
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::bytecode::{DynamicEnvironmentSource, EvalVariableSource};
-use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::value::{Value, conversion::NativeConversion};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,19 +78,18 @@ pub(super) fn step(
     if op == Operation::DefineArrayElement {
         return super::array_driver::define_element(runtime, execution, id);
     }
-    let can_push = execution.frames.can_push();
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
-    #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
     let mut request = None;
+    let mut query = None;
     let result = (|| -> Result<CallStep, Error> {
         match op {
             Operation::DefineArrayElement | Operation::Append | Operation::Iterator(_) => {
                 unreachable!()
             }
             Operation::GlobalDelete(index) => {
-                let deleted = if let Some(key) = super::environment_bindings::prepare_global_delete(
+                if let Some(key) = super::environment_bindings::prepare_global_delete(
                     runtime,
                     &frame.executable,
                     &frame.cold.closure_slots,
@@ -100,86 +98,35 @@ pub(super) fn step(
                     let object = runtime
                         .global_object_for_realm(realm)
                         .map_err(runtime_error_to_vm_error)?;
-                    let exists = if runtime
-                        .has_own_property(&object, &key)
-                        .map_err(runtime_error_to_vm_error)?
-                    {
-                        true
-                    } else if let Some(prototype) = runtime
-                        .get_prototype_of(&object)
-                        .map_err(runtime_error_to_vm_error)?
-                    {
-                        match runtime
-                            .prepare_ordinary_read(&prototype, &key, Value::Object(object.clone()))
-                            .map_err(runtime_error_to_vm_error)?
-                        {
-                            crate::engine::object::OrdinaryRead::Complete(value) => value.is_some(),
-                            crate::engine::object::OrdinaryRead::Call { .. } => true,
-                            crate::engine::object::OrdinaryRead::Special { .. } => {
-                                return Ok(CallStep::Bridge);
-                            }
-                        }
-                    } else {
-                        false
-                    };
-                    !exists
-                        || runtime
-                            .delete_property(&object, &key)
-                            .map_err(runtime_error_to_vm_error)?
+                    query = Some((
+                        EnvironmentStep::delete_global(realm, object, key),
+                        ReturnValue::Push,
+                    ));
                 } else {
-                    false
-                };
-                execution
-                    .slots
-                    .push(&mut frame.window, Value::Bool(deleted))?;
+                    execution
+                        .slots
+                        .push(&mut frame.window, Value::Bool(false))?;
+                }
             }
             Operation::GlobalReference(index) => {
                 use super::environment_bindings::GlobalReference;
-                let value = match super::environment_bindings::global_reference(
+                match super::environment_bindings::global_reference(
                     runtime,
                     realm,
                     &frame.executable,
                     &frame.cold.closure_slots,
                     index,
                 )? {
-                    GlobalReference::Lexical(object) => Value::Object(object),
+                    GlobalReference::Lexical(object) => execution
+                        .slots
+                        .push(&mut frame.window, Value::Object(object))?,
                     GlobalReference::Object { object, key } => {
-                        let present = if runtime
-                            .has_own_property(&object, &key)
-                            .map_err(runtime_error_to_vm_error)?
-                        {
-                            true
-                        } else if let Some(prototype) = runtime
-                            .get_prototype_of(&object)
-                            .map_err(runtime_error_to_vm_error)?
-                        {
-                            match runtime
-                                .prepare_ordinary_read(
-                                    &prototype,
-                                    &key,
-                                    Value::Object(object.clone()),
-                                )
-                                .map_err(runtime_error_to_vm_error)?
-                            {
-                                crate::engine::object::OrdinaryRead::Complete(value) => {
-                                    value.is_some()
-                                }
-                                crate::engine::object::OrdinaryRead::Call { .. } => true,
-                                crate::engine::object::OrdinaryRead::Special { .. } => {
-                                    return Ok(CallStep::Bridge);
-                                }
-                            }
-                        } else {
-                            false
-                        };
-                        if present {
-                            Value::Object(object)
-                        } else {
-                            Value::Undefined
-                        }
+                        query = Some((
+                            EnvironmentStep::reference(realm, object, key),
+                            ReturnValue::Push,
+                        ));
                     }
-                };
-                execution.slots.push(&mut frame.window, value)?;
+                }
             }
 
             Operation::Put {
@@ -188,10 +135,6 @@ pub(super) fn step(
                 strict,
                 check_presence,
             } => {
-                use crate::engine::object::{
-                    PreparedHas,
-                    operations::{PropertySetAction, PropertySetRejection},
-                };
                 let key = if let WriteTarget::Global { index, initialize } = source {
                     match super::environment_bindings::prepare_global_write(
                         runtime,
@@ -241,165 +184,25 @@ pub(super) fn step(
                         _ => return Err(Error::internal("invalid dynamic reference base")),
                     },
                 };
-                {
-                    let state = runtime.0.state.borrow();
-                    let data = state
-                        .heap
-                        .object(object.object_id())
-                        .map_err(|e| Error::internal(e.to_string()))?;
-                    if !matches!(
-                        (data.kind, &data.payload),
-                        (
-                            crate::engine::heap::ObjectKind::Ordinary,
-                            crate::engine::heap::ObjectPayload::Ordinary
-                        ) | (
-                            crate::engine::heap::ObjectKind::GlobalObject,
-                            crate::engine::heap::ObjectPayload::GlobalObject { .. }
-                        )
-                    ) {
-                        return Ok(CallStep::Bridge);
-                    }
-                }
-                if matches!(source, WriteTarget::Reference)
-                    && let Some(root) = runtime
-                        .own_var_ref_root(&object, &key)
-                        .map_err(runtime_error_to_vm_error)?
-                {
-                    // An own VarRef proves HasProperty without reading the TDZ value.
-                    let cell = runtime
-                        .0
-                        .state
-                        .borrow()
-                        .heap
-                        .var_ref(root.id())
-                        .map_err(|e| Error::internal(e.to_string()))?
-                        .clone();
-                    if matches!(cell.value, crate::engine::heap::RawValue::Uninitialized) {
-                        return Err(super::bindings::lexical_uninitialized_error(
-                            runtime,
-                            Some(key.atom()),
-                            true,
-                        )?);
-                    }
-                    if cell.is_const && strict {
-                        return Err(super::bindings::lexical_read_only_error(
-                            runtime,
-                            Some(key.atom()),
-                        )?);
-                    }
-                    let value = execution.slots.pop(&mut frame.window)?;
-                    execution.slots.pop(&mut frame.window)?;
-                    if !cell.is_const {
-                        runtime
-                            .write_var_ref(&root, value)
-                            .map_err(runtime_error_to_vm_error)?;
-                    }
-                    return Ok(CallStep::Entered);
-                }
-                // HasProperty distinguishes a missing integer-indexed property
-                // from Get's terminal undefined value. Recheck after the RHS.
-                let present = match runtime
-                    .prepare_has_property(&object, &key)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    PreparedHas::Complete(present) => present,
-                    PreparedHas::Proxy(_) => return Ok(CallStep::Bridge),
-                };
-                if check_presence && strict && !present {
-                    return Err(runtime
-                        .native_atom_error(
-                            crate::engine::api::ErrorKind::Reference,
-                            "'",
-                            &key,
-                            "' is not defined",
-                        )
-                        .map_err(runtime_error_to_vm_error)?);
-                }
-                let value = execution.slots.peek(&frame.window, 0)?.clone();
-                let action = runtime
-                    .prepare_set_property_with_receiver_in_realm(
-                        Some(realm),
-                        &object,
-                        &key,
-                        value,
-                        Value::Object(object.clone()),
-                    )
-                    .map_err(runtime_error_to_vm_error)?;
-                match action {
-                    PropertySetAction::Complete => {}
-                    PropertySetAction::Rejected(_) if !strict => {}
-                    PropertySetAction::Rejected(reason) => {
-                        use crate::engine::api::ErrorKind;
-                        return Err(match reason {
-                            PropertySetRejection::ReadOnly => runtime
-                                .native_atom_error(ErrorKind::Type, "'", &key, "' is read-only")
-                                .map_err(runtime_error_to_vm_error)?,
-                            PropertySetRejection::NoSetter => {
-                                Error::new(ErrorKind::Type, "no setter for property")
-                            }
-                            PropertySetRejection::NotExtensible => {
-                                Error::new(ErrorKind::Type, "object is not extensible")
-                            }
-                            _ => Error::internal(
-                                "ordinary environment Set returned an exotic rejection",
-                            ),
-                        });
-                    }
-                    PropertySetAction::Throw(value) => {
-                        return Ok(CallStep::Complete(Completion::Throw(value)));
-                    }
-                    PropertySetAction::RejectedProxyTrap => {
-                        return Err(Error::internal("ordinary environment Set entered a Proxy"));
-                    }
-                    PropertySetAction::Call {
-                        setter,
-                        receiver,
-                        argument,
-                    } => {
-                        let CallableExecution::Bytecode {
-                            bytecode,
-                            closure_slots,
-                        } = runtime
-                            .bytecode_for_callable(&setter)
-                            .map_err(runtime_error_to_vm_error)?
-                        else {
-                            return Ok(CallStep::Bridge);
-                        };
-                        if runtime
-                            .0
-                            .state
-                            .borrow()
-                            .heap
-                            .function_bytecode(bytecode.bytecode_id())
-                            .map_err(|e| Error::internal(e.to_string()))?
-                            .metadata
-                            .function_kind
-                            != FunctionKind::Normal
-                        {
-                            return Ok(CallStep::Bridge);
-                        }
-                        request = Some(BytecodeCallRequest {
-                            callable: setter,
-                            receiver,
-                            new_target: Value::Undefined,
-                            arguments: vec![argument],
-                            bytecode,
-                            closure_slots,
-                            caller_realm: realm,
-                            return_to: ReturnTarget {
-                                value_use: ReturnValue::Discard,
-                                frame: id,
-                                tail: false,
-                                operation: None,
-                            },
-                        });
-                    }
-                }
-                execution.slots.pop(&mut frame.window)?;
+                let value = execution.slots.pop(&mut frame.window)?;
                 if matches!(source, WriteTarget::Reference) {
                     execution.slots.pop(&mut frame.window)?;
                 }
+                let step = if check_presence {
+                    EnvironmentStep::put(
+                        realm,
+                        object,
+                        key,
+                        value,
+                        strict,
+                        matches!(source, WriteTarget::Reference),
+                    )
+                } else {
+                    EnvironmentStep::set(realm, object, key, value, strict)
+                };
+                query = Some((step, ReturnValue::Discard));
             }
+
             Operation::Define { source, name } => {
                 use crate::engine::object::{
                     DescriptorField, OrdinaryPropertyDescriptor, operations::PropertyDefineOutcome,
@@ -421,7 +224,9 @@ pub(super) fn step(
                     .kind
                     != crate::engine::heap::ObjectKind::Ordinary
                 {
-                    return Ok(CallStep::Bridge);
+                    return Err(Error::internal(
+                        "authenticated eval environment changed its object kind",
+                    ));
                 }
                 let key = linked_key(runtime, &frame.executable, name)?;
                 let value = execution.slots.pop(&mut frame.window)?;
@@ -463,35 +268,13 @@ pub(super) fn step(
                     |index| execution.slots.local(&frame.window, index).ok(),
                     &frame.cold.closure_slots,
                 )?;
-                {
-                    let state = runtime.0.state.borrow();
-                    let data = state
-                        .heap
-                        .object(object.object_id())
-                        .map_err(|e| Error::internal(e.to_string()))?;
-                    if !matches!(
-                        (data.kind, &data.payload),
-                        (
-                            crate::engine::heap::ObjectKind::Ordinary,
-                            crate::engine::heap::ObjectPayload::Ordinary
-                        )
-                    ) {
-                        return Ok(CallStep::Bridge);
-                    }
-                }
                 let key = linked_key(runtime, &frame.executable, name)?;
-                match runtime
-                    .internal_delete_property(realm, &object, &key)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    NativeConversion::Value(deleted) => execution
-                        .slots
-                        .push(&mut frame.window, Value::Bool(deleted))?,
-                    NativeConversion::Throw(value) => {
-                        return Ok(CallStep::Complete(Completion::Throw(value)));
-                    }
-                }
+                query = Some((
+                    EnvironmentStep::delete(realm, object, key),
+                    ReturnValue::Push,
+                ));
             }
+
             Operation::ReadReference { .. }
             | Operation::Object(_)
             | Operation::Get { .. }
@@ -523,7 +306,9 @@ pub(super) fn step(
                                 _ => return Err(Error::internal("invalid dynamic reference base")),
                             };
                             if !object.belongs_to(runtime) {
-                                return Ok(CallStep::Bridge);
+                                return Err(Error::internal(
+                                    "dynamic reference base belongs to another runtime",
+                                ));
                             }
                             object.clone()
                         }
@@ -546,45 +331,9 @@ pub(super) fn step(
                 };
                 match read {
                     BindingRead::Value(value) => execution.slots.push(&mut frame.window, value)?,
-                    BindingRead::Bridge => return Ok(CallStep::Bridge),
+                    BindingRead::Query(step) => query = Some((step, ReturnValue::Push)),
                     BindingRead::Getter { getter, receiver } => {
-                        let CallableExecution::Bytecode {
-                            bytecode,
-                            closure_slots,
-                        } = runtime
-                            .bytecode_for_callable(&getter)
-                            .map_err(runtime_error_to_vm_error)?
-                        else {
-                            return Ok(CallStep::Bridge);
-                        };
-                        if runtime
-                            .0
-                            .state
-                            .borrow()
-                            .heap
-                            .function_bytecode(bytecode.bytecode_id())
-                            .map_err(|e| Error::internal(e.to_string()))?
-                            .metadata
-                            .function_kind
-                            != FunctionKind::Normal
-                        {
-                            return Ok(CallStep::Bridge);
-                        }
-                        request = Some(BytecodeCallRequest {
-                            callable: getter,
-                            receiver,
-                            new_target: Value::Undefined,
-                            arguments: Vec::new(),
-                            bytecode,
-                            closure_slots,
-                            caller_realm: realm,
-                            return_to: ReturnTarget {
-                                value_use: ReturnValue::Push,
-                                frame: id,
-                                tail: false,
-                                operation: None,
-                            },
-                        });
+                        request = Some((getter, receiver, Vec::new(), ReturnValue::Push));
                     }
                 }
             }
@@ -667,13 +416,10 @@ pub(super) fn step(
     })();
     match result {
         Ok(CallStep::Entered) => {
-            if let Some(request) = &request {
-                if !can_push || runtime.bytecode_call_would_overflow() {
-                    return runtime
-                        .bytecode_stack_overflow_completion(realm, &request.bytecode)
-                        .map(CallStep::Complete)
-                        .map_err(runtime_error_to_vm_error);
-                }
+            if let Some((step, value_use)) = query {
+                return super::proxy_get_driver::start_environment(
+                    runtime, execution, id, step, value_use, depth,
+                );
             }
             frame.resume_pc = frame
                 .fault_pc
@@ -681,9 +427,10 @@ pub(super) fn step(
                 .ok_or_else(|| Error::internal("environment resume PC overflow"))?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
-            if let Some(request) = request {
-                let entry = request.prepare(runtime)?;
-                push_frame(execution, entry)?;
+            if let Some((callable, receiver, arguments, value_use)) = request {
+                return super::proxy_get_driver::start_vm_call(
+                    runtime, execution, id, callable, receiver, arguments, value_use,
+                );
             }
             Ok(CallStep::Entered)
         }
@@ -709,7 +456,7 @@ enum BindingRead {
         getter: crate::engine::object::CallableRef,
         receiver: Value,
     },
-    Bridge,
+    Query(EnvironmentStep),
 }
 
 /// Lookup owns a selected getter without invoking it.
@@ -719,7 +466,6 @@ fn read_binding(
     object: &crate::engine::object::ObjectRef,
     op: Operation,
 ) -> Result<BindingRead, Error> {
-    use crate::engine::object::OrdinaryRead;
     let (name, strict) = match op {
         Operation::Get { name, strict, .. } | Operation::ReadReference { name, strict } => {
             (name, strict)
@@ -763,48 +509,15 @@ fn read_binding(
             return Ok(BindingRead::Value(value));
         }
     }
-    if matches!(op, Operation::ReadReference { .. }) {
-        match runtime
-            .prepare_has_property(object, &key)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            crate::engine::object::PreparedHas::Complete(false) if strict => {
-                return Err(runtime
-                    .native_atom_error(
-                        crate::engine::api::ErrorKind::Reference,
-                        "'",
-                        &key,
-                        "' is not defined",
-                    )
-                    .map_err(runtime_error_to_vm_error)?);
-            }
-            crate::engine::object::PreparedHas::Complete(false) => {
-                return Ok(BindingRead::Value(Value::Undefined));
-            }
-            crate::engine::object::PreparedHas::Complete(true) => {}
-            crate::engine::object::PreparedHas::Proxy(_) => return Ok(BindingRead::Bridge),
-        }
-    }
-    let read = prepare_environment_read(runtime, object, &key)?;
-    match read {
-        OrdinaryRead::Complete(Some(value)) => Ok(BindingRead::Value(value)),
-        OrdinaryRead::Complete(None) if strict => Err(runtime
-            .native_atom_error(
-                crate::engine::api::ErrorKind::Reference,
-                "'",
-                &key,
-                "' is not defined",
-            )
-            .map_err(runtime_error_to_vm_error)?),
-        OrdinaryRead::Complete(None) => Ok(BindingRead::Value(Value::Undefined)),
-        crate::engine::object::OrdinaryRead::Call { getter, receiver } => {
-            Ok(BindingRead::Getter { getter, receiver })
-        }
-        _ => Ok(BindingRead::Bridge),
-    }
+    Ok(BindingRead::Query(EnvironmentStep::get(
+        executable.realm,
+        object.clone(),
+        key,
+        strict,
+    )))
 }
 
-fn linked_key(
+pub(super) fn linked_key(
     runtime: &Runtime,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
     name: u32,
@@ -946,7 +659,14 @@ fn read_global_binding(
             .map_err(runtime_error_to_vm_error)?),
         OrdinaryRead::Complete(None) => Ok(BindingRead::Value(Value::Undefined)),
         OrdinaryRead::Call { getter, receiver } => Ok(BindingRead::Getter { getter, receiver }),
-        OrdinaryRead::Special { .. } => Ok(BindingRead::Bridge),
+        OrdinaryRead::Special {
+            object, receiver, ..
+        } => Ok(BindingRead::Query(EnvironmentStep::read(
+            executable.realm,
+            object,
+            key,
+            receiver,
+        ))),
     }
 }
 
@@ -961,9 +681,43 @@ pub(super) fn reply(
         Some(super::frame::OperationTarget::Iterator(_)) => {
             super::iterator_driver::reply(runtime, execution, target, completion)
         }
-        Some(super::frame::OperationTarget::HasBinding(_)) => {
-            super::with_driver::reply(runtime, execution, target, completion)
-        }
         _ => Err(Error::internal("environment reply has no operation")),
+    }
+}
+
+#[cfg(all(test, feature = "profiling"))]
+mod tests {
+    use crate::engine::{
+        api::{profiling::CostProfile, runtime::Runtime},
+        value::Value,
+        vm::Completion,
+    };
+
+    #[test]
+    fn environment_queries_keep_native_getters_proxy_presence_and_receivers_owned() {
+        for source in [
+            "(function(){var excluded={x:false},o={x:42};Object.defineProperty(o,Symbol.unscopables,{get:Object.prototype.valueOf.bind(excluded)});return function(){with(o){return x}}})()",
+            "(function(){var h=0,u=0,g=0,t={x:42};var o=new Proxy(t,{has(t,k){if(k==='x')h++;return k in t},get(t,k,r){if(k===Symbol.unscopables){u++;return {x:false}}if(k==='x'){g++;if(r!==o)throw 99}return t[k]}});return function(){var result;with(o){result=x}return result===42&&h===2&&u===1&&g===1?42:0}})()",
+            "(function(){var h=0,s=0,t={x:1},o=new Proxy(t,{has(t,k){if(k==='x')h++;return k in t},get(t,k){if(k===Symbol.unscopables)return {x:false};return t[k]},set(t,k,v,r){s++;if(r!==o)throw 99;t[k]=v;return true}});return function(){with(o){x=42}return t.x===42&&h===2&&s===1?42:0}})()",
+            "(function(){var calls=0,o={x:0};Object.defineProperty(o,Symbol.unscopables,{get:new Proxy(function(){calls++;throw 42},{apply(t,r,a){return Reflect.apply(t,r,a)}})});return function(){try{with(o){return x}}catch(e){return calls===1?e:0}}})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let function = context.eval(source).unwrap();
+            let callable = runtime.callable_from_value(function).unwrap();
+            let profile = CostProfile::start();
+            let completion = runtime
+                .call_internal(context.realm, &callable, Value::Undefined, &[])
+                .unwrap();
+            let costs = profile.snapshot();
+            assert!(
+                matches!(completion, Completion::Return(Value::Int(42))),
+                "{source}: {completion:?}"
+            );
+            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 }

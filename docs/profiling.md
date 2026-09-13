@@ -173,17 +173,16 @@ separately and resumes the untouched opcode in the previous VM. CLI reports use
 coverage, not a claim that a whole sample ran in the new core.
 
 `owned_sync_call_bridges` counts selected owned calls and unresolved domain
-steps dispatched through synchronous Runtime entries, including callback-free
-callees and the remaining native/async callback paths. Proxy target descriptor
-queries, descriptor Has/Get, and Proxy apply continuations in the owned
-property/conversion routes no longer cross this boundary. Ordinary assignment
-setters and Proxy Set/receiver descriptor/define callbacks also use owned replies.
-Array length and TypedArray object conversions, including special Define paths,
-still have counted synchronous consumers. It does not count every nested
-internal callback or every domain fallback. PendingCall requests return from the
-resident dispatcher before invoking Runtime; remaining conversion and Proxy
-steps can still wait synchronously inside their driver. These are internal
-bridges, not host delimiters or proof of completed S05 callback migration.
+steps dispatched through synchronous Runtime entries. S05 synchronous native
+families now register typed domain continuations or explicitly audited NoJs
+leaves. Their property, conversion, iterator and callback requests stay in the
+owned driver; old synchronous consumers use the same domain steps. Promise,
+generator, module and host/API entries still have the S06/S07 migration work
+listed in [the callback ledger](primitive-vm-sync-callbacks.md).
+The counters describe the measured interval, not every possible path of an
+intrinsic. A coverage claim requires all three legacy/bridge counters to be zero
+and a source audit of the selected native leaves. PendingCall remains a counted
+internal migration boundary; it is not a host delimiter.
 Temporary request/continuation Box allocations and Proxy operation state storage
 are outside `call_preparation` coverage.
 

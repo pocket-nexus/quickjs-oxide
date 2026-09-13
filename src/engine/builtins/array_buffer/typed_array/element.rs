@@ -1,8 +1,16 @@
 //! Element conversion owns ToPrimitive; no buffer credential crosses a callback.
-use super::*;
+use super::{typed_array_encode_bigint, typed_array_encode_number};
 use crate::engine::object::CallableRef;
 use crate::engine::value::conversion::primitive::{PrimitiveResume, PrimitiveStep};
 use crate::engine::vm::ToPrimitiveHint;
+use crate::engine::{
+    api::{runtime::Runtime, runtime_error::RuntimeError},
+    builtins::native::TypedArrayElementKind,
+    heap::ContextId,
+    object::{ObjectRef, PropertyKey},
+    value::{Value, conversion::NativeConversion},
+    vm::Completion,
+};
 
 pub(crate) enum ElementStep {
     Complete(NativeConversion<[u8; 8]>),

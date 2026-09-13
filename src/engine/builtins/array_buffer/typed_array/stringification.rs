@@ -5,7 +5,17 @@
 //! element count, and then keeps resizable-buffer changes observable without
 //! consulting ordinary `length` or indexed properties.
 
-use super::*;
+use crate::engine::{
+    api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
+    builtins::native::ArrayJoinKind,
+    heap::ContextId,
+    object::{ObjectRef, PropertyKey},
+    value::{JsString, JsStringBuilder, Value, conversion::NativeConversion},
+    vm::{
+        Completion, ToPrimitiveHint,
+        call::{DirectCallTarget, NativeArguments, NativeInvocation},
+    },
+};
 
 #[cfg(test)]
 mod tests;
@@ -35,86 +45,268 @@ impl Runtime {
         arguments: &NativeArguments,
         string_limit: usize,
     ) -> Result<Completion, RuntimeError> {
+        finish(
+            self,
+            realm,
+            TypedStringStep::start_with_limit(
+                self,
+                realm,
+                kind,
+                &invocation,
+                arguments,
+                string_limit,
+            )?,
+        )
+    }
+}
+pub(crate) enum TypedStringStep {
+    Complete(Completion),
+    Primitive {
+        value: Value,
+        resume: TypedStringResume,
+    },
+    Read {
+        receiver: Value,
+        key: PropertyKey,
+        resume: TypedStringResume,
+    },
+    Call {
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        resume: TypedStringResume,
+    },
+}
+pub(crate) struct TypedStringResume {
+    realm: ContextId,
+    target: ObjectRef,
+    kind: ArrayJoinKind,
+    initial_length: u64,
+    current_length: u64,
+    index: u64,
+    separator: JsString,
+    output: JsStringBuilder,
+    phase: Phase,
+}
+enum Phase {
+    Separator,
+    LocaleMethod(Value),
+    LocaleResult,
+    Element,
+}
+impl TypedStringStep {
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn start(
+        runtime: &Runtime,
+        realm: ContextId,
+        kind: ArrayJoinKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Self, RuntimeError> {
+        Self::start_with_limit(
+            runtime,
+            realm,
+            kind,
+            invocation,
+            arguments,
+            JsString::MAX_LEN,
+        )
+    }
+    fn start_with_limit(
+        runtime: &Runtime,
+        realm: ContextId,
+        kind: ArrayJoinKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+        limit: usize,
+    ) -> Result<Self, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "TypedArray stringification received a constructor invocation",
             ));
         };
-        let target = match self.require_typed_array(realm, this_value)? {
+        let target = match runtime.require_typed_array(realm, this_value.clone())? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-        let initial_length = match self.typed_array_validated_length(realm, &target)? {
+        let length = match runtime.typed_array_validated_length(realm, &target)? {
             NativeConversion::Value(value) => u64::from(value),
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-
-        let mut current_length = initial_length;
-        let separator = match kind {
-            ArrayJoinKind::ToLocaleString => JsString::from_static(","),
-            ArrayJoinKind::Join
-                if arguments.actual_arg_count == 0
-                    || matches!(arguments.readable.first(), Some(Value::Undefined)) =>
-            {
-                JsString::from_static(",")
-            }
-            ArrayJoinKind::Join => {
-                let separator = arguments.readable.first().ok_or(RuntimeError::Invariant(
-                    "TypedArray.join separator argv was not padded",
-                ))?;
-                let separator = match self.native_to_js_string(realm, separator)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-                };
-                // QuickJS re-reads the live count only after an observable
-                // separator conversion. A shrink clips reads, while the final
-                // separator padding still reflects the old count.
-                current_length = u64::from(self.typed_array_state(&target)?.length);
-                separator
-            }
+        let state = TypedStringResume {
+            realm,
+            target,
+            kind,
+            initial_length: length,
+            current_length: length,
+            index: 0,
+            separator: JsString::from_static(","),
+            output: JsStringBuilder::with_limit(0, limit),
+            phase: Phase::Separator,
         };
-        let traversal_length = initial_length.min(current_length);
-        let mut output = JsStringBuilder::with_limit(0, string_limit);
-
-        for index in 0..traversal_length {
-            if index != 0 {
-                // Unlike generic Array.join, QuickJS's TypedArray kernel stops
-                // immediately when separator assembly overflows.
-                output.push_js_string(&separator)?;
+        if matches!(kind, ArrayJoinKind::Join)
+            && arguments.actual_arg_count != 0
+            && !matches!(arguments.readable.first(), Some(Value::Undefined))
+        {
+            return Ok(Self::Primitive {
+                value: arguments
+                    .readable
+                    .first()
+                    .ok_or(RuntimeError::Invariant(
+                        "TypedArray.join separator argv was not padded",
+                    ))?
+                    .clone(),
+                resume: state,
+            });
+        }
+        state.next(runtime)
+    }
+}
+impl TypedStringResume {
+    fn next(mut self, runtime: &Runtime) -> Result<TypedStringStep, RuntimeError> {
+        while self.index < self.initial_length.min(self.current_length) {
+            if self.index != 0 {
+                self.output.push_js_string(&self.separator)?;
             }
-            let Some(element) = self.typed_array_read_index(&target, index)? else {
+            let Some(element) = runtime.typed_array_read_index(&self.target, self.index)? else {
+                self.index += 1;
                 continue;
             };
-            let element = match kind {
-                ArrayJoinKind::Join => match self.native_to_js_string(realm, &element)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-                },
-                ArrayJoinKind::ToLocaleString => {
-                    let localized = match self.native_element_locale_value(realm, element)? {
+            match self.kind {
+                ArrayJoinKind::Join => {
+                    // Integer-indexed storage returns only primitive numeric values.
+                    let string = match runtime.native_to_js_string(self.realm, &element)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(Completion::Throw(value));
+                            return Ok(TypedStringStep::Complete(Completion::Throw(value)));
                         }
                     };
-                    match self.native_to_js_string(realm, &localized)? {
-                        NativeConversion::Value(value) => value,
-                        NativeConversion::Throw(value) => {
-                            return Ok(Completion::Throw(value));
-                        }
-                    }
+                    self.output.push_js_string(&string)?;
+                    self.index += 1;
                 }
-            };
-            output.push_js_string(&element)?;
+                ArrayJoinKind::ToLocaleString => {
+                    let key = runtime.intern_property_key("toLocaleString")?;
+                    self.phase = Phase::LocaleMethod(element.clone());
+                    return Ok(TypedStringStep::Read {
+                        receiver: element,
+                        key,
+                        resume: self,
+                    });
+                }
+            }
         }
-
-        // Separator coercion can shrink or detach the source before traversal.
-        // QuickJS still returns the same old-length slot shape, including the
-        // zero-live-element case where `old_length - 1` separators are needed.
-        for _ in current_length.max(1)..initial_length {
-            output.push_js_string(&separator)?;
+        for _ in self.current_length.max(1)..self.initial_length {
+            self.output.push_js_string(&self.separator)?;
         }
-
-        Ok(Completion::Return(Value::String(output.finish()?)))
+        Ok(TypedStringStep::Complete(Completion::Return(
+            Value::String(self.output.finish()?),
+        )))
+    }
+    pub(crate) fn resume(
+        mut self,
+        runtime: &Runtime,
+        result: Completion,
+    ) -> Result<TypedStringStep, RuntimeError> {
+        let value = match result {
+            Completion::Return(value) => value,
+            Completion::Throw(value) => {
+                return Ok(TypedStringStep::Complete(Completion::Throw(value)));
+            }
+        };
+        match self.phase {
+            Phase::Separator => {
+                self.separator = match runtime.native_to_js_string(self.realm, &value)? {
+                    NativeConversion::Value(value) => value,
+                    NativeConversion::Throw(value) => {
+                        return Ok(TypedStringStep::Complete(Completion::Throw(value)));
+                    }
+                };
+                self.current_length = u64::from(runtime.typed_array_state(&self.target)?.length);
+                self.next(runtime)
+            }
+            Phase::LocaleMethod(receiver) => {
+                let callable = match value {
+                    Value::Object(object) => runtime.as_callable(&object)?,
+                    _ => None,
+                };
+                let Some(callable) = callable else {
+                    return Ok(TypedStringStep::Complete(Completion::Throw(
+                        runtime.new_native_error(
+                            self.realm,
+                            NativeErrorKind::Type,
+                            "not a function",
+                        )?,
+                    )));
+                };
+                self.phase = Phase::LocaleResult;
+                Ok(TypedStringStep::Call {
+                    target: DirectCallTarget::Callable(callable),
+                    receiver,
+                    arguments: Vec::new(),
+                    resume: self,
+                })
+            }
+            Phase::LocaleResult => {
+                self.phase = Phase::Element;
+                Ok(TypedStringStep::Primitive {
+                    value,
+                    resume: self,
+                })
+            }
+            Phase::Element => {
+                let string = match runtime.native_to_js_string(self.realm, &value)? {
+                    NativeConversion::Value(value) => value,
+                    NativeConversion::Throw(value) => {
+                        return Ok(TypedStringStep::Complete(Completion::Throw(value)));
+                    }
+                };
+                self.output.push_js_string(&string)?;
+                self.index += 1;
+                self.next(runtime)
+            }
+        }
+    }
+}
+fn finish(
+    runtime: &Runtime,
+    realm: ContextId,
+    mut step: TypedStringStep,
+) -> Result<Completion, RuntimeError> {
+    loop {
+        step = match step {
+            TypedStringStep::Complete(result) => return Ok(result),
+            TypedStringStep::Primitive { value, resume } => {
+                let result = if matches!(value, Value::Object(_)) {
+                    runtime.to_primitive(realm, value, ToPrimitiveHint::String)?
+                } else {
+                    Completion::Return(value)
+                };
+                resume.resume(runtime, result)?
+            }
+            TypedStringStep::Read {
+                receiver,
+                key,
+                resume,
+            } => resume.resume(
+                runtime,
+                runtime.get_value_property_in_realm(realm, receiver, &key)?,
+            )?,
+            TypedStringStep::Call {
+                target,
+                receiver,
+                arguments,
+                resume,
+            } => {
+                let DirectCallTarget::Callable(callable) = target else {
+                    return Err(RuntimeError::Invariant(
+                        "TypedArray stringification requested invalid call target",
+                    ));
+                };
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                )?
+            }
+        };
     }
 }

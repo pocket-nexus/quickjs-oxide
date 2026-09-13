@@ -9,10 +9,9 @@ use crate::engine::code::bytecode::{DetachedBytecode, TestConstant};
 use crate::engine::heap::ContextId;
 use crate::engine::object::ObjectRef;
 
-use crate::engine::value::bigint::{BigIntError, JsBigInt};
+#[cfg(test)]
+use crate::engine::value::bigint::JsBigInt;
 use crate::engine::value::{JsString, Value};
-use num_bigint::BigInt;
-use num_traits::FromPrimitive;
 #[cfg(test)]
 use std::collections::VecDeque;
 
@@ -43,6 +42,7 @@ mod eval_bindings;
 #[cfg(feature = "stack-vm")]
 mod eval_driver;
 mod property_keys;
+mod pure_operations;
 #[cfg(feature = "stack-vm")]
 mod with_driver;
 
@@ -78,7 +78,8 @@ mod completion;
 pub(crate) use completion::*;
 
 mod numeric;
-use numeric::*;
+#[cfg(test)]
+use numeric::to_primitive;
 
 #[cfg(test)]
 mod detached;

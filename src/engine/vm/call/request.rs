@@ -50,9 +50,6 @@ impl BytecodeCallRequest {
             executable: prepared.executable,
             cold: Box::new(FrameCold {
                 regions: Vec::new(),
-                constructor_wait: None,
-                class_wait: None,
-                has_binding_wait: None,
                 iterator_wait: None,
                 property_wait: None,
                 property_generation: 0,

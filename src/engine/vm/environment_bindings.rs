@@ -1,4 +1,5 @@
 //! Shared authentication of hidden eval/with local and closure owners.
+pub(super) mod operation;
 use super::{
     bindings::{FrameBinding, read_frame_binding},
     exception::runtime_error_to_vm_error,

@@ -19,8 +19,78 @@ pub(super) fn step(
     id: FrameId,
     mut exit: RunExit,
 ) -> Result<Option<CallStep>, Error> {
+    if let RunExit::Pure(operation) = exit {
+        return super::pure_operations::step(runtime, execution, id, operation).map(Some);
+    }
+    if let RunExit::CopyData {
+        target,
+        source,
+        excluded,
+    } = exit
+    {
+        return super::proxy_get_driver::start_object_copy(
+            runtime, execution, id, target, source, excluded,
+        )
+        .map(Some);
+    }
     let original = exit;
     let mut forwarded = None;
+    if let RunExit::ReplaceBinding {
+        source,
+        index,
+        keep,
+        uninitialized,
+    } = exit
+    {
+        use super::{bindings::FrameBinding, run::BindingSource};
+        let frame = execution.frames.current_mut(id)?;
+        #[cfg(feature = "profiling")]
+        let depth = execution.slots.depth(&frame.window);
+        let current = match source {
+            BindingSource::Local => execution.slots.local(&frame.window, index)?,
+            BindingSource::Argument => execution.slots.parameter(&frame.window, index)?,
+            BindingSource::Closure => {
+                return Err(Error::internal("direct release received a closure"));
+            }
+        };
+        if !matches!(
+            current,
+            FrameBinding::Direct(_) | FrameBinding::Uninitialized
+        ) {
+            return Err(Error::internal("direct release lost its slot owner"));
+        }
+        let next = if uninitialized {
+            FrameBinding::Uninitialized
+        } else if keep {
+            FrameBinding::Direct(super::stack::copy_value(
+                execution.slots.peek(&frame.window, 0)?,
+            )?)
+        } else {
+            FrameBinding::Direct(execution.slots.pop(&mut frame.window)?)
+        };
+        let old = match source {
+            BindingSource::Local => execution.slots.replace_local(&frame.window, index, next)?,
+            BindingSource::Argument => {
+                execution
+                    .slots
+                    .replace_parameter(&frame.window, index, next)?
+            }
+            BindingSource::Closure => unreachable!(),
+        };
+        if uninitialized {
+            frame.cold.reusable_captured_locals[usize::from(index)] = false;
+        }
+        // Publish the replacement before releasing the displaced last root.
+        // Ordinary Drop handles collection work outside the resident dispatch.
+        drop(old);
+        frame.resume_pc = frame
+            .fault_pc
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("binding release resume PC overflow"))?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(depth);
+        return Ok(Some(CallStep::Entered));
+    }
     if let RunExit::ReleaseOperand { keep_top } = exit {
         let frame = execution.frames.current_mut(id)?;
         // Hot preflight has not changed an owner. Validate both operands before
@@ -122,8 +192,76 @@ pub(super) fn step(
                 forwarded = Some(Completion::Throw(value));
                 exit = RunExit::Complete;
             }
-            super::private_access::Outcome::Bridge => exit = RunExit::Bridge,
         }
+    }
+    if exit == RunExit::LogicalNot {
+        let frame = execution.frames.current_mut(id)?;
+        let result = !runtime
+            .value_to_boolean(execution.slots.peek(&frame.window, 0)?)
+            .map_err(runtime_error_to_vm_error)?;
+        #[cfg(feature = "profiling")]
+        let depth = execution.slots.depth(&frame.window);
+        let input = execution.slots.pop(&mut frame.window)?;
+        execution
+            .slots
+            .push(&mut frame.window, Value::Bool(result))?;
+        drop(input);
+        frame.resume_pc = frame
+            .fault_pc
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("logical not resume PC overflow"))?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(depth);
+        return Ok(Some(CallStep::Entered));
+    }
+    if let RunExit::ForIn(next) = exit {
+        let frame = execution.frames.current_mut(id)?;
+        let realm = frame.executable.realm;
+        let depth = execution.slots.depth(&frame.window);
+        let step = if next {
+            let Value::Object(iterator) = execution.slots.peek(&frame.window, 0)? else {
+                return Err(Error::internal(
+                    "for-in next received a non-object iterator",
+                ));
+            };
+            super::for_in::operation::ForInStep::next(runtime, realm, iterator.clone())
+        } else {
+            let value = execution.slots.pop(&mut frame.window)?;
+            super::for_in::operation::ForInStep::start(runtime, realm, value)
+        };
+        return match step {
+            Ok(step) => {
+                super::proxy_get_driver::start_for_in_query(runtime, execution, id, step, depth)
+                    .map(Some)
+            }
+            Err(error) => super::property_driver::throw_error(
+                runtime,
+                realm,
+                runtime_error_to_vm_error(error),
+            )
+            .map(Some),
+        };
+    }
+    if let RunExit::Numeric(kind) = exit {
+        let frame = execution.frames.current_mut(id)?;
+        let realm = frame.executable.realm;
+        let depth = execution.slots.depth(&frame.window);
+        let (left, right) = if kind.unary() {
+            (execution.slots.pop(&mut frame.window)?, None)
+        } else {
+            let right = execution.slots.pop(&mut frame.window)?;
+            (execution.slots.pop(&mut frame.window)?, Some(right))
+        };
+        let result = match super::numeric::operation::NumericStep::start(kind, left, right) {
+            Ok(step) => {
+                super::proxy_get_driver::start_numeric(runtime, execution, id, step, depth)?
+            }
+            Err(error) => super::property_driver::throw_error(runtime, realm, error)?,
+        };
+        return match result {
+            CallStep::Bridge => Err(Error::internal("numeric operation attempted replay")),
+            result => Ok(Some(result)),
+        };
     }
     if let RunExit::StrictEquality(negate) = exit {
         super::run::strict_comparison(execution, id, negate)?;

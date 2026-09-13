@@ -116,6 +116,11 @@ impl Runtime {
 }
 
 impl NativeActivation {
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
+        self.active_frame.mark_native_continuation()
+    }
+
     /// Allocate JS engine errors while this native frame and its selected realm
     /// are still visible. An existing thrown Value must not be re-materialized.
     pub(in crate::engine::vm) fn finish(

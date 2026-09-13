@@ -578,3 +578,38 @@ pub(in crate::engine::vm) fn initialize_local_binding(
             .map_err(runtime_error_to_vm_error),
     }
 }
+
+pub(in crate::engine::vm) fn initialize_derived_closure(
+    runtime: &Runtime,
+    root: &VarRefRoot,
+    descriptor: ClosureVariable,
+    value: Value,
+) -> Result<(), Error> {
+    use crate::engine::api::error::ErrorKind;
+    if !descriptor.is_lexical
+        || descriptor.is_const
+        || descriptor.kind != ClosureVariableKind::Normal
+    {
+        return Err(Error::internal(
+            "derived this initialization referenced a non-mutable lexical closure",
+        ));
+    }
+    if !matches!(value, Value::Object(_)) {
+        return Err(Error::internal(
+            "derived this initialization did not receive an Object",
+        ));
+    }
+    let raw = runtime
+        .raw_var_ref_value(root)
+        .map_err(runtime_error_to_vm_error)?;
+    if !matches!(raw, RawValue::Uninitialized) {
+        // Pinned QuickJS's captured form (`put_var_ref_check_init`) uses
+        // the ordinary uninitialized-binding diagnostic here. This
+        // intentionally differs from the owning-local opcode's explicit
+        // "initialized only once" message.
+        return Err(Error::new(ErrorKind::Reference, "this is not initialized"));
+    }
+    runtime
+        .write_var_ref(root, value)
+        .map_err(runtime_error_to_vm_error)
+}

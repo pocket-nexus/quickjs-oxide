@@ -607,38 +607,10 @@ impl VmActivation {
         instruction: &Instruction,
         host: &mut impl VmHost,
     ) -> Result<Option<Completion>, Error> {
+        if let Some(kind) = super::numeric::operation::NumericKind::for_instruction(instruction) {
+            return self.numeric_operation(host, kind);
+        }
         match instruction {
-            Instruction::Neg => {
-                if let OperationOutcome::Throw(value) = self.neg(host)? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Plus => {
-                if let OperationOutcome::Throw(value) = self.unary_plus(host)? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Inc | Instruction::Dec => {
-                let increment = matches!(instruction, Instruction::Inc);
-                if let OperationOutcome::Throw(value) =
-                    self.update_numeric(host, increment, false)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::PostInc | Instruction::PostDec => {
-                let increment = matches!(instruction, Instruction::PostInc);
-                if let OperationOutcome::Throw(value) =
-                    self.update_numeric(host, increment, true)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::BitNot => {
-                if let OperationOutcome::Throw(value) = self.bit_not(host)? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
             Instruction::Not => {
                 let value = self.pop()?;
                 self.stack.push(Value::Bool(!host.to_boolean(&value)?));
@@ -671,155 +643,13 @@ impl VmActivation {
                 let is_function = !host.is_html_dda(&value)? && host.is_callable(&value)?;
                 self.stack.push(Value::Bool(is_function));
             }
-            Instruction::Add => {
-                if let OperationOutcome::Throw(value) = self.add(host)? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Sub => {
-                if let OperationOutcome::Throw(value) =
-                    self.binary_numeric(host, |left, right| left - right, JsBigInt::sub)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Mul => {
-                if let OperationOutcome::Throw(value) =
-                    self.binary_numeric(host, |left, right| left * right, JsBigInt::mul)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Div => {
-                if let OperationOutcome::Throw(value) =
-                    self.binary_numeric(host, |left, right| left / right, JsBigInt::div)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Mod => {
-                if let OperationOutcome::Throw(value) =
-                    self.binary_numeric(host, |left, right| left % right, JsBigInt::rem)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Pow => {
-                if let OperationOutcome::Throw(value) =
-                    self.binary_numeric(host, crate::engine::value::number::pow, JsBigInt::pow)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Shl => {
-                if let OperationOutcome::Throw(value) = self.binary_numeric(
-                    host,
-                    |left, right| {
-                        f64::from(
-                            number_to_int32(left).wrapping_shl(number_to_uint32(right) & 0x1f),
-                        )
-                    },
-                    JsBigInt::shl,
-                )? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Sar => {
-                if let OperationOutcome::Throw(value) = self.binary_numeric(
-                    host,
-                    |left, right| {
-                        f64::from(number_to_int32(left) >> (number_to_uint32(right) & 0x1f))
-                    },
-                    JsBigInt::shr,
-                )? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Shr => {
-                if let OperationOutcome::Throw(value) = self.unsigned_shift_right(host)? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::BitAnd => {
-                if let OperationOutcome::Throw(value) = self.binary_numeric(
-                    host,
-                    |left, right| f64::from(number_to_int32(left) & number_to_int32(right)),
-                    JsBigInt::bit_and,
-                )? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::BitXor => {
-                if let OperationOutcome::Throw(value) = self.binary_numeric(
-                    host,
-                    |left, right| f64::from(number_to_int32(left) ^ number_to_int32(right)),
-                    JsBigInt::bit_xor,
-                )? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::BitOr => {
-                if let OperationOutcome::Throw(value) = self.binary_numeric(
-                    host,
-                    |left, right| f64::from(number_to_int32(left) | number_to_int32(right)),
-                    JsBigInt::bit_or,
-                )? {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Eq => {
-                let (left, right) = self.pop_pair()?;
-                match abstract_equal(host, left, right)? {
-                    OperationOutcome::Value(equal) => self.stack.push(Value::Bool(equal)),
-                    OperationOutcome::Throw(value) => {
-                        return Ok(Some(Completion::Throw(value)));
-                    }
-                }
-            }
             Instruction::StrictEq => {
                 let (left, right) = self.pop_pair()?;
                 self.stack.push(Value::Bool(left.strict_equal(&right)));
             }
-            Instruction::Neq => {
-                let (left, right) = self.pop_pair()?;
-                match abstract_equal(host, left, right)? {
-                    OperationOutcome::Value(equal) => self.stack.push(Value::Bool(!equal)),
-                    OperationOutcome::Throw(value) => {
-                        return Ok(Some(Completion::Throw(value)));
-                    }
-                }
-            }
             Instruction::StrictNeq => {
                 let (left, right) = self.pop_pair()?;
                 self.stack.push(Value::Bool(!left.strict_equal(&right)));
-            }
-            Instruction::Lt => {
-                if let OperationOutcome::Throw(value) =
-                    self.compare(host, std::cmp::Ordering::is_lt)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Lte => {
-                if let OperationOutcome::Throw(value) =
-                    self.compare(host, std::cmp::Ordering::is_le)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Gt => {
-                if let OperationOutcome::Throw(value) =
-                    self.compare(host, std::cmp::Ordering::is_gt)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
-            }
-            Instruction::Gte => {
-                if let OperationOutcome::Throw(value) =
-                    self.compare(host, std::cmp::Ordering::is_ge)?
-                {
-                    return Ok(Some(Completion::Throw(value)));
-                }
             }
             _ => {
                 return Err(Error::internal(

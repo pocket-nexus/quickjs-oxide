@@ -11,6 +11,7 @@ use crate::engine::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
+    Instance,
     Has,
     Delete,
 }
@@ -43,6 +44,20 @@ pub(super) fn start(
     let depth = execution.slots.depth(&frame.window);
     let right = execution.slots.pop(&mut frame.window)?;
     let left = execution.slots.pop(&mut frame.window)?;
+    if kind == Kind::Instance {
+        let Value::Object(target) = right else {
+            return super::property_driver::throw_error(
+                runtime,
+                realm,
+                Error::new(ErrorKind::Type, "invalid 'instanceof' right operand"),
+            )
+            .map(Progress::Call);
+        };
+        return super::proxy_get_driver::start_instance(
+            runtime, execution, id, left, target, depth,
+        )
+        .map(Progress::Call);
+    }
     let (base, key) = if kind == Kind::Has {
         (right, left)
     } else {

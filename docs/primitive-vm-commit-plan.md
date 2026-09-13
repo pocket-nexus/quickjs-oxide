@@ -1,8 +1,13 @@
 # 栈 VM：一个 PR 内的 10 个 commit
 
-状态：2026-09-13，S01–S04 阶段验收通过，S05 实施中，S06–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
+状态：2026-09-13，S01–S05 阶段验收通过，S06–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
 
 目标见[架构计划](primitive-vm-plan.md)，目录与算法见[实施设计](primitive-vm-implementation-plan.md)，能力和结构验收见[迁移清单](primitive-vm-migration.md)。
+
+用户于本轮要求：从当前 S05 剩余实现继续，按 S05 → S06 → S07 顺序，
+每阶段仅一次正式验收与一次 commit，不创建中途 checkpoint commit。
+开发中的定向构建/排错不作为阶段验收；S07 完成后再运行新旧 VM 完整
+benchmark/profile，并在 PR #21 comment 汇报。此要求优先于下文开发临时提交规则。
 
 ## 当前实施记录
 
@@ -119,6 +124,32 @@
 - S05 native 调用所有权准备：从原调用器抽出参数/帧所有者，保留完整 argv、错误的定义 realm 和 native 栈记录，验证放弃/异常展开及 metadata/runtime 拒绝。新库 2140 项、旧库 1996 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、CLI profiling 各 5 项及构建/扫描/契约/布局通过。当前仍由原同步调用器消费，下一步接 native 内置 continuation；S05 未验收，S06/S07 仍延后。
 
 ## 2. 编译与执行基础
+
+S05 本轮统一收口（阶段验收通过）：同步 native 全领域共享 Step/Resume，
+VM 查询只调度有类型的请求；对象/Proxy、iterator/collection、String/RegExp、
+buffer/TypedArray/Atomics、Function/scalar/Date/Math/Error/JSON/weak 与间接转换已接入。
+最后引用释放、literal/method 定义、非法调用/派生构造器、子帧安装事务和放弃执行的
+释放顺序一并收口。现有默认预算不变，统一阶段门禁已完成；同一次验收中
+修复失败并完成复核：非法 Construct 的 TypeError 已改由共享异常出口返回；有限递归
+资源探测区分默认 VM 的物理栈和 owned VM 的逻辑帧，原错误与恢复断言保留；
+async 预检探测改用直接索引收集 Promise，避免 Array.push 先耗尽预算。
+具体入口审计见同步回调账本。S06/S07 未开始，不创建中途 commit。
+
+本次门禁的语义与结构部分已完成：新库 2197 项、默认库 2032 项；新旧 oracle
+各 911 项及单独执行的 65K 实参压力用例各 1 项；CLI profiling 各 5 项；
+非 profiling 构建、4 项属性契约测试、723 个完整边界反例、631 文件源码布局与
+格式/diff 检查通过。CLI 原有 `instanceof Array` 探测脚本保持不变，计数预期更新为
+owned 配置零旧分派、零整帧交接和一次 S07 print 桥；默认配置保持旧分派预期。
+原始 Earley-Boyer 独立执行与调用栈归因均完成，三个残余桥逐个确认是
+`QjsConsoleLog`。原始组合脚本的八项 suite 与总分在完整归因运行中全部输出；
+零旧分派、零整帧交接，十个同步桥事件逐个确认属于同一 S07 输出入口。
+组合诊断首次触及外部 600 秒超时的失败记录保留；完整归因使用 1800 秒外部
+watchdog，610.16 秒退出 0，VM 默认预算与原始脚本均不变。诊断成绩不作性能结论。
+
+统一验收证据保存在 `target/primitive-vm-s05-acceptance/`，含所有失败/复核日志、
+905 个 Rust/Cargo 输入的最终哈希及 `coverage/coverage-verdict.json`。覆盖二进制
+SHA-256 为 `e458c028531a958baf724eac7dc570f0861de62173d1b5b81ba873c797d80b8a`。
+S05 阶段验收通过；以本阶段计划消息提交一次后，才恢复 S06 的独立 stash。
 
 ### S01 — `refactor(compiler): organize stack compilation and diagnostics`
 

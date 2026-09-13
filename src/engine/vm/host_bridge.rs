@@ -429,22 +429,6 @@ impl RuntimeVmHost {
         Ok((self.executable.code.clone(), activation))
     }
 
-    /// QuickJS `OP_typeof` converts one of its predefined type atoms back to
-    /// the atom's canonical String cell. Runtime construction pins the full
-    /// result set, so every realm reuses the same representation while sibling
-    /// runtimes remain isolated.
-    fn canonical_typeof_string(&self, spelling: &'static str) -> Result<JsString, Error> {
-        let mut state = self.runtime.0.state.borrow_mut();
-        let atom = state
-            .atoms
-            .intern_static(spelling)
-            .map_err(|error| runtime_error_to_vm_error(error.into()))?;
-        state
-            .atoms
-            .to_js_string(atom)
-            .map_err(|error| runtime_error_to_vm_error(error.into()))
-    }
-
     #[cfg(test)]
     pub(crate) fn empty_for_test(runtime: Runtime, current_realm: ContextId) -> Self {
         Self {
@@ -855,13 +839,6 @@ impl RuntimeVmHost {
         name_visible: bool,
     ) -> Result<Error, Error> {
         crate::engine::vm::bindings::lexical_uninitialized_error(&self.runtime, name, name_visible)
-    }
-
-    /// Dynamic/global environment records diagnose the resolved property atom
-    /// directly in QuickJS; strip-var-debug only erases local and ordinary
-    /// closure descriptor names.
-    fn dynamic_lexical_uninitialized_error(&self, name: Atom) -> Result<Error, Error> {
-        self.lexical_uninitialized_error_with_visibility(Some(name), true)
     }
 
     /// QuickJS strips vardef names per function when StripDebug was sampled
@@ -1760,63 +1737,7 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn type_of(&mut self, value: &Value) -> Result<JsString, Error> {
-        let Value::Object(object) = value else {
-            return self.canonical_typeof_string(value.type_of());
-        };
-        if !object.belongs_to(&self.runtime) {
-            return Err(Error::internal("typeof operand belongs to another runtime"));
-        }
-        let state = self.runtime.0.state.borrow();
-        let object = state
-            .heap
-            .object(object.object_id())
-            .map_err(|error| Error::internal(error.to_string()))?;
-        if object.is_html_dda {
-            drop(state);
-            return self.canonical_typeof_string("undefined");
-        }
-        let spelling = match &object.payload {
-            ObjectPayload::NativeFunction { .. }
-            | ObjectPayload::BoundFunction { .. }
-            | ObjectPayload::BytecodeFunction { .. } => "function",
-            ObjectPayload::Proxy(proxy) if proxy.is_callable => "function",
-            ObjectPayload::Proxy(_) => "object",
-            ObjectPayload::Ordinary
-            | ObjectPayload::ArrayBuffer(_)
-            | ObjectPayload::SharedArrayBuffer(_)
-            | ObjectPayload::DataView(_)
-            | ObjectPayload::TypedArray(_)
-            | ObjectPayload::AsyncFunctionState(_)
-            | ObjectPayload::RawJson
-            | ObjectPayload::Promise(_)
-            | ObjectPayload::Date(_)
-            | ObjectPayload::RegExp(_)
-            | ObjectPayload::Array { .. }
-            | ObjectPayload::Arguments { .. }
-            | ObjectPayload::ArrayIterator { .. }
-            | ObjectPayload::IteratorHelper(_)
-            | ObjectPayload::IteratorWrap(_)
-            | ObjectPayload::AsyncFromSyncIterator(_)
-            | ObjectPayload::IteratorConcat(_)
-            | ObjectPayload::Map { .. }
-            | ObjectPayload::MapIterator { .. }
-            | ObjectPayload::Set { .. }
-            | ObjectPayload::WeakMap { .. }
-            | ObjectPayload::WeakSet { .. }
-            | ObjectPayload::WeakRef { .. }
-            | ObjectPayload::FinalizationRegistry(_)
-            | ObjectPayload::SetIterator { .. }
-            | ObjectPayload::ForInIterator(_)
-            | ObjectPayload::Primitive(_)
-            | ObjectPayload::GlobalObject { .. }
-            | ObjectPayload::Error
-            | ObjectPayload::StringIterator { .. }
-            | ObjectPayload::RegExpStringIterator { .. }
-            | ObjectPayload::Generator { .. }
-            | ObjectPayload::AsyncGenerator(_) => "object",
-        };
-        drop(state);
-        self.canonical_typeof_string(spelling)
+        super::pure_operations::type_of(&self.runtime, value)
     }
 
     fn box_primitive(&mut self, value: Value) -> Result<Value, Error> {
@@ -2277,21 +2198,12 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn create_regexp(&mut self, index: u32) -> Result<Completion, Error> {
-        let (pattern, program) = match self.executable.constant(index) {
-            Some(BytecodeConstant::RegExp { pattern, program }) => {
-                (pattern.clone(), program.clone())
-            }
-            Some(BytecodeConstant::Value(_) | BytecodeConstant::Function(_)) => {
-                return Err(Error::internal(
-                    "RegExp opcode referenced a non-RegExp constant",
-                ));
-            }
-            None => return Err(Error::internal("constant index is out of bounds")),
-        };
-        self.runtime
-            .new_compiled_regexp_literal(self.current_realm, pattern, program)
-            .map(|object| Completion::Return(Value::Object(object)))
-            .map_err(runtime_error_to_vm_error)
+        super::pure_operations::create_regexp(
+            &self.runtime,
+            self.current_realm,
+            &self.executable,
+            index,
+        )
     }
 
     fn array_from(&mut self, elements: Vec<Value>) -> Result<Completion, Error> {
@@ -2490,23 +2402,11 @@ impl VmHost for RuntimeVmHost {
         let Value::Object(object) = base else {
             return Err(Error::new(ErrorKind::Type, "not an object"));
         };
-        let key = match self.property_key_from_value(index)? {
-            VmPropertyKeyConversion::Key(key) => key,
-            VmPropertyKeyConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let result = self.runtime.define_own_property_in_realm(
-            Some(self.current_realm),
-            &object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        );
-        self.finish_property_define(result)
+        use crate::engine::object::object_literal::element::{self, LiteralDefinitionStep};
+        let step =
+            LiteralDefinitionStep::start(&self.runtime, self.current_realm, object, index, value)
+                .map_err(runtime_error_to_vm_error)?;
+        element::finish(&self.runtime, self.current_realm, step).map_err(runtime_error_to_vm_error)
     }
 
     fn set_object_prototype(
@@ -2514,26 +2414,7 @@ impl VmHost for RuntimeVmHost {
         object: Value,
         prototype: Value,
     ) -> Result<Completion, Error> {
-        let Value::Object(object) = object else {
-            return Err(Error::internal(
-                "object-literal prototype target was not an Object",
-            ));
-        };
-        let prototype = match prototype {
-            Value::Object(prototype) => Some(prototype),
-            Value::Null => None,
-            // Pinned QuickJS `OP_set_proto` consumes every primitive without
-            // changing the fresh literal.
-            _ => return Ok(Completion::Return(Value::Undefined)),
-        };
-        let changed = self
-            .runtime
-            .set_prototype_of(&object, prototype.as_ref())
-            .map_err(runtime_error_to_vm_error)?;
-        if !changed {
-            return Err(Error::new(ErrorKind::Type, "prototype is immutable"));
-        }
-        Ok(Completion::Return(Value::Undefined))
+        super::pure_operations::set_object_prototype(&self.runtime, object, prototype)
     }
 
     fn copy_data_properties(&mut self, target: Value, source: Value) -> Result<Completion, Error> {
@@ -2658,26 +2539,16 @@ impl VmHost for RuntimeVmHost {
             .runtime
             .global_object_for_realm(self.current_realm)
             .map_err(runtime_error_to_vm_error)?;
-        // QuickJS `JS_DeleteGlobalVar` performs completion-aware HasProperty
-        // first. The actual Delete still targets the ordinary global object,
-        // but a Proxy in its prototype chain can observe or abruptly complete
-        // this probe.
-        let exists = match self
-            .runtime
-            .internal_has_property(self.current_realm, &global_object, &key)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            NativeConversion::Value(exists) => exists,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let deleted = if exists {
-            self.runtime
-                .delete_property(&global_object, &key)
-                .map_err(runtime_error_to_vm_error)?
-        } else {
-            true
-        };
-        Ok(Completion::Return(Value::Bool(deleted)))
+        super::environment_bindings::operation::finish(
+            &self.runtime,
+            self.current_realm,
+            super::environment_bindings::operation::EnvironmentStep::delete_global(
+                self.current_realm,
+                global_object,
+                key,
+            ),
+        )
+        .map_err(runtime_error_to_vm_error)
     }
 
     fn put_global_var(
@@ -2706,32 +2577,19 @@ impl VmHost for RuntimeVmHost {
             .runtime
             .global_object_for_realm(self.current_realm)
             .map_err(runtime_error_to_vm_error)?;
-        let exists = match self
-            .runtime
-            .internal_has_property(self.current_realm, &global_object, &key)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            NativeConversion::Value(exists) => exists,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        if strict && !exists {
-            let error = self
-                .runtime
-                .native_atom_error(ErrorKind::Reference, "'", &key, "' is not defined")
-                .map_err(runtime_error_to_vm_error)?;
-            return Err(error);
-        }
-        let result = self
-            .runtime
-            .internal_set(
+        super::environment_bindings::operation::finish(
+            &self.runtime,
+            self.current_realm,
+            super::environment_bindings::operation::EnvironmentStep::put(
                 self.current_realm,
-                &global_object,
-                &key,
+                global_object,
+                key,
                 value,
-                Value::Object(global_object.clone()),
-            )
-            .map_err(runtime_error_to_vm_error)?;
-        self.finish_internal_set(result, &key, strict)
+                strict,
+                false,
+            ),
+        )
+        .map_err(runtime_error_to_vm_error)
     }
 
     fn initialize_private_name(&mut self, index: u16) -> Result<(), Error> {
@@ -3753,38 +3611,11 @@ impl VmHost for RuntimeVmHost {
             .get(usize::from(index))
             .copied()
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        if !descriptor.is_lexical
-            || descriptor.is_const
-            || descriptor.kind != ClosureVariableKind::Normal
-        {
-            return Err(Error::internal(
-                "derived this initialization referenced a non-mutable lexical closure",
-            ));
-        }
-        if !matches!(value, Value::Object(_)) {
-            return Err(Error::internal(
-                "derived this initialization did not receive an Object",
-            ));
-        }
         let root = self
             .closure_slots
             .get(usize::from(index))
-            .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
-            .clone();
-        let raw = self
-            .runtime
-            .raw_var_ref_value(&root)
-            .map_err(runtime_error_to_vm_error)?;
-        if !matches!(raw, RawValue::Uninitialized) {
-            // Pinned QuickJS's captured form (`put_var_ref_check_init`) uses
-            // the ordinary uninitialized-binding diagnostic here. This
-            // intentionally differs from the owning-local opcode's explicit
-            // "initialized only once" message.
-            return Err(Error::new(ErrorKind::Reference, "this is not initialized"));
-        }
-        self.runtime
-            .write_var_ref(&root, value)
-            .map_err(runtime_error_to_vm_error)
+            .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
+        super::bindings::initialize_derived_closure(&self.runtime, root, descriptor, value)
     }
 
     fn return_derived(&mut self, index: u16, value: Value) -> Result<Completion, Error> {

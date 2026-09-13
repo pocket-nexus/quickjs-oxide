@@ -12,13 +12,44 @@ def check(ctx):
     if ctx.self_test_marker_authorized:
         return
 
+    def owned_function(relative, selector, diagnostic):
+        # Scope repeated start/resume names to their concrete algorithm owner.
+        # Count both the impl and its function so a shadow owner cannot satisfy
+        # a stale declaration elsewhere in the same module.
+        if "::" not in selector:
+            return ctx.stage3b_function(relative, selector, diagnostic)
+        owner, name = selector.split("::", 1)
+        implementation = ctx.unique_braced_item(
+            ctx.stage3b_code(relative),
+            re.compile(rf"\bimpl[ \t\n]+{re.escape(owner)}[ \t\n]*\{{"),
+            diagnostic, f"{relative}::impl {owner}",
+        )[0]
+        return ctx.unique_braced_item(
+            implementation,
+            re.compile(rf"\bfn[ \t\n]+{re.escape(name)}\b[^{{}};]*\{{"),
+            diagnostic, f"{relative}::{selector}",
+        )[0]
+
     stage3b_ordered_contracts = deepcopy(evidence.STAGE3B_ORDERED_CONTRACTS)
 
     for diagnostic, ctx.relative, ctx.function_name, fragments in stage3b_ordered_contracts:
+        item = owned_function(ctx.relative, ctx.function_name, diagnostic)
+        # FinalizationRegistry validates its callback in start; prototype
+        # acquisition and fallback must never narrow raw newTarget to [[Call]].
+        validates_callback = (
+            ctx.relative == "src/engine/builtins/weak_ref/constructor.rs"
+            and ctx.function_name == "WeakConstructorStep::start"
+        )
+        if (
+            diagnostic == "stage3b-native-prototype-family"
+            and not validates_callback
+            and re.search(r"\b(?:CallableRef|callable_from_value|as_callable)\b", item)
+        ):
+            ctx.fail(diagnostic, f"{ctx.relative}::{ctx.function_name} must retain raw prototype capability")
         ctx.require_ordered_fragments(
             diagnostic,
             f"{ctx.relative}::{ctx.function_name} must retain its reviewed Stage3B branch order",
-            ctx.stage3b_function(ctx.relative, ctx.function_name, diagnostic),
+            item,
             fragments,
         )
 
@@ -55,15 +86,9 @@ def check(ctx):
     if re.search(r"\b(?:CallableRef|callable_from_value|as_callable)\b", prototype_helper):
         ctx.fail("stage3b-constructor-prototype", "prototype fallback must consume raw newTarget")
 
-    native_borrowed_prototype_consumers = (
-        ("src/engine/heap/runtime/mod.rs", "create_from_constructor_value"),
-        ("src/engine/builtins/array.rs", "create_array_from_constructor"),
-    )
-
     native_owned_prototype_consumers = deepcopy(evidence.NATIVE_OWNED_PROTOTYPE_CONSUMERS)
 
     native_prototype_consumers = (
-        *((relative, function_name, "new_target") for relative, function_name in native_borrowed_prototype_consumers),
         *((relative, function_name, "&new_target") for relative, function_name in native_owned_prototype_consumers),
     )
 
@@ -76,12 +101,23 @@ def check(ctx):
         ):
             ctx.fail("stage3b-native-prototype-family", f"{ctx.relative}::{ctx.function_name} bypasses the raw helper payload")
 
+    for diagnostic, relative, name, payload in evidence.CONSTRUCTION_CAPABILITIES:
+        item = ctx.unique_braced_item(
+            ctx.stage3b_code(relative),
+            re.compile(rf"\benum[ \t\n]+{re.escape(name)}[ \t\n]*\{{"),
+            diagnostic, f"{relative}::{name}",
+        )[0]
+        ctx.require_ordered_fragments(
+            diagnostic, f"{relative}::{name} must carry constructor-only requests",
+            item, (payload,),
+        )
+
     constructor_only_items = deepcopy(evidence.CONSTRUCTOR_ONLY_ITEMS)
 
     for diagnostic, ctx.relative, ctx.function_name in constructor_only_items:
         if re.search(
             r"\b(?:CallableRef|callable_from_value|as_callable)\b",
-            ctx.stage3b_function(ctx.relative, ctx.function_name, diagnostic),
+            owned_function(ctx.relative, ctx.function_name, diagnostic),
         ):
             ctx.fail(diagnostic, f"{ctx.relative}::{ctx.function_name} must preserve constructor-only capability")
 

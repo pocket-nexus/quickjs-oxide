@@ -62,9 +62,9 @@ expect_full_rewrite_rejected stage3b-nullish-apply-bypass \
     '        if matches!(argument_array, Value::Undefined | Value::Null) {' \
     '        if false && matches!(argument_array, Value::Undefined | Value::Null) {'
 expect_full_rewrite_rejected stage3b-raw-new-target-collapse \
-    stage3b-raw-construction src/engine/heap/runtime/mod.rs \
-    '            ConstructNewTarget::Raw(new_target) => {' \
-    '            ConstructNewTarget::Validated(new_target) => {'
+    stage3b-raw-construction src/engine/vm/call.rs \
+    $'            ConstructNewTarget::Raw(value) => {' \
+    $'            ConstructNewTarget::Validated(value) => {'
 expect_full_rewrite_rejected stage3b-constructor-callable-narrowing \
     stage3b-constructor-capability src/engine/heap/runtime/mod.rs \
     '            object_data.is_constructor' \
@@ -78,21 +78,21 @@ expect_full_rewrite_rejected stage3b-proxy-before-callable \
     '            if self.is_proxy_object(constructor.as_object())? {' \
     '            if false && self.is_proxy_object(constructor.as_object())? {'
 expect_full_rewrite_rejected stage3b-function-realm-fallback \
-    stage3b-constructor-prototype src/engine/heap/runtime/mod.rs \
-    '        self.function_realm_from_value(caller_realm, new_target)' \
-    '        Ok(NativeConversion::Value(caller_realm))'
+    stage3b-constructor-prototype src/engine/vm/call/prototype.rs \
+    $'runtime.function_realm_from_value(self.realm, &self.new_target)?' \
+    $'NativeConversion::Value(self.realm)'
 expect_full_rewrite_rejected stage3b-native-prototype-helper-bypass \
-    stage3b-native-prototype-family src/engine/builtins/array_buffer.rs \
-    '        self.prototype_from_constructor_value(realm, &new_target, |fallback_realm| {' \
-    '        self.constructor_prototype_source(realm, &new_target).map(|_| |fallback_realm| {'
+    stage3b-native-prototype-family src/engine/builtins/array_buffer/constructor.rs \
+    $'ProtoSourceStep::start(runtime, realm, new_target)?' \
+    $'ProtoSourceStep::Complete(NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)))'
 expect_full_rewrite_rejected stage3b-proxy-call-layer-capability \
     stage3b-proxy-call-order src/engine/object/internal_methods/call.rs \
     '        if !rooted.data.is_callable {' \
     '        if false && !rooted.data.is_callable {'
 expect_full_rewrite_rejected stage3b-proxy-construct-callable-narrowing \
-    stage3b-proxy-construct-order src/engine/object/internal_methods.rs \
-    '                match self.constructor_from_value(realm, Value::Object(rooted.target.clone()))? {' \
-    '                match self.callable_from_value(Value::Object(rooted.target.clone())) {'
+    stage3b-proxy-construct-order src/engine/object/internal_methods/construct.rs \
+    $'.constructor_from_value(search.realm, Value::Object(rooted.target.clone()))?' \
+    $'.callable_from_value(Value::Object(rooted.target.clone()))?'
 expect_full_rewrite_rejected stage3b-public-raw-construction-leak \
     stage3b-public-construction src/engine/api/context/calls.rs \
     '            .construct_internal(self.realm, constructor, new_target, arguments)' \
@@ -107,9 +107,9 @@ expect_full_rewrite_rejected stage3b-apply-nullish-prework \
     $'        if matches!(argument_array, Value::Undefined | Value::Null) {\n            return self' \
     $'        if matches!(argument_array, Value::Undefined | Value::Null) {\n            let _ = self.build_argument_list(Value::Undefined)?;\n            return self'
 expect_full_rewrite_rejected stage3b-native-prototype-payload \
-    stage3b-native-prototype-family src/engine/builtins/array_buffer.rs \
-    '        self.prototype_from_constructor_value(realm, &new_target, |fallback_realm| {' \
-    '        self.prototype_from_constructor_value(realm, &Value::Undefined, |fallback_realm| {'
+    stage3b-native-prototype-family src/engine/builtins/array_buffer/constructor.rs \
+    $'ProtoSourceStep::start(runtime, realm, new_target)?' \
+    $'ProtoSourceStep::start(runtime, realm, Value::Undefined)?'
 expect_full_rewrite_table < "$boundary_dir/canaries/stage3c_canaries.txt"
 expect_full_rewrite_rejected stage3c-tail-terminal-fallthrough \
     stage3c-tail-verifier src/engine/code/bytecode.rs \

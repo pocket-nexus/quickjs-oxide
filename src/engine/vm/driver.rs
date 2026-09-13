@@ -18,16 +18,17 @@ pub(super) fn push_frame(
     execution: &mut RunningExecution,
     entry: FrameEntry,
 ) -> Result<FrameId, Error> {
+    let prepared = execution.frames.prepare_push()?;
     let window = execution
         .slots
         .push_frame(&entry.executable.frame_layout(), entry.storage)?;
-    execution.frames.push(Frame {
+    Ok(prepared.install(Frame {
         executable: entry.executable,
         cold: entry.cold,
         window,
         fault_pc: 0,
         resume_pc: 0,
-    })
+    }))
 }
 
 pub(super) fn prepare_captured_reuse(
@@ -54,6 +55,24 @@ pub(super) enum CallStep {
     Bridge,
 }
 
+/// Shared cold completion for a rejected call or constructor operand.
+pub(super) fn rejected_call(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    error: Error,
+) -> Result<CallStep, Error> {
+    let Some(kind) =
+        crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
+    else {
+        return Err(error);
+    };
+    Ok(CallStep::Complete(Completion::Throw(
+        runtime
+            .new_native_error_from_error(realm, kind, &error)
+            .map_err(runtime_error_to_vm_error)?,
+    )))
+}
+
 /// All classification and allocation occurs after publishing the caller's PC.
 /// Unsupported callable kinds leave every operand and the resume PC untouched.
 pub(super) fn enter_call(
@@ -68,18 +87,34 @@ pub(super) fn enter_call(
     let window = &mut frame.window;
     let count = usize::from(count);
     execution.slots.peek(window, count + usize::from(method))?;
-    let Value::Object(object) = execution.slots.peek(window, count)? else {
-        return Ok(CallStep::Bridge);
-    };
-    if !object.belongs_to(runtime) {
-        return Ok(CallStep::Bridge);
-    }
-    let Some(mut callable) = runtime
-        .as_callable(object)
-        .map_err(runtime_error_to_vm_error)?
-    else {
-        return Ok(CallStep::Bridge);
-    };
+    let realm = frame.executable.realm;
+    let mut callable =
+        match runtime.direct_call_target_from_value(execution.slots.peek(window, count)?.clone()) {
+            Ok(super::call::DirectCallTarget::Callable(callable)) => callable,
+            Ok(super::call::DirectCallTarget::NonCallableProxy(proxy)) => {
+                // Pinned direct calls observe a non-callable Proxy's apply getter
+                // before reporting its missing [[Call]] capability.
+                let depth = execution.slots.depth(window);
+                let mut arguments = Vec::new();
+                arguments
+                    .try_reserve_exact(count)
+                    .map_err(|_| Error::internal("Proxy call arguments allocation failed"))?;
+                for _ in 0..count {
+                    arguments.push(execution.slots.pop(window)?);
+                }
+                arguments.reverse();
+                execution.slots.pop(window)?;
+                let receiver = if method {
+                    execution.slots.pop(window)?
+                } else {
+                    Value::Undefined
+                };
+                return super::proxy_get_driver::start_call(
+                    runtime, execution, id, proxy, receiver, arguments, tail, depth,
+                );
+            }
+            Err(error) => return rejected_call(runtime, realm, runtime_error_to_vm_error(error)),
+        };
     // Keep the existing rejection order and exception materialization until
     // general call errors join the owned unwind path. Nothing was consumed.
     if method
@@ -97,7 +132,6 @@ pub(super) fn enter_call(
             return Ok(CallStep::Bridge);
         }
     }
-    let realm = frame.executable.realm;
     let mut bound_arguments = None;
     let mut bound_receiver = None;
     let (bytecode, closure_slots) = loop {
@@ -171,7 +205,8 @@ pub(super) fn enter_call(
                 );
             }
             CallableExecution::Native { target, .. }
-                if crate::engine::builtins::BuiltinPrototypeKind::for_target(target).is_some() =>
+                if crate::engine::builtins::continuation::NativeOperation::for_target(target)
+                    .is_some() =>
             {
                 let depth = execution.slots.depth(window);
                 let mut arguments = Vec::new();
@@ -482,17 +517,7 @@ fn run_frames_with_state(
         if let RunExit::Environment(super::environment_driver::Operation::Has { source, name }) =
             exit
         {
-            next_operation = next_operation
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("operation identity exhausted"))?;
-            match super::with_driver::start(
-                runtime,
-                &mut execution,
-                id,
-                source,
-                name,
-                next_operation,
-            )? {
+            match super::with_driver::start(runtime, &mut execution, id, source, name)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -864,41 +889,7 @@ fn run_frames_with_state(
 
         if matches!(
             target.operation,
-            Some(super::frame::OperationTarget::Constructor(_))
-        ) {
-            match super::construct_driver::reply(runtime, &mut execution, target, completion)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    continue;
-                }
-                CallStep::Bridge => {
-                    return Err(Error::internal(
-                        "constructor reply attempted instruction replay",
-                    ));
-                }
-            }
-        }
-        if matches!(
-            target.operation,
-            Some(super::frame::OperationTarget::ClassDefinition(_))
-        ) {
-            match super::construct_driver::reply_class(runtime, &mut execution, target, completion)?
-            {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    continue;
-                }
-                CallStep::Bridge => return Err(Error::internal("class reply attempted replay")),
-            }
-        }
-        if matches!(
-            target.operation,
-            Some(
-                super::frame::OperationTarget::HasBinding(_)
-                    | super::frame::OperationTarget::Iterator(_)
-            )
+            Some(super::frame::OperationTarget::Iterator(_))
         ) {
             match super::environment_driver::reply(runtime, &mut execution, target, completion)? {
                 CallStep::Entered => continue,
@@ -907,7 +898,7 @@ fn run_frames_with_state(
                     continue;
                 }
                 CallStep::Bridge => {
-                    return Err(Error::internal("HasBinding reply attempted replay"));
+                    return Err(Error::internal("iterator reply attempted replay"));
                 }
             }
         }
@@ -1003,9 +994,6 @@ mod tests {
             executable: prepared.executable,
             cold: Box::new(FrameCold {
                 regions: Vec::new(),
-                constructor_wait: None,
-                class_wait: None,
-                has_binding_wait: None,
                 iterator_wait: None,
                 property_wait: None,
                 property_generation: 0,
@@ -1135,7 +1123,7 @@ mod tests {
     }
 
     #[test]
-    fn catch_and_finally_resume_owned_frames_and_survive_handoff() {
+    fn catch_and_finally_resume_owned_frames() {
         for (source, bridge) in [
             ("(function(){try{throw 40}catch(e){return e+2}})", false),
             ("(function(f){try{return f()}catch(e){return e+2}})", false),
@@ -1154,7 +1142,7 @@ mod tests {
             ),
             (
                 "(function(){try{[] instanceof Array;throw 40}catch(e){return e+2}})",
-                true,
+                false,
             ),
         ] {
             let runtime = Runtime::new();
@@ -2182,6 +2170,31 @@ mod tests {
     }
 
     #[test]
+    fn owned_json_and_function_domains_keep_callback_order_without_bridges() {
+        for source in [
+            "(function(){let log='';let result=JSON.parse('{\"a\":1,\"b\":[2]}',function(k,v,c){log+=k;if(k==='a')return c.source==='1'?3:0;return v});return result.a===3&&result.b[0]===2&&log==='a0b'?42:0})",
+            "(function(){let log='';let value={get a(){log+='a';return {toJSON(k){log+='j'+k;return 2}}}};let text=JSON.stringify(value,function(k,v){log+='r'+k;return v},1);return text==='{'+'\\n '+ '\"a\": 2'+'\\n}'&&log==='rajara'?42:0})",
+            "(function(){let log='';let value={toString(){log+='s';return '12'}};return JSON.stringify({x:JSON.rawJSON(value)})==='{'+'\"x\":12}'&&log==='s'?42:0})",
+            "(function(){let log='';let f=function(a,b){return this.x+a+b};Object.defineProperty(f,'length',{get(){log+='l';return 2}});Object.defineProperty(f,'name',{get(){log+='n';return 'f'}});let g=f.bind({x:30},5);return g(7)===42&&g.length===1&&g.name==='bound f'&&log==='ln'?42:0})",
+            "(function(){let log='';let f=Function({toString(){log+='p';return 'x'}},{toString(){log+='b';return 'return x+2'}});return f(40)===42&&log==='pb'?42:0})",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let entry = entry(&runtime, &mut context, source, vec![]);
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{source}: {result:?}"
+            );
+            let costs = profile.snapshot();
+            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
+        }
+    }
+
+    #[test]
     fn selected_native_callback_reentry_preserves_captured_bindings() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -2203,9 +2216,8 @@ mod tests {
         assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
         assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
-        // The map callback still uses the selected synchronous domain boundary;
-        // zero frame handoffs do not claim that its S05 continuation has migrated.
-        assert_eq!(costs.owned_sync_call_bridges, 1);
+        // Mapping, species lookup and result construction all resume in this execution.
+        assert_eq!(costs.owned_sync_call_bridges, 0);
     }
 
     #[test]
@@ -2477,90 +2489,103 @@ mod tests {
 
     #[test]
     fn apply_construct_snapshot_survives_prototype_getter_and_carrier_mutation() {
-        use crate::engine::code::bytecode::{ApplyKind, Instruction};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let constructor = context.eval("(function(value){return value})").unwrap();
-        let new_target = context.eval("({get prototype(){return {}}})").unwrap();
-        let Value::Object(carrier) = context.eval("[{}]").unwrap() else {
-            panic!("expected argument array")
-        };
-        let argument_id = {
-            let values = runtime
-                .fast_array_like_values(&carrier, 1)
-                .unwrap()
-                .unwrap();
-            let Value::Object(object) = &values[0] else {
-                panic!("expected object argument")
+        for new_target_source in [
+            "({get prototype(){return {}}})",
+            "new Proxy({}, {get(t,k){return {}}})",
+            "Object.defineProperty({},'prototype',{get:Object.getPrototypeOf.bind(undefined,{})})",
+        ] {
+            use crate::engine::code::bytecode::{ApplyKind, Instruction};
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let constructor = context.eval("(function(value){return value})").unwrap();
+            let new_target = context.eval(new_target_source).unwrap();
+            let Value::Object(carrier) = context.eval("[{}]").unwrap() else {
+                panic!("expected argument array")
             };
-            object.object_id()
-        };
-        let entry = entry(
-            &runtime,
-            &mut context,
-            "(function(C){return new C(...[])})",
-            vec![],
-        );
-        let pc = entry
-            .executable
-            .code
-            .iter()
-            .position(|op| matches!(op, Instruction::Apply(ApplyKind::Construct)))
-            .unwrap();
-        let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
-        let frame = execution.frames.current_mut(id).unwrap();
-        frame.resume_pc = pc;
-        for value in [constructor, new_target, Value::Object(carrier.clone())] {
-            execution.slots.push(&mut frame.window, value).unwrap();
-        }
-        let profile = CostProfile::start();
-        assert!(matches!(
-            run(&mut execution, id).unwrap(),
-            RunExit::Apply(ApplyKind::Construct)
-        ));
-        assert!(matches!(
-            super::super::apply_driver::step(&runtime, &mut execution, id, ApplyKind::Construct, 1)
+            let argument_id = {
+                let values = runtime
+                    .fast_array_like_values(&carrier, 1)
+                    .unwrap()
+                    .unwrap();
+                let Value::Object(object) = &values[0] else {
+                    panic!("expected object argument")
+                };
+                object.object_id()
+            };
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(C){return new C(...[])})",
+                vec![],
+            );
+            let pc = entry
+                .executable
+                .code
+                .iter()
+                .position(|op| matches!(op, Instruction::Apply(ApplyKind::Construct)))
+                .unwrap();
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let frame = execution.frames.current_mut(id).unwrap();
+            frame.resume_pc = pc;
+            for value in [constructor, new_target, Value::Object(carrier.clone())] {
+                execution.slots.push(&mut frame.window, value).unwrap();
+            }
+            let profile = CostProfile::start();
+            assert!(matches!(
+                run(&mut execution, id).unwrap(),
+                RunExit::Apply(ApplyKind::Construct)
+            ));
+            assert!(matches!(
+                super::super::apply_driver::step(
+                    &runtime,
+                    &mut execution,
+                    id,
+                    ApplyKind::Construct,
+                    1
+                )
                 .unwrap(),
-            CallStep::Entered
-        ));
-        assert_ne!(execution.frames.current_id(), Some(id));
-        assert!(
-            runtime
-                .delete_property(&carrier, &runtime.intern_property_key("0").unwrap())
-                .unwrap()
-        );
-        assert!(
-            runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .object_strong_count(argument_id)
-                .unwrap()
-                > 0
-        );
-        let Completion::Return(Value::Object(result)) =
-            execute_running(runtime.clone(), execution).unwrap()
-        else {
-            panic!("expected original argument")
-        };
-        let costs = profile.snapshot();
-        assert_eq!(result.object_id(), argument_id);
-        drop(result);
-        assert_eq!(
-            runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .object_strong_count(argument_id)
-                .unwrap_or(0),
-            0
-        );
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
-        assert!(runtime.0.state.borrow().active_frames.is_empty());
+                CallStep::Entered
+            ));
+            assert_ne!(execution.frames.current_id(), Some(id));
+            assert!(
+                runtime
+                    .delete_property(&carrier, &runtime.intern_property_key("0").unwrap())
+                    .unwrap()
+            );
+            assert!(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object_strong_count(argument_id)
+                    .unwrap()
+                    > 0
+            );
+            let Completion::Return(Value::Object(result)) =
+                execute_running(runtime.clone(), execution).unwrap()
+            else {
+                panic!("expected original argument")
+            };
+            let costs = profile.snapshot();
+            assert_eq!(result.object_id(), argument_id);
+            drop(result);
+            assert_eq!(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object_strong_count(argument_id)
+                    .unwrap_or(0),
+                0
+            );
+            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 
     #[test]
@@ -4526,7 +4551,211 @@ mod tests {
     }
 
     #[test]
-    fn boxed_this_identity_survives_frame_handoff() {
+    fn nonobject_definition_rejections_preserve_static_computed_and_field_errors() {
+        use crate::engine::code::bytecode::DefineMethodKind;
+        for (computed, method, message) in [
+            (
+                false,
+                true,
+                "object-literal method target was not an Object",
+            ),
+            (
+                true,
+                true,
+                "computed object-literal method target was not an Object",
+            ),
+            (false, false, "not an object"),
+            (true, false, "not an object"),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(k){return {[k](){}}})",
+                vec![],
+            );
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let frame = execution.frames.current_mut(id).unwrap();
+            execution
+                .slots
+                .push(&mut frame.window, Value::Int(1))
+                .unwrap();
+            if computed {
+                execution
+                    .slots
+                    .push(&mut frame.window, Value::Int(0))
+                    .unwrap();
+            }
+            execution
+                .slots
+                .push(&mut frame.window, Value::Int(2))
+                .unwrap();
+            let profile = CostProfile::start();
+            let result = super::super::construct_driver::define_property(
+                &runtime,
+                &mut execution,
+                id,
+                (!computed).then_some(0),
+                method.then_some((DefineMethodKind::Method, true)),
+            );
+            if method {
+                let Err(error) = result else {
+                    panic!("invalid method target must remain an internal error")
+                };
+                assert_eq!(error.kind(), crate::engine::api::ErrorKind::Internal);
+                assert!(error.to_string().contains(message));
+            } else {
+                let Ok(CallStep::Complete(Completion::Throw(Value::Object(error)))) = result else {
+                    panic!("expected field TypeError")
+                };
+                assert_eq!(
+                    context
+                        .get_property(&error, &runtime.intern_property_key("message").unwrap())
+                        .unwrap(),
+                    Value::String(crate::engine::value::JsString::from_static(message))
+                );
+            }
+            let costs = profile.snapshot();
+            assert_eq!(costs.legacy_dispatches, 0);
+            assert_eq!(costs.owned_bridge_exits, 0);
+            assert_eq!(costs.owned_sync_call_bridges, 0);
+        }
+    }
+
+    #[test]
+    fn method_definition_checkpoints_keep_exotic_coercions_and_native_values_owned() {
+        use crate::engine::code::bytecode::Instruction;
+        for (target_source, function_source, key, expected, hits) in [
+            (
+                "[]",
+                "(function(){var f=function(){};f.valueOf=function(){hits++;return 2};return f})()",
+                "length",
+                Some(0),
+                2,
+            ),
+            (
+                "new Uint8Array(1)",
+                "(function(){var f=function(){};f.valueOf=function(){hits++;return 42};return f})()",
+                "0",
+                Some(42),
+                1,
+            ),
+            (
+                "new Proxy({}, {defineProperty(){throw 99}})",
+                "Math.abs",
+                "x",
+                None,
+                0,
+            ),
+            ("[]", "Math.abs.bind(null)", "x", None, 0),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            context.eval("var hits=0").unwrap();
+            let target = context.eval(target_source).unwrap();
+            let function = context.eval(function_source).unwrap();
+            let Value::Object(old_target) = context.eval(target_source).unwrap() else {
+                unreachable!()
+            };
+            let old = runtime
+                .define_object_literal_method(
+                    context.realm,
+                    &old_target,
+                    &runtime.intern_property_key(key).unwrap(),
+                    function.clone(),
+                    crate::engine::code::bytecode::DefineMethodKind::Method,
+                    true,
+                )
+                .unwrap();
+            assert!(
+                matches!(old, crate::engine::object::operations::PropertyDefineOutcome::Defined(defined) if defined == (key != "length"))
+            );
+            assert_eq!(context.eval("hits").unwrap(), Value::Int(hits));
+            context.eval("hits=0").unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(k){return {[k](){}}})",
+                vec![],
+            );
+            let pc = entry
+                .executable
+                .code
+                .iter()
+                .position(|op| matches!(op, Instruction::DefineMethodComputed { .. }))
+                .unwrap();
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let frame = execution.frames.current_mut(id).unwrap();
+            frame.resume_pc = pc;
+            execution
+                .slots
+                .push(&mut frame.window, target.clone())
+                .unwrap();
+            execution
+                .slots
+                .push(
+                    &mut frame.window,
+                    Value::String(crate::engine::value::JsString::from_static(key)),
+                )
+                .unwrap();
+            execution
+                .slots
+                .push(&mut frame.window, function.clone())
+                .unwrap();
+            let profile = CostProfile::start();
+            let completion = execute_running(runtime.clone(), execution).unwrap();
+            if key == "length" {
+                let Completion::Throw(Value::Object(error)) = completion else {
+                    panic!("method cannot reconfigure Array length")
+                };
+                assert_eq!(
+                    context
+                        .get_property(&error, &runtime.intern_property_key("message").unwrap())
+                        .unwrap(),
+                    Value::String(crate::engine::value::JsString::from_static(
+                        "property is not configurable"
+                    ))
+                );
+            } else {
+                assert_eq!(
+                    completion,
+                    Completion::Return(target.clone()),
+                    "{target_source}"
+                );
+            }
+            let costs = profile.snapshot();
+            assert_eq!(costs.legacy_dispatches, 0, "{target_source}: {costs:?}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{target_source}: {costs:?}");
+            assert_eq!(
+                costs.owned_sync_call_bridges, 0,
+                "{target_source}: {costs:?}"
+            );
+            drop(profile);
+            let Value::Object(target) = target else {
+                unreachable!()
+            };
+            let descriptor = runtime
+                .get_own_property(&target, &runtime.intern_property_key(key).unwrap())
+                .unwrap()
+                .unwrap();
+            let crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data { value, .. } =
+                descriptor
+            else {
+                panic!("expected method data")
+            };
+            assert_eq!(value, expected.map(Value::Int).unwrap_or(function));
+            assert_eq!(context.eval("hits").unwrap(), Value::Int(hits));
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn boxed_this_identity_survives_owned_frames() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let callee = context
@@ -4542,7 +4771,9 @@ mod tests {
         let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
         assert!(matches!(result, Completion::Return(Value::Bool(true))));
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 1);
+        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
+        assert_eq!(profile.snapshot().legacy_dispatches, 0);
+        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -4641,7 +4872,18 @@ mod tests {
         let (weak, pending) = {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            let callee = context.eval("Math.abs").unwrap();
+            let callee = Value::Object(
+                runtime
+                    .new_bound_native_function(
+                        &context.function_prototype().unwrap(),
+                        context.realm,
+                        crate::engine::builtins::native::NativeFunctionId::ArgumentProbe,
+                        2,
+                    )
+                    .unwrap()
+                    .as_object()
+                    .clone(),
+            );
             let entry = entry(
                 &runtime,
                 &mut context,
@@ -4819,7 +5061,7 @@ mod tests {
     }
 
     #[test]
-    fn converted_key_crosses_only_the_unresolved_property_step() {
+    fn converted_key_and_native_getter_remain_owned() {
         for target_source in [
             "new Proxy({x:42},{get(t,k,r){traps++;return t[k]}})",
             "Object.defineProperty({},'x',{get:Number.prototype.valueOf.bind(42)})",
@@ -4844,10 +5086,7 @@ mod tests {
             let costs = profile.snapshot();
             assert_eq!(costs.legacy_dispatches, 0);
             assert_eq!(costs.owned_bridge_exits, 0);
-            assert_eq!(
-                costs.owned_sync_call_bridges,
-                u64::from(!target_source.starts_with("new Proxy"))
-            );
+            assert_eq!(costs.owned_sync_call_bridges, 0);
             drop(profile);
             assert_eq!(context.eval("keys").unwrap(), Value::Int(1));
             assert_eq!(
@@ -5703,6 +5942,374 @@ mod tests {
     }
 
     #[test]
+    fn owned_native_properties_preserve_order_receivers_and_throw_identity() {
+        for (setup, body) in [
+            (
+                "(function(a,b){return this.x+a+b})",
+                "return o.call({x:20},10,12)",
+            ),
+            (
+                "(function(){return arguments.length})",
+                "return o.call()===0?42:0",
+            ),
+            (
+                "(function(a,b){return this.x+a+b})",
+                "return o.apply({x:20},{get length(){return {valueOf(){return 2}}},get 0(){return 10},get 1(){return 12}})",
+            ),
+            (
+                "(function(){return arguments.length})",
+                "return o.apply(null,null)===0?42:0",
+            ),
+            (
+                "(function(a,b){return a+b})",
+                "return Reflect.apply(o,null,new Proxy({length:2,0:20,1:22},{get(t,k){return t[k]}}))",
+            ),
+            (
+                "new Proxy(function(x){return x},{apply(t,r,a){return a[0]+2}})",
+                "return o.call(null,40)",
+            ),
+            (
+                "var trace=0;({get length(){trace++;return 1},get 0(){throw 42}})",
+                "try{Reflect.apply(function(){},null,o)}catch(e){return trace===1?e:0}",
+            ),
+            (
+                "var trace=0;({get length(){trace++;return 1}})",
+                "try{Function.prototype.apply.call(1,null,o)}catch(e){return trace===0?42:0}",
+            ),
+            (
+                "var trace=0;({get length(){trace++;return 65535},get 0(){trace+=10}})",
+                "try{Reflect.apply(function(){},null,o)}catch(e){return trace===1?42:0}",
+            ),
+            (
+                "({})",
+                "o.__defineGetter__({toString(){return 'x'}},function(){return 42});return o.x",
+            ),
+            (
+                "new Proxy({}, {defineProperty(t,k,d){return Reflect.defineProperty(t,k,d)}})",
+                "o.__defineSetter__('x',function(v){this.y=v});o.x=42;return o.y",
+            ),
+            (
+                "var getter=function(){return 42};Object.create({get x(){return 1},y:1})",
+                "o.__defineGetter__('x',getter);return o.__lookupGetter__('x')===getter?42:0",
+            ),
+            (
+                "var getter=function(){return 42};var p=Object.defineProperty({},'x',{get:getter});new Proxy(Object.create(p),{getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)},getPrototypeOf(t){return Object.getPrototypeOf(t)}})",
+                "return o.__lookupGetter__({toString(){return 'x'}})===getter?42:0",
+            ),
+            (
+                "var trace=0;({toString(){trace++;return 'x'}})",
+                "try{({}).__defineGetter__(o,1)}catch(e){return trace===0?42:0}",
+            ),
+            (
+                "({tag:Object.prototype.toString,get [Symbol.toStringTag](){return 'owned'}})",
+                "return o.tag()==='[object owned]'?42:0",
+            ),
+            (
+                "new Proxy({}, {get(t,k){if(k===Symbol.toStringTag)return 'proxy';return Object.prototype.toString}})",
+                "return o.tag()==='[object proxy]'?42:0",
+            ),
+            (
+                "var calls=0;Object.defineProperty(Number.prototype,Symbol.toStringTag,{get(){calls++;return this===1?'bad':'boxed'},configurable:true});Object.prototype.toString.bind(1)",
+                "return o()==='[object boxed]'&&calls===1?42:0",
+            ),
+            (
+                "({locale:Object.prototype.toLocaleString,get toString(){return function(){return this.x}},x:42})",
+                "return o.locale()",
+            ),
+            (
+                "Number.prototype.toString=function(){'use strict';return this===1?42:0};Object.prototype.toLocaleString.bind(1)",
+                "return o()",
+            ),
+            (
+                "Object.prototype.toString.bind(null)",
+                "return o()==='[object Null]'?42:0",
+            ),
+            (
+                "var r=Proxy.revocable({},{});var f=Object.prototype.toString.bind(r.proxy);r.revoke();f",
+                "try{o()}catch(e){return e.name==='TypeError'?42:0}",
+            ),
+            (
+                "({})",
+                "return Object.is(NaN,NaN)&&!Object.is(0,-0)&&o.valueOf()===o?42:0",
+            ),
+            (
+                "var proto={};new Proxy({}, {getPrototypeOf(){return proto}})",
+                "return o.__proto__===proto?42:0",
+            ),
+            (
+                "var proto={};new Proxy({}, {setPrototypeOf(t,p){return Reflect.setPrototypeOf(t,p)}})",
+                "o.__proto__=proto;return Object.getPrototypeOf(o)===proto?42:0",
+            ),
+            (
+                "var proto={};var o=new Proxy({}, {getPrototypeOf(){return proto}});({check:Object.prototype.isPrototypeOf,proto:proto,o:o})",
+                "o.proto.check=o.check;return o.proto.check(o.o)?42:0",
+            ),
+            (
+                "Object.prototype.isPrototypeOf.bind(null,1)",
+                "return o()===false?42:0",
+            ),
+            (
+                "({})",
+                "try{Object.defineProperties(o,{x:{value:42},get y(){throw o}})}catch(e){return e===o?o.x:0}",
+            ),
+            (
+                "var trace=0;new Proxy({x:{value:42},y:{value:1}},{ownKeys(t){return ['x','y']},getOwnPropertyDescriptor(t,k){trace=trace*10+(k==='x'?1:2);return Reflect.getOwnPropertyDescriptor(t,k)},get(t,k){trace=trace*10+(k==='x'?3:4);return t[k]}})",
+                "var t=Object.defineProperties({},o);return trace===1234?t.x:0",
+            ),
+            (
+                "({get x(){return {get value(){return 42}}}})",
+                "return Object.create(null,o).x",
+            ),
+            (
+                "({})",
+                "return Object.getPrototypeOf(Object.create(o))===o?42:0",
+            ),
+            (
+                "({get x(){throw 42}})",
+                "try{Object.create(0,o)}catch(e){return e.message==='not a prototype'?42:0}",
+            ),
+            (
+                "new Proxy({}, {getOwnPropertyDescriptor(t,k){return {value:1,enumerable:true,configurable:true}}})",
+                "return Object.hasOwn(o,{toString(){return 'x'}})?42:0",
+            ),
+            (
+                "({x:42,check:Object.prototype.hasOwnProperty})",
+                "return o.check({toString(){return 'x'}})?42:0",
+            ),
+            (
+                "({x:42,check:Object.prototype.propertyIsEnumerable})",
+                "return o.check({toString(){return 'x'}})?42:0",
+            ),
+            (
+                "var calls=0;var marker={};Object.prototype.hasOwnProperty.bind(null,{toString(){calls++;throw marker}})",
+                "try{o()}catch(e){return e===marker&&calls===1?42:0}",
+            ),
+            (
+                "var calls=0;var marker={};Object.prototype.propertyIsEnumerable.bind(null,{toString(){calls++;throw marker}})",
+                "try{o()}catch(e){return e===marker&&calls===1?42:0}",
+            ),
+            (
+                "({toString(){throw 99}})",
+                "try{Object.hasOwn(null,o)}catch(e){return e===99?0:42}",
+            ),
+            ("'x'", "return Object.hasOwn(o,'length')?42:0"),
+            (
+                "({get x(){Object.defineProperty(this,'y',{enumerable:false});return 40},y:2})",
+                "var t=Object.assign({},null,o);return t.x+t.y",
+            ),
+            (
+                "new Proxy({get x(){Object.defineProperty(this,'y',{enumerable:false});return 42},y:2},{ownKeys(t){return Reflect.ownKeys(t)},getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)}})",
+                "var t=Object.assign({},o);return t.y===undefined?t.x:0",
+            ),
+            (
+                "({set x(v){this.y=v}})",
+                "return Object.assign(o,{get x(){return 42}}).y",
+            ),
+            (
+                "({})",
+                "var t={};try{Object.assign(t,{get x(){return 42},get y(){throw o}})}catch(e){return e===o?t.x:0}",
+            ),
+            (
+                "new Proxy({x:42},{preventExtensions(t){return Reflect.preventExtensions(t)},ownKeys(t){return Reflect.ownKeys(t)},getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)},defineProperty(t,k,d){return Reflect.defineProperty(t,k,d)}})",
+                "return Object.freeze(o)===o&&Object.isFrozen(o)&&Object.isSealed(o)?o.x:0",
+            ),
+            (
+                "({x:42})",
+                "Object.seal(o);return Object.isSealed(o)&&!Object.isFrozen(o)?o.x:0",
+            ),
+            (
+                "var trace=0;new Proxy({x:1},{getOwnPropertyDescriptor(t,k){trace++;return Reflect.getOwnPropertyDescriptor(t,k)},isExtensible(){trace+=100;return true}})",
+                "return !Object.isFrozen(o)&&trace===1?42:0",
+            ),
+            (
+                "new Proxy({}, {preventExtensions(){throw 42}})",
+                "try{Object.seal(o)}catch(e){return e}",
+            ),
+            (
+                "({get x(){delete this.y;return 42},y:1})",
+                "var a=Object.values(o);return a.length===1?a[0]:0",
+            ),
+            (
+                "({get x(){Object.defineProperty(this,'y',{enumerable:false});return 42},y:1})",
+                "var a=Object.entries(o);return a.length===1&&a[0][0]==='x'?a[0][1]:0",
+            ),
+            (
+                "var symbol=Symbol('k');({x:1,[symbol]:42})",
+                "return Object.getOwnPropertyNames(o)[0]==='x'&&Object.getOwnPropertySymbols(o)[0]===symbol?42:0",
+            ),
+            (
+                "var symbol=Symbol('k');new Proxy({x:1,[symbol]:42},{getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)},ownKeys(t){return Reflect.ownKeys(t)}})",
+                "return Object.getOwnPropertyDescriptors(o)[symbol].value",
+            ),
+            (
+                "new Proxy({x:1,y:2},{ownKeys(){return ['y','x']},getOwnPropertyDescriptor(t,k){return {enumerable:k==='x',configurable:true}}})",
+                "var a=Object.keys(o);return a.length===1&&a[0]==='x'?42:0",
+            ),
+            (
+                "({get x(){throw 42}})",
+                "try{Object.entries(o)}catch(e){return e}",
+            ),
+            (
+                "new Proxy({x:42},{ownKeys(){return {get length(){return {valueOf(){return 1}}},get 0(){return 'x'}}}})",
+                "return Reflect.ownKeys(o)[0]==='x'?42:0",
+            ),
+            (
+                "new Proxy(new Proxy({x:1},{ownKeys(t){return Reflect.ownKeys(t)},getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)}}),{ownKeys(){return ['x']}})",
+                "return Reflect.ownKeys(o)[0]==='x'?42:0",
+            ),
+            (
+                "new Proxy({}, {ownKeys(){return 'ab'}})",
+                "var a=Reflect.ownKeys(o);return a.length===2&&a[0]==='a'&&a[1]==='b'?42:0",
+            ),
+            (
+                "new Proxy({}, {ownKeys(){return null}})",
+                r#"try{Reflect.ownKeys(o)}catch(e){return e.message==="cannot read property 'length' of null"?42:0}"#,
+            ),
+            (
+                "var trace=0;new Proxy({}, {ownKeys(){return {length:3,get 0(){trace=trace*10+1;return 'a'},get 1(){trace=trace*10+2;return 'a'},get 2(){trace=trace*10+3;return 'b'}}}})",
+                "try{Reflect.ownKeys(o)}catch(e){return e.message==='proxy: duplicate property'&&trace===123?42:0}",
+            ),
+            (
+                "var trace=0;new Proxy(new Proxy(Object.preventExtensions({x:1}),{isExtensible(t){trace=trace*10+1;return false},ownKeys(t){trace=trace*10+2;return ['x']},getOwnPropertyDescriptor(t,k){trace=trace*10+3;return Reflect.getOwnPropertyDescriptor(t,k)}}),{ownKeys(){return []}})",
+                "try{Reflect.ownKeys(o)}catch(e){return e.message==='proxy: target property must be present in proxy ownKeys'&&trace===123?42:0}",
+            ),
+            (
+                "new Proxy(Object.preventExtensions({}),{ownKeys(){return ['x']}})",
+                "try{Reflect.ownKeys(o)}catch(e){return e.message==='proxy: property not present in target were returned by non extensible proxy'?42:0}",
+            ),
+            (
+                "new Proxy({}, {ownKeys(){return {get length(){throw 42}}}})",
+                "try{Reflect.ownKeys(o)}catch(e){return e}",
+            ),
+            (
+                "({get x(){return this.y}})",
+                "return Reflect.get(o,{toString(){return 'x'}},{y:42})",
+            ),
+            (
+                "({set x(v){this.y=v}})",
+                "var r={};return Reflect.set(o,'x',42,r)&&r.y",
+            ),
+            (
+                "new Proxy({}, {get(t,k,r){return Reflect.get({get x(){return this.y}},k,r)}})",
+                "return Reflect.get(o,'x',{y:42})",
+            ),
+            (
+                "new Proxy({}, {defineProperty(t,k,d){return Reflect.defineProperty(t,k,d)}})",
+                "return Reflect.defineProperty(o,{toString(){return 'x'}},{get value(){return 42}})&&o.x",
+            ),
+            (
+                "({})",
+                "return Object.defineProperty(o,'x',{get value(){return 42},get writable(){return true}}).x",
+            ),
+            (
+                "new Proxy({}, {getOwnPropertyDescriptor(){return {get value(){return 42},configurable:true}}})",
+                "return Reflect.getOwnPropertyDescriptor(o,'x').value",
+            ),
+            (
+                "'abc'",
+                "return Object.getOwnPropertyDescriptor(o,'length').value===3?42:0",
+            ),
+            (
+                "new Proxy({}, {has(t,k){return k==='x'}})",
+                "return Reflect.has(o,{toString(){return 'x'}})?42:0",
+            ),
+            (
+                "new Proxy({x:1}, {deleteProperty(t,k){return Reflect.deleteProperty(t,k)}})",
+                "return Reflect.deleteProperty(o,'x')&&!Reflect.has(o,'x')?42:0",
+            ),
+            (
+                "new Proxy({}, {isExtensible(t){return Reflect.isExtensible(t)}})",
+                "return Object.isExtensible(o)?42:0",
+            ),
+            (
+                "new Proxy({}, {preventExtensions(t){return Reflect.preventExtensions(t)}})",
+                "return Object.preventExtensions(o)===o&&!Reflect.isExtensible(o)?42:0",
+            ),
+            (
+                "new Proxy({}, {preventExtensions(){return false}})",
+                "if(Reflect.preventExtensions(o))return 0;try{Object.preventExtensions(o)}catch(e){return e.message==='proxy preventExtensions handler returned false'?42:0}",
+            ),
+            (
+                "new Proxy({}, {defineProperty(){return false}})",
+                "if(Reflect.defineProperty(o,'x',{}))return 0;try{Object.defineProperty(o,'x',{})}catch(e){return e.message==='proxy: defineProperty exception'?42:0}",
+            ),
+            (
+                "({})",
+                "var n=0,k={toString(){n++;throw o}};try{Reflect.get(0,k)}catch(e){}if(n)return 0;try{Reflect.get({},k)}catch(e){return e===o&&n===1?42:0}",
+            ),
+            (
+                "({})",
+                "var n=0;try{Object.defineProperty({}, {toString(){n++;throw o}}, {get value(){n+=10}})}catch(e){return e===o&&n===1?42:0}",
+            ),
+            (
+                "({})",
+                "var n=0;try{Reflect.defineProperty({},'x',{get enumerable(){n++;throw o},get value(){n+=10}})}catch(e){return e===o&&n===1?42:0}",
+            ),
+            (
+                "({})",
+                "return Object.preventExtensions(42)===42&&!Object.isExtensible(null)?42:0",
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{body}: {result:?}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{body}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{body}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{body}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_native_enumeration_uses_vm_limits_without_native_family_charges() {
+        for (frames, depth) in [(256, 64), (32, 64)] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(depth){function go(n){if(n===0)return 42;return Object.values({get x(){return go(n-1)}})[0]}try{return go(depth)}catch(e){return e.message==='stack overflow'?43:0}})",
+                vec![Value::Int(depth)],
+            );
+            let profile = CostProfile::start();
+            let result = execute(
+                runtime.clone(),
+                entry,
+                ExecutionLimits {
+                    frames,
+                    ..ExecutionLimits::default()
+                },
+            )
+            .unwrap();
+            let expected = if frames == 256 { 42 } else { 43 };
+            assert!(
+                matches!(result, Completion::Return(Value::Int(value)) if value == expected),
+                "{result:?}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0);
+            assert_eq!(cost.owned_bridge_exits, 0);
+            assert_eq!(cost.owned_sync_call_bridges, 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+        }
+    }
+
+    #[test]
     fn owned_native_prototype_recursion_uses_existing_frame_budget_and_recovers() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -6347,25 +6954,25 @@ mod tests {
                 "var trace=0;var b=new ArrayBuffer(1,{maxByteLength:2});var v={valueOf(){trace++;b.resize(0);return 42}};new Uint8Array(b)",
                 "o[0]=v;return o[0]===undefined?42:0",
                 1,
-                1,
+                0,
             ),
             (
                 "var trace=0;var b=new ArrayBuffer(0,{maxByteLength:2});var v={valueOf(){trace++;b.resize(1);return 42}};new Uint8Array(b)",
                 "o[0]=v;return o[0]",
                 1,
-                1,
+                0,
             ),
             (
                 "var trace=0;var b=new ArrayBuffer(1);var v={valueOf(){trace++;b.transfer();return 42}};new Uint8Array(b)",
                 "o[0]=v;return o[0]===undefined?42:0",
                 1,
-                1,
+                0,
             ),
             (
                 "var trace=0;var b=new ArrayBuffer(1);var a=new Uint8Array(b);var v={valueOf(){trace++;b.transfer();return 42}};new Proxy(a,{})",
                 "'use strict';o[0]=v;return a[0]===undefined?42:0",
                 1,
-                1,
+                0,
             ),
             (
                 "var trace=0;var b=new SharedArrayBuffer(1);var v={valueOf(){trace++;return 42}};new Uint8Array(b)",
@@ -6449,13 +7056,13 @@ mod tests {
                 "var trace=0;var a=[1,2,3];var v={valueOf(){trace++;if(trace===2)Object.defineProperty(a,'length',{writable:false});return 3}};a",
                 "'use strict';try{o.length=v}catch(e){return e.name==='TypeError'&&o.length===3?42:0}",
                 2,
-                1,
+                0,
             ),
             (
                 "var trace=0;var a=[1,2,3];var v={valueOf(){trace++;if(trace===2)Object.defineProperty(a,'length',{writable:false});return 1}};new Proxy(a,{})",
                 "'use strict';try{o.length=v}catch(e){return e.name==='TypeError'&&a.length===3?42:0}",
                 2,
-                1,
+                0,
             ),
             (
                 "var trace=0;var v={valueOf(){trace++;return 1n}};[1,2,3]",
@@ -7147,5 +7754,91 @@ mod tests {
                 .object(object.object_id())
                 .is_ok()
         );
+    }
+    #[test]
+    fn literal_element_accepts_object_keys_once_and_keeps_ordinary_definition() {
+        use crate::engine::code::bytecode::Instruction;
+        use crate::engine::value::JsString;
+
+        for (key_source, proxy, throws) in [
+            (
+                "({get [Symbol.toPrimitive](){trace+='g';return function(hint){trace+=hint;return 'answer'}}})",
+                false,
+                false,
+            ),
+            (
+                "({get [Symbol.toPrimitive](){trace+='g';throw marker}})",
+                false,
+                true,
+            ),
+            (
+                "({get [Symbol.toPrimitive](){trace+='g';return function(hint){trace+=hint;return 'answer'}}})",
+                true,
+                false,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            context
+                .eval("var trace='',traps=0,marker={};var target={};")
+                .unwrap();
+            let object = context
+                .eval(if proxy {
+                    "new Proxy(target,{defineProperty(){traps++;throw 99}})"
+                } else {
+                    "target"
+                })
+                .unwrap();
+            let key = context.eval(key_source).unwrap();
+            let marker = context.eval("marker").unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(){return {[Symbol.species]:40}})",
+                vec![],
+            );
+            let pc = entry
+                .executable
+                .code
+                .iter()
+                .position(|op| matches!(op, Instruction::DefineArrayEl))
+                .unwrap();
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let frame = execution.frames.current_mut(id).unwrap();
+            // Supply a raw object key at this accepted instruction, without the
+            // compiler's preceding ToPropKey. The following Drop must still
+            // consume the retained key, then Return must receive the base.
+            frame.resume_pc = pc;
+            for value in [object.clone(), key, Value::Int(40)] {
+                execution.slots.push(&mut frame.window, value).unwrap();
+            }
+            let profile = CostProfile::start();
+            let result = execute_running(runtime.clone(), execution).unwrap();
+            let costs = profile.snapshot();
+            match result {
+                Completion::Throw(value) if throws => assert_eq!(value, marker),
+                Completion::Return(value) if !throws => assert_eq!(value, object),
+                result => panic!("unexpected literal completion: {result:?}"),
+            }
+            assert_eq!(
+                context.eval("trace").unwrap(),
+                Value::String(JsString::from_static(if throws { "g" } else { "gstring" }))
+            );
+            assert_eq!(context.eval("traps").unwrap(), Value::Int(0));
+            assert_eq!(
+                context.eval("target.answer").unwrap(),
+                if throws || proxy {
+                    Value::Undefined
+                } else {
+                    Value::Int(40)
+                }
+            );
+            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{costs:?}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 }

@@ -1,6 +1,6 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-13。用户已确定使用栈 VM，**S01–S04 阶段验收通过，S05 实施中，S06–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
+状态：2026-09-13。用户已确定使用栈 VM，**S01–S05 阶段验收通过，S06–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
 
 ## 1. 起点与范围
 
@@ -67,10 +67,10 @@
 | 转换/异常/finally | conversion/operation/unwind，S04 | getter 次数、不同抛错点、清理优先级、单次释放 | S04 已验收；其余领域回调归 S05 |
 | binding/eval/arguments | resolution/bindings，S04 | captured、每迭代 cell、mapped/unmapped、private/readonly | S04 已验收 |
 | 局部 update/条件融合 | optimize/run/code，S08 | 快照、prefix/postfix/discard、NaN、效果/site/预算 | 待做 |
-| properties/Proxy | object + 对应 builtin，S05 | receiver、trap invariant、递归 getter、PR19 回退用例 | 原语 base/对象键和 Proxy Get 字节码回调已接入；其余待做 |
-| Array/iterator | 对应 builtin，S05 | holes、species、sort、动态 length、IteratorClose | 待做 |
-| String/RegExp/buffer | 对应 builtin，S05 | replacement/Unicode、resize/detach、共享内存与 BigInt | 待做 |
-| 其余同步内置 | 各领域 owner，S05 | intrinsic 逐项审核、toJSON/replacer、修改中迭代、realm | 待做 |
+| properties/Proxy | object + 对应 builtin，S05 | receiver、trap invariant、递归 getter、PR19 回退用例 | 全部属性/Proxy 协议及 Object/Reflect 已接入共享阶段；S05 已验收 |
+| Array/iterator | 对应 builtin，S05 | holes、species、sort、动态 length、IteratorClose | callback/sort/species/同步迭代与 close 已接入；S05 已验收 |
+| String/RegExp/buffer | 对应 builtin，S05 | replacement/Unicode、resize/detach、共享内存与 BigInt | String/RegExp 协议、buffer/TypedArray/Atomics 转换已接入；S05 已验收 |
+| 其余同步内置 | 各领域 owner，S05 | intrinsic 逐项审核、toJSON/replacer、修改中迭代、realm | Function/scalar/Math/collections/Date/JSON/Error/weak 已接入；逐调用点审计与 S05 统一验收通过 |
 | generator | suspend + generator 驱动，S06 | next/throw/return、yield*、reentry、关闭/失败/GC | 待做 |
 | async/Promise | suspend/async/jobs，S06 | 同步前缀、assimilation、微任务次序、pending roots | 待做 |
 | async generator/iteration | 专用队列与恢复，S06 | 交错请求、finally await、异步 close | 待做 |
@@ -1130,3 +1130,14 @@ preventExtensions 的 owned 域查询测试不代表 Object/Reflect native 入�
 已经迁移。prototype/ownKeys/construct 等剩余 Proxy 操作、动态环境剩余
 路径、instanceof 与各同步内置仍按 S05 继续；S05 尚未验收，S06/S07 及最后的
 完整 benchmark/profile、PR #21 comment 尚未执行。
+
+## S05 本轮阶段验收
+
+同步领域已按共享 Step/Resume 接入 owned driver，最后引用覆盖、literal/method 定义、
+非法调用错误出口、子帧安装事务与放弃执行的释放顺序一并收口。新库 2197、旧库 2032、
+新旧 oracle 各 911 加压力用例各 1、CLI profiling 各 5，以及 723 个完整边界反例通过。
+默认预算原始 Earley-Boyer 独立及组合完整运行，旧分派/整帧交接均为零；
+残余 3/10 个同步桥逐个由目标实参与调用栈确认是 S07 的 QjsConsoleLog。
+初次组合诊断的 600 秒外部超时保持失败记录；放宽外部 watchdog 的完整归因运行
+退出 0，未改变 VM 预算或脚本，也不作为性能测量。详见逐 commit 计划当前实施记录
+和同步回调账本。本节取代上方各历史 checkpoint 的 S05 待办状态；S06/S07 仍未实施。

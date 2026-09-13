@@ -15,3 +15,11 @@ builtins 实现 ECMAScript 的内置对象与函数，以及显式启用的 qjs 
 [缓冲区与视图](array_buffer/README.md)有独立介绍，说明二进制内置的
 共享存储边界。其余小型方法分组使用源码说明。[栈 VM 计划](../../../docs/primitive-vm-plan.md)
 改变内部 JS 回调的推进机制，各内置领域继续拥有其算法与恢复状态。
+
+迁移中的 `continuation` 是 native 算法的封闭登记表；它只选择领域
+step，不保存属性或转换算法。各领域的 Step/Resume 保存阶段与必要 roots，
+旧同步入口及 owned VM 共用同一算法。VM 的 request 模块按领域适配有类型的
+请求和回复，回调由显式子帧推进；无回调叶函数仍直接执行。
+
+S05 同步领域已接入，完整性仍须以[逐调用点账本](../../../docs/primitive-vm-sync-callbacks.md)
+和统一验收为准。Promise/generator 归 S06，模块与真实 host/API 入口归 S07。

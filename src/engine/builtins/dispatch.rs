@@ -226,36 +226,23 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Function.prototype.call did not receive a generic invocation",
-            ));
-        };
-        let actual_arguments = &arguments.readable[..arguments.actual_arg_count];
-        match self.forward_function_prototype_call(realm, this_value, actual_arguments)? {
-            NativeConversion::Value((target, this_argument)) => {
-                let forwarded = if actual_arguments.is_empty() {
-                    &[]
-                } else {
-                    &actual_arguments[1..]
-                };
-                match target {
-                    DirectCallTarget::Callable(target) => {
-                        self.call_internal(realm, &target, this_argument, forwarded)
-                    }
-                    DirectCallTarget::NonCallableProxy(proxy) => {
-                        self.call_proxy(realm, &proxy, this_argument, forwarded)
-                    }
-                }
-            }
-            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
-        }
+        super::function::invoke::finish(
+            self,
+            realm,
+            super::function::invoke::InvokeStep::start(
+                self,
+                realm,
+                super::function::invoke::InvokeKind::Call,
+                &invocation,
+                arguments,
+            )?,
+        )
     }
 
     /// Validate the active native frame and adapt the public call shape to the
     /// target's typed C-function protocol. Both ordinary calls and the raw
     /// iterator-next fast path pass through this single boundary.
-    fn adapt_native_invocation(
+    pub(crate) fn adapt_native_invocation(
         &self,
         target: NativeFunctionId,
         realm: ContextId,
@@ -431,6 +418,16 @@ impl Runtime {
             NativeInvocationAdaptation::Invoke(invocation) => invocation,
             NativeInvocationAdaptation::Complete(completion) => return Ok(completion),
         };
+        self.dispatch_adapted_native_function(callable, target, realm, invocation, arguments)
+    }
+    pub(crate) fn dispatch_adapted_native_function(
+        &self,
+        callable: &crate::engine::object::CallableRef,
+        target: NativeFunctionId,
+        realm: ContextId,
+        invocation: NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Completion, RuntimeError> {
         match target {
             NativeFunctionId::FunctionPrototype => Ok(Completion::Return(Value::Undefined)),
             NativeFunctionId::FunctionConstructor(kind) => {

@@ -1,5 +1,22 @@
-//! Typed replies connecting property domain states to the owned scheduler.
-use super::*;
+//! Closed reply routing between domain states and the owned scheduler.
+mod array;
+mod buffer;
+mod conversion;
+mod function;
+mod iterator;
+mod native;
+mod object;
+mod object_builtins;
+mod scalar;
+mod string;
+mod vm;
+
+use super::{
+    BytecodeCallRequest, CompleteOrdinaryPropertyDescriptor, Completion, DescriptorResume,
+    DescriptorStep, DirectCallTarget, NativeConversion, ObjectRef, OrdinaryPropertyDescriptor,
+    OrdinaryRead, PropertyKey, ProxyBooleanResume, ProxyBooleanStep, ProxyGetResume, ProxyGetStep,
+    ProxyOwnResume, ProxyOwnStep, Runtime, Value,
+};
 use crate::engine::object::operations::{
     InternalDefineResult, InternalSetResult, PropertySetAction,
 };
@@ -7,6 +24,7 @@ use crate::engine::object::{
     ProxyDefineResume, ProxyDefineStep, ProxySetResume, ProxySetStep, SetResume, SetStep,
     set_completion,
 };
+use crate::engine::vm::ToPrimitiveHint;
 
 use crate::engine::object::operations::ArrayLengthConversion;
 use crate::engine::object::{ArrayLengthResume, ArrayLengthStep};
@@ -18,7 +36,181 @@ use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, Type
 use crate::engine::object::{ProxyPrototypeResume, ProxyPrototypeStep};
 
 pub(super) enum Resume {
+    ForIn(crate::engine::vm::for_in::operation::ForInResume),
+    Atomics(crate::engine::builtins::AtomicsResume),
+    PublicField,
+    LiteralDefinition(crate::engine::object::object_literal::element::LiteralDefinitionResume),
+    TypedCreate(crate::engine::builtins::TypedCreateResume),
+    TypedCollect(crate::engine::builtins::TypedCollectResume),
+    TypedIteratorMethod(crate::engine::builtins::TypedIteratorMethodResume),
+
+    BufferSlice(crate::engine::builtins::BufferSliceResume),
+    TypedWith(crate::engine::builtins::TypedWithResume),
+    Uint8Codec(crate::engine::builtins::Uint8CodecResume),
+
+    VmNumeric(crate::engine::vm::numeric::operation::NumericResume),
+    TypedSearch(crate::engine::builtins::TypedSearchResume),
+    TypedString(crate::engine::builtins::TypedStringResume),
+    TypedSlice(crate::engine::builtins::TypedSliceResume),
+    TypedMutation(crate::engine::builtins::TypedMutationResume),
+    StringFactory(crate::engine::builtins::StringFactoryResume),
+
+    WeakConstructor(crate::engine::builtins::WeakConstructorResume),
+    Environment(crate::engine::vm::environment_bindings::operation::EnvironmentResume),
+    RegExpIteratorSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::RegExpIteratorResume,
+    },
+    RegExpMatchAll(crate::engine::builtins::RegExpMatchAllResume),
+    RegExpSplit(crate::engine::builtins::RegExpSplitResume),
+    RegExpIterator(crate::engine::builtins::RegExpIteratorResume),
+    RegExpSpecies(crate::engine::builtins::RegExpSpeciesResume),
+
+    JsonRaw(crate::engine::builtins::JsonRawResume),
+    ObjectConstructor(crate::engine::builtins::ObjectConstructorResume),
+    Bind(crate::engine::builtins::BindResume),
+    FunctionText(crate::engine::builtins::FunctionTextResume),
+    DynamicFunction(crate::engine::builtins::DynamicFunctionResume),
+    JsonParse(crate::engine::builtins::JsonParseResume),
+    JsonStringify(crate::engine::builtins::JsonStringifyResume),
+    BufferConstructor(crate::engine::builtins::BufferConstructorResume),
+    DataViewConstructor(crate::engine::builtins::DataViewConstructorResume),
+    TypedSet(crate::engine::builtins::TypedSetResume),
+    RegExpConstructor(crate::engine::builtins::RegExpConstructorResume),
+    RegExpSearch(crate::engine::builtins::RegExpSearchResume),
+    RegExpMatch(crate::engine::builtins::RegExpMatchResume),
+    RegExpCompile(crate::engine::builtins::RegExpCompileResume),
+    StringProtocol(crate::engine::builtins::StringProtocolResume),
+
+    TypedSort(crate::engine::builtins::TypedSortResume),
+    Math(crate::engine::builtins::MathResume),
+    Sum(crate::engine::builtins::SumResume),
+    PrimitiveConstructor(crate::engine::builtins::PrimitiveConstructorResume),
+    Global(crate::engine::builtins::GlobalResume),
+    Numeric(crate::engine::builtins::NumericResume),
+    ScalarText(crate::engine::builtins::ScalarTextResume),
+    DateConstructor(crate::engine::builtins::DateConstructorResume),
+    DatePrototype(crate::engine::builtins::DatePrototypeResume),
+    Error(crate::engine::builtins::ErrorResume),
+    Aggregate(crate::engine::builtins::AggregateResume),
+    PrimitiveConstructorValue(crate::engine::builtins::PrimitiveConstructorResume),
+    NumericPrimitive(crate::engine::builtins::NumericResume),
+    DateConstructorPrimitive(crate::engine::builtins::DateConstructorResume),
+
+    MapCallback(crate::engine::builtins::MapCallbackResume),
+    SetEach(crate::engine::builtins::SetEachResume),
+    SetOperation(crate::engine::builtins::SetOperationResume),
+    Collection(crate::engine::builtins::CollectionResume),
+    WeakComputed(crate::engine::builtins::WeakComputedResume),
+    IteratorInvalidCount(crate::engine::builtins::IteratorCreateResume),
+    ArrayConstructor(crate::engine::builtins::ArrayConstructorResume),
+    ArraySlice(crate::engine::builtins::ArraySliceResume),
+    IteratorConstructor(crate::engine::builtins::IteratorConstructorResume),
+    IteratorTag(crate::engine::builtins::IteratorTagResume),
+    TypedTraversal(crate::engine::builtins::TypedTraversalResume),
+    TypedSpecies(crate::engine::builtins::TypedSpeciesResume),
+    TypedIteration(crate::engine::builtins::TypedIterationResume),
+
+    ConstructorSource(crate::engine::vm::call::prototype::ProtoSourceResume),
+    ArrayConstructorSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArrayConstructorResume,
+    },
+    ArraySliceSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArraySliceResume,
+    },
+
+    ArrayCopy(crate::engine::builtins::ArrayCopyResume),
+    ArrayConcat(crate::engine::builtins::ArrayConcatResume),
+    ArrayFlatten(crate::engine::builtins::ArrayFlattenResume),
+    ObjectCopy(crate::engine::builtins::ObjectCopyResume),
+    StringText(crate::engine::builtins::StringTextResume),
+    StringSearch(crate::engine::builtins::StringSearchResume),
+    StringSplit(crate::engine::builtins::StringSplitResume),
+    ArrayCopySet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArrayCopyResume,
+    },
+    ArrayConcatSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArrayConcatResume,
+    },
+
+    Instance(crate::engine::builtins::InstanceResume),
+    IteratorFrom(crate::engine::builtins::IteratorFromResume),
+    IteratorWrap(crate::engine::builtins::IteratorWrapResume),
+    IteratorConcat(crate::engine::builtins::IteratorConcatResume),
+    ArrayBuild(crate::engine::builtins::ArrayBuildResume),
+    ArrayBuildSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArrayBuildResume,
+    },
+
+    ArraySort(crate::engine::builtins::ArraySortResume),
+    ArrayIndexed(crate::engine::builtins::ArrayIndexedResume),
+    ArrayReverse(crate::engine::builtins::ArrayReverseResume),
+    ArrayString(crate::engine::builtins::ArrayStringResume),
+    RegExpExec(crate::engine::builtins::RegExpExecResume),
+    RegExpPresentation(crate::engine::builtins::RegExpPresentationResume),
+    RegExpReplace(crate::engine::builtins::RegExpReplaceResume),
+    IteratorConsume(crate::engine::builtins::IteratorConsumeResume),
+    IteratorHelper(crate::engine::builtins::IteratorHelperResume),
+    IteratorCreate(crate::engine::builtins::IteratorCreateResume),
+
+    StringValue {
+        realm: crate::engine::heap::ContextId,
+        resume: Box<Resume>,
+    },
+    ArraySortSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArraySortResume,
+    },
+    ArrayIndexedSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArrayIndexedResume,
+    },
+    ArrayReverseSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArrayReverseResume,
+    },
+
+    ArrayNext(crate::engine::builtins::ArrayNextResume),
+    ArrayMutation(crate::engine::builtins::ArrayMutationResume),
+    ArrayMutationSet {
+        key: PropertyKey,
+        resume: crate::engine::builtins::ArrayMutationResume,
+    },
+    ArrayCallback(crate::engine::builtins::ArrayCallbackResume),
+    ArraySpecies(crate::engine::builtins::ArraySpeciesResume),
+    StringReplace(crate::engine::builtins::StringReplaceResume),
+    DataView(crate::engine::builtins::DataViewAccessResume),
+    BufferMutation(crate::engine::builtins::BufferMutationResume),
+    ObjectIteration(crate::engine::builtins::ObjectIterationResume),
+    ObjectIterationKey(crate::engine::builtins::ObjectIterationResume),
+    IteratorNext(crate::engine::builtins::IteratorNextResume),
+    IteratorClose(crate::engine::builtins::IteratorCloseResume),
+
+    ProxyConstruct(crate::engine::object::ProxyConstructResume),
+    ConstructorPrototype {
+        request: Box<BytecodeCallRequest>,
+        resume: Box<Resume>,
+    },
+    Arguments(crate::engine::builtins::ArgumentsResume),
+    Invoke(crate::engine::builtins::InvokeResume),
     Identity,
+    ObjectString(crate::engine::builtins::ObjectStringResume),
+    Definitions(crate::engine::builtins::DefinitionsResume),
+    PredicateKey(crate::engine::builtins::PredicateResume),
+    Predicate(crate::engine::builtins::PredicateResume),
+    OwnFlagReply {
+        enumerable: bool,
+        resume: Box<Resume>,
+    },
+    Keys(crate::engine::object::KeysResume),
+    Property(crate::engine::builtins::PropertyResume),
+    PropertyKey(crate::engine::builtins::PropertyResume),
+    Primitive(crate::engine::value::conversion::primitive::PrimitiveResume),
     BuiltinPrototype(crate::engine::builtins::BuiltinPrototypeResume),
     Prototype(ProxyPrototypeResume),
     PrototypeGetReply(Box<Resume>),
@@ -58,6 +250,201 @@ pub(super) enum Resume {
 }
 
 pub(super) enum Step {
+    ForInComplete {
+        value: Value,
+        done: Option<bool>,
+    },
+    TypedIteratorMethod {
+        source: Value,
+        resume: Resume,
+    },
+    TypedIteratorMethodComplete(NativeConversion<Option<crate::engine::object::CallableRef>>),
+    TypedCollect {
+        source: Value,
+        method: crate::engine::object::CallableRef,
+        element: TypedArrayElementKind,
+        resume: Resume,
+    },
+    TypedCollectComplete(NativeConversion<Vec<Value>>),
+    TypedCreate {
+        constructor: Value,
+        length: u64,
+        resume: Resume,
+    },
+
+    NumericComplete {
+        value: Value,
+        previous: Option<Value>,
+    },
+    NumericHtmlDda {
+        value: Value,
+        resume: crate::engine::vm::numeric::operation::NumericResume,
+    },
+    TypedSpeciesView {
+        source: ObjectRef,
+        element: TypedArrayElementKind,
+        buffer: ObjectRef,
+        offset: u64,
+        length: Option<u64>,
+        resume: Resume,
+    },
+    RegExpSpecies {
+        regexp: ObjectRef,
+        resume: Resume,
+    },
+    RegExpSpeciesComplete(NativeConversion<crate::engine::vm::call::ConstructorRef>),
+    IndirectEval {
+        source: crate::engine::value::JsString,
+        resume: Resume,
+    },
+    Aggregate {
+        iterable: Value,
+        resume: Resume,
+    },
+    OrdinaryPrimitive {
+        object: ObjectRef,
+        hint: ToPrimitiveHint,
+    },
+
+    ConstructorSource {
+        new_target: Value,
+        resume: Resume,
+    },
+    ConstructorSourceComplete(
+        NativeConversion<crate::engine::vm::call::ConstructorPrototypeSource>,
+    ),
+    TypedSpecies {
+        source: ObjectRef,
+        element: TypedArrayElementKind,
+        length: u64,
+        resume: Resume,
+    },
+    TypedSpeciesComplete(NativeConversion<ObjectRef>),
+    ArrayCopy {
+        object: ObjectRef,
+        to: u64,
+        from: u64,
+        count: u64,
+        backwards: bool,
+        resume: Resume,
+    },
+    OrdinaryInstance {
+        constructor: crate::engine::object::CallableRef,
+        value: Value,
+        resume: Resume,
+    },
+    ParseIterator {
+        result: Completion,
+        resume: Resume,
+    },
+    String {
+        value: Value,
+        resume: Resume,
+    },
+    ObjectTag {
+        receiver: Value,
+    },
+    RegExpExec {
+        regexp: Value,
+        input: Value,
+        resume: Resume,
+    },
+    IteratorCloseWithResume {
+        iterator: ObjectRef,
+        completion: Completion,
+        resume: Resume,
+    },
+    NativeRawComplete(crate::engine::vm::call::NativeInvokeOutcome),
+    ArraySpecies {
+        source: ObjectRef,
+        length: u64,
+        resume: Resume,
+    },
+    ArrayPush {
+        object: ObjectRef,
+        value: Value,
+        resume: Resume,
+    },
+    IteratorNext {
+        iterator: ObjectRef,
+        method: Value,
+        resume: Resume,
+    },
+    IteratorNextComplete(crate::engine::builtins::ObjectIteratorStep),
+    IteratorCall {
+        callable: crate::engine::object::CallableRef,
+        iterator: ObjectRef,
+        resume: crate::engine::builtins::IteratorNextResume,
+    },
+    IteratorClose {
+        iterator: ObjectRef,
+        completion: Completion,
+    },
+
+    Native {
+        callable: crate::engine::object::CallableRef,
+        target: crate::engine::builtins::native::NativeFunctionId,
+        defining_realm: crate::engine::heap::ContextId,
+        min_readable_args: u8,
+        mode: crate::engine::vm::call::NativeInvokeMode,
+        invocation: crate::engine::vm::call::NativeInvocation,
+        arguments: Vec<Value>,
+        resume: Resume,
+    },
+    Construct {
+        target: crate::engine::vm::call::ConstructorRef,
+        new_target: crate::engine::vm::call::ConstructNewTarget,
+        arguments: Vec<Value>,
+        resume: Resume,
+    },
+    ConstructProxy {
+        target: crate::engine::vm::call::ConstructorRef,
+        new_target: crate::engine::vm::call::ConstructNewTarget,
+        arguments: Vec<Value>,
+        resume: Resume,
+    },
+    ConstructorReady {
+        request: Box<BytecodeCallRequest>,
+        receiver: Completion,
+        derived: bool,
+        resume: Resume,
+    },
+    Arguments {
+        value: Value,
+        resume: Resume,
+    },
+    ArgumentsComplete(NativeConversion<Vec<Value>>),
+    SnapshotEnumerable {
+        object: ObjectRef,
+        key: PropertyKey,
+        resume: Resume,
+    },
+    OwnFlag {
+        object: ObjectRef,
+        key: PropertyKey,
+        enumerable: bool,
+        resume: Resume,
+    },
+    Keys {
+        object: ObjectRef,
+        resume: Resume,
+    },
+    KeysComplete(NativeConversion<Vec<PropertyKey>>),
+    ReadValue {
+        receiver: Value,
+        key: PropertyKey,
+        resume: Resume,
+    },
+    PreparedRead {
+        read: OrdinaryRead,
+        key: PropertyKey,
+        resume: Resume,
+    },
+    Primitive {
+        value: Value,
+        hint: crate::engine::vm::ToPrimitiveHint,
+        resume: Resume,
+    },
     GetPrototype {
         object: ObjectRef,
         resume: Resume,
@@ -79,13 +466,13 @@ pub(super) enum Step {
     Element {
         element: TypedArrayElementKind,
         value: Value,
-        resume: TypedWriteResume,
+        resume: Resume,
     },
     ElementComplete(NativeConversion<[u8; 8]>),
     TypedComplete(NativeConversion<bool>),
     Number {
         value: Value,
-        resume: ArrayLengthResume,
+        resume: Resume,
     },
     NumberComplete(NativeConversion<f64>),
     LengthComplete(ArrayLengthConversion),
@@ -117,6 +504,12 @@ pub(super) enum Step {
         resume: Resume,
     },
     Define {
+        object: ObjectRef,
+        key: PropertyKey,
+        descriptor: OrdinaryPropertyDescriptor,
+        resume: Resume,
+    },
+    DefineOrdinary {
         object: ObjectRef,
         key: PropertyKey,
         descriptor: OrdinaryPropertyDescriptor,
@@ -155,371 +548,8 @@ pub(super) enum Step {
     },
     Convert {
         value: Value,
-        resume: ProxyOwnResume,
+        resume: Resume,
     },
-}
-
-impl From<ProxyGetStep> for Step {
-    fn from(step: ProxyGetStep) -> Self {
-        match step {
-            ProxyGetStep::Complete(result) => Self::Complete(result),
-            ProxyGetStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Get(resume),
-            },
-            ProxyGetStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Get(resume),
-            },
-            ProxyGetStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::Get(resume),
-            },
-        }
-    }
-}
-
-impl From<ProxyOwnStep> for Step {
-    fn from(step: ProxyOwnStep) -> Self {
-        match step {
-            ProxyOwnStep::Complete(result) => Self::OwnComplete(result),
-            ProxyOwnStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Extensible { object, resume } => Self::Extensible {
-                object,
-                resume: Resume::Own(resume),
-            },
-            ProxyOwnStep::Convert { value, resume } => Self::Convert { value, resume },
-        }
-    }
-}
-
-impl From<DescriptorStep> for Step {
-    fn from(step: DescriptorStep) -> Self {
-        match step {
-            DescriptorStep::Complete(result) => Self::Converted(result),
-            DescriptorStep::Has {
-                object,
-                key,
-                resume,
-            } => Self::Has {
-                object,
-                key,
-                resume: Resume::Conversion(resume),
-            },
-            DescriptorStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Conversion(resume),
-            },
-        }
-    }
-}
-
-impl From<ProxyBooleanStep> for Step {
-    fn from(step: ProxyBooleanStep) -> Self {
-        match step {
-            ProxyBooleanStep::Delete {
-                object,
-                key,
-                resume,
-            } => Self::Delete {
-                object,
-                key,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::PreventExtensions { object, resume } => Self::PreventExtensions {
-                object,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Complete(result) => Self::BooleanComplete(result),
-            ProxyBooleanStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Has {
-                object,
-                key,
-                resume,
-            } => Self::Has {
-                object,
-                key,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Extensible { object, resume } => Self::Extensible {
-                object,
-                resume: Resume::Boolean(resume),
-            },
-            ProxyBooleanStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::Boolean(resume),
-            },
-        }
-    }
-}
-
-impl From<crate::engine::object::ProxyCallStep> for Step {
-    fn from(step: crate::engine::object::ProxyCallStep) -> Self {
-        use crate::engine::object::ProxyCallStep;
-        match step {
-            ProxyCallStep::Complete(result) => Self::Complete(result),
-            ProxyCallStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Call(resume),
-            },
-            ProxyCallStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Call(resume),
-            },
-        }
-    }
-}
-
-impl From<SetStep> for Step {
-    fn from(step: SetStep) -> Self {
-        match step {
-            SetStep::Complete(action) => Self::SetComplete(action),
-            SetStep::Continue { resume } => Self::SetContinue(resume),
-            SetStep::Proxy {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            } => Self::SetProxy {
-                object,
-                key,
-                value,
-                receiver,
-                resume: Resume::OrdinarySet(resume),
-            },
-            SetStep::Special {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            } => Self::SetSpecial {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            },
-            SetStep::ArrayLength { value, resume, .. } => Self::SetLength { value, resume },
-            SetStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::OrdinarySet(resume),
-            },
-            SetStep::Define {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => Self::Define {
-                object,
-                key,
-                descriptor,
-                resume: Resume::OrdinarySet(resume),
-            },
-        }
-    }
-}
-impl From<ProxySetStep> for Step {
-    fn from(step: ProxySetStep) -> Self {
-        match step {
-            ProxySetStep::Complete(result) => Self::SetComplete(set_completion(result)),
-            ProxySetStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::ProxySet(resume),
-            },
-            ProxySetStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::ProxySet(resume),
-            },
-            ProxySetStep::Set {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            } => Self::Set {
-                object,
-                key,
-                value,
-                receiver,
-                resume: Resume::ProxySet(resume),
-            },
-            ProxySetStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::ProxySet(resume),
-            },
-        }
-    }
-}
-impl From<ProxyDefineStep> for Step {
-    fn from(step: ProxyDefineStep) -> Self {
-        match step {
-            ProxyDefineStep::Complete(result) => Self::Defined(result),
-            ProxyDefineStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Define(resume),
-            },
-            ProxyDefineStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Define(resume),
-            },
-            ProxyDefineStep::Define {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => Self::Define {
-                object,
-                key,
-                descriptor,
-                resume: Resume::Define(resume),
-            },
-            ProxyDefineStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => Self::Descriptor {
-                object,
-                key,
-                resume: Resume::Define(resume),
-            },
-        }
-    }
 }
 
 pub(super) fn set_result(
@@ -545,10 +575,52 @@ pub(super) fn set_result(
 impl Resume {
     pub(super) fn set(
         self,
-        _runtime: &Runtime,
+        runtime: &Runtime,
         action: PropertySetAction,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::RegExpMatchAll(resume) => {
+                resume.set(runtime, set_result(action)?).map(Into::into)
+            }
+            Self::RegExpSplit(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
+            Self::Environment(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
+            Self::RegExpIteratorSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+
+            Self::RegExpSearch(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
+            Self::RegExpMatch(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
+
+            Self::ArrayConstructorSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::ArraySliceSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::IteratorTag(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
+            Self::ArrayCopySet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::ArrayConcatSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::ArrayBuildSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::RegExpReplace(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
+            Self::ArraySortSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::ArrayIndexedSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::ArrayReverseSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::ArrayMutationSet { key, resume } => resume
+                .set(runtime, key, set_result(action)?)
+                .map(Into::into),
+            Self::Property(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
             Self::OrdinarySet(resume) => resume.forward(action).map(Into::into),
             Self::ProxySet(resume) => resume.set(set_result(action)?).map(Into::into),
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
@@ -562,6 +634,43 @@ impl Resume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::LiteralDefinition(resume) => resume.defined(result).map(Into::into),
+            Self::PublicField => match Runtime::finish_public_class_field_definition(result)? {
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
+                    Ok(Step::Complete(Completion::Return(Value::Undefined)))
+                }
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
+                    Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                        "public field rejected without throwing",
+                    ))
+                }
+                crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                    Ok(Step::Complete(Completion::Throw(value)))
+                }
+            },
+
+            Self::JsonParse(resume) => resume
+                .boolean(
+                    runtime,
+                    match result {
+                        NativeConversion::Value(result) => {
+                            NativeConversion::Value(matches!(result, InternalDefineResult::Defined))
+                        }
+                        NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                    },
+                )
+                .map(Into::into),
+
+            Self::ArraySlice(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::IteratorTag(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::ArrayConcat(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::ArrayFlatten(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::ArrayBuild(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::ArrayCallback(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::ObjectIteration(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::Predicate(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::Definitions(resume) => resume.defined(runtime, result).map(Into::into),
+            Self::Property(resume) => resume.defined(runtime, result).map(Into::into),
             Self::OrdinarySet(resume) => resume.defined(runtime, result).map(Into::into),
             Self::Define(resume) => resume.defined(result).map(Into::into),
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
@@ -576,6 +685,26 @@ impl Resume {
         result: NativeConversion<bool>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::ForIn(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::Environment(resume) => resume.boolean(runtime, result).map(Into::into),
+
+            Self::Bind(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::JsonParse(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::JsonStringify(resume) => resume.boolean(runtime, result).map(Into::into),
+
+            Self::Error(resume) => resume.boolean(runtime, result).map(Into::into),
+
+            Self::ArraySlice(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::IteratorTag(resume) => resume.boolean(result).map(Into::into),
+            Self::ArrayCopy(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ArrayConcat(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ArrayFlatten(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ObjectCopy(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ArraySort(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ArrayIndexed(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ArrayReverse(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ArrayMutation(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::ArrayCallback(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::BooleanResult {
                 _object,
                 _key,
@@ -583,6 +712,10 @@ impl Resume {
             } => runtime
                 .finish_property_delete(result, strict_delete)
                 .map(Step::Complete),
+            Self::Definitions(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::Predicate(resume) => resume.boolean(result).map(Into::into),
+            Self::Keys(resume) => resume.boolean(runtime, result).map(Into::into),
+            Self::Property(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::BuiltinPrototype(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Prototype(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Own(resume) => resume.extensible(result).map(Into::into),
@@ -600,7 +733,158 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::ForIn(_) => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "for-in requires typed reply",
+            )),
+            Self::Atomics(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::LiteralDefinition(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::PublicField => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "public field requires definition reply",
+            )),
+
+            Self::TypedCreate(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedCollect(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedIteratorMethod(resume) => resume.resume(runtime, completion).map(Into::into),
+
+            Self::BufferSlice(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedWith(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Uint8Codec(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::VmNumeric(resume) => resume
+                .resume(completion)
+                .map(Into::into)
+                .map_err(crate::engine::api::runtime_error::RuntimeError::Engine),
+            Self::TypedSearch(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedString(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedSlice(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedMutation(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::StringFactory(resume) => resume.resume(runtime, completion).map(Into::into),
+
+            Self::WeakConstructor(_) => {
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "weak constructor requires prototype reply",
+                ))
+            }
+            Self::RegExpMatchAll(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpSplit(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpIterator(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpSpecies(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Environment(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpIteratorSet { .. } => {
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "RegExp iterator requires Set reply",
+                ))
+            }
+
+            Self::Bind(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::FunctionText(resume) => resume.resume(completion).map(Into::into),
+            Self::DynamicFunction(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::JsonParse(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::JsonStringify(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::BufferConstructor(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::DataViewConstructor(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedSet(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpConstructor(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpSearch(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpMatch(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpCompile(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::StringProtocol(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ObjectConstructor(_) | Self::JsonRaw(_) => {
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "native requires typed reply",
+                ))
+            }
+
+            Self::Math(_) | Self::Global(_) | Self::Numeric(_) | Self::ScalarText(_) => {
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "scalar conversion requires typed reply",
+                ))
+            }
+            Self::TypedSort(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Sum(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::PrimitiveConstructor(resume) => {
+                resume.resume(runtime, completion).map(Into::into)
+            }
+            Self::DateConstructor(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::DatePrototype(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Error(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Aggregate(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::PrimitiveConstructorValue(resume) => {
+                resume.primitive(runtime, completion).map(Into::into)
+            }
+            Self::NumericPrimitive(resume) => resume.primitive(runtime, completion).map(Into::into),
+            Self::DateConstructorPrimitive(resume) => {
+                resume.primitive(runtime, completion).map(Into::into)
+            }
+
+            Self::MapCallback(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::SetEach(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::SetOperation(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Collection(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::WeakComputed(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorInvalidCount(resume) => {
+                resume.invalid_count(runtime, completion).map(Into::into)
+            }
+
+            Self::ArrayConstructor(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArraySlice(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedTraversal(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedSpecies(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedIteration(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ConstructorSource(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayCopy(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayConcat(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayFlatten(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ObjectCopy(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::StringText(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::StringSearch(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::StringSplit(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Instance(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorFrom(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorWrap(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorConcat(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayBuild(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArraySort(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayIndexed(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayReverse(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayString(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpExec(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpPresentation(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::RegExpReplace(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorConsume(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorHelper(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorCreate(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::StringValue { realm, resume } => {
+                let result = match completion {
+                    Completion::Return(value) => runtime.string_from_primitive(realm, &value)?,
+                    Completion::Throw(value) => NativeConversion::Throw(value),
+                };
+                resume.string(runtime, result)
+            }
+            Self::ArrayNext(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayMutation(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArrayCallback(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ArraySpecies(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::StringReplace(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::DataView(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::BufferMutation(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ObjectIteration(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorNext(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::IteratorClose(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ObjectIterationKey(resume) => resume.key(runtime, completion).map(Into::into),
+            Self::Arguments(resume) => resume.read(runtime, completion).map(Into::into),
+            Self::ProxyConstruct(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ConstructorPrototype { request, resume } => {
+                super::construct::prototype(runtime, request, completion, *resume)
+                    .map_err(crate::engine::api::runtime_error::RuntimeError::Engine)
+            }
             Self::Identity => Ok(Step::Complete(completion)),
+            Self::ObjectString(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Definitions(resume) => resume.read(completion).map(Into::into),
+            Self::PredicateKey(resume) => resume.key(runtime, completion).map(Into::into),
+            Self::Keys(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::PropertyKey(resume) => resume.key(runtime, completion).map(Into::into),
+            Self::Property(resume) => resume.read(runtime, completion).map(Into::into),
+            Self::Primitive(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::BuiltinPrototype(_) => {
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "prototype builtin received an untyped reply",
@@ -648,7 +932,21 @@ impl Resume {
             Self::ReadOwner(_owner) => Ok(Step::Complete(completion)),
             Self::Element(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Number(resume) => resume.resume(runtime, completion).map(Into::into),
-            Self::TypedElement(_)
+            Self::IteratorConstructor(_)
+            | Self::IteratorTag(_)
+            | Self::ArrayConstructorSet { .. }
+            | Self::ArraySliceSet { .. }
+            | Self::ArrayCopySet { .. }
+            | Self::ArrayConcatSet { .. }
+            | Self::ArrayBuildSet { .. }
+            | Self::ArraySortSet { .. }
+            | Self::ArrayIndexedSet { .. }
+            | Self::ArrayReverseSet { .. }
+            | Self::ArrayMutationSet { .. }
+            | Self::Invoke(_)
+            | Self::Predicate(_)
+            | Self::OwnFlagReply { .. }
+            | Self::TypedElement(_)
             | Self::SetTyped(_)
             | Self::DefineTyped { .. }
             | Self::LengthNumber(_)
@@ -672,7 +970,19 @@ impl Resume {
         result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::OwnFlagReply { enumerable, resume } => resume.boolean(
+                runtime,
+                match result {
+                    NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                    NativeConversion::Value(descriptor) => NativeConversion::Value(
+                        descriptor.is_some_and(|descriptor| !enumerable || descriptor.enumerable()),
+                    ),
+                },
+            ),
+            Self::Predicate(resume) => resume.descriptor(result).map(Into::into),
+            Self::Keys(resume) => resume.descriptor(runtime, result).map(Into::into),
             Self::Get(resume) => resume.descriptor(runtime, result).map(Into::into),
+            Self::Property(resume) => resume.descriptor(runtime, result).map(Into::into),
             Self::Own(resume) => resume.descriptor(runtime, result).map(Into::into),
             Self::Boolean(resume) => resume.descriptor(runtime, result).map(Into::into),
             Self::OrdinarySet(resume) => resume.descriptor(runtime, result).map(Into::into),
@@ -685,42 +995,6 @@ impl Resume {
     }
 }
 
-impl From<NumberStep> for Step {
-    fn from(step: NumberStep) -> Self {
-        match step {
-            NumberStep::Complete(result) => Self::NumberComplete(result),
-            NumberStep::Read {
-                object,
-                key,
-                resume,
-            } => Self::Read {
-                receiver: Value::Object(object.clone()),
-                object,
-                key,
-                resume: Resume::Number(resume),
-            },
-            NumberStep::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target: DirectCallTarget::Callable(callable),
-                receiver,
-                arguments,
-                resume: Resume::Number(resume),
-            },
-        }
-    }
-}
-impl From<ArrayLengthStep> for Step {
-    fn from(step: ArrayLengthStep) -> Self {
-        match step {
-            ArrayLengthStep::Complete(result) => Self::LengthComplete(result),
-            ArrayLengthStep::Number { value, resume } => Self::Number { value, resume },
-        }
-    }
-}
 impl Resume {
     pub(super) fn length(
         self,
@@ -759,50 +1033,6 @@ impl Resume {
     }
 }
 
-impl From<ElementStep> for Step {
-    fn from(step: ElementStep) -> Self {
-        match step {
-            ElementStep::Complete(result) => Self::ElementComplete(result),
-            ElementStep::Read {
-                object,
-                key,
-                resume,
-            } => Self::Read {
-                receiver: Value::Object(object.clone()),
-                object,
-                key,
-                resume: Resume::Element(resume),
-            },
-            ElementStep::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target: DirectCallTarget::Callable(callable),
-                receiver,
-                arguments,
-                resume: Resume::Element(resume),
-            },
-        }
-    }
-}
-impl From<TypedWriteStep> for Step {
-    fn from(step: TypedWriteStep) -> Self {
-        match step {
-            TypedWriteStep::Complete(result) => Self::TypedComplete(result),
-            TypedWriteStep::Element {
-                element,
-                value,
-                resume,
-            } => Self::Element {
-                element,
-                value,
-                resume,
-            },
-        }
-    }
-}
 impl Resume {
     pub(super) fn typed(
         self,
@@ -842,52 +1072,6 @@ impl Resume {
     }
 }
 
-impl From<ProxyPrototypeStep> for Step {
-    fn from(step: ProxyPrototypeStep) -> Self {
-        match step {
-            ProxyPrototypeStep::Complete(result) => Self::Complete(result),
-            ProxyPrototypeStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => Self::Read {
-                object,
-                key,
-                receiver,
-                resume: Resume::Prototype(resume),
-            },
-            ProxyPrototypeStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Prototype(resume),
-            },
-            ProxyPrototypeStep::Get { object, resume } => Self::GetPrototype {
-                object,
-                resume: Resume::Prototype(resume),
-            },
-            ProxyPrototypeStep::Set {
-                object,
-                prototype,
-                resume,
-            } => Self::SetPrototype {
-                object,
-                prototype,
-                resume: Resume::Prototype(resume),
-            },
-            ProxyPrototypeStep::Extensible { object, resume } => Self::Extensible {
-                object,
-                resume: Resume::Prototype(resume),
-            },
-        }
-    }
-}
 impl Resume {
     pub(super) fn prototype(
         self,
@@ -895,6 +1079,9 @@ impl Resume {
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::ForIn(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::Instance(resume) => resume.prototype(result).map(Into::into),
+            Self::Predicate(resume) => resume.prototype(result).map(Into::into),
             Self::BuiltinPrototype(resume) => resume.prototype(result).map(Into::into),
             Self::Prototype(resume) => resume.prototype(runtime, result).map(Into::into),
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
@@ -904,24 +1091,269 @@ impl Resume {
     }
 }
 
-impl From<crate::engine::builtins::BuiltinPrototypeStep> for Step {
-    fn from(step: crate::engine::builtins::BuiltinPrototypeStep) -> Self {
-        use crate::engine::builtins::BuiltinPrototypeStep;
-        match step {
-            BuiltinPrototypeStep::Complete(result) => Self::Complete(result),
-            BuiltinPrototypeStep::Get { object, resume } => Self::GetPrototype {
-                object,
-                resume: Resume::BuiltinPrototype(resume),
-            },
-            BuiltinPrototypeStep::Set {
-                object,
-                prototype,
-                resume,
-            } => Self::SetPrototype {
-                object,
-                prototype,
-                resume: Resume::BuiltinPrototype(resume),
-            },
+impl Resume {
+    pub(super) fn converted(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<OrdinaryPropertyDescriptor>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::Definitions(resume) => resume.converted(result).map(Into::into),
+            Self::Own(resume) => resume.converted(runtime, result).map(Into::into),
+            Self::Property(resume) => resume.converted(result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "descriptor conversion has no matching operation",
+            )),
+        }
+    }
+}
+
+impl Resume {
+    pub(super) fn number(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<f64>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::Atomics(resume) => resume.number(runtime, result).map(Into::into),
+            Self::StringFactory(resume) => resume.number(runtime, result).map(Into::into),
+
+            Self::JsonParse(resume) => resume.number(runtime, result).map(Into::into),
+            Self::JsonStringify(resume) => resume.number(runtime, result).map(Into::into),
+
+            Self::TypedSort(resume) => resume.number(runtime, result).map(Into::into),
+            Self::Math(resume) => resume.number(result).map(Into::into),
+            Self::Global(resume) => resume.number(result).map(Into::into),
+            Self::Numeric(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ScalarText(resume) => resume.number(result).map(Into::into),
+            Self::DateConstructor(resume) => resume.number(runtime, result).map(Into::into),
+            Self::DatePrototype(resume) => resume.number(runtime, result).map(Into::into),
+
+            Self::SetOperation(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArraySlice(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayConcat(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayFlatten(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayBuild(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArraySort(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayIndexed(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayReverse(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayString(resume) => resume.number(runtime, result).map(Into::into),
+            Self::IteratorCreate(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayNext(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayMutation(resume) => resume.number(runtime, result).map(Into::into),
+            Self::ArrayCallback(resume) => resume.number(runtime, result).map(Into::into),
+            Self::Arguments(resume) => resume.number(runtime, result).map(Into::into),
+            Self::LengthNumber(resume) => resume.number(runtime, result).map(Into::into),
+            Self::Keys(resume) => resume.number(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "numeric reply has no matching continuation",
+            )),
+        }
+    }
+    pub(super) fn keys(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<Vec<PropertyKey>>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::ForIn(resume) => resume.keys(runtime, result).map(Into::into),
+            Self::JsonParse(resume) => resume.keys(runtime, result).map(Into::into),
+            Self::JsonStringify(resume) => resume.keys(runtime, result).map(Into::into),
+
+            Self::ObjectCopy(resume) => resume.keys(runtime, result).map(Into::into),
+            Self::Definitions(resume) => resume.keys(runtime, result).map(Into::into),
+            Self::Keys(resume) => resume.keys(runtime, result).map(Into::into),
+            Self::Property(resume) => resume.keys(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "key-list reply has no matching continuation",
+            )),
+        }
+    }
+}
+
+impl Resume {
+    pub(super) fn arguments(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<Vec<Value>>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::Invoke(resume) => resume.arguments(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "argument list has no matching continuation",
+            )),
+        }
+    }
+}
+
+impl Resume {
+    pub(super) fn iterator_next(
+        self,
+        runtime: &Runtime,
+        result: crate::engine::builtins::ObjectIteratorStep,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::Sum(resume) => resume.item(runtime, result).map(Into::into),
+            Self::Aggregate(resume) => resume.item(runtime, result).map(Into::into),
+
+            Self::SetOperation(resume) => resume.parsed(runtime, result).map(Into::into),
+            Self::Collection(resume) => resume.next(runtime, result).map(Into::into),
+            Self::IteratorWrap(resume) => resume.next(runtime, result).map(Into::into),
+            Self::IteratorConcat(resume) => resume.next(runtime, result).map(Into::into),
+            Self::ArrayBuild(resume) => resume.parsed(runtime, result).map(Into::into),
+            Self::IteratorConsume(resume) => resume.next(runtime, result).map(Into::into),
+            Self::IteratorHelper(resume) => resume.next(runtime, result).map(Into::into),
+            Self::ObjectIteration(resume) => resume.next(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "iterator result has no continuation",
+            )),
+        }
+    }
+}
+
+impl Resume {
+    pub(super) fn native(
+        self,
+        runtime: &Runtime,
+        result: crate::engine::vm::call::NativeInvokeOutcome,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::IteratorNext(resume) => resume.raw(runtime, result).map(Into::into),
+            resume => resume.resume(runtime, Runtime::ordinary_native_completion(result)?),
+        }
+    }
+}
+
+impl Resume {
+    fn string(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<crate::engine::value::JsString>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::StringFactory(resume) => resume.string(runtime, result).map(Into::into),
+
+            Self::RegExpIterator(resume) => resume.string(runtime, result).map(Into::into),
+
+            Self::FunctionText(resume) => resume.string(result).map(Into::into),
+            Self::DynamicFunction(resume) => resume.string(result).map(Into::into),
+            Self::JsonParse(resume) => resume.string(runtime, result).map(Into::into),
+            Self::JsonStringify(resume) => resume.string(runtime, result).map(Into::into),
+            Self::JsonRaw(resume) => resume.string(runtime, result).map(Step::Complete),
+
+            Self::PrimitiveConstructor(resume) => resume.string(runtime, result).map(Into::into),
+            Self::Global(resume) => resume.string(runtime, result).map(Into::into),
+            Self::ScalarText(resume) => resume.string(runtime, result).map(Into::into),
+            Self::DateConstructor(resume) => resume.string(runtime, result).map(Into::into),
+            Self::Error(resume) => resume.string(runtime, result).map(Into::into),
+
+            Self::ArraySort(resume) => resume.string(runtime, result).map(Into::into),
+            Self::ArrayString(resume) => resume.string(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "string result has no continuation",
+            )),
+        }
+    }
+}
+
+impl Resume {
+    pub(super) fn constructor_source(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<crate::engine::vm::call::ConstructorPrototypeSource>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::TypedCreate(resume) => resume.prototype(runtime, result).map(Into::into),
+
+            Self::WeakConstructor(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::ObjectConstructor(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::BufferConstructor(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::DataViewConstructor(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::RegExpConstructor(resume) => resume.prototype(runtime, result).map(Into::into),
+
+            Self::Collection(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::IteratorConstructor(resume) => resume.prototype(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "constructor prototype source has no continuation",
+            )),
+        }
+    }
+    pub(super) fn element(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<[u8; 8]>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::TypedCreate(resume) => resume.element(runtime, result).map(Into::into),
+
+            Self::TypedMutation(resume) => resume.element(runtime, result).map(Into::into),
+
+            Self::TypedSet(resume) => resume.element(runtime, result).map(Into::into),
+
+            Self::TypedIteration(resume) => resume.element(runtime, result).map(Into::into),
+            Self::TypedElement(resume) => resume.element(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "element result has no continuation",
+            )),
+        }
+    }
+    pub(super) fn typed_species(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<ObjectRef>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::TypedCreate(resume) => resume.created(runtime, result).map(Into::into),
+
+            Self::TypedSlice(resume) => resume.species(runtime, result).map(Into::into),
+
+            Self::TypedIteration(resume) => resume.species(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "typed species result has no continuation",
+            )),
+        }
+    }
+}
+
+impl Resume {
+    pub(super) fn regexp_species(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<crate::engine::vm::call::ConstructorRef>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::RegExpMatchAll(resume) => resume.species(runtime, result).map(Into::into),
+            Self::RegExpSplit(resume) => resume.species(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "RegExp species has no continuation",
+            )),
+        }
+    }
+}
+
+impl Resume {
+    pub(super) fn typed_iterator_method(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<Option<crate::engine::object::CallableRef>>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::TypedCreate(resume) => resume.method(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "typed iterator method has no continuation",
+            )),
+        }
+    }
+    pub(super) fn typed_collected(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<Vec<Value>>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::TypedCreate(resume) => resume.collected(runtime, result).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "typed collected values have no continuation",
+            )),
         }
     }
 }

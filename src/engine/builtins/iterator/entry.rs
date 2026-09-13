@@ -45,6 +45,47 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
+        finish_tag(
+            self,
+            realm,
+            TagSetterStep::start(self, realm, &invocation, arguments)?,
+        )
+    }
+}
+
+pub(crate) enum TagSetterStep {
+    Complete(Completion),
+    Own {
+        object: crate::engine::object::ObjectRef,
+        key: PropertyKey,
+        resume: TagSetterResume,
+    },
+    Define {
+        object: crate::engine::object::ObjectRef,
+        key: PropertyKey,
+        descriptor: OrdinaryPropertyDescriptor,
+        resume: TagSetterResume,
+    },
+    Set {
+        object: crate::engine::object::ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        resume: TagSetterResume,
+    },
+}
+pub(crate) struct TagSetterResume {
+    realm: ContextId,
+    receiver: crate::engine::object::ObjectRef,
+    key: PropertyKey,
+    value: Value,
+}
+impl TagSetterStep {
+    pub(crate) fn start(
+        runtime: &Runtime,
+        realm: ContextId,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Self, RuntimeError> {
         let NativeInvocation::Setter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Iterator.prototype toStringTag setter received the wrong native invocation",
@@ -63,7 +104,7 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant(
                 "Iterator.prototype toStringTag setter argv was not padded",
             ))?;
-        let iterator_prototype = self
+        let iterator_prototype = runtime
             .0
             .state
             .borrow()
@@ -76,57 +117,123 @@ impl Runtime {
                 "Cannot assign to read only property",
             )));
         }
-
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
-        let own_property = match self.internal_has_own_property(realm, &receiver, &key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        if !own_property {
-            let descriptor = OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            };
-            return Ok(
-                match self.internal_define_own_property(realm, &receiver, &key, &descriptor)? {
-                    NativeConversion::Value(InternalDefineResult::Defined) => {
-                        Completion::Return(Value::Undefined)
-                    }
-                    NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
-                        Completion::Throw(self.new_native_error(
-                            realm,
-                            NativeErrorKind::Type,
-                            "proxy: defineProperty exception",
-                        )?)
-                    }
-                    NativeConversion::Value(InternalDefineResult::RejectedOrdinary(target)) => {
-                        let message = if !self.has_own_property(&target, &key)?
-                            && !self.is_extensible(&target)?
-                        {
-                            "object is not extensible"
-                        } else {
-                            "property is not configurable"
-                        };
-                        Completion::Throw(self.new_native_error(
-                            realm,
-                            NativeErrorKind::Type,
-                            message,
-                        )?)
-                    }
-                    NativeConversion::Throw(value) => Completion::Throw(value),
-                },
-            );
-        }
-
-        Ok(
-            if let Some(value) = self.set_property_or_throw(realm, &receiver, &key, value)? {
-                Completion::Throw(value)
-            } else {
-                Completion::Return(Value::Undefined)
+        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+        Ok(Self::Own {
+            object: receiver.clone(),
+            key: key.clone(),
+            resume: TagSetterResume {
+                realm,
+                receiver: receiver.clone(),
+                key,
+                value,
             },
-        )
+        })
+    }
+}
+impl TagSetterResume {
+    pub(crate) fn boolean(
+        self,
+        reply: NativeConversion<bool>,
+    ) -> Result<TagSetterStep, RuntimeError> {
+        match reply {
+            NativeConversion::Throw(value) => Ok(TagSetterStep::Complete(Completion::Throw(value))),
+            NativeConversion::Value(true) => Ok(TagSetterStep::Set {
+                object: self.receiver.clone(),
+                key: self.key.clone(),
+                value: self.value.clone(),
+                resume: self,
+            }),
+            NativeConversion::Value(false) => Ok(TagSetterStep::Define {
+                object: self.receiver.clone(),
+                key: self.key.clone(),
+                descriptor: OrdinaryPropertyDescriptor {
+                    value: DescriptorField::Present(self.value.clone()),
+                    writable: DescriptorField::Present(true),
+                    enumerable: DescriptorField::Present(true),
+                    configurable: DescriptorField::Present(true),
+                    ..OrdinaryPropertyDescriptor::new()
+                },
+                resume: self,
+            }),
+        }
+    }
+    pub(crate) fn defined(
+        self,
+        runtime: &Runtime,
+        reply: NativeConversion<InternalDefineResult>,
+    ) -> Result<TagSetterStep, RuntimeError> {
+        Ok(TagSetterStep::Complete(match reply {
+            NativeConversion::Value(InternalDefineResult::Defined) => {
+                Completion::Return(Value::Undefined)
+            }
+            NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
+                Completion::Throw(runtime.new_native_error(
+                    self.realm,
+                    NativeErrorKind::Type,
+                    "proxy: defineProperty exception",
+                )?)
+            }
+            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(target)) => {
+                let message = if !runtime.has_own_property(&target, &self.key)?
+                    && !runtime.is_extensible(&target)?
+                {
+                    "object is not extensible"
+                } else {
+                    "property is not configurable"
+                };
+                Completion::Throw(runtime.new_native_error(
+                    self.realm,
+                    NativeErrorKind::Type,
+                    message,
+                )?)
+            }
+            NativeConversion::Throw(value) => Completion::Throw(value),
+        }))
+    }
+    pub(crate) fn set(
+        self,
+        runtime: &Runtime,
+        reply: NativeConversion<crate::engine::object::operations::InternalSetResult>,
+    ) -> Result<TagSetterStep, RuntimeError> {
+        Ok(TagSetterStep::Complete(
+            match runtime.finish_set_property_or_throw(self.realm, &self.key, reply)? {
+                Some(value) => Completion::Throw(value),
+                None => Completion::Return(Value::Undefined),
+            },
+        ))
+    }
+}
+pub(crate) fn finish_tag(
+    runtime: &Runtime,
+    realm: ContextId,
+    mut step: TagSetterStep,
+) -> Result<Completion, RuntimeError> {
+    loop {
+        step = match step {
+            TagSetterStep::Complete(result) => return Ok(result),
+            TagSetterStep::Own {
+                object,
+                key,
+                resume,
+            } => resume.boolean(runtime.internal_has_own_property(realm, &object, &key)?)?,
+            TagSetterStep::Define {
+                object,
+                key,
+                descriptor,
+                resume,
+            } => resume.defined(
+                runtime,
+                runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+            )?,
+            TagSetterStep::Set {
+                object,
+                key,
+                value,
+                resume,
+            } => resume.set(
+                runtime,
+                runtime.internal_set(realm, &object, &key, value, Value::Object(object.clone()))?,
+            )?,
+        };
     }
 }

@@ -1,0 +1,520 @@
+//! For-in owns snapshot cursors and both prototype passes across Proxy callbacks.
+use crate::engine::{
+    api::{runtime::Runtime, runtime_error::RuntimeError},
+    atom::PropertyKeyKind,
+    heap::{ContextId, ForInCandidate, ForInProperty},
+    object::{ObjectRef, PropertyKey},
+    value::{JsString, Value, conversion::NativeConversion},
+};
+
+pub(in crate::engine::vm) enum ForInStep {
+    Complete {
+        value: Value,
+        done: Option<bool>,
+    },
+    Throw(Value),
+    Keys {
+        object: ObjectRef,
+        resume: ForInResume,
+    },
+    Enumerable {
+        object: ObjectRef,
+        key: PropertyKey,
+        resume: ForInResume,
+    },
+    Own {
+        object: ObjectRef,
+        key: PropertyKey,
+        resume: ForInResume,
+    },
+    Prototype {
+        object: ObjectRef,
+        resume: ForInResume,
+    },
+}
+pub(in crate::engine::vm) struct ForInResume {
+    realm: ContextId,
+    phase: Phase,
+}
+struct Probe {
+    iterator: ObjectRef,
+    base: ObjectRef,
+    fast_array: bool,
+}
+enum AfterSnapshot {
+    Start,
+    Refresh { iterator: ObjectRef },
+    Level { iterator: ObjectRef },
+}
+struct Snapshot {
+    object: ObjectRef,
+    keys: std::vec::IntoIter<PropertyKey>,
+    properties: Vec<ForInProperty>,
+    after: AfterSnapshot,
+}
+enum Phase {
+    SnapshotKeys {
+        object: ObjectRef,
+        after: AfterSnapshot,
+    },
+    SnapshotEnumerable {
+        snapshot: Snapshot,
+        name: JsString,
+    },
+    ProbePrototype(Probe),
+    ProbeKeys {
+        probe: Probe,
+        prototype: ObjectRef,
+    },
+    ProbeEnumerable {
+        probe: Probe,
+        prototype: ObjectRef,
+        keys: std::vec::IntoIter<PropertyKey>,
+    },
+    LevelPrototype {
+        iterator: ObjectRef,
+    },
+    Candidate {
+        iterator: ObjectRef,
+        name: JsString,
+    },
+}
+impl ForInStep {
+    pub(in crate::engine::vm) fn start(
+        runtime: &Runtime,
+        realm: ContextId,
+        value: Value,
+    ) -> Result<Self, RuntimeError> {
+        let object = runtime.for_in_object(realm, value)?;
+        let fast = object
+            .as_ref()
+            .map(|object| runtime.for_in_fast_array_count(object))
+            .transpose()?
+            .flatten();
+        match object {
+            Some(object) if fast.is_none() => snapshot(realm, object, AfterSnapshot::Start),
+            object => Ok(ForInStep::Complete {
+                value: Value::Object(runtime.allocate_for_in_iterator(
+                    object.as_ref(),
+                    fast,
+                    Vec::new(),
+                )?),
+                done: None,
+            }),
+        }
+    }
+
+    pub(in crate::engine::vm) fn next(
+        runtime: &Runtime,
+        realm: ContextId,
+        iterator: ObjectRef,
+    ) -> Result<Self, RuntimeError> {
+        if !iterator.belongs_to(runtime) {
+            return Err(RuntimeError::WrongRuntime("for-in iterator"));
+        }
+        advance(runtime, realm, iterator)
+    }
+}
+fn snapshot(
+    realm: ContextId,
+    object: ObjectRef,
+    after: AfterSnapshot,
+) -> Result<ForInStep, RuntimeError> {
+    Ok(ForInStep::Keys {
+        object: object.clone(),
+        resume: ForInResume {
+            realm,
+            phase: Phase::SnapshotKeys { object, after },
+        },
+    })
+}
+fn done() -> ForInStep {
+    ForInStep::Complete {
+        value: Value::Undefined,
+        done: Some(true),
+    }
+}
+fn advance(
+    runtime: &Runtime,
+    realm: ContextId,
+    iterator: ObjectRef,
+) -> Result<ForInStep, RuntimeError> {
+    let candidate = runtime
+        .0
+        .state
+        .borrow_mut()
+        .heap
+        .next_for_in_candidate(iterator.object_id())?;
+    match candidate {
+        ForInCandidate::Done => Ok(done()),
+        ForInCandidate::BaseComplete { object, fast_array } => {
+            let base = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
+            Ok(ForInStep::Prototype {
+                object: base.clone(),
+                resume: ForInResume {
+                    realm,
+                    phase: Phase::ProbePrototype(Probe {
+                        iterator,
+                        base,
+                        fast_array,
+                    }),
+                },
+            })
+        }
+        ForInCandidate::LevelComplete(object) => {
+            let current = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
+            Ok(ForInStep::Prototype {
+                object: current,
+                resume: ForInResume {
+                    realm,
+                    phase: Phase::LevelPrototype { iterator },
+                },
+            })
+        }
+        ForInCandidate::ArrayIndex { object, index } => {
+            let name = JsString::try_from_utf8(&index.to_string())?;
+            candidate_key(runtime, realm, iterator, object, name)
+        }
+        ForInCandidate::Property { object, name } => {
+            candidate_key(runtime, realm, iterator, object, name)
+        }
+    }
+}
+fn candidate_key(
+    runtime: &Runtime,
+    realm: ContextId,
+    iterator: ObjectRef,
+    object: crate::engine::heap::ObjectId,
+    name: JsString,
+) -> Result<ForInStep, RuntimeError> {
+    let object = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
+    let key = runtime.intern_property_key_js_string(&name)?;
+    Ok(ForInStep::Own {
+        object,
+        key,
+        resume: ForInResume {
+            realm,
+            phase: Phase::Candidate { iterator, name },
+        },
+    })
+}
+impl ForInResume {
+    pub(in crate::engine::vm) fn keys(
+        self,
+        runtime: &Runtime,
+        reply: NativeConversion<Vec<PropertyKey>>,
+    ) -> Result<ForInStep, RuntimeError> {
+        let keys = match reply {
+            NativeConversion::Value(keys) => keys,
+            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+        };
+        match self.phase {
+            Phase::SnapshotKeys { object, after } => snapshot_next(
+                runtime,
+                self.realm,
+                Snapshot {
+                    object,
+                    after,
+                    keys: keys.into_iter(),
+                    properties: Vec::new(),
+                },
+            ),
+            Phase::ProbeKeys { probe, prototype } => {
+                probe_keys(runtime, self.realm, probe, prototype, keys.into_iter())
+            }
+            _ => Err(RuntimeError::Invariant("for-in keys reply has wrong phase")),
+        }
+    }
+    pub(in crate::engine::vm) fn boolean(
+        self,
+        runtime: &Runtime,
+        reply: NativeConversion<bool>,
+    ) -> Result<ForInStep, RuntimeError> {
+        let value = match reply {
+            NativeConversion::Value(value) => value,
+            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+        };
+        match self.phase {
+            Phase::SnapshotEnumerable { mut snapshot, name } => {
+                snapshot
+                    .properties
+                    .try_reserve(1)
+                    .map_err(|_| RuntimeError::Invariant("for-in snapshot allocation failed"))?;
+                snapshot.properties.push(ForInProperty {
+                    name,
+                    enumerable: value,
+                });
+                snapshot_next(runtime, self.realm, snapshot)
+            }
+            Phase::ProbeEnumerable {
+                probe,
+                prototype,
+                keys,
+            } => {
+                if value {
+                    enter_prototypes(runtime, self.realm, probe)
+                } else {
+                    probe_keys(runtime, self.realm, probe, prototype, keys)
+                }
+            }
+            Phase::Candidate { iterator, name } => {
+                if value {
+                    Ok(ForInStep::Complete {
+                        value: Value::String(name),
+                        done: Some(false),
+                    })
+                } else {
+                    advance(runtime, self.realm, iterator)
+                }
+            }
+            _ => Err(RuntimeError::Invariant(
+                "for-in Boolean reply has wrong phase",
+            )),
+        }
+    }
+    pub(in crate::engine::vm) fn prototype(
+        self,
+        runtime: &Runtime,
+        reply: NativeConversion<Option<ObjectRef>>,
+    ) -> Result<ForInStep, RuntimeError> {
+        let prototype = match reply {
+            NativeConversion::Value(value) => value,
+            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+        };
+        match self.phase {
+            Phase::ProbePrototype(probe) => {
+                if let Some(prototype) = prototype {
+                    Ok(ForInStep::Keys {
+                        object: prototype.clone(),
+                        resume: Self {
+                            realm: self.realm,
+                            phase: Phase::ProbeKeys { probe, prototype },
+                        },
+                    })
+                } else {
+                    runtime.store_for_in_level(&probe.iterator, None, Vec::new())?;
+                    Ok(done())
+                }
+            }
+            Phase::LevelPrototype { iterator } => {
+                if let Some(prototype) = prototype {
+                    snapshot(self.realm, prototype, AfterSnapshot::Level { iterator })
+                } else {
+                    runtime.store_for_in_level(&iterator, None, Vec::new())?;
+                    Ok(done())
+                }
+            }
+            _ => Err(RuntimeError::Invariant(
+                "for-in prototype reply has wrong phase",
+            )),
+        }
+    }
+}
+fn snapshot_next(
+    runtime: &Runtime,
+    realm: ContextId,
+    mut pending: Snapshot,
+) -> Result<ForInStep, RuntimeError> {
+    for key in pending.keys.by_ref() {
+        if runtime
+            .0
+            .state
+            .borrow()
+            .atoms
+            .property_key_kind(key.atom())?
+            != PropertyKeyKind::String
+        {
+            continue;
+        }
+        let name = runtime.property_key_to_js_string(&key)?;
+        return Ok(ForInStep::Enumerable {
+            object: pending.object.clone(),
+            key,
+            resume: ForInResume {
+                realm,
+                phase: Phase::SnapshotEnumerable {
+                    snapshot: pending,
+                    name,
+                },
+            },
+        });
+    }
+    match pending.after {
+        AfterSnapshot::Start => Ok(ForInStep::Complete {
+            value: Value::Object(runtime.allocate_for_in_iterator(
+                Some(&pending.object),
+                None,
+                pending.properties,
+            )?),
+            done: None,
+        }),
+        AfterSnapshot::Refresh { iterator } => {
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .heap
+                .enter_for_in_prototype_chain(iterator.object_id(), Some(pending.properties))?;
+            Ok(ForInStep::Prototype {
+                object: pending.object,
+                resume: ForInResume {
+                    realm,
+                    phase: Phase::LevelPrototype { iterator },
+                },
+            })
+        }
+        AfterSnapshot::Level { iterator } => {
+            runtime.store_for_in_level(
+                &iterator,
+                Some(pending.object.object_id()),
+                pending.properties,
+            )?;
+            advance(runtime, realm, iterator)
+        }
+    }
+}
+fn probe_keys(
+    runtime: &Runtime,
+    realm: ContextId,
+    probe: Probe,
+    prototype: ObjectRef,
+    mut keys: std::vec::IntoIter<PropertyKey>,
+) -> Result<ForInStep, RuntimeError> {
+    for key in keys.by_ref() {
+        if runtime
+            .0
+            .state
+            .borrow()
+            .atoms
+            .property_key_kind(key.atom())?
+            != PropertyKeyKind::String
+        {
+            continue;
+        }
+        return Ok(ForInStep::Enumerable {
+            object: prototype.clone(),
+            key,
+            resume: ForInResume {
+                realm,
+                phase: Phase::ProbeEnumerable {
+                    probe,
+                    prototype,
+                    keys,
+                },
+            },
+        });
+    }
+    Ok(ForInStep::Prototype {
+        object: prototype,
+        resume: ForInResume {
+            realm,
+            phase: Phase::ProbePrototype(probe),
+        },
+    })
+}
+fn enter_prototypes(
+    runtime: &Runtime,
+    realm: ContextId,
+    probe: Probe,
+) -> Result<ForInStep, RuntimeError> {
+    if probe.fast_array {
+        snapshot(
+            realm,
+            probe.base,
+            AfterSnapshot::Refresh {
+                iterator: probe.iterator,
+            },
+        )
+    } else {
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .enter_for_in_prototype_chain(probe.iterator.object_id(), None)?;
+        Ok(ForInStep::Prototype {
+            object: probe.base,
+            resume: ForInResume {
+                realm,
+                phase: Phase::LevelPrototype {
+                    iterator: probe.iterator,
+                },
+            },
+        })
+    }
+}
+pub(in crate::engine::vm) fn finish(
+    runtime: &Runtime,
+    realm: ContextId,
+    mut step: ForInStep,
+) -> Result<(Value, Option<bool>), RuntimeError> {
+    loop {
+        step = match step {
+            ForInStep::Complete { value, done } => return Ok((value, done)),
+            ForInStep::Throw(value) => {
+                runtime.set_pending_exception(value)?;
+                return Err(RuntimeError::Exception);
+            }
+            ForInStep::Keys { object, resume } => {
+                resume.keys(runtime, runtime.internal_own_property_keys(realm, &object)?)?
+            }
+            ForInStep::Enumerable {
+                object,
+                key,
+                resume,
+            } => resume.boolean(
+                runtime,
+                runtime.internal_snapshot_own_property_is_enumerable(realm, &object, &key)?,
+            )?,
+            ForInStep::Own {
+                object,
+                key,
+                resume,
+            } => resume.boolean(
+                runtime,
+                runtime.internal_has_own_property(realm, &object, &key)?,
+            )?,
+            ForInStep::Prototype { object, resume } => {
+                resume.prototype(runtime, runtime.internal_get_prototype_of(realm, &object)?)?
+            }
+        };
+    }
+}
+
+#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+mod tests {
+    use crate::engine::{
+        api::{profiling::CostProfile, runtime::Runtime},
+        value::Value,
+        vm::Completion,
+    };
+
+    #[test]
+    fn for_in_proxy_snapshots_and_double_prototype_probe_are_owned_without_replay() {
+        for source in [
+            "(function(){var baseProto=0,protoKeys=0;var proto=new Proxy({b:2},{ownKeys(t){protoKeys++;return Reflect.ownKeys(t)},getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)},getPrototypeOf(){return null}});var base=new Proxy({a:1},{ownKeys(t){return Reflect.ownKeys(t)},getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)},getPrototypeOf(){baseProto++;return proto}});return function(){var names='';for(var key in base)names+=key;return names==='ab'&&baseProto===2&&protoKeys===2?42:0}})()",
+            "(function(){var n=0;var base=new Proxy({a:1},{ownKeys(){return ['a']},getOwnPropertyDescriptor(){n++;return {value:1,writable:true,enumerable:n===1,configurable:true}},getPrototypeOf(){return null}});return function(){var names='';for(var key in base)names+=key;return names==='a'&&n===2?42:0}})()",
+            "(function(){var marker={},calls=0,base=new Proxy({}, {ownKeys(){calls++;throw marker}});return function(){try{for(var key in base){}}catch(e){return calls===1&&e===marker?42:0}return 0}})()",
+            "(function(){var base=[1,2],proto={p:3};Object.setPrototypeOf(base,proto);return function(){var names='';for(var key in base){names+=key;if(key==='0')delete base[1]}return names==='0p'?42:0}})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let callable = runtime
+                .callable_from_value(context.eval(source).unwrap())
+                .unwrap();
+            let profile = CostProfile::start();
+            let result = runtime
+                .call_internal(context.realm, &callable, Value::Undefined, &[])
+                .unwrap();
+            let costs = profile.snapshot();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{source}: {result:?}"
+            );
+            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+}

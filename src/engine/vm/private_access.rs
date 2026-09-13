@@ -23,7 +23,6 @@ pub(super) enum Outcome {
     Entered,
     Done,
     Throw(Value),
-    Bridge,
 }
 
 #[inline(never)]
@@ -78,7 +77,9 @@ pub(super) fn step(
             Access::Define => false,
         };
     if kind != ClosureVariableKind::PrivateField && !callable_identity_operation {
-        return Ok(Outcome::Bridge);
+        return Err(Error::internal(
+            "private-field definition referenced a non-field binding",
+        ));
     }
     let realm = frame.executable.realm;
     #[cfg(feature = "profiling")]
@@ -237,8 +238,8 @@ pub(super) fn step(
     }
 }
 
-/// Resolve and classify without consuming operands. Unsupported callable kinds
-/// hand off before execution; an installed child owns the only accessor call.
+/// Resolve and brand-check once, then retain the selected accessor in the
+/// shared call driver across native, Proxy, bound, and bytecode targets.
 #[inline(never)]
 fn enter_accessor(
     runtime: &Runtime,
@@ -248,9 +249,7 @@ fn enter_accessor(
     access: Access,
     kind: ClosureVariableKind,
 ) -> Result<Outcome, Error> {
-    use super::call::{BytecodeCallRequest, CallableExecution};
-    use super::frame::{ReturnTarget, ReturnValue};
-    use crate::engine::code::function::metadata::FunctionKind;
+    use super::frame::ReturnValue;
     let frame = execution.frames.current_mut(id)?;
     let binding = match source {
         PrivateNameSource::Local(index) => PrivateSource::Local(
@@ -270,44 +269,13 @@ fn enter_accessor(
         .peek(&frame.window, usize::from(setter))?
         .clone();
     let receiver = private_bindings::branded_receiver(runtime, &callable, kind, base)?;
-    let CallableExecution::Bytecode {
-        bytecode,
-        closure_slots,
-    } = runtime
-        .bytecode_for_callable(&callable)
-        .map_err(runtime_error_to_vm_error)?
-    else {
-        return Ok(Outcome::Bridge);
-    };
-    let function_kind = runtime
-        .0
-        .state
-        .borrow()
-        .heap
-        .function_bytecode(bytecode.bytecode_id())
-        .map_err(|error| Error::internal(error.to_string()))?
-        .metadata
-        .function_kind;
-    if function_kind != FunctionKind::Normal {
-        return Ok(Outcome::Bridge);
-    }
     if setter {
         runtime
             .validate_value_domain(execution.slots.peek(&frame.window, 0)?, "call argument")
             .map_err(runtime_error_to_vm_error)?;
     }
-    let realm = frame.executable.realm;
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
-    if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
-        return match runtime
-            .bytecode_stack_overflow_completion(realm, &bytecode)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            super::Completion::Throw(value) => Ok(Outcome::Throw(value)),
-            _ => Err(Error::internal("accessor overflow did not throw")),
-        };
-    }
     let frame = execution.frames.current_mut(id)?;
     let mut arguments = Vec::new();
     if setter {
@@ -320,32 +288,31 @@ fn enter_accessor(
     if access == Access::GetKeep {
         execution.slots.push(&mut frame.window, base)?;
     }
-    let request = BytecodeCallRequest {
-        callable,
-        receiver: Value::Object(receiver),
-        new_target: Value::Undefined,
-        arguments,
-        bytecode,
-        closure_slots,
-        caller_realm: realm,
-        return_to: ReturnTarget {
-            frame: id,
-            tail: false,
-            operation: None,
-            value_use: if setter {
-                ReturnValue::Discard
-            } else {
-                ReturnValue::Push
-            },
-        },
-    };
     frame.resume_pc = frame
         .fault_pc
         .checked_add(1)
         .ok_or_else(|| Error::internal("accessor resume PC overflow"))?;
-    let entry = request.prepare(runtime)?;
-    super::driver::push_frame(execution, entry)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
-    Ok(Outcome::Entered)
+    match super::proxy_get_driver::start_vm_call(
+        runtime,
+        execution,
+        id,
+        callable,
+        Value::Object(receiver),
+        arguments,
+        if setter {
+            ReturnValue::Discard
+        } else {
+            ReturnValue::Push
+        },
+    )? {
+        super::driver::CallStep::Entered => Ok(Outcome::Entered),
+        super::driver::CallStep::Complete(super::Completion::Throw(value)) => {
+            Ok(Outcome::Throw(value))
+        }
+        _ => Err(Error::internal(
+            "private accessor call returned an invalid transition",
+        )),
+    }
 }

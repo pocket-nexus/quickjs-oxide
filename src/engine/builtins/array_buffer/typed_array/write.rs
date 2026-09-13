@@ -1,6 +1,12 @@
 //! Integer indexed writes retain their owners, then reacquire buffer access.
 use super::element::ElementStep;
-use super::*;
+use crate::engine::{
+    api::{runtime::Runtime, runtime_error::RuntimeError},
+    builtins::native::TypedArrayElementKind,
+    heap::ContextId,
+    object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor},
+    value::{Value, conversion::NativeConversion},
+};
 
 pub(crate) enum TypedWriteStep {
     Complete(NativeConversion<bool>),
