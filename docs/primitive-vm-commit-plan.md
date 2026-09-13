@@ -116,6 +116,8 @@
 
 - S05 Proxy 原型操作继续推进：getPrototypeOf/setPrototypeOf 共享有序阶段，owned 查询覆盖嵌套 target 的可扩展性与原型身份检查，保持各阶段抛出值身份，并验证等待/放弃的 GC 所有权。新库 2136 项、旧库 1992 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、CLI profiling 各 5 项及构建/扫描/契约/布局通过。独立查询已验证，Object/Reflect 生产 native 入口、其余 traps 和同步内置仍待迁移；S05 未验收，未进入 S06/S07。
 
+- S05 native 调用所有权准备：从原调用器抽出参数/帧所有者，保留完整 argv、错误的定义 realm 和 native 栈记录，验证放弃/异常展开及 metadata/runtime 拒绝。新库 2140 项、旧库 1996 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、CLI profiling 各 5 项及构建/扫描/契约/布局通过。当前仍由原同步调用器消费，下一步接 native 内置 continuation；S05 未验收，S06/S07 仍延后。
+
 ## 2. 编译与执行基础
 
 ### S01 — `refactor(compiler): organize stack compilation and diagnostics`

@@ -5,10 +5,12 @@ pub(in crate::engine::vm) use request::{
     BytecodeCallRequest, NormalizedCallback, normalize_callback,
 };
 
+mod native;
+
 mod prepare;
 pub(in crate::engine::vm) use prepare::PreparedBytecodeFrame;
 
-use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
+use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
@@ -684,100 +686,44 @@ impl Runtime {
         arguments: &[Value],
         mode: NativeInvokeMode,
     ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        if !callable.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("native callable"));
-        }
-        self.0.state.borrow().heap.context(realm)?;
-
-        // The callable root held by the caller owns the native payload and its
-        // defining-realm edge for the whole invocation. Revalidate the
-        // detached snapshot before recording raw identities in the frame.
-        // Class-call and CFunctionData-style internal functions deliberately
-        // execute in `realm`, which is the calling realm rather than the
-        // separately retained defining realm.
-        {
-            let state = self.0.state.borrow();
-            let object = state.heap.object(callable.as_object().object_id())?;
-            let ObjectPayload::NativeFunction { data, .. } = &object.payload else {
-                return Err(RuntimeError::Invariant(
-                    "native invocation target was not a native function",
-                ));
-            };
-            let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
-                "native function lost its defining realm",
-            ))?;
-            if data.target != target
-                || (matches!(mode, NativeInvokeMode::Ordinary)
-                    && !target.uses_calling_realm()
-                    && defining_realm != realm)
-                || data.min_readable_args != min_readable_args
-            {
-                return Err(RuntimeError::Invariant(
-                    "native invocation metadata changed after snapshot",
-                ));
-            }
-            state.heap.context(defining_realm)?;
-        }
-
-        let actual_arg_count = arguments.len();
-        let available_arg_count = actual_arg_count.max(usize::from(min_readable_args));
-        let mut readable = Vec::with_capacity(available_arg_count);
-        readable.extend_from_slice(arguments);
-        readable.resize(available_arg_count, Value::Undefined);
-        let arguments = NativeArguments {
-            actual_arg_count,
-            readable,
-        };
-        let active_frame = match mode {
-            NativeInvokeMode::Ordinary => self.push_native_active_frame(
-                callable.as_object().clone(),
-                realm,
-                target,
-                actual_arg_count,
-                available_arg_count,
-            )?,
-            NativeInvokeMode::IteratorNextRaw => self.push_native_iterator_next_active_frame(
-                callable.as_object().clone(),
-                realm,
-                target,
-                actual_arg_count,
-                available_arg_count,
-            )?,
-        };
-
-        // JavaScript-style engine errors are materialized in the selected
-        // execution realm while its frame is still visible. A pre-existing
-        // Error returned as an ordinary Throw completion is not captured here:
-        // QuickJS pops the C frame first and lets the enclosing bytecode
-        // exception boundary add any missing stack.
-        let result = (|| {
-            let result = match mode {
-                NativeInvokeMode::Ordinary => self
-                    .dispatch_native_function(callable, target, realm, invocation, &arguments)
-                    .map(NativeInvokeOutcome::Completion),
-                NativeInvokeMode::IteratorNextRaw => {
-                    if target.descriptor().cproto != NativeCProto::IteratorNext {
-                        return Err(RuntimeError::Invariant(
-                            "raw iterator-next dispatch targeted another native cproto",
-                        ));
-                    }
-                    self.dispatch_native_iterator_next_raw(target, realm, invocation, &arguments)
+        let native::PreparedNativeCall {
+            activation,
+            invocation,
+        } = self.prepare_native_invocation(
+            callable,
+            realm,
+            target,
+            min_readable_args,
+            invocation,
+            arguments,
+            mode,
+        )?;
+        let result = match activation.mode {
+            NativeInvokeMode::Ordinary => self
+                .dispatch_native_function(
+                    &activation.callable,
+                    activation.target,
+                    activation.realm,
+                    invocation,
+                    &activation.arguments,
+                )
+                .map(NativeInvokeOutcome::Completion),
+            NativeInvokeMode::IteratorNextRaw => {
+                if activation.target.descriptor().cproto != NativeCProto::IteratorNext {
+                    Err(RuntimeError::Invariant(
+                        "raw iterator-next dispatch targeted another native cproto",
+                    ))
+                } else {
+                    self.dispatch_native_iterator_next_raw(
+                        activation.target,
+                        activation.realm,
+                        invocation,
+                        &activation.arguments,
+                    )
                 }
-            };
-            match result {
-                Err(RuntimeError::Engine(error))
-                    if NativeErrorKind::from_javascript_error(error.kind()).is_some() =>
-                {
-                    let kind = NativeErrorKind::from_javascript_error(error.kind())
-                        .expect("guard proved this is a JavaScript-visible native error");
-                    let value = self.new_native_error_from_error(realm, kind, &error)?;
-                    Ok(NativeInvokeOutcome::Completion(Completion::Throw(value)))
-                }
-                result => result,
             }
-        })();
-        active_frame.finish()?;
-        result
+        };
+        activation.finish(result)
     }
 
     pub(crate) fn active_function(&self) -> Result<ObjectRef, RuntimeError> {

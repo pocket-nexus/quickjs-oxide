@@ -1,6 +1,6 @@
 # S05 同步回调调用点账本
 
-状态：S05 实施中，尚未验收。源码基准为 `bc19483` 加当前 S05 Proxy 原型操作工作区；
+状态：S05 实施中，尚未验收。源码基准为 `22dc64d` 加当前 S05 native 调用所有权工作区；
 本文件跟踪迁移责任，不把旧同步入口仍存在等同于 owned 路径已覆盖。
 
 ## 当前覆盖与待办
@@ -40,6 +40,10 @@
   target IsExtensible 和原型身份比较。Get 先检查返回值类型，Set false 立即完成；
   请求/返回原型及 Proxy 边贯穿等待，在放弃后释放。独立查询验证三个旧路径
   计数均为零；Object/Reflect 生产 native 入口仍未接入，不能据此视为全部覆盖。
+- `vm/call/native` 抽出 native activation：准备阶段重验 payload/realm/min argv，
+  可失败预留完整实参并保留额外 argv；完成时先在 native 帧及其 realm 中
+  创建 JS engine error，再解除帧登记。放弃/异常展开释放 argv 和帧根。
+  目前原同步调用器消费此所有者，尚未将 native 内置的回调改为 owned continuation。
 - Reference/with 普通存在性重查改用 HasProperty，避免把 TypedArray 无效
   数字键的 Get(undefined) 当作存在；相关原 oracle 保持并通过。动态环境的
   剩余 Proxy/同步 Set 路径、其他 traps、Object/Reflect 原 native 入口、
