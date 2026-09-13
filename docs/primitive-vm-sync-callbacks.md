@@ -1,6 +1,6 @@
 # S05 同步回调调用点账本
 
-状态：S05 实施中，尚未验收。源码基准为 `48ae350` 加当前 S05 Array length/TypedArray 工作区；
+状态：S05 实施中，尚未验收。源码基准为 `e0afd95` 加当前 S05 super 属性工作区；
 本文件跟踪迁移责任，不把旧同步入口仍存在等同于 owned 路径已覆盖。
 
 ## 当前覆盖与待办
@@ -28,8 +28,12 @@
   这些赋值路径不再同步等待转换中的 JS；旧/native 入口仍消费同一阶段。
 - Drop/Nip 释放最后临时引用时，由 driver 冷路径消费不改变所有权的热预检结果，
   防止 transfer() 返回的新 buffer 被丢弃后把转换回调的余下指令交给旧 VM。
-- super 属性、其他 traps、Object/Reflect 的原 native 入口、native/非普通
-  字节码 callable 及其他同步内置仍待完成领域恢复。
+- super 的 HomeObject、冻结 base、读取/调用/写入已接入。普通读取的 getter
+  使用实际 receiver，调用点读取按 pinned 规则使用 base 作为 getter receiver；
+  方法调用继续使用原 receiver。读取先转换键，写入先检查 base；冻结 base
+  独立保活到 getter/Proxy 回复，对象键继续复用 value 的转换阶段。
+- 其他 traps、Object/Reflect 的原 native 入口、native/非普通字节码 callable
+  及其他同步内置仍待完成领域恢复。
 - Array/iterator 的 callback/sort/species/close，String/RegExp replacement，
   TypedArray/buffer 参数转换，以及 Function/scalar/Math/collections/Date/
   JSON/Error/globals 的全部同步调用点仍按原 S05 要求逐项迁移。
@@ -86,7 +90,7 @@ S04 call_preparation 的统计范围。
 | [src/engine/builtins/array.rs:2528](../src/engine/builtins/array.rs#L2528) `native_element_locale_value` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array.rs:2667](../src/engine/builtins/array.rs#L2667) `call_array_prototype_to_string` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array.rs:3129](../src/engine/builtins/array.rs#L3129) `compare_array_sort_slots` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
-| [src/engine/builtins/array_buffer/typed_array/element.rs:63](../src/engine/builtins/array_buffer/typed_array/element.rs#L63) `finish_sync` | `call_internal` | 旧/native 元素转换消费器；owned 整数索引写入已迁移，其余 S05 入口待做 |
+| [src/engine/builtins/array_buffer/typed_array/element.rs:63](../src/engine/builtins/array_buffer/typed_array/element.rs#L63) `finish_sync` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array_buffer/typed_array/find.rs:70](../src/engine/builtins/array_buffer/typed_array/find.rs#L70) `call_typed_array_find` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array_buffer/typed_array/iteration.rs:90](../src/engine/builtins/array_buffer/typed_array/iteration.rs#L90) `call_typed_array_iteration` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
 | [src/engine/builtins/array_buffer/typed_array/reduce.rs:77](../src/engine/builtins/array_buffer/typed_array/reduce.rs#L77) `call_typed_array_reduce` | `call_internal` | S05：owned 领域恢复待逐项迁移 |
@@ -177,7 +181,7 @@ S04 call_preparation 的统计范围。
 | [src/engine/vm/async_generator.rs:1031](../src/engine/vm/async_generator.rs#L1031) `settle_front_async_generator_request` | `call_internal` | S06：挂起/Promise 状态机待迁移 |
 | [src/engine/vm/call_bridge.rs:135](../src/engine/vm/call_bridge.rs#L135) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/construct_driver.rs:284](../src/engine/vm/construct_driver.rs#L284) `enter_request` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/conversion_driver.rs:493](../src/engine/vm/conversion_driver.rs#L493) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/conversion_driver.rs:518](../src/engine/vm/conversion_driver.rs#L518) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/host_bridge/private_elements.rs:246](../src/engine/vm/host_bridge/private_elements.rs#L246) `get_private_field_value` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/host_bridge/private_elements.rs:280](../src/engine/vm/host_bridge/private_elements.rs#L280) `put_private_field_value` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/host_bridge.rs:1224](../src/engine/vm/host_bridge.rs#L1224) `call_iterator_method` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
@@ -186,5 +190,5 @@ S04 call_preparation 的统计范围。
 | [src/engine/vm/host_bridge.rs:3186](../src/engine/vm/host_bridge.rs#L3186) `apply` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/host_bridge.rs:3196](../src/engine/vm/host_bridge.rs#L3196) `apply` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/iterator_driver.rs:776](../src/engine/vm/iterator_driver.rs#L776) `invoke` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
-| [src/engine/vm/proxy_get_driver.rs:942](../src/engine/vm/proxy_get_driver.rs#L942) `advance` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
+| [src/engine/vm/proxy_get_driver.rs:982](../src/engine/vm/proxy_get_driver.rs#L982) `advance` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |
 | [src/engine/vm/with_driver.rs:192](../src/engine/vm/with_driver.rs#L192) `read` | `call_internal` | 迁移边界或旧 VM 消费器；按 S05/S06 接入，S10 删除旧路 |

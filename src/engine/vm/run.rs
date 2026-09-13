@@ -61,6 +61,8 @@ pub(super) enum RunExit {
     },
     Environment(super::environment_driver::Operation),
     GetSuper,
+    HomeObject,
+    SuperProperty(super::super_property_driver::Kind),
     ReturnDerived(u16),
     InitDerivedConstructor,
     Construct(u16),
@@ -241,6 +243,22 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 return Ok(RunExit::InitializeDerived(*index));
             }
             Instruction::GetSuper => return Ok(RunExit::GetSuper),
+            Instruction::PushHomeObject => return Ok(RunExit::HomeObject),
+            Instruction::GetSuperValue => {
+                return Ok(RunExit::SuperProperty(
+                    super::super_property_driver::Kind::Read,
+                ));
+            }
+            Instruction::GetSuperValueForCall => {
+                return Ok(RunExit::SuperProperty(
+                    super::super_property_driver::Kind::Call,
+                ));
+            }
+            Instruction::PutSuperValue => {
+                return Ok(RunExit::SuperProperty(
+                    super::super_property_driver::Kind::Write,
+                ));
+            }
             Instruction::ReturnDerived(index) => return Ok(RunExit::ReturnDerived(*index)),
             Instruction::CheckCtor => !matches!(frame.cold.input.new_target, Value::Undefined),
             Instruction::PushActiveFunction => {

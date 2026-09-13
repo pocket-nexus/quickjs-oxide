@@ -93,6 +93,46 @@ pub(super) fn start(
     }
 }
 
+/// A super lookup retains its frozen base independently of the getter receiver.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_owned_read(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    object: ObjectRef,
+    key: PropertyKey,
+    receiver: Value,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    let realm = parent.executable.realm;
+    let step = Step::Read {
+        object: object.clone(),
+        key,
+        receiver,
+        resume: Resume::ReadOwner(object),
+    };
+    let result = advance(
+        runtime,
+        execution,
+        frame,
+        identity,
+        Vec::new(),
+        step,
+        Finish::PropertyRead(depth),
+    );
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("super read returned a conversion")),
+    }
+}
+
 pub(super) fn start_conversion(
     runtime: &Runtime,
     execution: &mut RunningExecution,

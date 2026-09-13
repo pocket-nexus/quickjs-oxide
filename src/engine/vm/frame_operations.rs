@@ -47,6 +47,25 @@ pub(super) fn step(
         crate::engine::api::profiling::record_owned_instruction(depth);
         return Ok(Some(CallStep::Entered));
     }
+    if exit == RunExit::HomeObject {
+        let frame = execution.frames.current_mut(id)?;
+        let home = runtime
+            .bytecode_function_home_object(&frame.cold.function)
+            .map_err(runtime_error_to_vm_error)?
+            .ok_or_else(|| Error::internal("bytecode requested an uninstalled HomeObject"))?;
+        #[cfg(feature = "profiling")]
+        let depth = execution.slots.depth(&frame.window);
+        execution
+            .slots
+            .push(&mut frame.window, Value::Object(home))?;
+        frame.resume_pc = frame
+            .fault_pc
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("HomeObject resume PC overflow"))?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(depth);
+        return Ok(Some(CallStep::Entered));
+    }
     if exit == RunExit::GetSuper {
         let frame = execution.frames.current_mut(id)?;
         let value = execution.slots.peek(&frame.window, 0)?;

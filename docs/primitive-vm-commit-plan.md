@@ -110,6 +110,8 @@
 
 - S05 特殊写入转换继续推进：Array length 两次 ToNumber、后置 writable 检查，TypedArray 整数索引 Set/Define 的 Number/BigInt 转换与 buffer 凭证重取已接入 owned 阶段；Drop/Nip 最后临时引用交给 driver 冷路径。新库 2127 项、旧库 1990 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、CLI profiling 各 5 项、扫描/契约/布局通过。super 属性、其他 traps 与同步内置继续待办；S05 未验收，S06/S07 仍按顺序延后。
 
+- S05 super 属性继续推进：HomeObject、冻结 base、读取/调用/写入及对象键转换接入 owned 驱动，保留 pinned getter receiver 差异与读写顺序，并验证 base 独立 GC 保活。super 15 项、owned 库 2129 项、owned 常规 oracle 907 项（1 项手动压力未运行）、CLI profiling 5 项及构建/扫描/契约/布局通过。本批仅修改 stack-vm；S05 其余 Proxy/native 同步回调仍待完成，未进入 S06/S07。
+
 ## 2. 编译与执行基础
 
 ### S01 — `refactor(compiler): organize stack compilation and diagnostics`

@@ -370,6 +370,25 @@ fn run_frames_with_state(
                     forwarded = Some(completion);
                     RunExit::Complete
                 }
+                Progress::SuperProperty(input) => {
+                    match super::super_property_driver::converted(
+                        runtime,
+                        &mut execution,
+                        id,
+                        input,
+                    )? {
+                        CallStep::Entered => continue,
+                        CallStep::Complete(completion) => {
+                            forwarded = Some(completion);
+                            RunExit::Complete
+                        }
+                        CallStep::Bridge => {
+                            return Err(Error::internal(
+                                "converted super property attempted replay",
+                            ));
+                        }
+                    }
+                }
                 Progress::PropertyWrite(input) => {
                     match super::property_write_driver::converted(
                         runtime,
@@ -597,6 +616,33 @@ fn run_frames_with_state(
                     exit = RunExit::Complete;
                 }
                 CallStep::Bridge => exit = RunExit::Bridge,
+            }
+        }
+        if let RunExit::SuperProperty(kind) = exit {
+            match super::super_property_driver::start(runtime, &mut execution, id, kind)? {
+                super::super_property_driver::Progress::Convert(input) => {
+                    next_operation = next_operation
+                        .checked_add(1)
+                        .ok_or_else(|| Error::internal("super conversion identity exhausted"))?;
+                    conversion = Some(
+                        super::conversion_driver::ConversionTask::start_super_property(
+                            runtime,
+                            &mut execution,
+                            id,
+                            next_operation,
+                            input,
+                        )?,
+                    );
+                    continue;
+                }
+                super::super_property_driver::Progress::Call(CallStep::Entered) => continue,
+                super::super_property_driver::Progress::Call(CallStep::Complete(completion)) => {
+                    forwarded = Some(completion);
+                    exit = RunExit::Complete;
+                }
+                super::super_property_driver::Progress::Call(CallStep::Bridge) => {
+                    return Err(Error::internal("super property attempted replay"));
+                }
             }
         }
         if let RunExit::SetProperty(key) = exit {
@@ -5275,6 +5321,148 @@ mod tests {
             Value::String(crate::engine::value::JsString::from_static("toPrimitive"))
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn super_lookup_keeps_frozen_base_independent_of_getter_receiver() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let mut context = runtime.new_context();
+        let Value::Object(base) = context
+            .eval("Object.defineProperty({},'x',{get:function(){return 42}})")
+            .unwrap()
+        else {
+            panic!("expected base")
+        };
+        let base_id = base.object_id();
+        let receiver = runtime.new_object(None).unwrap();
+        let receiver_id = receiver.object_id();
+        let entry = entry(&runtime, &mut context, "(function(){return 42})", vec![]);
+        let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+        let id = push_frame(&mut execution, entry).unwrap();
+        assert!(matches!(
+            super::super::proxy_get_driver::start_owned_read(
+                &runtime,
+                &mut execution,
+                id,
+                base,
+                runtime.intern_property_key("x").unwrap(),
+                Value::Object(receiver),
+                0
+            )
+            .unwrap(),
+            CallStep::Entered
+        ));
+        assert_ne!(execution.frames.current_id(), Some(id));
+        runtime.run_gc().unwrap();
+        for id in [base_id, receiver_id] {
+            assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+        }
+        drop(execution);
+        runtime.run_gc().unwrap();
+        for id in [base_id, receiver_id] {
+            assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        }
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        drop(context);
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn owned_super_properties_keep_pinned_receivers_and_key_order() {
+        for (setup, body, trace, native_calls) in [
+            (
+                "var trace=0;var p={get x(){trace++;return this.answer}};({__proto__:p,answer:42,read(){return super.x}})",
+                "return o.read()",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var p={answer:0,get x(){trace+=this===p?1:100;return function(){return this.answer}}};({__proto__:p,answer:42,read(){return super.x()}})",
+                "return o.read()",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var p={set x(v){trace++;this.answer=v}};({__proto__:p,write(){super.x=42;return this.answer}})",
+                "return o.write()",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var p={x:42};var key={toString(){trace++;Object.setPrototypeOf(o,{x:0});return 'x'}};var o={__proto__:p,read(){return super[key]}};o",
+                "return o.read()",
+                1,
+                1,
+            ),
+            (
+                "var trace=0;var key={toString(){trace=trace*10+2;return 'x'}};var rhs=function(){trace=trace*10+1;return 42};({__proto__:null,write(){super[key]=rhs()}})",
+                "try{o.write()}catch(e){return e.message==='not an object'?42:0}",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var key={toString(){trace++;return 'x'}};({__proto__:null,read(){return super[key]}})",
+                r#"try{o.read()}catch(e){return e.message==="cannot read property 'x' of null"?42:0}"#,
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var key={toString(){trace++;return 'x'}};({__proto__:null,read(){return super[key]()}})",
+                "try{o.read()}catch(e){return e.message==='cannot read property of null'?42:0}",
+                0,
+                0,
+            ),
+            (
+                "var trace=0;var p=new Proxy({},{get(t,k,r){trace++;return r.answer}});({__proto__:p,answer:42,read(){return super.x}})",
+                "return o.read()",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var p=new Proxy({},{set(t,k,v,r){trace++;r.answer=v;return true}});({__proto__:p,answer:0,write(){super.x=42;return this.answer}})",
+                "return o.write()",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var key={toString(){trace=trace*10+1;return 'x'}};var p={get x(){trace=trace*10+2;return 40},set x(v){trace=trace*10+3;this.answer=v}};({__proto__:p,write(){super[key]+=2;return this.answer}})",
+                "return o.write()",
+                123,
+                0,
+            ),
+            (
+                "var trace=0;var token={};var p={get x(){trace++;throw token}};({__proto__:p,read(){return super.x}})",
+                "try{o.read()}catch(e){return e===token?42:0}",
+                1,
+                0,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{setup}: {result:?}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, native_calls, "{setup}");
+            drop(profile);
+            assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 
     #[test]

@@ -16,6 +16,7 @@ use crate::engine::builtins::native::TypedArrayElementKind;
 use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, TypedWriteStep};
 
 pub(super) enum Resume {
+    ReadOwner(ObjectRef),
     Element(ElementResume),
     TypedElement(TypedWriteResume),
     SetTyped(SetResume),
@@ -553,6 +554,7 @@ impl Resume {
                 Completion::Return(_) => PropertySetAction::Complete,
                 Completion::Throw(value) => PropertySetAction::Throw(value),
             })),
+            Self::ReadOwner(_owner) => Ok(Step::Complete(completion)),
             Self::Element(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Number(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::TypedElement(_)

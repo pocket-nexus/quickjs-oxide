@@ -202,6 +202,34 @@ fn finish_read(
         Ok(read) => read,
         Err(error) => return throw_error(runtime, realm, runtime_error_to_vm_error(error)),
     };
+    read_prepared(
+        runtime,
+        execution,
+        id,
+        base,
+        key,
+        read,
+        retained_key,
+        keep_receiver,
+        consume,
+        depth,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn read_prepared(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    preserved_receiver: Value,
+    key: PropertyKey,
+    read: OrdinaryRead,
+    retained_key: Option<Value>,
+    keep_receiver: bool,
+    consume: usize,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    let realm = execution.frames.current_mut(id)?.executable.realm;
     let mut request = None;
     let mut deferred = None;
     let mut proxy = None;
@@ -287,7 +315,9 @@ fn finish_read(
         execution.slots.pop(&mut frame.window)?;
     }
     if keep_receiver {
-        execution.slots.push(&mut frame.window, base)?;
+        execution
+            .slots
+            .push(&mut frame.window, preserved_receiver)?;
     }
     if let Some(key) = retained_key {
         execution.slots.push(&mut frame.window, key)?;

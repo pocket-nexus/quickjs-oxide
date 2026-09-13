@@ -1076,3 +1076,27 @@ scan-only、格式/diff、源码布局 538 文件通过。直接调用账本刷�
 super 属性、其他 Proxy traps、Object/Reflect native 入口和各同步内置继续
 按 S05 范围迁移。S05 尚未验收；S06 stash 继续延后，S07 后的完整新旧 VM
 benchmark/profile 与 PR #21 comment 尚未执行。
+
+
+## S05 super 属性（实施中）
+
+PushHomeObject 从当前已验证函数读取隐藏边，GetSuperValue、调用点读取和
+PutSuperValue 进入 owned 属性/转换驱动。读取先转换键，再检查 base；写入
+在 RHS 后先拒绝无效 base，再转换键。保留 pinned QuickJS 调用点的特殊
+getter receiver：普通 super 读取使用实际 this，super[key]() 的 getter 使用
+base，返回的方法仍使用原 this。复合赋值保留已转换的键，不重复转换。
+
+冻结的 base 与实际 receiver 分别保活，避免键转换改动 HomeObject 原型后，
+原 base 在 getter 期间过早回收。GC/放弃测试确认两者保持到等待结束，再唯一
+释放；Runtime 登记与 owning cycle 检查通过。对象存储、错误消息和 strict
+写入完成继续复用既有领域规则，没有新增语义算法。
+
+本批 super 相关 15 项测试、owned 库 2129 项、owned 常规 oracle 907 项
+（1 项手动 65K 压力测试未运行）、CLI profiling 5 项通过；非 profiling
+stack-vm CLI 构建无警告。boundary scan-only、属性契约/mutation 2 项、
+格式/diff 与源码布局 539 文件通过。默认配置本批未重跑；其共享领域代码
+未修改，前一检查点的证据单独保留。完整 714 项 boundary 仍待 S05 验收。
+
+S05 的其他 Proxy 操作、Object/Reflect native 入口及同步内置仍未全部迁移，
+原始 Earley-Boyer 默认预算覆盖筛查尚待完成。S06/S07 和最终 benchmark/
+profile、PR #21 comment 保持原顺序，尚未执行。

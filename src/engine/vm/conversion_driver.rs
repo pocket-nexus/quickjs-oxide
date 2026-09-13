@@ -12,6 +12,7 @@ use crate::engine::vm::frame::{FrameId, ReturnTarget};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 enum Finish {
+    SuperProperty(Box<super::super_property_driver::Input>),
     Plus,
     PropertyKey,
     PropertyWrite {
@@ -41,6 +42,7 @@ pub(super) struct ConversionTask {
 }
 
 pub(super) enum Progress {
+    SuperProperty(Box<super::super_property_driver::Input>),
     Ready(ConversionTask),
     Entered,
     Complete(Completion),
@@ -51,7 +53,8 @@ pub(super) enum Progress {
 impl ConversionTask {
     #[cfg(feature = "profiling")]
     pub(super) fn operand_count(&self) -> usize {
-        match self.finish {
+        match &self.finish {
+            Finish::SuperProperty(input) => input.operand_count(),
             Finish::Plus | Finish::PropertyKey => 1,
             Finish::PropertyWrite { .. } => 3,
             _ => 2,
@@ -84,6 +87,24 @@ impl ConversionTask {
             frame,
             identity,
             step: PrimitiveResume::start(runtime, parent.executable.realm, value, hint),
+        })
+    }
+
+    pub(super) fn start_super_property(
+        runtime: &Runtime,
+        execution: &mut RunningExecution,
+        frame: FrameId,
+        identity: u64,
+        input: Box<super::super_property_driver::Input>,
+    ) -> Result<Self, Error> {
+        let realm = execution.frames.current_mut(frame)?.executable.realm;
+        let step =
+            PrimitiveResume::start(runtime, realm, input.key.clone(), ToPrimitiveHint::String);
+        Ok(Self {
+            finish: Finish::SuperProperty(input),
+            frame,
+            identity,
+            step,
         })
     }
 
@@ -239,6 +260,10 @@ impl ConversionTask {
                                         )
                                     }
                                 }
+                            }
+                            Finish::SuperProperty(mut input) => {
+                                input.key = value;
+                                return Ok(Progress::SuperProperty(input));
                             }
                             Finish::PropertyWrite {
                                 base,
