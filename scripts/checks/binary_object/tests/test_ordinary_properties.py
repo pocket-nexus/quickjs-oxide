@@ -30,8 +30,13 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         self.assertEqual(self.scan(), [])
 
     def test_bad_boundaries_are_rejected(self):
-        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define = ordinary_properties.FILES
+        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write = ordinary_properties.FILES
         mutations = [
+            (typed_element, "Ok(match step {", "runtime.native_to_bigint(); Ok(match step {"),
+            (typed_write, "let result = match result {", "runtime.typed_array_convert_element(); let result = match result {"),
+            (dispatch, "let same_receiver = matches!(receiver,", "self.typed_array_convert_element(); let same_receiver = matches!(receiver,"),
+            (array_length, "Ok(match value {", "runtime.native_to_number(); Ok(match value {"),
+            (number, "Ok(match step {", "runtime.to_primitive(); Ok(match step {"),
             (ordinary_set, "let _operation = runtime.operation();", "runtime.internal_set(); let _operation = runtime.operation();"),
             (proxy_set, "let key_value = runtime.property_key_value(&key)?;", "runtime.proxy_set(); let key_value = runtime.property_key_value(&key)?;"),
             (proxy_define, "let key_value = runtime.property_key_value(&key)?;", "runtime.internal_define_own_property(); let key_value = runtime.property_key_value(&key)?;"),

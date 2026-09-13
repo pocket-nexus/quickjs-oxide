@@ -1044,3 +1044,35 @@ Array length 与 TypedArray 的对象参数转换仍由明确的同步请求消�
 Define 的转换也尚未全部改为 continuation；计数继续披露这些路径。其他 Proxy
 traps、Object/Reflect native 入口及各同步内置仍按 S05 清单继续。S06 仍保持
 延后，S07 及其后的完整 benchmark/profile 和 PR #21 comment 尚未执行。
+
+## S05 Array length 与 TypedArray 写入转换（实施中）
+
+Array length 的非 Number 参数由 object/array_length 保存原值与第一次 Uint32
+结果，按 pinned 顺序发出两次 ToNumber 请求；value/conversion/number 复用
+ToPrimitive 的 getter/方法阶段及原始错误 realm。第二次转换重新读取方法。
+普通赋值及 Proxy receiver 的 Define 转发均已接入 owned 查询 driver，长度
+写入与稀疏截断继续复用原内核，并在转换完成后重读 length/writable。
+
+TypedArray element/write 阶段按元素类型完成 Number 或 BigInt 转换。Set 保留
+无效/越界整数键仍转换、不同 receiver 的跳过/转交规则；Define 保留转换前
+的 descriptor/view 检查。请求只持有 view、原值、元素类型和索引，不持有跨
+回调 buffer access；完成后重新获取 view/buffer 凭证，保留 resize/detach 后
+写失败仍接受的 pinned 行为。旧/native 入口同步消费相同领域阶段。
+
+新增 Array length/TypedArray 定向测试覆盖方法替换、两次转换的 throw 身份、
+Number hint、只读重检、稀疏截断回滚、BigInt、无效索引、不同 receiver、
+resize、detach 和共享内存。请求放弃测试对原值、view、buffer 强制 GC，确认
+保活/释放和 Runtime 无 owning cycle。transfer() 回调暴露的最后临时引用
+Drop/Nip 回退改由 driver 冷路径完成：热预检不改变所有权，幸存栈先发布，
+再使用原 Drop 释放；没有调整堆释放规则或 native 栈预算。String(1) 临时值
+释放的既有测试加强为零交接，并保留独立未迁移操作的 handoff/catch 回归。
+
+本批最终 owned 库 2127 项、默认库 1990 项通过；新旧常规 oracle 各 907 项
+通过（各 1 项手动 65K 压力测试未运行），新旧 CLI profiling 各 5 项通过；
+非 profiling stack-vm CLI 构建无警告。属性契约/mutation 2 项、boundary
+scan-only、格式/diff、源码布局 538 文件通过。直接调用账本刷新为 127 个
+表达式，仍不等于完整间接回调图；本批未运行完整 714 项 boundary。
+
+super 属性、其他 Proxy traps、Object/Reflect native 入口和各同步内置继续
+按 S05 范围迁移。S05 尚未验收；S06 stash 继续延后，S07 后的完整新旧 VM
+benchmark/profile 与 PR #21 comment 尚未执行。

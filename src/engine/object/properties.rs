@@ -525,6 +525,15 @@ impl Runtime {
             ArrayLengthConversion::Length(length) => length,
             ArrayLengthConversion::Throw(value) => return Ok(PropertySetAction::Throw(value)),
         };
+        self.apply_set_array_length(object, key, new_length)
+    }
+
+    pub(crate) fn apply_set_array_length(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        new_length: u32,
+    ) -> Result<PropertySetAction, RuntimeError> {
         let (_, writable) = self.array_length_state(object)?;
         if !writable {
             return Ok(PropertySetAction::Rejected(
@@ -536,7 +545,7 @@ impl Runtime {
             ..OrdinaryPropertyDescriptor::new()
         };
         Ok(
-            match self.define_array_length(realm, object, key, &descriptor)? {
+            match self.apply_array_length_descriptor(object, key, &descriptor, new_length)? {
                 PropertyDefineOutcome::Defined(true) => PropertySetAction::Complete,
                 PropertyDefineOutcome::Defined(false) => {
                     PropertySetAction::Rejected(PropertySetRejection::NotConfigurable)
@@ -1020,6 +1029,57 @@ impl Runtime {
         Ok(PropertyDefineOutcome::Defined(true))
     }
 
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn prepare_typed_array_definition(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &OrdinaryPropertyDescriptor,
+    ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
+        use crate::engine::builtins::TypedWriteStep;
+        if !self.typed_array_is_object(object)? {
+            return Ok(None);
+        }
+        self.validate_object_and_key(object, key)?;
+        self.validate_descriptor_domains(descriptor)?;
+        if descriptor.is_mixed_descriptor() {
+            return Err(PropertyDefinitionError::InvalidDescriptor.into());
+        }
+        let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
+            return Ok(None);
+        };
+        let CanonicalNumericIndex::Valid(index) = numeric else {
+            return Ok(Some(TypedWriteStep::Complete(NativeConversion::Value(
+                false,
+            ))));
+        };
+        TypedWriteStep::define(self, object.clone(), index, descriptor).map(Some)
+    }
+
+    /// Prepare the only Array DefineOwnProperty branch that can invoke JS.
+    /// Arrays cannot take the ordinary-value fast path or another exotic branch.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn prepare_array_length_definition(
+        &self,
+        realm: Option<ContextId>,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &OrdinaryPropertyDescriptor,
+    ) -> Result<Option<super::ArrayLengthStep>, RuntimeError> {
+        if self.array_own_key(object, key)? != ArrayOwnKey::Length {
+            return Ok(None);
+        }
+        self.validate_object_and_key(object, key)?;
+        self.validate_descriptor_domains(descriptor)?;
+        if descriptor.is_mixed_descriptor() {
+            return Err(PropertyDefinitionError::InvalidDescriptor.into());
+        }
+        let DescriptorField::Present(value) = &descriptor.value else {
+            return Ok(None);
+        };
+        super::ArrayLengthStep::start(self, realm, value.clone()).map(Some)
+    }
+
     fn define_array_length(
         &self,
         realm: Option<ContextId>,
@@ -1039,6 +1099,16 @@ impl Runtime {
             }
         };
 
+        self.apply_array_length_descriptor(object, key, descriptor, new_length)
+    }
+
+    pub(crate) fn apply_array_length_descriptor(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &OrdinaryPropertyDescriptor,
+        new_length: u32,
+    ) -> Result<PropertyDefineOutcome, RuntimeError> {
         // Conversion may execute JavaScript and mutate this same Array. Match
         // QuickJS by reloading the length slot only after conversion returns.
         let (old_length, old_writable) = self.array_length_state(object)?;
@@ -1146,36 +1216,15 @@ impl Runtime {
         realm: Option<ContextId>,
         value: &Value,
     ) -> Result<ArrayLengthConversion, RuntimeError> {
-        match value {
-            Value::Int(value) if *value >= 0 => {
-                return Ok(ArrayLengthConversion::Length(*value as u32));
-            }
-            Value::Bool(value) => {
-                return Ok(ArrayLengthConversion::Length(u32::from(*value)));
-            }
-            Value::Null => return Ok(ArrayLengthConversion::Length(0)),
-            Value::Float(value) => return self.validate_array_length_number(realm, *value, None),
-            Value::Int(_) => return self.invalid_array_length(realm),
-            Value::Undefined
-            | Value::BigInt(_)
-            | Value::String(_)
-            | Value::Symbol(_)
-            | Value::Object(_) => {}
+        let mut step = crate::engine::object::ArrayLengthStep::start(self, realm, value.clone())?;
+        loop {
+            step = match step {
+                crate::engine::object::ArrayLengthStep::Complete(result) => return Ok(result),
+                crate::engine::object::ArrayLengthStep::Number { value, resume } => {
+                    resume.number(self, self.array_length_to_number(realm, &value)?)?
+                }
+            };
         }
-
-        // QuickJS deliberately preserves the legacy two-conversion behavior
-        // for non-number Array length definitions: ToUint32(value), then a
-        // second ToNumber(value), followed by equality with an exact Uint32.
-        let first = match self.array_length_to_number(realm, value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(ArrayLengthConversion::Throw(value)),
-        };
-        let uint32 = Self::to_uint32_number(first);
-        let second = match self.array_length_to_number(realm, value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(ArrayLengthConversion::Throw(value)),
-        };
-        self.validate_array_length_number(realm, second, Some(uint32))
     }
 
     fn array_length_to_number(

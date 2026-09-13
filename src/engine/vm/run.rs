@@ -91,6 +91,9 @@ pub(super) enum RunExit {
         access: super::private_access::Access,
     },
     StrictEquality(bool),
+    ReleaseOperand {
+        keep_top: bool,
+    },
     Complete,
     Bridge,
 }
@@ -841,7 +844,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.pop(window)?;
                     true
                 } else {
-                    false
+                    return Ok(RunExit::ReleaseOperand { keep_top: false });
                 }
             }
             Instruction::Swap => {
@@ -855,7 +858,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.push(window, right)?;
                     true
                 } else {
-                    false
+                    return Ok(RunExit::ReleaseOperand { keep_top: true });
                 }
             }
             Instruction::Add => {

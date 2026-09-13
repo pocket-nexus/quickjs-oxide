@@ -19,6 +19,7 @@ use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 use super::*;
 
 mod copying;
+pub(crate) mod element;
 mod find;
 mod iteration;
 mod mutation;
@@ -31,6 +32,7 @@ mod stringification;
 #[cfg(test)]
 mod tests;
 mod uint8_codec;
+pub(crate) mod write;
 
 /// Classification of an ECMAScript CanonicalNumericIndexString.
 ///
@@ -1828,20 +1830,7 @@ impl Runtime {
         element: TypedArrayElementKind,
         value: &Value,
     ) -> Result<NativeConversion<[u8; 8]>, RuntimeError> {
-        if element.is_bigint() {
-            let bigint = match self.native_to_bigint(realm, value)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            };
-            return typed_array_encode_bigint(&bigint).map(NativeConversion::Value);
-        }
-        let number = match self.native_to_number(realm, value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        Ok(NativeConversion::Value(typed_array_encode_number(
-            element, number,
-        )))
+        element::ElementStep::start(self, realm, element, value.clone())?.finish_sync(self, realm)
     }
 
     /// Convert a primitive descriptor value for the public context-free
@@ -1927,13 +1916,14 @@ impl Runtime {
         index: u64,
         value: &Value,
     ) -> Result<NativeConversion<()>, RuntimeError> {
-        let element = self.typed_array_snapshot(object)?.element;
-        let bytes = match self.typed_array_convert_element(realm, element, value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let _ = self.typed_array_write_converted_index(object, index, &bytes)?;
-        Ok(NativeConversion::Value(()))
+        Ok(
+            match write::TypedWriteStep::set(self, object.clone(), Some(index), value.clone())?
+                .finish_sync(self, realm)?
+            {
+                NativeConversion::Value(_) => NativeConversion::Value(()),
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
+            },
+        )
     }
 
     pub(crate) fn typed_array_define_index(
@@ -1943,29 +1933,8 @@ impl Runtime {
         index: u64,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
-        if descriptor.get.is_present()
-            || descriptor.set.is_present()
-            || matches!(descriptor.writable, DescriptorField::Present(false))
-            || matches!(descriptor.enumerable, DescriptorField::Present(false))
-            || matches!(descriptor.configurable, DescriptorField::Present(false))
-        {
-            return Ok(NativeConversion::Value(false));
-        }
-        let state = self.typed_array_state(object)?;
-        if state.out_of_bounds || index >= u64::from(state.length) {
-            return Ok(NativeConversion::Value(false));
-        }
-        if let DescriptorField::Present(value) = &descriptor.value {
-            let bytes =
-                match self.typed_array_convert_element(realm, state.snapshot.element, value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(NativeConversion::Throw(value));
-                    }
-                };
-            let _ = self.typed_array_write_converted_index(object, index, &bytes)?;
-        }
-        Ok(NativeConversion::Value(true))
+        write::TypedWriteStep::define(self, object.clone(), index, descriptor)?
+            .finish_sync(self, realm)
     }
 
     pub(crate) fn typed_array_delete_index(

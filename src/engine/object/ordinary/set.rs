@@ -360,6 +360,33 @@ impl State {
 }
 
 impl SetResume {
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn array_length(
+        self,
+        runtime: &Runtime,
+        result: crate::engine::object::operations::ArrayLengthConversion,
+    ) -> Result<SetStep, RuntimeError> {
+        if !matches!(self.phase, Phase::Forward) {
+            return Err(RuntimeError::Invariant(
+                "Set continuation received an Array length reply",
+            ));
+        }
+        let action = match result {
+            crate::engine::object::operations::ArrayLengthConversion::Throw(value) => {
+                PropertySetAction::Throw(value)
+            }
+            crate::engine::object::operations::ArrayLengthConversion::Length(length) => {
+                let Value::Object(object) = &self.state.receiver else {
+                    return Err(RuntimeError::Invariant(
+                        "Array length receiver lost its object",
+                    ));
+                };
+                runtime.apply_set_array_length(object, &self.state.key, length)?
+            }
+        };
+        complete(action)
+    }
+
     pub(crate) fn advance(self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
         let Phase::Walk(object) = self.phase else {
             return Err(RuntimeError::Invariant(

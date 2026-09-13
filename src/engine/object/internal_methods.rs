@@ -981,36 +981,44 @@ impl Runtime {
         if !matches!(kind, SpecialKind::TypedArray) {
             return Ok(None);
         }
+        let Some(step) = self.prepare_typed_array_set(object, key, value, receiver)? else {
+            return Ok(None);
+        };
+        Ok(Some(match step.finish_sync(self, realm)? {
+            NativeConversion::Value(_) => NativeConversion::Value(InternalSetResult::Accepted),
+            NativeConversion::Throw(value) => NativeConversion::Throw(value),
+        }))
+    }
+
+    pub(crate) fn prepare_typed_array_set(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: &Value,
+        receiver: &Value,
+    ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
+        use crate::engine::builtins::TypedWriteStep;
         let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
             return Ok(None);
         };
         let same_receiver = matches!(receiver, Value::Object(receiver) if receiver == object);
-        let result = match numeric {
-            CanonicalNumericIndex::Valid(index) if same_receiver => {
-                self.typed_array_set_index(realm, object, index, value)?
-            }
-            CanonicalNumericIndex::Invalid if same_receiver => {
-                let element = self.typed_array_snapshot(object)?.element;
-                match self.typed_array_convert_element(realm, element, value)? {
-                    NativeConversion::Value(_) => NativeConversion::Value(()),
-                    NativeConversion::Throw(value) => NativeConversion::Throw(value),
-                }
-            }
-            CanonicalNumericIndex::Invalid => NativeConversion::Value(()),
-            CanonicalNumericIndex::Valid(index) => {
-                if self
-                    .typed_array_get_index_descriptor(object, index)?
-                    .is_some()
-                {
-                    return Ok(None);
-                }
-                NativeConversion::Value(())
-            }
-        };
-        Ok(Some(match result {
-            NativeConversion::Value(()) => NativeConversion::Value(InternalSetResult::Accepted),
-            NativeConversion::Throw(value) => NativeConversion::Throw(value),
-        }))
+        if same_receiver {
+            let index = match numeric {
+                CanonicalNumericIndex::Valid(index) => Some(index),
+                CanonicalNumericIndex::Invalid => None,
+            };
+            return TypedWriteStep::set(self, object.clone(), index, value.clone()).map(Some);
+        }
+        if let CanonicalNumericIndex::Valid(index) = numeric
+            && self
+                .typed_array_get_index_descriptor(object, index)?
+                .is_some()
+        {
+            return Ok(None);
+        }
+        Ok(Some(TypedWriteStep::Complete(NativeConversion::Value(
+            true,
+        ))))
     }
 
     pub(super) fn proxy_set(

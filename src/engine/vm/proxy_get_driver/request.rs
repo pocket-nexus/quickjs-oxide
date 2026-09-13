@@ -8,7 +8,31 @@ use crate::engine::object::{
     set_completion,
 };
 
+use crate::engine::object::operations::ArrayLengthConversion;
+use crate::engine::object::{ArrayLengthResume, ArrayLengthStep};
+use crate::engine::value::conversion::number::{NumberResume, NumberStep};
+
+use crate::engine::builtins::native::TypedArrayElementKind;
+use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, TypedWriteStep};
+
 pub(super) enum Resume {
+    Element(ElementResume),
+    TypedElement(TypedWriteResume),
+    SetTyped(SetResume),
+    DefineTyped {
+        object: ObjectRef,
+        _descriptor: OrdinaryPropertyDescriptor,
+        resume: Box<Resume>,
+    },
+    Number(NumberResume),
+    LengthNumber(ArrayLengthResume),
+    SetLength(SetResume),
+    DefineLength {
+        object: ObjectRef,
+        key: PropertyKey,
+        descriptor: OrdinaryPropertyDescriptor,
+        resume: Box<Resume>,
+    },
     OrdinarySet(SetResume),
     ProxySet(ProxySetResume),
     Define(ProxyDefineResume),
@@ -21,9 +45,32 @@ pub(super) enum Resume {
 }
 
 pub(super) enum Step {
+    Element {
+        element: TypedArrayElementKind,
+        value: Value,
+        resume: TypedWriteResume,
+    },
+    ElementComplete(NativeConversion<[u8; 8]>),
+    TypedComplete(NativeConversion<bool>),
+    Number {
+        value: Value,
+        resume: ArrayLengthResume,
+    },
+    NumberComplete(NativeConversion<f64>),
+    LengthComplete(ArrayLengthConversion),
+    SetLength {
+        value: Value,
+        resume: SetResume,
+    },
     SetComplete(PropertySetAction),
     SetContinue(SetResume),
-    SetDeferred(SetStep),
+    SetSpecial {
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        receiver: Value,
+        resume: SetResume,
+    },
     Set {
         object: ObjectRef,
         key: PropertyKey,
@@ -293,9 +340,20 @@ impl From<SetStep> for Step {
                 receiver,
                 resume: Resume::OrdinarySet(resume),
             },
-            request @ (SetStep::Special { .. } | SetStep::ArrayLength { .. }) => {
-                Self::SetDeferred(request)
-            }
+            SetStep::Special {
+                object,
+                key,
+                value,
+                receiver,
+                resume,
+            } => Self::SetSpecial {
+                object,
+                key,
+                value,
+                receiver,
+                resume,
+            },
+            SetStep::ArrayLength { value, resume, .. } => Self::SetLength { value, resume },
             SetStep::Descriptor {
                 object,
                 key,
@@ -495,7 +553,15 @@ impl Resume {
                 Completion::Return(_) => PropertySetAction::Complete,
                 Completion::Throw(value) => PropertySetAction::Throw(value),
             })),
-            Self::OrdinarySet(_) => {
+            Self::Element(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Number(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::TypedElement(_)
+            | Self::SetTyped(_)
+            | Self::DefineTyped { .. }
+            | Self::LengthNumber(_)
+            | Self::SetLength(_)
+            | Self::DefineLength { .. }
+            | Self::OrdinarySet(_) => {
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "ordinary Set received an untyped reply",
                 ))
@@ -521,6 +587,163 @@ impl Resume {
             Self::Define(resume) => resume.descriptor(runtime, result).map(Into::into),
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "descriptor conversion received an own-property reply",
+            )),
+        }
+    }
+}
+
+impl From<NumberStep> for Step {
+    fn from(step: NumberStep) -> Self {
+        match step {
+            NumberStep::Complete(result) => Self::NumberComplete(result),
+            NumberStep::Read {
+                object,
+                key,
+                resume,
+            } => Self::Read {
+                receiver: Value::Object(object.clone()),
+                object,
+                key,
+                resume: Resume::Number(resume),
+            },
+            NumberStep::Call {
+                callable,
+                receiver,
+                arguments,
+                resume,
+            } => Self::Call {
+                target: DirectCallTarget::Callable(callable),
+                receiver,
+                arguments,
+                resume: Resume::Number(resume),
+            },
+        }
+    }
+}
+impl From<ArrayLengthStep> for Step {
+    fn from(step: ArrayLengthStep) -> Self {
+        match step {
+            ArrayLengthStep::Complete(result) => Self::LengthComplete(result),
+            ArrayLengthStep::Number { value, resume } => Self::Number { value, resume },
+        }
+    }
+}
+impl Resume {
+    pub(super) fn length(
+        self,
+        runtime: &Runtime,
+        result: ArrayLengthConversion,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        use crate::engine::object::operations::PropertyDefineOutcome;
+        match self {
+            Self::SetLength(resume) => resume.array_length(runtime, result).map(Into::into),
+            Self::DefineLength {
+                object,
+                key,
+                descriptor,
+                resume,
+            } => {
+                let result = match result {
+                    ArrayLengthConversion::Throw(value) => NativeConversion::Throw(value),
+                    ArrayLengthConversion::Length(length) => match runtime
+                        .apply_array_length_descriptor(&object, &key, &descriptor, length)?
+                    {
+                        PropertyDefineOutcome::Defined(true) => {
+                            NativeConversion::Value(InternalDefineResult::Defined)
+                        }
+                        PropertyDefineOutcome::Defined(false) => {
+                            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object))
+                        }
+                        PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
+                    },
+                };
+                resume.defined(runtime, result)
+            }
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "Array length result has no matching continuation",
+            )),
+        }
+    }
+}
+
+impl From<ElementStep> for Step {
+    fn from(step: ElementStep) -> Self {
+        match step {
+            ElementStep::Complete(result) => Self::ElementComplete(result),
+            ElementStep::Read {
+                object,
+                key,
+                resume,
+            } => Self::Read {
+                receiver: Value::Object(object.clone()),
+                object,
+                key,
+                resume: Resume::Element(resume),
+            },
+            ElementStep::Call {
+                callable,
+                receiver,
+                arguments,
+                resume,
+            } => Self::Call {
+                target: DirectCallTarget::Callable(callable),
+                receiver,
+                arguments,
+                resume: Resume::Element(resume),
+            },
+        }
+    }
+}
+impl From<TypedWriteStep> for Step {
+    fn from(step: TypedWriteStep) -> Self {
+        match step {
+            TypedWriteStep::Complete(result) => Self::TypedComplete(result),
+            TypedWriteStep::Element {
+                element,
+                value,
+                resume,
+            } => Self::Element {
+                element,
+                value,
+                resume,
+            },
+        }
+    }
+}
+impl Resume {
+    pub(super) fn typed(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<bool>,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::SetTyped(resume) => {
+                let result = match result {
+                    NativeConversion::Value(_) => {
+                        NativeConversion::Value(InternalSetResult::Accepted)
+                    }
+                    NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                };
+                resume.special(runtime, Some(result)).map(Into::into)
+            }
+            Self::DefineTyped {
+                object,
+                _descriptor,
+                resume,
+            } => {
+                let result = match result {
+                    NativeConversion::Value(true) => {
+                        NativeConversion::Value(InternalDefineResult::Defined)
+                    }
+                    NativeConversion::Value(false) => {
+                        NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object))
+                    }
+                    NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                };
+                resume.defined(runtime, result)
+            }
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "TypedArray result has no matching continuation",
             )),
         }
     }

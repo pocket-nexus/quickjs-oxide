@@ -108,6 +108,8 @@
 
 每个提交中的实现、对应测试、源码契约及相关架构说明和结构检查一起完成。语义检查随提交执行，不推迟到 S10；诊断样本不充当正式性能成绩。临时桥明确记录覆盖；经过旧 VM 的样本不能宣称新核心已覆盖，禁止按测试或 benchmark 名选择路径。
 
+- S05 特殊写入转换继续推进：Array length 两次 ToNumber、后置 writable 检查，TypedArray 整数索引 Set/Define 的 Number/BigInt 转换与 buffer 凭证重取已接入 owned 阶段；Drop/Nip 最后临时引用交给 driver 冷路径。新库 2127 项、旧库 1990 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、CLI profiling 各 5 项、扫描/契约/布局通过。super 属性、其他 traps 与同步内置继续待办；S05 未验收，S06/S07 仍按顺序延后。
+
 ## 2. 编译与执行基础
 
 ### S01 — `refactor(compiler): organize stack compilation and diagnostics`

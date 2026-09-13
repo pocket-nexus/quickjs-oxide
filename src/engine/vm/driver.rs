@@ -1034,6 +1034,10 @@ mod tests {
             ),
             (
                 "(function(){try{String(1);throw 40}catch(e){return e+2}})",
+                false,
+            ),
+            (
+                "(function(){try{'x' in {};throw 40}catch(e){return e+2}})",
                 true,
             ),
         ] {
@@ -5271,6 +5275,289 @@ mod tests {
             Value::String(crate::engine::value::JsString::from_static("toPrimitive"))
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn cold_operand_release_preserves_surviving_roots_and_commits_once() {
+        for keep_top in [false, true] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(a,b){return a+b})",
+                vec![],
+            );
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let released = runtime.new_object(None).unwrap();
+            let released_id = released.object_id();
+            let frame = execution.frames.current_mut(id).unwrap();
+            execution
+                .slots
+                .push(&mut frame.window, Value::Object(released))
+                .unwrap();
+            let kept_id = if keep_top {
+                let kept = runtime.new_object(None).unwrap();
+                let kept_id = kept.object_id();
+                execution
+                    .slots
+                    .push(&mut frame.window, Value::Object(kept))
+                    .unwrap();
+                Some(kept_id)
+            } else {
+                None
+            };
+            assert!(
+                !execution
+                    .slots
+                    .release_operand(&frame.window, usize::from(keep_top), &runtime)
+                    .unwrap()
+            );
+            assert_eq!(
+                execution.slots.depth(&frame.window),
+                1 + usize::from(keep_top)
+            );
+            assert!(matches!(
+                super::super::frame_operations::step(
+                    &runtime,
+                    &mut execution,
+                    id,
+                    RunExit::ReleaseOperand { keep_top }
+                )
+                .unwrap(),
+                Some(CallStep::Entered)
+            ));
+            let frame = execution.frames.current_mut(id).unwrap();
+            assert_eq!(frame.resume_pc, frame.fault_pc + 1);
+            assert_eq!(execution.slots.depth(&frame.window), usize::from(keep_top));
+            runtime.run_gc().unwrap();
+            assert!(runtime.0.state.borrow().heap.object(released_id).is_err());
+            if let Some(kept_id) = kept_id {
+                assert!(runtime.0.state.borrow().heap.object(kept_id).is_ok());
+            }
+            drop(execution);
+            runtime.run_gc().unwrap();
+            if let Some(kept_id) = kept_id {
+                assert!(runtime.0.state.borrow().heap.object(kept_id).is_err());
+            }
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_typed_writes_convert_once_and_reacquire_buffer_after_callbacks() {
+        for (setup, body, hits, native_calls) in [
+            (
+                "var trace=0;var v={valueOf(){trace++;return 42}};new Uint8Array(1)",
+                "o[0]=v;return o[0]",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var a=new Uint8Array(1);var v={valueOf(){trace++;return 42}};new Proxy(a,{})",
+                "o[0]=v;return a[0]",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return 42}};new Uint8ClampedArray(1)",
+                "o[0]=v;return o[0]",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var v={[Symbol.toPrimitive](h){trace++;return h==='number'?42n:0n}};new BigInt64Array(1)",
+                "o[0]=v;return o[0]===42n?42:0",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return true}};new BigUint64Array(1)",
+                "o[0]=v;return o[0]===1n?42:0",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return 42}};new Uint8Array(1)",
+                "o['-0']=v;return o['-0']===undefined&&o[0]===0?42:0",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return 42}};new Uint8Array(1)",
+                "o[99]=v;return o[99]===undefined?42:0",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return 42}};new Proxy(new Uint8Array(1),{})",
+                "o[99]=v;return 42",
+                0,
+                0,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return 42}};new BigInt64Array(1)",
+                "try{o[99]=v}catch(e){return e.message==='cannot convert to bigint'?42:0}",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var token={};var v={valueOf(){trace++;throw token}};new Uint8Array(1)",
+                "try{o[0]=v}catch(e){return e===token&&o[0]===0?42:0}",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var b=new ArrayBuffer(1,{maxByteLength:2});var v={valueOf(){trace++;b.resize(0);return 42}};new Uint8Array(b)",
+                "o[0]=v;return o[0]===undefined?42:0",
+                1,
+                1,
+            ),
+            (
+                "var trace=0;var b=new ArrayBuffer(0,{maxByteLength:2});var v={valueOf(){trace++;b.resize(1);return 42}};new Uint8Array(b)",
+                "o[0]=v;return o[0]",
+                1,
+                1,
+            ),
+            (
+                "var trace=0;var b=new ArrayBuffer(1);var v={valueOf(){trace++;b.transfer();return 42}};new Uint8Array(b)",
+                "o[0]=v;return o[0]===undefined?42:0",
+                1,
+                1,
+            ),
+            (
+                "var trace=0;var b=new ArrayBuffer(1);var a=new Uint8Array(b);var v={valueOf(){trace++;b.transfer();return 42}};new Proxy(a,{})",
+                "'use strict';o[0]=v;return a[0]===undefined?42:0",
+                1,
+                1,
+            ),
+            (
+                "var trace=0;var b=new SharedArrayBuffer(1);var v={valueOf(){trace++;return 42}};new Uint8Array(b)",
+                "o[0]=v;return o[0]",
+                1,
+                0,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{setup}: {result:?}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, native_calls, "{setup}");
+            drop(profile);
+            assert_eq!(context.eval("trace").unwrap(), Value::Int(hits), "{setup}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_array_length_runs_both_conversions_and_preserves_write_failures() {
+        for (setup, body, expected_trace, native_calls) in [
+            (
+                "var trace=0;var a=[1,2,3];var second=function(){trace=trace*10+2;return 1};var v={valueOf(){trace=trace*10+1;this.valueOf=second;return 1}};a",
+                "o.length=v;return o.length===1&&o[1]===undefined?42:0",
+                12,
+                0,
+            ),
+            (
+                "var trace=0;var a=[1,2,3];var v={valueOf(){trace++;a.length=5;return 2}};new Proxy(a,{})",
+                "o.length=v;return a.length===2&&a[2]===undefined?42:0",
+                2,
+                0,
+            ),
+            (
+                "var trace=0;var token={};var v={valueOf(){trace++;if(trace===2)throw token;return 1}};[1,2,3]",
+                "try{o.length=v}catch(e){return e===token&&o.length===3?42:0}",
+                2,
+                0,
+            ),
+            (
+                "var trace=0;var token={};var v={get valueOf(){trace++;throw token}};[1,2,3]",
+                "try{o.length=v}catch(e){return e===token&&o.length===3?42:0}",
+                1,
+                0,
+            ),
+            (
+                "var trace=0;var v={[Symbol.toPrimitive](hint){trace++;return hint==='number'?1:99}};[1,2,3]",
+                "o.length=v;return o.length===1?42:0",
+                2,
+                0,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return trace===1?1:2}};[1,2,3]",
+                "try{o.length=v}catch(e){return e.name==='RangeError'&&o.length===3?42:0}",
+                2,
+                0,
+            ),
+            (
+                "var trace=0;var a=[1,2,3];Object.defineProperty(a,'1',{configurable:false});var v={valueOf(){trace++;return 0}};a",
+                "'use strict';try{o.length=v}catch(e){return e.name==='TypeError'&&o.length===2&&o[2]===undefined?42:0}",
+                2,
+                0,
+            ),
+            (
+                "var trace=0;var a=[1,2,3];var v={valueOf(){trace++;if(trace===2)Object.defineProperty(a,'length',{writable:false});return 3}};a",
+                "'use strict';try{o.length=v}catch(e){return e.name==='TypeError'&&o.length===3?42:0}",
+                2,
+                1,
+            ),
+            (
+                "var trace=0;var a=[1,2,3];var v={valueOf(){trace++;if(trace===2)Object.defineProperty(a,'length',{writable:false});return 1}};new Proxy(a,{})",
+                "'use strict';try{o.length=v}catch(e){return e.name==='TypeError'&&a.length===3?42:0}",
+                2,
+                1,
+            ),
+            (
+                "var trace=0;var v={valueOf(){trace++;return 1n}};[1,2,3]",
+                "try{o.length=v}catch(e){return e.name==='TypeError'&&o.length===3?42:0}",
+                1,
+                0,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{setup}: {result:?}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, native_calls, "{setup}");
+            drop(profile);
+            assert_eq!(
+                context.eval("trace").unwrap(),
+                Value::Int(expected_trace),
+                "{setup}"
+            );
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 
     #[test]

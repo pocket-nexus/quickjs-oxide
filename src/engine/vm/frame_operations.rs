@@ -21,6 +21,32 @@ pub(super) fn step(
 ) -> Result<Option<CallStep>, Error> {
     let original = exit;
     let mut forwarded = None;
+    if let RunExit::ReleaseOperand { keep_top } = exit {
+        let frame = execution.frames.current_mut(id)?;
+        // Hot preflight has not changed an owner. Validate both operands before
+        // moving either, then let the ordinary Drop path drain deferred work.
+        execution.slots.peek(&frame.window, usize::from(keep_top))?;
+        #[cfg(feature = "profiling")]
+        let depth = execution.slots.depth(&frame.window);
+        let kept = if keep_top {
+            Some(execution.slots.pop(&mut frame.window)?)
+        } else {
+            None
+        };
+        let released = execution.slots.pop(&mut frame.window)?;
+        if let Some(kept) = kept {
+            execution.slots.push(&mut frame.window, kept)?;
+        }
+        // Publish the surviving stack before dropping the last temporary root.
+        drop(released);
+        frame.resume_pc = frame
+            .fault_pc
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("release resume PC overflow"))?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(depth);
+        return Ok(Some(CallStep::Entered));
+    }
     if exit == RunExit::GetSuper {
         let frame = execution.frames.current_mut(id)?;
         let value = execution.slots.peek(&frame.window, 0)?;

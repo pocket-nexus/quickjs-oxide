@@ -362,30 +362,109 @@ fn advance(
                     .into();
                 continue;
             }
-            Step::SetDeferred(request) => {
-                #[cfg(feature = "profiling")]
-                {
-                    let may_call = match &request {
-                        crate::engine::object::SetStep::Special {
-                            object,
-                            value: Value::Object(_),
-                            receiver: Value::Object(receiver),
-                            ..
-                        } => object == receiver,
-                        crate::engine::object::SetStep::ArrayLength {
-                            value: Value::Object(_),
-                            ..
-                        } => true,
-                        _ => false,
-                    };
-                    if may_call {
-                        crate::engine::api::profiling::record_owned_sync_call_bridge();
-                    }
-                }
-                step = request
-                    .finish_sync(runtime)
+            Step::SetLength { value, resume } => {
+                parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                parents.push(Resume::SetLength(resume));
+                step = crate::engine::object::ArrayLengthStep::start(runtime, Some(realm), value)
                     .map_err(runtime_error_to_vm_error)?
                     .into();
+                continue;
+            }
+            Step::Number { value, resume } => {
+                parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                parents.push(Resume::LengthNumber(resume));
+                step = crate::engine::value::conversion::number::NumberStep::start(
+                    runtime, realm, value,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::NumberComplete(result) => {
+                let Some(Resume::LengthNumber(resume)) = parents.pop() else {
+                    return Err(Error::internal(
+                        "ToNumber result has no matching continuation",
+                    ));
+                };
+                step = resume
+                    .number(runtime, result)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                continue;
+            }
+            Step::LengthComplete(result) => {
+                let resume = parents
+                    .pop()
+                    .ok_or_else(|| Error::internal("Array length result has no parent"))?;
+                step = resume
+                    .length(runtime, result)
+                    .map_err(runtime_error_to_vm_error)?;
+                continue;
+            }
+            Step::SetSpecial {
+                object,
+                key,
+                value,
+                receiver,
+                resume,
+            } => {
+                match runtime
+                    .prepare_typed_array_set(&object, &key, &value, &receiver)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    None => {
+                        step = resume
+                            .special(runtime, None)
+                            .map_err(runtime_error_to_vm_error)?
+                            .into()
+                    }
+                    Some(request) => {
+                        parents.try_reserve(1).map_err(|_| {
+                            Error::internal("property continuation allocation failed")
+                        })?;
+                        parents.push(Resume::SetTyped(resume));
+                        step = request.into();
+                    }
+                }
+                continue;
+            }
+            Step::Element {
+                element,
+                value,
+                resume,
+            } => {
+                parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                parents.push(Resume::TypedElement(resume));
+                step = crate::engine::builtins::ElementStep::start(runtime, realm, element, value)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                continue;
+            }
+            Step::ElementComplete(result) => {
+                let Some(Resume::TypedElement(resume)) = parents.pop() else {
+                    return Err(Error::internal(
+                        "element result has no matching continuation",
+                    ));
+                };
+                step = resume
+                    .element(runtime, result)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                continue;
+            }
+            Step::TypedComplete(result) => {
+                let resume = parents
+                    .pop()
+                    .ok_or_else(|| Error::internal("TypedArray result has no parent"))?;
+                step = resume
+                    .typed(runtime, result)
+                    .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
             Step::SetComplete(action) => {
@@ -527,19 +606,36 @@ fn advance(
                     .into();
                     continue;
                 }
-                #[cfg(feature = "profiling")]
-                if matches!(
-                    &descriptor.value,
-                    crate::engine::object::DescriptorField::Present(Value::Object(_))
-                ) && (runtime
-                    .typed_array_is_object(&object)
+                if let Some(length) = runtime
+                    .prepare_array_length_definition(Some(realm), &object, &key, &descriptor)
                     .map_err(runtime_error_to_vm_error)?
-                    || runtime
-                        .array_own_key(&object, &key)
-                        .map_err(runtime_error_to_vm_error)?
-                        == crate::engine::object::operations::ArrayOwnKey::Length)
                 {
-                    crate::engine::api::profiling::record_owned_sync_call_bridge();
+                    parents
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                    parents.push(Resume::DefineLength {
+                        object,
+                        key,
+                        descriptor,
+                        resume: Box::new(resume),
+                    });
+                    step = length.into();
+                    continue;
+                }
+                if let Some(request) = runtime
+                    .prepare_typed_array_definition(&object, &key, &descriptor)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    parents
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                    parents.push(Resume::DefineTyped {
+                        object,
+                        _descriptor: descriptor,
+                        resume: Box::new(resume),
+                    });
+                    step = request.into();
+                    continue;
                 }
                 let result = runtime
                     .internal_define_own_property(realm, &object, &key, &descriptor)

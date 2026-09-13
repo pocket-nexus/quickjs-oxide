@@ -1,4 +1,5 @@
 pub(crate) mod descriptor;
+pub(crate) mod number;
 pub(crate) mod primitive;
 
 use crate::engine::api::error::NativeErrorKind;
@@ -141,14 +142,38 @@ impl Runtime {
         realm: ContextId,
         value: &Value,
     ) -> Result<NativeConversion<f64>, RuntimeError> {
-        let value = if matches!(value, Value::Object(_)) {
-            match self.to_primitive(realm, value.clone(), ToPrimitiveHint::Number)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            }
-        } else {
-            value.clone()
-        };
+        let mut step = number::NumberStep::start(self, realm, value.clone())?;
+        loop {
+            step = match step {
+                number::NumberStep::Complete(result) => return Ok(result),
+                number::NumberStep::Read {
+                    object,
+                    key,
+                    resume,
+                } => resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?,
+                number::NumberStep::Call {
+                    callable,
+                    receiver,
+                    arguments,
+                    resume,
+                } => resume.resume(
+                    self,
+                    self.call_internal(realm, &callable, receiver, &arguments)?,
+                )?,
+            };
+        }
+    }
+
+    pub(crate) fn number_from_primitive(
+        &self,
+        realm: ContextId,
+        value: &Value,
+    ) -> Result<NativeConversion<f64>, RuntimeError> {
+        if matches!(value, Value::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "ToNumber primitive completion received an object",
+            ));
+        }
         match value.to_number() {
             Ok(value) => Ok(NativeConversion::Value(value)),
             Err(error) => {
@@ -248,6 +273,19 @@ impl Runtime {
         } else {
             value.clone()
         };
+        self.bigint_from_primitive(realm, value)
+    }
+
+    pub(crate) fn bigint_from_primitive(
+        &self,
+        realm: ContextId,
+        value: Value,
+    ) -> Result<NativeConversion<crate::engine::value::bigint::JsBigInt>, RuntimeError> {
+        if matches!(value, Value::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "ToBigInt primitive completion received an object",
+            ));
+        }
         match value {
             Value::BigInt(value) => Ok(NativeConversion::Value(value)),
             Value::Bool(value) => Ok(NativeConversion::Value(

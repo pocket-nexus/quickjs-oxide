@@ -38,6 +38,12 @@ mod array;
 mod array_buffer;
 mod atomics;
 pub(crate) use array_buffer::typed_array::CanonicalNumericIndex;
+pub(crate) use array_buffer::typed_array::write::TypedWriteStep;
+#[cfg(feature = "stack-vm")]
+pub(crate) use array_buffer::typed_array::{
+    element::{ElementResume, ElementStep},
+    write::TypedWriteResume,
+};
 pub(crate) mod date;
 mod error;
 mod eval;
