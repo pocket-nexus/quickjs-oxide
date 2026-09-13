@@ -133,6 +133,61 @@ pub(super) fn start_owned_read(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_boolean(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    object: ObjectRef,
+    kind: ProxyBooleanKind,
+    strict_delete: bool,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    let realm = parent.executable.realm;
+    let resume = Resume::BooleanResult {
+        _object: object.clone(),
+        _key: match &kind {
+            ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) => Some(key.clone()),
+            _ => None,
+        },
+        strict_delete,
+    };
+    let step = match kind {
+        ProxyBooleanKind::Has(key) => Step::Has {
+            object,
+            key,
+            resume,
+        },
+        ProxyBooleanKind::Delete(key) => Step::Delete {
+            object,
+            key,
+            resume,
+        },
+        ProxyBooleanKind::Extensible => Step::Extensible { object, resume },
+        ProxyBooleanKind::PreventExtensions => Step::PreventExtensions { object, resume },
+    };
+    let result = advance(
+        runtime,
+        execution,
+        frame,
+        identity,
+        Vec::new(),
+        step,
+        Finish::PropertyRead(depth),
+    );
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("boolean query returned a conversion")),
+    }
+}
+
 pub(super) fn start_conversion(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -701,6 +756,82 @@ fn advance(
                 step = resume
                     .boolean(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
+                continue;
+            }
+            Step::Delete {
+                object,
+                key,
+                resume,
+            } => {
+                if runtime
+                    .is_proxy_object(&object)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                        let Completion::Throw(value) = overflow(runtime, realm)? else {
+                            unreachable!()
+                        };
+                        step = resume
+                            .boolean(runtime, NativeConversion::Throw(value))
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    parents
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                    parents.push(resume);
+                    step = ProxyBooleanStep::start(
+                        runtime,
+                        realm,
+                        object,
+                        ProxyBooleanKind::Delete(key),
+                    )
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                } else {
+                    let result = runtime
+                        .delete_property(&object, &key)
+                        .map_err(runtime_error_to_vm_error)?;
+                    step = resume
+                        .boolean(runtime, NativeConversion::Value(result))
+                        .map_err(runtime_error_to_vm_error)?;
+                }
+                continue;
+            }
+            Step::PreventExtensions { object, resume } => {
+                if runtime
+                    .is_proxy_object(&object)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    if !execution.frames.can_push_with_continuations(parents.len()) {
+                        let Completion::Throw(value) = overflow(runtime, realm)? else {
+                            unreachable!()
+                        };
+                        step = resume
+                            .boolean(runtime, NativeConversion::Throw(value))
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    parents
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                    parents.push(resume);
+                    step = ProxyBooleanStep::start(
+                        runtime,
+                        realm,
+                        object,
+                        ProxyBooleanKind::PreventExtensions,
+                    )
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                } else {
+                    let result = runtime
+                        .internal_prevent_extensions(realm, &object)
+                        .map_err(runtime_error_to_vm_error)?;
+                    step = resume
+                        .boolean(runtime, result)
+                        .map_err(runtime_error_to_vm_error)?;
+                }
                 continue;
             }
             Step::Extensible { object, resume } => {

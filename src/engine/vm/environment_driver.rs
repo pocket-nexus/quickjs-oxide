@@ -189,7 +189,7 @@ pub(super) fn step(
                 check_presence,
             } => {
                 use crate::engine::object::{
-                    OrdinaryRead,
+                    PreparedHas,
                     operations::{PropertySetAction, PropertySetRejection},
                 };
                 let key = if let WriteTarget::Global { index, initialize } = source {
@@ -296,12 +296,14 @@ pub(super) fn step(
                     }
                     return Ok(CallStep::Entered);
                 }
-                // This read-only probe never invokes getters. It proves that the
-                // Set walk cannot enter an exotic protocol before selecting its setter.
-                let present = match prepare_environment_read(runtime, &object, &key)? {
-                    OrdinaryRead::Complete(value) => value.is_some(),
-                    OrdinaryRead::Call { .. } => true,
-                    OrdinaryRead::Special { .. } => return Ok(CallStep::Bridge),
+                // HasProperty distinguishes a missing integer-indexed property
+                // from Get's terminal undefined value. Recheck after the RHS.
+                let present = match runtime
+                    .prepare_has_property(&object, &key)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    PreparedHas::Complete(present) => present,
+                    PreparedHas::Proxy(_) => return Ok(CallStep::Bridge),
                 };
                 if check_presence && strict && !present {
                     return Err(runtime
@@ -759,6 +761,28 @@ fn read_binding(
                 ));
             };
             return Ok(BindingRead::Value(value));
+        }
+    }
+    if matches!(op, Operation::ReadReference { .. }) {
+        match runtime
+            .prepare_has_property(object, &key)
+            .map_err(runtime_error_to_vm_error)?
+        {
+            crate::engine::object::PreparedHas::Complete(false) if strict => {
+                return Err(runtime
+                    .native_atom_error(
+                        crate::engine::api::ErrorKind::Reference,
+                        "'",
+                        &key,
+                        "' is not defined",
+                    )
+                    .map_err(runtime_error_to_vm_error)?);
+            }
+            crate::engine::object::PreparedHas::Complete(false) => {
+                return Ok(BindingRead::Value(Value::Undefined));
+            }
+            crate::engine::object::PreparedHas::Complete(true) => {}
+            crate::engine::object::PreparedHas::Proxy(_) => return Ok(BindingRead::Bridge),
         }
     }
     let read = prepare_environment_read(runtime, object, &key)?;

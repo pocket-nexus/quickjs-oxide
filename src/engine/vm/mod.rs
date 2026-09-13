@@ -132,3 +132,6 @@ mod proxy_get_driver;
 mod property_write_driver;
 #[cfg(feature = "stack-vm")]
 mod super_property_driver;
+
+#[cfg(feature = "stack-vm")]
+mod predicate_driver;

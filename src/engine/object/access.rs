@@ -14,6 +14,53 @@ use crate::engine::value::{JsString, Value};
 use crate::engine::vm::Completion;
 
 impl Runtime {
+    /// Virtual own properties of primitive bases; object deletion has its own protocol.
+    pub(crate) fn primitive_delete_property(
+        &self,
+        base: &Value,
+        key: &PropertyKey,
+    ) -> Result<bool, RuntimeError> {
+        self.validate_value_domain(base, "delete base")?;
+        if !key.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("delete property key"));
+        }
+        Ok(match base {
+            Value::Null | Value::Undefined => {
+                return Err(RuntimeError::Engine(crate::engine::api::Error::new(
+                    ErrorKind::Type,
+                    "cannot convert to object",
+                )));
+            }
+            Value::Object(_) => {
+                return Err(RuntimeError::Invariant(
+                    "primitive Delete received an object",
+                ));
+            }
+            Value::String(string) => {
+                let index = self.0.state.borrow().atoms.array_index(key.atom())?;
+                let indexed = index.is_some_and(|index| {
+                    usize::try_from(index).is_ok_and(|index| index < string.len())
+                });
+                !indexed && key != &self.intern_property_key("length")?
+            }
+            _ => true,
+        })
+    }
+
+    pub(crate) fn finish_property_delete(
+        &self,
+        result: NativeConversion<bool>,
+        strict: bool,
+    ) -> Result<Completion, RuntimeError> {
+        match result {
+            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
+            NativeConversion::Value(false) if strict => Err(RuntimeError::Engine(
+                crate::engine::api::Error::new(ErrorKind::Type, "could not delete property"),
+            )),
+            NativeConversion::Value(value) => Ok(Completion::Return(Value::Bool(value))),
+        }
+    }
+
     pub(crate) fn get_property_in_realm(
         &self,
         realm: ContextId,

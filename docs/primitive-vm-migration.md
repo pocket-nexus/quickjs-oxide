@@ -1100,3 +1100,33 @@ stack-vm CLI 构建无警告。boundary scan-only、属性契约/mutation 2 项�
 S05 的其他 Proxy 操作、Object/Reflect native 入口及同步内置仍未全部迁移，
 原始 Earley-Boyer 默认预算覆盖筛查尚待完成。S06/S07 和最终 benchmark/
 profile、PR #21 comment 保持原顺序，尚未执行。
+
+
+## S05 属性谓词与 Proxy 删除/阻止扩展阶段（实施中）
+
+`in` 和 `delete` 由 owned 谓词驱动消费输入及键转换。`in` 先拒绝非对象 RHS，
+`delete` 先执行 ToPropertyKey，再拒绝 nullish base；原语 String 的虚拟索引/
+length 删除规则和严格删除完成由 object helper 与旧 host 共用。
+
+Proxy boolean 阶段增加 deleteProperty 和 preventExtensions。删除 trap 返回
+false 立即完成；true 则查询 target descriptor，拒绝不可配置属性，对仍存在
+的可配置属性要求嵌套 IsExtensible 为 true。preventExtensions 成功则要求
+嵌套 IsExtensible 为 false。Has 的 pinned raw extensible bit 规则保持独立。
+转发与两次不变量查询持续保活 Symbol 键、target/handler；强制 GC 与放弃
+测试确认键在等待期间存在，放弃后释放，Runtime 无 owning cycle。
+
+完整 oracle 暴露了先前被删除指令旧回退掩盖的 Reference/with 检查：严格
+赋值 RHS 删除对象属性后，TypedArray 原型上的无效数字键 Get 返回 undefined，
+不能由此判为存在。读/写 reference 的普通重查改用共享 HasProperty，保留
+原始 oracle 的 ReferenceError 预期，并增加零旧分派的定向回归。混合路径
+测试保留未迁移 instanceof 反例；没有改变 oracle 预期或 native 栈预算。
+
+本批最终 owned 库 2133 项、默认库 1991 项、新旧常规 oracle 各 907 项通过
+（各 1 项手动 65K 压力测试未运行），新旧 CLI profiling 各 5 项通过；
+非 profiling stack-vm CLI 构建无警告。boundary scan-only、属性契约/mutation
+2 项、格式/diff、源码布局 540 文件通过。完整 714 项 boundary 本批未运行。
+
+preventExtensions 的 owned 域查询测试不代表 Object/Reflect native 入口
+已经迁移。prototype/ownKeys/construct 等剩余 Proxy 操作、动态环境剩余
+路径、instanceof 与各同步内置仍按 S05 继续；S05 尚未验收，S06/S07 及最后的
+完整 benchmark/profile、PR #21 comment 尚未执行。

@@ -16,6 +16,11 @@ use crate::engine::builtins::native::TypedArrayElementKind;
 use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, TypedWriteStep};
 
 pub(super) enum Resume {
+    BooleanResult {
+        _object: ObjectRef,
+        _key: Option<PropertyKey>,
+        strict_delete: bool,
+    },
     ReadOwner(ObjectRef),
     Element(ElementResume),
     TypedElement(TypedWriteResume),
@@ -46,6 +51,15 @@ pub(super) enum Resume {
 }
 
 pub(super) enum Step {
+    Delete {
+        object: ObjectRef,
+        key: PropertyKey,
+        resume: Resume,
+    },
+    PreventExtensions {
+        object: ObjectRef,
+        resume: Resume,
+    },
     Element {
         element: TypedArrayElementKind,
         value: Value,
@@ -243,6 +257,19 @@ impl From<DescriptorStep> for Step {
 impl From<ProxyBooleanStep> for Step {
     fn from(step: ProxyBooleanStep) -> Self {
         match step {
+            ProxyBooleanStep::Delete {
+                object,
+                key,
+                resume,
+            } => Self::Delete {
+                object,
+                key,
+                resume: Resume::Boolean(resume),
+            },
+            ProxyBooleanStep::PreventExtensions { object, resume } => Self::PreventExtensions {
+                object,
+                resume: Resume::Boolean(resume),
+            },
             ProxyBooleanStep::Complete(result) => Self::BooleanComplete(result),
             ProxyBooleanStep::Read {
                 object,
@@ -533,6 +560,13 @@ impl Resume {
         result: NativeConversion<bool>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::BooleanResult {
+                _object,
+                _key,
+                strict_delete,
+            } => runtime
+                .finish_property_delete(result, strict_delete)
+                .map(Step::Complete),
             Self::Own(resume) => resume.extensible(result).map(Into::into),
             Self::Boolean(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Conversion(resume) => resume.has(runtime, result).map(Into::into),
@@ -554,6 +588,11 @@ impl Resume {
                 Completion::Return(_) => PropertySetAction::Complete,
                 Completion::Throw(value) => PropertySetAction::Throw(value),
             })),
+            Self::BooleanResult { .. } => {
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "boolean operation received an untyped reply",
+                ))
+            }
             Self::ReadOwner(_owner) => Ok(Step::Complete(completion)),
             Self::Element(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Number(resume) => resume.resume(runtime, completion).map(Into::into),

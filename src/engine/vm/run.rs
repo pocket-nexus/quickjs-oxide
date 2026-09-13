@@ -61,6 +61,7 @@ pub(super) enum RunExit {
     },
     Environment(super::environment_driver::Operation),
     GetSuper,
+    Predicate(super::predicate_driver::Kind),
     HomeObject,
     SuperProperty(super::super_property_driver::Kind),
     ReturnDerived(u16),
@@ -241,6 +242,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::InitializeDerivedLocal(index) => {
                 return Ok(RunExit::InitializeDerived(*index));
+            }
+            Instruction::In => return Ok(RunExit::Predicate(super::predicate_driver::Kind::Has)),
+            Instruction::Delete => {
+                return Ok(RunExit::Predicate(super::predicate_driver::Kind::Delete));
             }
             Instruction::GetSuper => return Ok(RunExit::GetSuper),
             Instruction::PushHomeObject => return Ok(RunExit::HomeObject),
@@ -1084,7 +1089,7 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let profile = CostProfile::start();
-        let result = context.eval("var calls=0;function outer(f){return 1+f()} function inner(){calls++; 'x' in {};throw 42} var result;try{outer(inner)}catch(e){result=e} result*10+calls").unwrap();
+        let result = context.eval("var calls=0;function outer(f){return 1+f()} function inner(){calls++; [] instanceof Array;throw 42} var result;try{outer(inner)}catch(e){result=e} result*10+calls").unwrap();
         assert_eq!(result, Value::Int(421));
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3, "{costs:?}");
@@ -1270,7 +1275,7 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let profile = CostProfile::start();
-        let result = context.eval_with_filename("var calls=0; function f(a){var x=3;return (x+a)+(x=2)} var v=f({valueOf(){calls++; 'x' in {};return 4}}); v*10+calls", "owned-handoff.js").unwrap();
+        let result = context.eval_with_filename("var calls=0; function f(a){var x=3;return (x+a)+(x=2)} var v=f({valueOf(){calls++; [] instanceof Array;return 4}}); v*10+calls", "owned-handoff.js").unwrap();
         assert_eq!(result, Value::Int(91));
         let costs = profile.snapshot();
         assert!(costs.owned_instructions > 0);

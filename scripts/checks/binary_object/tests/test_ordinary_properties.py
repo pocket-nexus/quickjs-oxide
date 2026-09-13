@@ -32,6 +32,9 @@ class OrdinaryPropertyContracts(unittest.TestCase):
     def test_bad_boundaries_are_rejected(self):
         storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write = ordinary_properties.FILES
         mutations = [
+            (proxy_boolean, "let step = MethodStep::start(runtime, realm, object, name)?;", "runtime.internal_prevent_extensions(); let step = MethodStep::start(runtime, realm, object, name)?;"),
+            (proxy_boolean, "let (rooted, key, deleting) = match self.phase {", "runtime.internal_delete_property(); let (rooted, key, deleting) = match self.phase {"),
+            (access, 'self.validate_value_domain(base, "delete base")?;', 'self.native_to_property_key(); self.validate_value_domain(base, "delete base")?;'),
             (typed_element, "Ok(match step {", "runtime.native_to_bigint(); Ok(match step {"),
             (typed_write, "let result = match result {", "runtime.typed_array_convert_element(); let result = match result {"),
             (dispatch, "let same_receiver = matches!(receiver,", "self.typed_array_convert_element(); let same_receiver = matches!(receiver,"),

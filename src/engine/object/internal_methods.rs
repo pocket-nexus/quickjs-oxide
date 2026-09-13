@@ -717,32 +717,16 @@ impl Runtime {
             self.prevent_extensions(object)?;
             return Ok(NativeConversion::Value(true));
         };
-        let (rooted, method) = match self.proxy_method(realm, object, "preventExtensions")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_prevent_extensions(realm, &rooted.target);
-        };
-        let result = match self.call_proxy_trap(
+        boolean::finish(
+            self,
             realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone())],
-        )? {
-            Completion::Return(value) => self.value_to_boolean(&value)?,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if result {
-            let target = match self.internal_is_extensible(realm, &rooted.target)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            };
-            if target {
-                return self.proxy_invariant_throw(realm, "preventExtensions");
-            }
-        }
-        Ok(NativeConversion::Value(result))
+            ProxyBooleanStep::start(
+                self,
+                realm,
+                object.clone(),
+                ProxyBooleanKind::PreventExtensions,
+            )?,
+        )
     }
 
     pub(crate) fn internal_has_property(
@@ -1273,43 +1257,16 @@ impl Runtime {
                 .delete_property(object, key)
                 .map(NativeConversion::Value);
         };
-        let (rooted, method) = match self.proxy_method(realm, object, "deleteProperty")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_delete_property(realm, &rooted.target, key);
-        };
-        let key_value = self.property_key_value(key)?;
-        let accepted = match self.call_proxy_trap(
+        boolean::finish(
+            self,
             realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone()), key_value],
-        )? {
-            Completion::Return(value) => self.value_to_boolean(&value)?,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !accepted {
-            return Ok(NativeConversion::Value(false));
-        }
-        let target = match self.internal_get_own_property(realm, &rooted.target, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if let Some(target) = target {
-            if !target.configurable() {
-                return self.proxy_invariant_throw(realm, "deleteProperty");
-            }
-            let extensible = match self.internal_is_extensible(realm, &rooted.target)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            };
-            if !extensible {
-                return self.proxy_invariant_throw(realm, "deleteProperty");
-            }
-        }
-        Ok(NativeConversion::Value(true))
+            ProxyBooleanStep::start(
+                self,
+                realm,
+                object.clone(),
+                ProxyBooleanKind::Delete(key.clone()),
+            )?,
+        )
     }
 
     pub(crate) fn internal_own_property_keys(

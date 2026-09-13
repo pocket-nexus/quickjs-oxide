@@ -1122,48 +1122,20 @@ impl RuntimeVmHost {
         key: &PropertyKey,
         strict: bool,
     ) -> Result<Completion, Error> {
-        let deleted = match &base {
-            Value::Null | Value::Undefined => {
-                return Err(Error::new(ErrorKind::Type, "cannot convert to object"));
-            }
-            Value::Object(object) => {
-                match self
-                    .runtime
-                    .internal_delete_property(self.current_realm, object, key)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-                }
-            }
-            Value::String(string) => {
-                let index = self
-                    .runtime
-                    .0
-                    .state
-                    .borrow()
-                    .atoms
-                    .array_index(key.atom())
-                    .map_err(|error| Error::internal(error.to_string()))?;
-                let indexed = index.is_some_and(|index| {
-                    usize::try_from(index).is_ok_and(|index| index < string.len())
-                });
-                let length = self
-                    .runtime
-                    .intern_property_key("length")
-                    .map_err(|error| Error::internal(error.to_string()))?;
-                !indexed && key != &length
-            }
-            Value::Bool(_)
-            | Value::Int(_)
-            | Value::Float(_)
-            | Value::BigInt(_)
-            | Value::Symbol(_) => true,
+        let result = if let Value::Object(object) = &base {
+            self.runtime
+                .internal_delete_property(self.current_realm, object, key)
+                .map_err(runtime_error_to_vm_error)?
+        } else {
+            NativeConversion::Value(
+                self.runtime
+                    .primitive_delete_property(&base, key)
+                    .map_err(runtime_error_to_vm_error)?,
+            )
         };
-        if !deleted && strict {
-            return Err(Error::new(ErrorKind::Type, "could not delete property"));
-        }
-        Ok(Completion::Return(Value::Bool(deleted)))
+        self.runtime
+            .finish_property_delete(result, strict)
+            .map_err(runtime_error_to_vm_error)
     }
 
     /// Convert only JavaScript-visible engine errors into rooted thrown

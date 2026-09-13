@@ -370,6 +370,18 @@ fn run_frames_with_state(
                     forwarded = Some(completion);
                     RunExit::Complete
                 }
+                Progress::Predicate(input) => {
+                    match super::predicate_driver::converted(runtime, &mut execution, id, input)? {
+                        CallStep::Entered => continue,
+                        CallStep::Complete(completion) => {
+                            forwarded = Some(completion);
+                            RunExit::Complete
+                        }
+                        CallStep::Bridge => {
+                            return Err(Error::internal("converted predicate attempted replay"));
+                        }
+                    }
+                }
                 Progress::SuperProperty(input) => {
                     match super::super_property_driver::converted(
                         runtime,
@@ -616,6 +628,31 @@ fn run_frames_with_state(
                     exit = RunExit::Complete;
                 }
                 CallStep::Bridge => exit = RunExit::Bridge,
+            }
+        }
+        if let RunExit::Predicate(kind) = exit {
+            match super::predicate_driver::start(runtime, &mut execution, id, kind)? {
+                super::predicate_driver::Progress::Convert(input) => {
+                    next_operation = next_operation.checked_add(1).ok_or_else(|| {
+                        Error::internal("predicate conversion identity exhausted")
+                    })?;
+                    conversion = Some(super::conversion_driver::ConversionTask::start_predicate(
+                        runtime,
+                        &mut execution,
+                        id,
+                        next_operation,
+                        input,
+                    )?);
+                    continue;
+                }
+                super::predicate_driver::Progress::Call(CallStep::Entered) => continue,
+                super::predicate_driver::Progress::Call(CallStep::Complete(completion)) => {
+                    forwarded = Some(completion);
+                    exit = RunExit::Complete;
+                }
+                super::predicate_driver::Progress::Call(CallStep::Bridge) => {
+                    return Err(Error::internal("predicate attempted replay"));
+                }
             }
         }
         if let RunExit::SuperProperty(kind) = exit {
@@ -1084,6 +1121,10 @@ mod tests {
             ),
             (
                 "(function(){try{'x' in {};throw 40}catch(e){return e+2}})",
+                false,
+            ),
+            (
+                "(function(){try{[] instanceof Array;throw 40}catch(e){return e+2}})",
                 true,
             ),
         ] {
@@ -4460,7 +4501,7 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let callee = context
-            .eval("(function(){return this === ('x' in {},this)}).bind(3)")
+            .eval("(function(){return this === ([] instanceof Array,this)}).bind(3)")
             .unwrap();
         let entry = entry(
             &runtime,
@@ -5321,6 +5362,214 @@ mod tests {
             Value::String(crate::engine::value::JsString::from_static("toPrimitive"))
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn owned_reference_write_rechecks_typed_array_prototype_presence_after_rhs() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let callable = context.eval("(function(o){with(o){return function(){'use strict';NaN=(delete o.NaN,0)}}})(Object.defineProperty(Object.create(new Int32Array(1)),'NaN',{value:100,configurable:true}))").unwrap();
+        let entry = entry(
+            &runtime,
+            &mut context,
+            "(function(f){try{f()}catch(e){return e.name==='ReferenceError'?42:0}})",
+            vec![callable],
+        );
+        let profile = CostProfile::start();
+        let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+        assert!(
+            matches!(result, Completion::Return(Value::Int(42))),
+            "{result:?}"
+        );
+        let cost = profile.snapshot();
+        assert_eq!(cost.legacy_dispatches, 0);
+        assert_eq!(cost.owned_bridge_exits, 0);
+        assert_eq!(cost.owned_sync_call_bridges, 0);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn owned_in_and_delete_preserve_conversion_order_and_proxy_invariants() {
+        for (setup, body, trace) in [
+            (
+                "var trace=0;var key={toString(){trace++;return 'x'}};({x:42})",
+                "return key in o?42:0",
+                1,
+            ),
+            (
+                "var trace=0;var key={toString(){trace++;return 'x'}};null",
+                r#"try{return key in o}catch(e){return e.message==="invalid 'in' operand"?42:0}"#,
+                0,
+            ),
+            (
+                "var trace=0;var token={};var key={toString(){trace++;throw token}};null",
+                "try{delete o[key]}catch(e){return e===token?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var key={toString(){trace++;return 'x'}};null",
+                "try{delete o[key]}catch(e){return e.message==='cannot convert to object'?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var key={toString(){trace++;return '0'}};'abc'",
+                "return delete o[key]?0:42",
+                1,
+            ),
+            (
+                "var trace=0;var key={toString(){trace++;return '0'}};'abc'",
+                "'use strict';try{delete o[key]}catch(e){return e.message==='could not delete property'?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var key='x';new Proxy({x:1},{get deleteProperty(){trace=trace*10+1;return function(t,k){trace=trace*10+2;return delete t[k]}}})",
+                "return delete o[key]?42:0",
+                12,
+            ),
+            (
+                "var trace=0;var key='x';new Proxy({x:1},{deleteProperty(){trace++;return false}})",
+                "return delete o[key]?0:42",
+                1,
+            ),
+            (
+                "var trace=0;var key='x';new Proxy({x:1},{deleteProperty(){trace++;return false}})",
+                "'use strict';try{delete o[key]}catch(e){return e.message==='could not delete property'?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var key='x';new Proxy(Object.defineProperty({},'x',{value:1}),{deleteProperty(){trace++;return true}})",
+                "try{delete o[key]}catch(e){return e.name==='TypeError'?42:0}",
+                1,
+            ),
+            (
+                "var trace=0;var key='x';var t=new Proxy({x:1},{getOwnPropertyDescriptor(){trace=trace*10+2;return {value:1,writable:true,enumerable:true,configurable:true}},isExtensible(){trace=trace*10+3;return true}});new Proxy(t,{deleteProperty(){trace=trace*10+1;return true}})",
+                "return delete o[key]?42:0",
+                123,
+            ),
+            (
+                "var trace=0;var key='x';var t=new Proxy(Object.preventExtensions({x:1}),{isExtensible(){trace=trace*10+2;return false}});new Proxy(t,{deleteProperty(){trace=trace*10+1;return true}})",
+                "try{delete o[key]}catch(e){return e.name==='TypeError'?42:0}",
+                12,
+            ),
+            (
+                "var trace=0;var key='x';var t=new Proxy({}, {isExtensible(){trace=99;throw 1}});new Proxy(t,{deleteProperty(){trace++;return true}})",
+                "return delete o[key]?42:0",
+                1,
+            ),
+            (
+                "var trace=0;var key='x';new Proxy({x:42},{get has(){trace=trace*10+1;return function(t,k){trace=trace*10+2;return k in t}}})",
+                "return key in o?42:0",
+                12,
+            ),
+            (
+                "var trace=0;var key='x';new Proxy(Object.defineProperty({},'x',{value:1}),{has(){trace++;return false}})",
+                "try{return key in o}catch(e){return e.name==='TypeError'?42:0}",
+                1,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                &format!("(function(o){{{body}}})"),
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{setup}: {result:?}"
+            );
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            drop(profile);
+            assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn owned_prevent_extensions_checks_nested_target_after_trap() {
+        use crate::engine::object::ProxyBooleanKind;
+        for (setup, expected, trace) in [
+            (
+                "var trace=0;new Proxy({}, {preventExtensions(){trace++;return false}})",
+                Some(false),
+                1,
+            ),
+            (
+                "var trace=0;new Proxy(Object.preventExtensions({}), {preventExtensions(){trace++;return true}})",
+                Some(true),
+                1,
+            ),
+            (
+                "var trace=0;new Proxy({}, {preventExtensions(){trace++;return true}})",
+                None,
+                1,
+            ),
+            (
+                "var trace=0;var t=new Proxy(Object.preventExtensions({}),{isExtensible(){trace=trace*10+2;return false}});new Proxy(t,{preventExtensions(){trace=trace*10+1;return true}})",
+                Some(true),
+                12,
+            ),
+            (
+                "var trace=0;var t=new Proxy({}, {preventExtensions(){trace=trace*10+2;return false}});new Proxy(t,{get preventExtensions(){trace=trace*10+1;return undefined}})",
+                Some(false),
+                12,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let Value::Object(object) = context.eval(setup).unwrap() else {
+                panic!("expected Proxy")
+            };
+            let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let profile = CostProfile::start();
+            let result = match super::super::proxy_get_driver::start_boolean(
+                &runtime,
+                &mut execution,
+                id,
+                object,
+                ProxyBooleanKind::PreventExtensions,
+                false,
+                0,
+            )
+            .unwrap()
+            {
+                CallStep::Entered => super::run_frames(&runtime, execution)
+                    .unwrap()
+                    .finish(runtime.clone())
+                    .unwrap(),
+                CallStep::Complete(result) => result,
+                CallStep::Bridge => panic!("preventExtensions attempted handoff"),
+            };
+            match expected {
+                Some(expected) => assert!(
+                    matches!(result, Completion::Return(Value::Bool(value)) if value == expected),
+                    "{setup}: {result:?}"
+                ),
+                None => assert!(
+                    matches!(result, Completion::Throw(_)),
+                    "{setup}: {result:?}"
+                ),
+            }
+            let cost = profile.snapshot();
+            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
+            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            drop(profile);
+            assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 
     #[test]

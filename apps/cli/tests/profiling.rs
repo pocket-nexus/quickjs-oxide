@@ -91,7 +91,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         "--profile-json",
         "-e",
         // Keep an explicit unmigrated operation in this mixed-route probe.
-        "'x' in {}; print((function(x){return x+1})(41))",
+        "[] instanceof Array; print((function(x){return x+1})(41))",
     ]);
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");

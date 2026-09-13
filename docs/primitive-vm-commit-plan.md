@@ -112,6 +112,8 @@
 
 - S05 super 属性继续推进：HomeObject、冻结 base、读取/调用/写入及对象键转换接入 owned 驱动，保留 pinned getter receiver 差异与读写顺序，并验证 base 独立 GC 保活。super 15 项、owned 库 2129 项、owned 常规 oracle 907 项（1 项手动压力未运行）、CLI profiling 5 项及构建/扫描/契约/布局通过。本批仅修改 stack-vm；S05 其余 Proxy/native 同步回调仍待完成，未进入 S06/S07。
 
+- S05 属性谓词继续推进：in/delete 接入 owned 转换/查询，Proxy deleteProperty/preventExtensions 共享阶段并保留不同的 target 不变量；Symbol 键跨等待保活。修正删除后 reference/with 用 Get(undefined) 误判 TypedArray 属性存在的问题，原 oracle 预期不变。新库 2133 项、旧库 1991 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、CLI profiling 各 5 项及构建/扫描/契约/布局通过。剩余 Proxy/native 同步路径继续待办，S05 未验收，未进入 S06/S07。
+
 ## 2. 编译与执行基础
 
 ### S01 — `refactor(compiler): organize stack compilation and diagnostics`

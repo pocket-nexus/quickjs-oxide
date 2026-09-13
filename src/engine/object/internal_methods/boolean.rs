@@ -1,4 +1,4 @@
-//! Completion-aware Proxy HasProperty and IsExtensible requests.
+//! Completion-aware Proxy boolean internal methods and their distinct invariants.
 use super::{
     RootedProxy,
     method::{MethodResume, MethodStep},
@@ -11,9 +11,20 @@ use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyBooleanKind {
     Has(PropertyKey),
+    Delete(PropertyKey),
     Extensible,
+    PreventExtensions,
 }
 pub(crate) enum ProxyBooleanStep {
+    Delete {
+        object: ObjectRef,
+        key: PropertyKey,
+        resume: ProxyBooleanResume,
+    },
+    PreventExtensions {
+        object: ObjectRef,
+        resume: ProxyBooleanResume,
+    },
     Complete(NativeConversion<bool>),
     Read {
         object: ObjectRef,
@@ -53,13 +64,25 @@ enum Phase {
     },
     Forward {
         _rooted: RootedProxy,
+        _key: Option<PropertyKey>,
     },
     Trap {
         rooted: RootedProxy,
         kind: ProxyBooleanKind,
     },
+    DeleteInvariant {
+        rooted: RootedProxy,
+        key: PropertyKey,
+    },
+    RequiredExtensibility {
+        _rooted: RootedProxy,
+        _key: Option<PropertyKey>,
+        name: &'static str,
+        expected: bool,
+    },
     HasInvariant {
         rooted: RootedProxy,
+        key: PropertyKey,
     },
     ExtensibleInvariant {
         _rooted: RootedProxy,
@@ -79,7 +102,12 @@ impl ProxyBooleanStep {
                 runtime.validate_object_and_key(&object, key)?;
                 "has"
             }
+            ProxyBooleanKind::Delete(key) => {
+                runtime.validate_object_and_key(&object, key)?;
+                "deleteProperty"
+            }
             ProxyBooleanKind::Extensible => "isExtensible",
+            ProxyBooleanKind::PreventExtensions => "preventExtensions",
         };
         let step = MethodStep::start(runtime, realm, object, name)?;
         method(runtime, realm, kind, step)
@@ -114,7 +142,15 @@ fn method(
             let object = rooted.target.clone();
             let resume = ProxyBooleanResume {
                 realm,
-                phase: Phase::Forward { _rooted: rooted },
+                phase: Phase::Forward {
+                    _rooted: rooted,
+                    _key: match &kind {
+                        ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) => {
+                            Some(key.clone())
+                        }
+                        _ => None,
+                    },
+                },
             };
             match kind {
                 ProxyBooleanKind::Has(key) => ProxyBooleanStep::Has {
@@ -123,11 +159,19 @@ fn method(
                     resume,
                 },
                 ProxyBooleanKind::Extensible => ProxyBooleanStep::Extensible { object, resume },
+                ProxyBooleanKind::Delete(key) => ProxyBooleanStep::Delete {
+                    object,
+                    key,
+                    resume,
+                },
+                ProxyBooleanKind::PreventExtensions => {
+                    ProxyBooleanStep::PreventExtensions { object, resume }
+                }
             }
         }
         MethodStep::Complete(NativeConversion::Value((rooted, Some(target)))) => {
             let mut arguments = vec![Value::Object(rooted.target.clone())];
-            if let ProxyBooleanKind::Has(key) = &kind {
+            if let ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) = &kind {
                 arguments.push(runtime.property_key_value(key)?);
             }
             ProxyBooleanStep::Call {
@@ -170,10 +214,35 @@ impl ProxyBooleanResume {
                     }
                     ProxyBooleanKind::Has(key) => Ok(ProxyBooleanStep::Descriptor {
                         object: rooted.target.clone(),
-                        key,
+                        key: key.clone(),
                         resume: Self {
                             realm: self.realm,
-                            phase: Phase::HasInvariant { rooted },
+                            phase: Phase::HasInvariant { rooted, key },
+                        },
+                    }),
+                    ProxyBooleanKind::Delete(_) | ProxyBooleanKind::PreventExtensions
+                        if !result =>
+                    {
+                        Ok(ProxyBooleanStep::Complete(NativeConversion::Value(false)))
+                    }
+                    ProxyBooleanKind::Delete(key) => Ok(ProxyBooleanStep::Descriptor {
+                        object: rooted.target.clone(),
+                        key: key.clone(),
+                        resume: Self {
+                            realm: self.realm,
+                            phase: Phase::DeleteInvariant { rooted, key },
+                        },
+                    }),
+                    ProxyBooleanKind::PreventExtensions => Ok(ProxyBooleanStep::Extensible {
+                        object: rooted.target.clone(),
+                        resume: Self {
+                            realm: self.realm,
+                            phase: Phase::RequiredExtensibility {
+                                _rooted: rooted,
+                                name: "preventExtensions",
+                                expected: false,
+                                _key: None,
+                            },
                         },
                     }),
                     ProxyBooleanKind::Extensible => Ok(ProxyBooleanStep::Extensible {
@@ -207,6 +276,16 @@ impl ProxyBooleanResume {
         };
         match self.phase {
             Phase::Forward { .. } => Ok(ProxyBooleanStep::Complete(NativeConversion::Value(value))),
+            Phase::RequiredExtensibility {
+                _rooted,
+                name,
+                expected,
+                _key,
+            } => Ok(ProxyBooleanStep::Complete(if value != expected {
+                runtime.proxy_invariant_throw(self.realm, name)?
+            } else {
+                NativeConversion::Value(true)
+            })),
             Phase::ExtensibleInvariant { _rooted, result } => {
                 if result != value {
                     return Ok(ProxyBooleanStep::Complete(
@@ -226,10 +305,14 @@ impl ProxyBooleanResume {
         runtime: &Runtime,
         descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<ProxyBooleanStep, RuntimeError> {
-        let Phase::HasInvariant { rooted } = self.phase else {
-            return Err(RuntimeError::Invariant(
-                "Proxy boolean continuation received a descriptor reply",
-            ));
+        let (rooted, key, deleting) = match self.phase {
+            Phase::HasInvariant { rooted, key } => (rooted, key, false),
+            Phase::DeleteInvariant { rooted, key } => (rooted, key, true),
+            _ => {
+                return Err(RuntimeError::Invariant(
+                    "Proxy boolean continuation received a descriptor reply",
+                ));
+            }
         };
         let descriptor = match descriptor {
             NativeConversion::Value(value) => value,
@@ -237,6 +320,29 @@ impl ProxyBooleanResume {
                 return Ok(ProxyBooleanStep::Complete(NativeConversion::Throw(value)));
             }
         };
+        if deleting {
+            let Some(target) = descriptor else {
+                return Ok(ProxyBooleanStep::Complete(NativeConversion::Value(true)));
+            };
+            if !target.configurable() {
+                return Ok(ProxyBooleanStep::Complete(
+                    runtime.proxy_invariant_throw(self.realm, "deleteProperty")?,
+                ));
+            }
+            // Delete consults nested [[IsExtensible]], unlike Has's pinned raw bit.
+            return Ok(ProxyBooleanStep::Extensible {
+                object: rooted.target.clone(),
+                resume: Self {
+                    realm: self.realm,
+                    phase: Phase::RequiredExtensibility {
+                        _rooted: rooted,
+                        name: "deleteProperty",
+                        expected: true,
+                        _key: Some(key),
+                    },
+                },
+            });
+        }
         if let Some(target) = descriptor
             && (!target.configurable() || !runtime.raw_extensible_bit(&rooted.target)?)
         {
@@ -255,6 +361,18 @@ pub(super) fn finish(
 ) -> Result<NativeConversion<bool>, RuntimeError> {
     loop {
         step = match step {
+            ProxyBooleanStep::Delete {
+                object,
+                key,
+                resume,
+            } => resume.boolean(
+                runtime,
+                runtime.internal_delete_property(realm, &object, &key)?,
+            )?,
+            ProxyBooleanStep::PreventExtensions { object, resume } => resume.boolean(
+                runtime,
+                runtime.internal_prevent_extensions(realm, &object)?,
+            )?,
             ProxyBooleanStep::Complete(result) => return Ok(result),
             ProxyBooleanStep::Read {
                 object,
@@ -301,5 +419,95 @@ pub(super) fn finish(
                 runtime.internal_get_own_property(realm, &object, &key)?,
             )?,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn take_read(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Read { resume, .. } = step else {
+            panic!("expected method read")
+        };
+        resume
+    }
+    fn take_call(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Call { resume, .. } = step else {
+            panic!("expected trap call")
+        };
+        resume
+    }
+    fn take_descriptor(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Descriptor { resume, .. } = step else {
+            panic!("expected descriptor query")
+        };
+        resume
+    }
+    fn take_extensible(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Extensible { resume, .. } = step else {
+            panic!("expected extensibility query")
+        };
+        resume
+    }
+
+    #[test]
+    fn delete_keeps_symbol_key_across_both_invariant_queries_and_abandonment() {
+        for after_descriptor in [false, true] {
+            let runtime = Runtime::new();
+            let weak = std::rc::Rc::downgrade(&runtime.0);
+            let mut context = runtime.new_context();
+            let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
+                panic!("expected Proxy")
+            };
+            let callable = context.eval("(function(){return true})").unwrap();
+            let symbol = runtime.new_symbol(None).unwrap();
+            let key = PropertyKey::from(symbol);
+            let atom = key.atom();
+            let resume = take_read(
+                ProxyBooleanStep::start(
+                    &runtime,
+                    context.realm,
+                    proxy,
+                    ProxyBooleanKind::Delete(key),
+                )
+                .unwrap(),
+            );
+            let resume = take_call(
+                resume
+                    .resume(&runtime, Completion::Return(callable))
+                    .unwrap(),
+            );
+            let mut resume = take_descriptor(
+                resume
+                    .resume(&runtime, Completion::Return(Value::Bool(true)))
+                    .unwrap(),
+            );
+            if after_descriptor {
+                resume = take_extensible(
+                    resume
+                        .descriptor(
+                            &runtime,
+                            NativeConversion::Value(Some(
+                                CompleteOrdinaryPropertyDescriptor::Data {
+                                    value: Value::Int(1),
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: true,
+                                },
+                            )),
+                        )
+                        .unwrap(),
+                );
+            }
+            runtime.run_gc().unwrap();
+            assert!(runtime.0.state.borrow().atoms.is_live(atom));
+            drop(resume);
+            runtime.run_gc().unwrap();
+            assert!(!runtime.0.state.borrow().atoms.is_live(atom));
+            drop(context);
+            drop(runtime);
+            assert!(weak.upgrade().is_none());
+        }
     }
 }
