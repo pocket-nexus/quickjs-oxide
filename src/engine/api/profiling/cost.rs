@@ -93,6 +93,9 @@ pub struct CostSnapshot {
     pub owned_instructions: u64,
     /// Untouched instructions handed to the temporary previous-VM bridge.
     pub owned_bridge_exits: u64,
+    /// Selected calls still executed through the transitional synchronous
+    /// runtime boundary. Includes callback-free callees; not all nested calls.
+    pub owned_sync_call_bridges: u64,
     pub owned_max_operand_depth: usize,
     pub owned_storage: OwnedStorageCost,
     pub call_preparation: CallPreparationCost,
@@ -316,6 +319,14 @@ pub(crate) fn record_owned_bridge() {
     if let Some(collector) = current() {
         let mut costs = collector.borrow_mut();
         costs.owned_bridge_exits = costs.owned_bridge_exits.saturating_add(1);
+    }
+}
+
+#[cfg(feature = "stack-vm")]
+pub(crate) fn record_owned_sync_call_bridge() {
+    if let Some(collector) = current() {
+        let mut costs = collector.borrow_mut();
+        costs.owned_sync_call_bridges = costs.owned_sync_call_bridges.saturating_add(1);
     }
 }
 

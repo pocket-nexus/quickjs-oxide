@@ -121,3 +121,6 @@ mod frame_operations;
 
 #[cfg(feature = "stack-vm")]
 mod call_bridge;
+
+#[cfg(feature = "stack-vm")]
+mod property_driver;

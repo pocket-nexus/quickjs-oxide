@@ -207,6 +207,7 @@ pub(super) struct RunningExecution {
     pub slots: SlotStore,
     /// Cold completion owns its payload before the active window is cleared.
     pub pending: Option<Value>,
+    pub pending_call: Option<Box<super::call_bridge::PendingCall>>,
     _guard: ExecutionGuard,
 }
 
@@ -217,6 +218,7 @@ impl RunningExecution {
             frames: FrameStore::new(guard.registration.id, limits.frames),
             slots: SlotStore::new(limits.slots),
             pending: None,
+            pending_call: None,
             _guard: guard,
         })
     }

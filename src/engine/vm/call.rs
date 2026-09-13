@@ -1,7 +1,9 @@
 #[cfg(feature = "stack-vm")]
 mod request;
 #[cfg(feature = "stack-vm")]
-pub(in crate::engine::vm) use request::BytecodeCallRequest;
+pub(in crate::engine::vm) use request::{
+    BytecodeCallRequest, NormalizedCallback, normalize_callback,
+};
 
 mod prepare;
 pub(in crate::engine::vm) use prepare::PreparedBytecodeFrame;

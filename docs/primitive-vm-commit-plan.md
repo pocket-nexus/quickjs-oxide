@@ -1,6 +1,6 @@
 # 栈 VM：一个 PR 内的 10 个 commit
 
-状态：2026-09-13，S01–S04 阶段验收通过，S05–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
+状态：2026-09-13，S01–S04 阶段验收通过，S05 实施中，S06–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
 
 目标见[架构计划](primitive-vm-plan.md)，目录与算法见[实施设计](primitive-vm-implementation-plan.md)，能力和结构验收见[迁移清单](primitive-vm-migration.md)。
 
@@ -77,6 +77,9 @@
 - S04 完整库门禁发现并修正了一元 `+` 恢复使用通用 ToNumber 的偏差：新旧执行路径现在共享原语 OP_plus 处理，保持 BigInt 特定消息和 Float 原表示。二进制既有断言未改，回调 Float/-0/NaN 位模式与 BigInt 抛错测试零旧分派通过。修正后新配置库测试 2092 项、默认配置 1981 项通过；最终阶段结果见下条。
 
 - **S04 阶段验收通过（2026-09-13）。** 一元 `+` 修正后的同源门禁：owned 库 2092 项、默认库 1981 项；两种配置的常规 oracle 各 907 项加单独 65K 压力 1 项，合计各 908 项；CLI profiling 各 5 项通过。完整 boundary 714 个反例全部拒绝，退出码 0；非 profiling stack-vm 构建、格式、diff 和源码布局（521 文件）通过。普通调用/构造、完整绑定、同步展开、一条完整转换回调、host delimiter 骨架和初步调用成本按本阶段范围验收；逐项证据与后续边界见迁移账本。S05–S10 尚未开始，整体目标未完成；正式十个提交仍在最终 PR 整理时归并。
+
+- S05 首批属性读取迁移：object 共享准备阶段覆盖 non-Proxy 描述符/原型查找，保留 Array 孔位、TypedArray 整数索引终止、Arguments/String/namespace/autoinit 的原存储规则。GetField/GetField2 与原语动态键的 GetArrayEl/2/3 由 property_driver 消费已选 getter，原对象键转换/Proxy/Set 等继续待办。相关 getter、receiver、旧键保留、nullish 顺序和请求放弃测试通过。
+- S05 临时同步调用请求先拥有 callee/实参并返回到外层 driver，常驻分派帧退出后才调用未迁移 Runtime 入口；父执行和 operation 代次保留，回收或错误不重放调用。此桥仍可能同步等待内部 JS，不能计作 S05 callback continuation 完成。新增 owned_sync_call_bridges 单独揭示这些调用；原 native 小栈用例保持预算并通过。完整 owned 库 2097 项、默认库 1981 项、新旧常规 oracle 各 907 项（各 1 项手动压力用例本批未重跑）、新旧 CLI profiling 各 5 项、非 profiling 构建、边界扫描/定向 mutation 与源码布局 522 文件通过。第一轮 [121 个直接调用点账本](primitive-vm-sync-callbacks.md) 已建立，间接回调图仍须补全；S05 未验收。
 
 ## 1. 提交顺序与关口
 

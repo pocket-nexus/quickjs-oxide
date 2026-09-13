@@ -144,7 +144,7 @@ pub(super) fn enter_call(
                 callable = target;
             }
             _ => {
-                return super::call_bridge::invoke(
+                return super::call_bridge::prepare(
                     runtime, execution, id, count, method, tail, None,
                 );
             }
@@ -162,7 +162,7 @@ pub(super) fn enter_call(
     if kind != FunctionKind::Normal {
         let overflow = (!execution.frames.can_push() || runtime.bytecode_call_would_overflow())
             .then_some(bytecode);
-        return super::call_bridge::invoke(runtime, execution, id, count, method, tail, overflow);
+        return super::call_bridge::prepare(runtime, execution, id, count, method, tail, overflow);
     }
     #[cfg(feature = "profiling")]
     let observed_depth = execution.slots.depth(window);
@@ -219,126 +219,6 @@ pub(super) fn enter_call(
     Ok(CallStep::Entered)
 }
 
-fn enter_field(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    index: u32,
-    keep_receiver: bool,
-) -> Result<CallStep, Error> {
-    use crate::engine::object::{OrdinaryRead, PropertyKey};
-    let frame = execution.frames.current_mut(id)?;
-    let Value::Object(object) = execution.slots.peek(&frame.window, 0)? else {
-        return Ok(CallStep::Bridge);
-    };
-    if !object.belongs_to(runtime) {
-        return Ok(CallStep::Bridge);
-    }
-    let Some(atom) = frame
-        .executable
-        .property_key_atoms
-        .as_ref()
-        .and_then(|atoms| atoms.get(index as usize))
-        .copied()
-        .filter(|atom| !atom.is_null())
-    else {
-        return Ok(CallStep::Bridge);
-    };
-    let key = PropertyKey::from_borrowed_atom(runtime.clone(), atom)
-        .map_err(|error| Error::internal(error.to_string()))?;
-    let realm = frame.executable.realm;
-    let read = match super::environment_driver::prepare_environment_read(runtime, object, &key) {
-        Ok(read) => read,
-        Err(error) => {
-            let Some(kind) =
-                crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
-            else {
-                return Err(error);
-            };
-            return Ok(CallStep::Complete(Completion::Throw(
-                runtime
-                    .new_native_error_from_error(realm, kind, &error)
-                    .map_err(runtime_error_to_vm_error)?,
-            )));
-        }
-    };
-    let mut request = None;
-    let value = match read {
-        OrdinaryRead::Complete(value) => Some(value.unwrap_or(Value::Undefined)),
-        OrdinaryRead::Call { getter, receiver } => {
-            let CallableExecution::Bytecode {
-                bytecode,
-                closure_slots,
-            } = runtime
-                .bytecode_for_callable(&getter)
-                .map_err(runtime_error_to_vm_error)?
-            else {
-                return Ok(CallStep::Bridge);
-            };
-            let kind = runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .function_bytecode(bytecode.bytecode_id())
-                .map_err(|error| Error::internal(error.to_string()))?
-                .metadata
-                .function_kind;
-            if kind != FunctionKind::Normal {
-                return Ok(CallStep::Bridge);
-            }
-            request = Some(BytecodeCallRequest {
-                callable: getter,
-                receiver,
-                new_target: Value::Undefined,
-                arguments: Vec::new(),
-                bytecode,
-                closure_slots,
-                caller_realm: realm,
-                return_to: ReturnTarget {
-                    value_use: crate::engine::vm::frame::ReturnValue::Push,
-                    frame: id,
-                    tail: false,
-                    operation: None,
-                },
-            });
-            None
-        }
-        OrdinaryRead::Special { .. } => return Ok(CallStep::Bridge),
-    };
-    #[cfg(feature = "profiling")]
-    let observed_depth = execution.slots.depth(&frame.window);
-    if let Some(request) = &request {
-        if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
-            return runtime
-                .bytecode_stack_overflow_completion(realm, &request.bytecode)
-                .map(CallStep::Complete)
-                .map_err(runtime_error_to_vm_error);
-        }
-    }
-    let frame = execution.frames.current_mut(id)?;
-    let receiver = execution.slots.pop(&mut frame.window)?;
-    if keep_receiver {
-        execution.slots.push(&mut frame.window, receiver)?;
-    }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property resume PC overflow"))?;
-    if let Some(request) = request {
-        let entry = request.prepare(runtime)?;
-        push_frame(execution, entry)?;
-    } else {
-        execution.slots.push(
-            &mut frame.window,
-            value.ok_or_else(|| Error::internal("property result missing"))?,
-        )?;
-    }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(observed_depth);
-    Ok(CallStep::Entered)
-}
-
 pub(super) fn execute(
     runtime: Runtime,
     entry: FrameEntry,
@@ -352,23 +232,81 @@ pub(super) fn execute(
 pub(super) enum RunningExit {
     Complete(Completion),
     RootHandoff(Box<super::frame_exit::RootHandoff>),
+    Call(Box<CallContinuation>),
+}
+
+pub(super) struct CallContinuation {
+    execution: RunningExecution,
+    conversion: Option<super::conversion_driver::ConversionTask>,
+    next_operation: u64,
+}
+
+impl CallContinuation {
+    #[inline(never)]
+    fn invoke(&mut self, runtime: &Runtime) -> Result<Option<Completion>, Error> {
+        let call = self
+            .execution
+            .pending_call
+            .take()
+            .ok_or_else(|| Error::internal("call continuation has no request"))?;
+        call.invoke(runtime, &mut self.execution)
+    }
+
+    #[inline(never)]
+    fn resume(
+        self: Box<Self>,
+        runtime: &Runtime,
+        forwarded: Option<Completion>,
+    ) -> Result<RunningExit, Error> {
+        let Self {
+            execution,
+            conversion,
+            next_operation,
+        } = *self;
+        run_frames_with_state(runtime, execution, forwarded, conversion, next_operation)
+    }
 }
 
 impl RunningExit {
     pub(super) fn finish(self, runtime: Runtime) -> Result<Completion, Error> {
-        match self {
-            Self::Complete(completion) => Ok(completion),
-            Self::RootHandoff(handoff) => handoff.execute(runtime),
+        let mut exit = self;
+        loop {
+            match exit {
+                Self::Complete(completion) => return Ok(completion),
+                Self::RootHandoff(handoff) => return handoff.execute(runtime),
+                Self::Call(mut continuation) => {
+                    let forwarded = continuation.invoke(&runtime)?;
+                    exit = continuation.resume(&runtime, forwarded)?;
+                }
+            }
         }
     }
 }
 
 #[inline(never)]
-fn run_frames(runtime: &Runtime, mut execution: RunningExecution) -> Result<RunningExit, Error> {
-    let mut forwarded = None;
-    let mut conversion = None;
-    let mut next_operation = 0_u64;
+fn run_frames(runtime: &Runtime, execution: RunningExecution) -> Result<RunningExit, Error> {
+    run_frames_with_state(runtime, execution, None, None, 0)
+}
+
+#[inline(never)]
+fn run_frames_with_state(
+    runtime: &Runtime,
+    mut execution: RunningExecution,
+    mut forwarded: Option<Completion>,
+    mut conversion: Option<super::conversion_driver::ConversionTask>,
+    mut next_operation: u64,
+) -> Result<RunningExit, Error> {
     loop {
+        if execution.pending_call.is_some() {
+            if forwarded.is_some() {
+                return Err(Error::internal("pending call conflicts with a completion"));
+            }
+            return Ok(RunningExit::Call(Box::new(CallContinuation {
+                execution,
+                conversion,
+                next_operation,
+            })));
+        }
         let id = execution
             .frames
             .current_id()
@@ -404,6 +342,25 @@ fn run_frames(runtime: &Runtime, mut execution: RunningExecution) -> Result<Runn
                 Progress::Complete(completion) => {
                     forwarded = Some(completion);
                     RunExit::Complete
+                }
+                Progress::PropertyRead(input) => {
+                    match super::property_driver::read_converted(
+                        runtime,
+                        &mut execution,
+                        id,
+                        input,
+                    )? {
+                        CallStep::Entered => continue,
+                        CallStep::Complete(completion) => {
+                            forwarded = Some(completion);
+                            RunExit::Complete
+                        }
+                        CallStep::Bridge => {
+                            return Err(Error::internal(
+                                "converted property read attempted replay",
+                            ));
+                        }
+                    }
                 }
             }
         } else if forwarded.is_some() {
@@ -601,7 +558,54 @@ fn run_frames(runtime: &Runtime, mut execution: RunningExecution) -> Result<Runn
             keep_receiver,
         } = exit
         {
-            match enter_field(runtime, &mut execution, id, index, keep_receiver)? {
+            match super::property_driver::read(
+                runtime,
+                &mut execution,
+                id,
+                super::property_driver::ReadKey::Static(index),
+                keep_receiver,
+            )? {
+                CallStep::Entered => continue,
+                CallStep::Complete(completion) => {
+                    forwarded = Some(completion);
+                    exit = RunExit::Complete;
+                }
+                CallStep::Bridge => exit = RunExit::Bridge,
+            }
+        }
+        if let RunExit::GetElement {
+            keep_receiver,
+            keep_key,
+        } = exit
+        {
+            let frame = execution.frames.current_mut(id)?;
+            if !matches!(
+                execution.slots.peek(&frame.window, 1)?,
+                Value::Null | Value::Undefined
+            ) && matches!(execution.slots.peek(&frame.window, 0)?, Value::Object(_))
+            {
+                next_operation = next_operation
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("property conversion identity exhausted"))?;
+                conversion = Some(
+                    super::conversion_driver::ConversionTask::start_property_read(
+                        runtime,
+                        &mut execution,
+                        id,
+                        next_operation,
+                        keep_receiver,
+                        keep_key,
+                    )?,
+                );
+                continue;
+            }
+            match super::property_driver::read(
+                runtime,
+                &mut execution,
+                id,
+                super::property_driver::ReadKey::Computed { keep_key },
+                keep_receiver,
+            )? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -1985,6 +1989,7 @@ mod tests {
         assert!(runtime.0.state.borrow().active_frames.is_empty());
         // The map callback still uses the selected synchronous domain boundary;
         // zero frame handoffs do not claim that its S05 continuation has migrated.
+        assert_eq!(costs.owned_sync_call_bridges, 1);
     }
 
     #[test]
@@ -4309,7 +4314,7 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let callee = context
-            .eval("(function(){return this === (Math.abs(0),this)}).bind(3)")
+            .eval("(function(){return this === ('x' in {},this)}).bind(3)")
             .unwrap();
         let entry = entry(
             &runtime,
@@ -4322,6 +4327,433 @@ mod tests {
         assert!(matches!(result, Completion::Return(Value::Bool(true))));
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
         assert_eq!(profile.snapshot().owned_bridge_exits, 1);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn named_accessors_on_non_proxy_storage_use_owned_getter_frames() {
+        for expression in [
+            "(function(){return arguments})(7)",
+            "new Uint8Array(2)",
+            "new String('text')",
+            "new Number(7)",
+            "new Map()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(&format!(
+                "var hits=0;var object={expression};object.marker=42;Object.defineProperty(object,'x',{{get:function(){{hits++;return this.marker}}}});object"
+            )).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(o){return o.x})",
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{expression}"
+            );
+            let costs = profile.snapshot();
+            assert_eq!(costs.owned_storage.frames_pushed, 2, "{expression}");
+            assert_eq!(costs.legacy_dispatches, 0, "{expression}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{expression}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{expression}");
+            drop(profile);
+            assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
+        }
+    }
+
+    #[test]
+    fn computed_reads_keep_receivers_holes_and_typed_index_terminals() {
+        for (setup, source, expected, calls) in [
+            (
+                "var hits=0;var object=[,];object.marker=42;Object.setPrototypeOf(object,{get 0(){hits++;return this.marker}});object",
+                "(function(o){return o[0]})",
+                Value::Int(42),
+                1,
+            ),
+            (
+                "var hits=0;var object=(function(){return arguments})(7);object.marker=42;Object.defineProperty(object,'0',{get:function(){hits++;return function(){return this.marker}}});object",
+                "(function(o){return o[0]()})",
+                Value::Int(42),
+                1,
+            ),
+            (
+                "var hits=0;var object=new Uint8Array([7]);Object.setPrototypeOf(object,{get '-0'(){hits++;throw 99},get '1'(){hits++;throw 98}});object",
+                "(function(o){var k='-0';return o[k]===undefined && o[1]===undefined})",
+                Value::Bool(true),
+                0,
+            ),
+            (
+                "var hits=0;var object={};object[Symbol.iterator]=42;object",
+                "(function(o){return o[Symbol.iterator]})",
+                Value::Int(42),
+                0,
+            ),
+            (
+                "var hits=0;var object={'true':42,'1.5':42};object",
+                "(function(o){return o[true] + o[1.5]})",
+                Value::Int(84),
+                0,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let object = context.eval(setup).unwrap();
+            let entry = entry(&runtime, &mut context, source, vec![object]);
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            let Completion::Return(value) = result else {
+                panic!("read threw: {source}");
+            };
+            assert_eq!(value, expected, "{source}");
+            let costs = profile.snapshot();
+            assert_eq!(costs.legacy_dispatches, 0, "{source}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{source}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}");
+            drop(profile);
+            assert_eq!(context.eval("hits").unwrap(), Value::Int(calls));
+        }
+    }
+
+    #[test]
+    fn pending_native_call_can_be_abandoned_without_invocation_or_runtime_cycle() {
+        let profile = CostProfile::start();
+        let (weak, pending) = {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let callee = context.eval("Math.abs").unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(f){return f(42)})",
+                vec![callee],
+            );
+            let weak = std::rc::Rc::downgrade(&runtime.0);
+            let pending =
+                super::execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            assert!(matches!(pending, super::RunningExit::Call(_)));
+            assert!(!runtime.0.state.borrow().active_frames.is_empty());
+            (weak, pending)
+        };
+        assert!(weak.upgrade().is_some());
+        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+        drop(pending);
+        assert!(weak.upgrade().is_none());
+        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+    }
+
+    #[test]
+    fn computed_update_retains_the_original_key_across_getter_and_write_handoff() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let object = context.eval("var key='x',hits=0,written=0;({get x(){hits++;key='y';return 40},set x(v){written=v},set y(v){throw 99}})").unwrap();
+        let entry = entry(
+            &runtime,
+            &mut context,
+            "(function(o){return o[key]++})",
+            vec![object],
+        );
+        let profile = CostProfile::start();
+        let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+        assert!(matches!(result, Completion::Return(Value::Int(40))));
+        let costs = profile.snapshot();
+        assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
+        // Set is still awaiting its S05 driver path. The completed Get must
+        // carry its old canonical key into that handoff, without rereading it.
+        assert_eq!(costs.owned_bridge_exits, 1);
+        drop(profile);
+        assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
+        assert_eq!(context.eval("written").unwrap(), Value::Int(41));
+        assert_eq!(
+            context.eval("key").unwrap(),
+            Value::String(crate::engine::value::JsString::from_static("y"))
+        );
+    }
+
+    #[test]
+    fn nullish_computed_reads_reject_before_key_callbacks() {
+        for (source, expected) in [
+            (
+                "(function(o,k){try{return o[k]}catch(e){return e.message}})",
+                "cannot read property of null",
+            ),
+            (
+                "(function(o,k){try{return o[k]++}catch(e){return e.message}})",
+                "value has no property",
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let key = context
+                .eval("var hits=0;({toString(){hits++;throw 99}})")
+                .unwrap();
+            let entry = entry(&runtime, &mut context, source, vec![Value::Null, key]);
+            let profile = CostProfile::start();
+            let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            let Completion::Return(value) = result else {
+                panic!("read escaped catch");
+            };
+            assert_eq!(
+                value,
+                Value::String(crate::engine::value::JsString::from_static(expected))
+            );
+            let costs = profile.snapshot();
+            assert_eq!(costs.owned_bridge_exits, 0);
+            assert_eq!(costs.legacy_dispatches, 0);
+            assert_eq!(costs.owned_sync_call_bridges, 0);
+            drop(profile);
+            assert_eq!(context.eval("hits").unwrap(), Value::Int(0));
+        }
+    }
+
+    #[test]
+    fn object_property_keys_resume_string_hint_and_late_method_reads() {
+        for (setup, expected_events) in [
+            (
+                "var events='';var target={marker:42,get x(){events+='G';return this.marker}};var key={get [Symbol.toPrimitive](){events+='M';return function(hint){events+=hint;return 'x'}}}",
+                "MstringG",
+            ),
+            (
+                "var events='';var later=function(){throw 99};var target={get x(){events+='G';return 42}};var key={toString(){events+='S';later=function(){events+='V';return 'x'};return this},get valueOf(){events+='M';return later}}",
+                "SMVG",
+            ),
+            (
+                "var events='';var target={};Object.defineProperty(target,'x',{get:(function(a,b){events+='G';return this.marker+a+b}).bind({marker:39},1).bind({marker:0},2)});var key={toString:(function(k){events+=this.marker;return k}).bind({marker:'B'},'x')}",
+                "BG",
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            context.eval(setup).unwrap();
+            let target = context.eval("target").unwrap();
+            let key = context.eval("key").unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(o,k){return o[k]})",
+                vec![target, key],
+            );
+            let profile = CostProfile::start();
+            assert!(matches!(
+                execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
+                Completion::Return(Value::Int(42))
+            ));
+            let costs = profile.snapshot();
+            assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
+            assert_eq!(costs.legacy_dispatches, 0, "{setup}");
+            assert_eq!(costs.owned_bridge_exits, 0, "{setup}");
+            assert_eq!(costs.owned_sync_call_bridges, 0, "{setup}");
+            drop(profile);
+            assert_eq!(
+                context.eval("events").unwrap(),
+                Value::String(crate::engine::value::JsString::from_static(expected_events))
+            );
+        }
+    }
+
+    #[test]
+    fn converted_property_keys_keep_the_evaluated_base_and_throw_identity() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let key = context.eval("var current={x:42};var replacement={x:99};({toString(){current=replacement;return 'x'}})").unwrap();
+        let initial_entry = entry(
+            &runtime,
+            &mut context,
+            "(function(k){return current[k]})",
+            vec![key],
+        );
+        let profile = CostProfile::start();
+        assert!(matches!(
+            execute(runtime.clone(), initial_entry, ExecutionLimits::default()).unwrap(),
+            Completion::Return(Value::Int(42))
+        ));
+        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
+        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+        drop(profile);
+        assert_eq!(context.eval("current.x").unwrap(), Value::Int(99));
+        for key_source in [
+            "({get toString(){hits++;throw token}})",
+            "({toString(){hits++;throw token}})",
+        ] {
+            let token = context.eval("var hits=0;var token={};token").unwrap();
+            let key = context.eval(key_source).unwrap();
+            let target = context.eval("({get x(){throw 98}})").unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(o,k){return o[k]})",
+                vec![target, key],
+            );
+            let profile = CostProfile::start();
+            let Completion::Throw(value) =
+                execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap()
+            else {
+                panic!("key did not throw");
+            };
+            assert_eq!(value, token);
+            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
+            assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+            drop(profile);
+            assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
+        }
+    }
+
+    #[test]
+    fn converted_key_crosses_only_the_unresolved_property_step() {
+        for target_source in [
+            "new Proxy({x:42},{get(t,k,r){traps++;return t[k]}})",
+            "Object.defineProperty({},'x',{get:Number.prototype.valueOf.bind(42)})",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let key = context
+                .eval("var keys=0,traps=0;({toString(){keys++;return 'x'}})")
+                .unwrap();
+            let target = context.eval(target_source).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(o,k){return o[k]})",
+                vec![target, key],
+            );
+            let profile = CostProfile::start();
+            assert!(matches!(
+                execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
+                Completion::Return(Value::Int(42))
+            ));
+            let costs = profile.snapshot();
+            assert_eq!(costs.legacy_dispatches, 0);
+            assert_eq!(costs.owned_bridge_exits, 0);
+            assert_eq!(costs.owned_sync_call_bridges, 1);
+            drop(profile);
+            assert_eq!(context.eval("keys").unwrap(), Value::Int(1));
+            assert_eq!(
+                context.eval("traps").unwrap(),
+                Value::Int(i32::from(target_source.starts_with("new Proxy")))
+            );
+        }
+    }
+
+    #[test]
+    fn primitive_property_receivers_and_string_units_use_owned_reads() {
+        for (setup, source, input, expected) in [
+            (
+                "Object.defineProperty(Number.prototype,'x',{get:function(){'use strict';return this===42}})",
+                "(function(o){return o.x})",
+                Value::Int(42),
+                Value::Bool(true),
+            ),
+            (
+                "Object.defineProperty(String.prototype,'x',{get:function(){'use strict';return this==='hi'}})",
+                "(function(o){return o.x})",
+                Value::String(crate::engine::value::JsString::from_static("hi")),
+                Value::Bool(true),
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            context.eval(setup).unwrap();
+            let entry = entry(&runtime, &mut context, source, vec![input]);
+            let profile = CostProfile::start();
+            let Completion::Return(value) =
+                execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap()
+            else {
+                panic!("primitive read threw");
+            };
+            assert_eq!(value, expected);
+            assert_eq!(profile.snapshot().legacy_dispatches, 0);
+            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
+            assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+        }
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let entry = entry(
+            &runtime,
+            &mut context,
+            "(function(s){return s[0]+':'+s.length})",
+            vec![Value::String(crate::engine::value::JsString::from_static(
+                "hi",
+            ))],
+        );
+        let profile = CostProfile::start();
+        assert!(
+            matches!(execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(), Completion::Return(Value::String(value)) if value==crate::engine::value::JsString::from_static("h:2"))
+        );
+        assert_eq!(profile.snapshot().owned_storage.frames_pushed, 1);
+        assert_eq!(profile.snapshot().legacy_dispatches, 0);
+        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
+        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+    }
+
+    #[test]
+    fn object_key_updates_keep_one_conversion_across_the_remaining_set_bridge() {
+        for selected in ["0", "Symbol.iterator"] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            context.eval(&format!("var keys=0,getters=0,written=0;var selected={selected};var target={{}};Object.defineProperty(target,selected,{{get:function(){{getters++;return 41}},set:function(v){{written=v}}}});var key={{toString(){{keys++;return selected}}}};")).unwrap();
+            let target = context.eval("target").unwrap();
+            let key = context.eval("key").unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function(o,k){return o[k]++})",
+                vec![target, key],
+            );
+            let profile = CostProfile::start();
+            assert!(matches!(
+                execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
+                Completion::Return(Value::Int(41))
+            ));
+            assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
+            assert_eq!(profile.snapshot().owned_bridge_exits, 1);
+            assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+            drop(profile);
+            assert_eq!(
+                context.eval("keys*100+getters*10+written").unwrap(),
+                Value::Int(152)
+            );
+        }
+    }
+
+    #[test]
+    fn object_key_conversion_failure_uses_the_reading_realm() {
+        let runtime = Runtime::new();
+        let mut caller = runtime.new_context();
+        let mut foreign = runtime.new_context();
+        let Value::Object(expected) = caller.eval("TypeError.prototype").unwrap() else {
+            panic!("missing error prototype");
+        };
+        let key = foreign
+            .eval("({toString(){return {}},valueOf(){return {}}})")
+            .unwrap();
+        let target = caller.eval("({})").unwrap();
+        let entry = entry(
+            &runtime,
+            &mut caller,
+            "(function(o,k){return o[k]})",
+            vec![target, key],
+        );
+        let profile = CostProfile::start();
+        let Completion::Throw(Value::Object(error)) =
+            execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap()
+        else {
+            panic!("key unexpectedly succeeded");
+        };
+        assert_eq!(profile.snapshot().legacy_dispatches, 0);
+        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
+        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
+        drop(profile);
+        assert_eq!(runtime.get_prototype_of(&error).unwrap(), Some(expected));
+        assert_eq!(
+            caller
+                .get_property(&error, &runtime.intern_property_key("message").unwrap())
+                .unwrap(),
+            Value::String(crate::engine::value::JsString::from_static("toPrimitive"))
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 

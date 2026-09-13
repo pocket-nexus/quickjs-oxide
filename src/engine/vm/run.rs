@@ -36,6 +36,10 @@ pub(super) enum RunExit {
         index: u32,
         keep_receiver: bool,
     },
+    GetElement {
+        keep_receiver: bool,
+        keep_key: bool,
+    },
     InitializeDerived(u16),
     LexicalUninitialized(u16),
     Binding {
@@ -212,6 +216,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 return Ok(RunExit::GetField {
                     index: *index,
                     keep_receiver: matches!(instruction, Instruction::GetField2(_)),
+                });
+            }
+            Instruction::GetArrayEl | Instruction::GetArrayEl2 | Instruction::GetArrayEl3 => {
+                return Ok(RunExit::GetElement {
+                    keep_receiver: !matches!(instruction, Instruction::GetArrayEl),
+                    keep_key: matches!(instruction, Instruction::GetArrayEl3),
                 });
             }
             Instruction::Construct(count) | Instruction::ConstructSuper(count) => {

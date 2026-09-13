@@ -84,3 +84,53 @@ impl BytecodeCallRequest {
         Ok(entry)
     }
 }
+
+/// Callback classification consumes the bound chain without executing code.
+/// Both property getters and ToPrimitive methods keep the same argument order
+/// and innermost bound receiver before choosing their driver entry.
+pub(in crate::engine::vm) struct NormalizedCallback {
+    pub callable: CallableRef,
+    pub receiver: Value,
+    pub arguments: Vec<Value>,
+    pub classification: super::CallableExecution,
+}
+
+pub(in crate::engine::vm) fn normalize_callback(
+    runtime: &Runtime,
+    realm: ContextId,
+    mut callable: CallableRef,
+    mut receiver: Value,
+    mut arguments: Vec<Value>,
+) -> Result<crate::engine::value::conversion::NativeConversion<NormalizedCallback>, Error> {
+    use crate::engine::value::conversion::NativeConversion;
+    loop {
+        match runtime
+            .bytecode_for_callable(&callable)
+            .map_err(runtime_error_to_vm_error)?
+        {
+            super::CallableExecution::Bound {
+                target,
+                this_value,
+                arguments: bound,
+            } => {
+                arguments = match runtime
+                    .concatenate_bound_arguments(realm, &bound, &arguments)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    NativeConversion::Value(arguments) => arguments,
+                    NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                };
+                receiver = this_value;
+                callable = target;
+            }
+            classification => {
+                return Ok(NativeConversion::Value(NormalizedCallback {
+                    callable,
+                    receiver,
+                    arguments,
+                    classification,
+                }));
+            }
+        }
+    }
+}

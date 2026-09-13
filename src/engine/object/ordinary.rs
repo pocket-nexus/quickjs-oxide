@@ -270,8 +270,18 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
+        let read = self.prepare_ordinary_read(object, key, receiver)?;
+        self.finish_prepared_read(realm, key, read)
+    }
+
+    pub(super) fn finish_prepared_read(
+        &self,
+        realm: ContextId,
+        key: &PropertyKey,
+        read: OrdinaryRead,
+    ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
         use crate::engine::vm::Completion;
-        match self.prepare_ordinary_read(object, key, receiver)? {
+        match read {
             OrdinaryRead::Complete(value) => Ok(NativeConversion::Value(value)),
             OrdinaryRead::Call { getter, receiver } => {
                 Ok(match self.call_internal(realm, &getter, receiver, &[])? {
@@ -287,7 +297,7 @@ impl Runtime {
         }
     }
 
-    /// Finish ordinary lookup without invoking an accessor or exotic method.
+    /// Finish lookup through non-Proxy storage without invoking an accessor.
     /// Every returned owner remains valid after the lookup borrows end; a
     /// caller can schedule the selected getter without repeating the lookup.
     pub(crate) fn prepare_ordinary_read(
@@ -296,6 +306,9 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<OrdinaryRead, RuntimeError> {
+        let _operation = self.operation();
+        self.validate_object_and_key(object, key)?;
+        self.validate_value_domain(&receiver, "property receiver")?;
         use crate::engine::object::ordinary_storage::ReadProbe;
         let mut prototype = None;
         loop {
@@ -310,12 +323,53 @@ impl Runtime {
                 }
                 ReadProbe::Missing(Some(next)) => prototype = Some(next),
                 ReadProbe::Missing(None) => return Ok(OrdinaryRead::Complete(None)),
-                ReadProbe::Special(kind) => {
+                ReadProbe::Special(kind @ SpecialKind::Proxy) => {
                     return Ok(OrdinaryRead::Special {
                         kind,
                         object: current.clone(),
                         receiver,
                     });
+                }
+                ReadProbe::Special(kind) => {
+                    // Integer-indexed exotic Get is terminal, including
+                    // invalid/detached indices. It must not inspect a prototype.
+                    if matches!(kind, SpecialKind::TypedArray)
+                        && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
+                    {
+                        let value = match numeric {
+                            crate::engine::builtins::CanonicalNumericIndex::Valid(index) => self
+                                .typed_array_read_index(current, index)?
+                                .unwrap_or(Value::Undefined),
+                            crate::engine::builtins::CanonicalNumericIndex::Invalid => {
+                                Value::Undefined
+                            }
+                        };
+                        return Ok(OrdinaryRead::Complete(Some(value)));
+                    }
+                    // Reuse the full storage kernel for Array holes, String,
+                    // Arguments, namespace live cells and lazy own properties.
+                    // Materializing a descriptor does not invoke its getter.
+                    if let Some(own) = self.get_own_property_in_operation(current, key)? {
+                        return Ok(match own {
+                            CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
+                                OrdinaryRead::Complete(Some(value))
+                            }
+                            CompleteOrdinaryPropertyDescriptor::Accessor {
+                                get: Some(getter),
+                                ..
+                            } => OrdinaryRead::Call { getter, receiver },
+                            CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. } => {
+                                OrdinaryRead::Complete(Some(Value::Undefined))
+                            }
+                        });
+                    }
+                    // A non-Proxy object's prototype lookup has no user call.
+                    // A Proxy reached on the next iteration is still returned
+                    // as an explicit unresolved boundary with the same receiver.
+                    let Some(next) = self.get_prototype_of(current)? else {
+                        return Ok(OrdinaryRead::Complete(None));
+                    };
+                    prototype = Some(next);
                 }
             }
         }

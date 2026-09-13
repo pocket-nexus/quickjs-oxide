@@ -14,6 +14,11 @@ use crate::engine::vm::{Completion, ToPrimitiveHint};
 enum Finish {
     Plus,
     PropertyKey,
+    PropertyRead {
+        base: Value,
+        keep_receiver: bool,
+        keep_key: bool,
+    },
     AddLeft(Value),
     AddRight(Value),
 }
@@ -35,6 +40,7 @@ pub(super) enum Progress {
     Ready(ConversionTask),
     Entered,
     Complete(Completion),
+    PropertyRead(Box<super::property_driver::ConvertedRead>),
 }
 
 impl ConversionTask {
@@ -72,6 +78,43 @@ impl ConversionTask {
             frame,
             identity,
             step: PrimitiveResume::start(runtime, parent.executable.realm, value, hint),
+        })
+    }
+
+    pub(super) fn start_property_read(
+        runtime: &Runtime,
+        execution: &mut RunningExecution,
+        frame: FrameId,
+        identity: u64,
+        keep_receiver: bool,
+        keep_key: bool,
+    ) -> Result<Self, Error> {
+        let parent = execution.frames.current_mut(frame)?;
+        runtime
+            .validate_value_domain(
+                execution.slots.peek(&parent.window, 1)?,
+                "property receiver",
+            )
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .validate_value_domain(execution.slots.peek(&parent.window, 0)?, "property key")
+            .map_err(runtime_error_to_vm_error)?;
+        let key = execution.slots.pop(&mut parent.window)?;
+        let base = execution.slots.pop(&mut parent.window)?;
+        Ok(Self {
+            finish: Finish::PropertyRead {
+                base,
+                keep_receiver,
+                keep_key,
+            },
+            frame,
+            identity,
+            step: PrimitiveResume::start(
+                runtime,
+                parent.executable.realm,
+                key,
+                ToPrimitiveHint::String,
+            ),
         })
     }
 
@@ -150,6 +193,20 @@ impl ConversionTask {
                                     }
                                 }
                             }
+                            Finish::PropertyRead {
+                                base,
+                                keep_receiver,
+                                keep_key,
+                            } => {
+                                return Ok(Progress::PropertyRead(Box::new(
+                                    super::property_driver::ConvertedRead {
+                                        base,
+                                        key: value,
+                                        keep_receiver,
+                                        keep_key,
+                                    },
+                                )));
+                            }
                             Finish::PropertyKey => {
                                 let value = match value {
                                     Value::Symbol(symbol) => {
@@ -215,6 +272,8 @@ impl ConversionTask {
                     OrdinaryRead::Special { .. } => {
                         // Only this unresolved read crosses the transitional
                         // boundary. Earlier getters and calls are never replayed.
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_sync_call_bridge();
                         let completion = runtime
                             .get_property_in_realm(realm, &object, &key)
                             .map_err(runtime_error_to_vm_error)?;
@@ -254,12 +313,28 @@ fn invoke(
     resume: PrimitiveResume,
 ) -> Result<Progress, Error> {
     let realm = execution.frames.current_mut(frame)?.executable.realm;
+    let super::call::NormalizedCallback {
+        callable,
+        receiver,
+        arguments,
+        classification,
+    } = match super::call::normalize_callback(runtime, realm, callable, receiver, arguments)? {
+        crate::engine::value::conversion::NativeConversion::Value(call) => call,
+        crate::engine::value::conversion::NativeConversion::Throw(value) => {
+            return Ok(Progress::Ready(ConversionTask {
+                finish,
+                frame,
+                identity,
+                step: resume
+                    .resume(runtime, Completion::Throw(value))
+                    .map_err(runtime_error_to_vm_error)?,
+            }));
+        }
+    };
     if let CallableExecution::Bytecode {
         bytecode,
         closure_slots,
-    } = runtime
-        .bytecode_for_callable(&callable)
-        .map_err(runtime_error_to_vm_error)?
+    } = classification
     {
         let kind = runtime
             .0
@@ -315,6 +390,8 @@ fn invoke(
             return Ok(Progress::Entered);
         }
     }
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_sync_call_bridge();
     let completion = runtime
         .call_internal(realm, &callable, receiver, &arguments)
         .map_err(runtime_error_to_vm_error)?;

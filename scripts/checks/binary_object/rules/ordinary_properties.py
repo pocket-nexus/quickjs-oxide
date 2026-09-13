@@ -7,6 +7,7 @@ FILES = (
     "src/engine/object/internal_methods.rs",
     "src/engine/heap/runtime/mod.rs",
     "src/engine/heap/object_storage.rs",
+    "src/engine/object/access.rs",
 )
 
 
@@ -22,7 +23,7 @@ def check(ctx):
             ctx.fail("ordinary-property-source", f"missing regular source: {relative}")
             return
         sources.append(ctx.rust_code_only(path.read_text()))
-    storage, ordinary, dispatch, runtime, heap = sources
+    storage, ordinary, dispatch, runtime, heap, access = sources
     compact = lambda text: re.sub(r"\s+", "", text)
     requirements = [
         (not re.search(r"pub(?:\([^)]*\))?\s+struct\s+OwnSlot", storage), "slot positions must remain private to the storage owner"),
@@ -37,6 +38,12 @@ def check(ctx):
     retained = body.find("retain_edges_transactionally")
     published = body.find("replace_retained_object_slot")
     requirements.append((0 <= retained < published, "replacement edges must be retained before publication"))
+    read, _, _ = ctx.unique_braced_item(ordinary, re.compile(r"fn\s+prepare_ordinary_read\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", "prepared property read")
+    requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm)\s*\(", read), "prepared property reads must return callbacks without invoking JavaScript"))
+    requirements.append(("self.validate_object_and_key(object,key)?" in compact(read) and "self.validate_value_domain(&receiver," in compact(read), "prepared property reads must validate object, key and receiver domains"))
+    for name in ("prepare_value_property_read", "prepare_string_property_read"):
+        prepared, _, _ = ctx.unique_braced_item(access, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", name)
+        requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|get_value_property_in_realm|get_string_property_with_receiver)\s*\(", prepared), "primitive property preparation must return callbacks without invoking JavaScript"))
     for accepted, message in requirements:
         if not accepted:
             ctx.fail("ordinary-property-contract", message)

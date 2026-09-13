@@ -10,7 +10,7 @@ use crate::engine::{
 };
 
 #[inline(never)]
-pub(super) fn invoke(
+pub(super) fn prepare(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
@@ -40,39 +40,141 @@ pub(super) fn invoke(
     } else {
         Value::Undefined
     };
-    // There are no live slot or heap borrows across this selected synchronous call.
-    let completion = match overflow {
-        Some(bytecode) => runtime.bytecode_stack_overflow_completion(realm, &bytecode),
-        None => runtime.call_internal(realm, &callable, receiver, &arguments),
-    };
-    let completion = match completion {
-        Ok(completion) => completion,
-        Err(error) => {
-            let error = runtime_error_to_vm_error(error);
-            let Some(kind) =
-                crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
-            else {
-                return Err(error);
-            };
-            Completion::Throw(
-                runtime
-                    .new_native_error_from_error(realm, kind, &error)
-                    .map_err(runtime_error_to_vm_error)?,
-            )
-        }
-    };
-    match completion {
-        Completion::Return(value) if !tail => {
-            let frame = execution.frames.current_mut(id)?;
-            execution.slots.push(&mut frame.window, value)?;
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("call boundary resume PC overflow"))?;
+    if execution.pending_call.is_some() {
+        return Err(Error::internal("call boundary overwrote a pending request"));
+    }
+    execution.pending_call = Some(Box::new(PendingCall {
+        frame: id,
+        realm,
+        action: Action::Call {
+            callable,
+            receiver,
+            arguments,
+        },
+        tail,
+        overflow,
+        #[cfg(feature = "profiling")]
+        depth,
+    }));
+    Ok(CallStep::Entered)
+}
+
+/// Transitional internal call, owned while the resident dispatcher returns.
+/// This is not an external-host delimiter or a completed S05 continuation.
+pub(super) struct PendingCall {
+    frame: FrameId,
+    realm: crate::engine::heap::ContextId,
+    action: Action,
+    tail: bool,
+    overflow: Option<crate::engine::code::rooted::FunctionBytecodeRef>,
+    #[cfg(feature = "profiling")]
+    depth: usize,
+}
+
+pub(super) enum Action {
+    Call {
+        callable: crate::engine::object::CallableRef,
+        receiver: Value,
+        arguments: Vec<Value>,
+    },
+    Get {
+        object: crate::engine::object::ObjectRef,
+        key: crate::engine::object::PropertyKey,
+        receiver: Value,
+    },
+}
+
+pub(super) fn prepare_property(
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    realm: crate::engine::heap::ContextId,
+    action: Action,
+    _depth: usize,
+) -> Result<CallStep, Error> {
+    if execution.pending_call.is_some() {
+        return Err(Error::internal(
+            "property boundary overwrote a pending request",
+        ));
+    }
+    execution.pending_call = Some(Box::new(PendingCall {
+        frame,
+        realm,
+        action,
+        tail: false,
+        overflow: None,
+        #[cfg(feature = "profiling")]
+        depth: _depth,
+    }));
+    Ok(CallStep::Entered)
+}
+
+impl PendingCall {
+    #[inline(never)]
+    pub(super) fn invoke(
+        self: Box<Self>,
+        runtime: &Runtime,
+        execution: &mut RunningExecution,
+    ) -> Result<Option<Completion>, Error> {
+        let Self {
+            frame: id,
+            realm,
+            action,
+            tail,
+            overflow,
             #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
-            Ok(CallStep::Entered)
+            depth,
+        } = *self;
+        execution.frames.current_mut(id)?;
+        // The request is independent of caller slots. The resident dispatcher
+        // has returned before this remaining synchronous internal call begins.
+        let completion = match overflow {
+            Some(bytecode) => runtime.bytecode_stack_overflow_completion(realm, &bytecode),
+            None => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_sync_call_bridge();
+                match action {
+                    Action::Call {
+                        callable,
+                        receiver,
+                        arguments,
+                    } => runtime.call_internal(realm, &callable, receiver, &arguments),
+                    Action::Get {
+                        object,
+                        key,
+                        receiver,
+                    } => runtime.internal_get(realm, &object, &key, receiver),
+                }
+            }
+        };
+        let completion = match completion {
+            Ok(completion) => completion,
+            Err(error) => {
+                let error = runtime_error_to_vm_error(error);
+                let Some(kind) =
+                    crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
+                else {
+                    return Err(error);
+                };
+                Completion::Throw(
+                    runtime
+                        .new_native_error_from_error(realm, kind, &error)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+            }
+        };
+        match completion {
+            Completion::Return(value) if !tail => {
+                let frame = execution.frames.current_mut(id)?;
+                execution.slots.push(&mut frame.window, value)?;
+                frame.resume_pc = frame
+                    .fault_pc
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("call boundary resume PC overflow"))?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_instruction(depth);
+                Ok(None)
+            }
+            completion => Ok(Some(completion)),
         }
-        completion => Ok(CallStep::Complete(completion)),
     }
 }

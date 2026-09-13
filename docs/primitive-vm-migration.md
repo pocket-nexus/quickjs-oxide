@@ -1,6 +1,6 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-13。用户已确定使用栈 VM，**S01–S04 阶段验收通过，S05–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
+状态：2026-09-13。用户已确定使用栈 VM，**S01–S04 阶段验收通过，S05 实施中，S06–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
 
 ## 1. 起点与范围
 
@@ -67,7 +67,7 @@
 | 转换/异常/finally | conversion/operation/unwind，S04 | getter 次数、不同抛错点、清理优先级、单次释放 | S04 已验收；其余领域回调归 S05 |
 | binding/eval/arguments | resolution/bindings，S04 | captured、每迭代 cell、mapped/unmapped、private/readonly | S04 已验收 |
 | 局部 update/条件融合 | optimize/run/code，S08 | 快照、prefix/postfix/discard、NaN、效果/site/预算 | 待做 |
-| properties/Proxy | object + 对应 builtin，S05 | receiver、trap invariant、递归 getter、PR19 回退用例 | 待做 |
+| properties/Proxy | object + 对应 builtin，S05 | receiver、trap invariant、递归 getter、PR19 回退用例 | non-Proxy object base/原语键读取已接入；其余待做 |
 | Array/iterator | 对应 builtin，S05 | holes、species、sort、动态 length、IteratorClose | 待做 |
 | String/RegExp/buffer | 对应 builtin，S05 | replacement/Unicode、resize/detach、共享内存与 BigInt | 待做 |
 | 其余同步内置 | 各领域 owner，S05 | intrinsic 逐项审核、toJSON/replacer、修改中迭代、realm | 待做 |
@@ -904,3 +904,43 @@ stack-vm 构建通过。上述验证使用一元 `+` 修正后的生产源码；
 521 个可达 Rust 文件、格式及 diff 检查通过。修正前那次库检查的一元 `+`
 错误已由共享规则修复；其边界任务因源码变更终止，不计作通过。本次结果
 来自修正后的新任务。S04 阶段验收通过，S05–S10 尚未开始。
+
+
+## S05 首批属性读取与显式调用请求（实施中）
+
+object 的 prepare_ordinary_read 现在复用完整的非 Proxy 描述符读取内核：
+Array 孔位继续查原型，TypedArray 的 invalid/detached 整数索引完成 undefined
+而不读原型，Arguments/String/namespace live cell/autoinit 仍调用原存储规则。
+准备阶段只返回已选 getter/receiver 或 unresolved Proxy，不调用 JS。
+旧同步读取与 owned 读取共用这一步，删除了特殊节点上的重复 getter 调用。
+新增源码契约及 mutation 保证准备函数不回调且验证输入域。
+
+GetField/GetField2 的调度归 vm/property_driver；GetArrayEl/2/3 对 object
+base 和原语 key 使用同一入口。GetArrayEl3 在 getter 前保留 canonical key，
+即使 getter 改写 key 变量，之后的旧 Set 交接仍使用原键；nullish 检查保留
+普通读取与更新读取的不同消息，先于对象键回调。对象 key 的 ToPrimitive、
+原语 base、bound/native getter 与 Proxy 仍在未消费输入前交接，继续属于 S05
+待办，不把这批改动称为完整 Get 迁移。
+
+非 Proxy 查找覆盖扩大后，TypedArray 的命名读取不再提前交接根帧，暴露了
+临时 native 调用保留整个 resident dispatcher 原生帧的额外开销。调用现在先
+形成独立 PendingCall，RunningExit::Call 把父执行、转换等待和 operation
+代次一起交回外层 driver；分派函数返回后才调用原 Runtime 入口，回复再
+恢复同一父帧。原有 native 栈预算和有限深度不变，VM 组的小栈回归已恢复。
+它仍是内部同步桥，后续各内置必须继续改为领域恢复，不能以此完成 S05。
+
+新计数 owned_sync_call_bridges 与旧分派/整帧交接分开；无回调 native callee
+也计入，不代表全部内部嵌套调用总数。新增属性读取用例三个计数均为零，
+Array.map 对照用例仍报告一个同步桥。放弃已准备请求的测试验证未调用
+callee 且 Runtime 可释放。临时请求/continuation Box 分配未包含在 S04
+call_preparation 范围，profiling.md 已明确披露。
+
+本批 driver 82 项、完整 owned 库 2097 项、默认库 1981 项、新旧常规 oracle
+各 907 项及新旧 CLI profiling 各 5 项通过；各配置另有 1 项 65K 手动压力
+测试本批未重跑。非 profiling stack-vm 构建、边界 scan-only、2 项属性契约
+测试（包括新增非法回调 mutation）、格式/diff 与源码布局 522 文件通过。
+本批没有重跑完整 714 项 boundary，不借用 S04 结果充当当前完整门禁。
+
+[同步回调调用点账本](primitive-vm-sync-callbacks.md) 记录首轮 121 个直接
+call/construct 表达式及后续阶段责任；间接 helper 调用图仍须补查。
+S05 尚未验收，整体 S01–S10 目标保持不变。

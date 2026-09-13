@@ -115,6 +115,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     }
     assert!(costs.contains("\"owned_storage\":{\"coverage\":\"partial\""));
     assert!(costs.contains("\"maximum_live_slots\":"));
+    assert!(costs.contains("\"owned_sync_call_bridges\":"));
     assert!(costs.contains(
         "\"call_preparation\":{\"coverage\":\"bytecode-preparation-and-owned-frame-storage\""
     ));

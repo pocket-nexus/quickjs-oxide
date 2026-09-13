@@ -240,6 +240,7 @@ mod enabled {
                     || snapshot.legacy_dispatches != 0
                     || snapshot.owned_instructions != 0
                     || snapshot.owned_bridge_exits != 0
+                    || snapshot.owned_sync_call_bridges != 0
                 {
                     self.write(|out| write_costs(out, &snapshot, self.json));
                 }
@@ -307,8 +308,11 @@ mod enabled {
             )?;
             writeln!(
                 out,
-                "owned_instructions={} bridge_exits={} max_operand_depth={}",
-                costs.owned_instructions, costs.owned_bridge_exits, costs.owned_max_operand_depth
+                "owned_instructions={} bridge_exits={} sync_call_bridges={} max_operand_depth={}",
+                costs.owned_instructions,
+                costs.owned_bridge_exits,
+                costs.owned_sync_call_bridges,
+                costs.owned_max_operand_depth
             )?;
             writeln!(
                 out,
@@ -464,7 +468,10 @@ mod enabled {
         write!(
             out,
             ",\"scope\":\"thread-interval-innermost-collector\",\"execution_path\":\"{}\",\"timer\":\"inclusive-monotonic-wall-ns\",\"phase_totals_additive\":false,\"phases\":{{",
-            if costs.owned_instructions != 0 || costs.owned_bridge_exits != 0 {
+            if costs.owned_instructions != 0
+                || costs.owned_bridge_exits != 0
+                || costs.owned_sync_call_bridges != 0
+            {
                 "owned-stack-with-legacy-bridge"
             } else {
                 "legacy"
@@ -493,7 +500,7 @@ mod enabled {
         }
         writeln!(
             out,
-            "}},\"lowered_functions\":{},\"code_instructions\":{},\"code_inline_bytes\":{},\"maximum_verified_stack\":{},\"legacy_dispatches\":{},\"legacy_pc_publications\":{},\"legacy_max_operand_depth\":{},\"owned_instructions\":{},\"owned_bridge_exits\":{},\"owned_max_operand_depth\":{},\"code_bytes_basis\":\"typed-instruction-inline-storage-excludes-boxed-operands-and-metadata\",\"ir_capacity_basis\":\"phase-boundary-owned-Vec-buffers-excludes-payloads-source-hash-tables-worklists\",\"unavailable\":[\"compile-peak-memory\",\"all-call-allocations\",\"primitive-rc-reference-events\",\"all-retain-release\"]}}",
+            "}},\"lowered_functions\":{},\"code_instructions\":{},\"code_inline_bytes\":{},\"maximum_verified_stack\":{},\"legacy_dispatches\":{},\"legacy_pc_publications\":{},\"legacy_max_operand_depth\":{},\"owned_instructions\":{},\"owned_bridge_exits\":{},\"owned_sync_call_bridges\":{},\"owned_max_operand_depth\":{},\"code_bytes_basis\":\"typed-instruction-inline-storage-excludes-boxed-operands-and-metadata\",\"ir_capacity_basis\":\"phase-boundary-owned-Vec-buffers-excludes-payloads-source-hash-tables-worklists\",\"unavailable\":[\"compile-peak-memory\",\"all-call-allocations\",\"primitive-rc-reference-events\",\"all-retain-release\"]}}",
             costs.lowered_functions,
             costs.code_instructions,
             costs.code_inline_bytes,
@@ -503,6 +510,7 @@ mod enabled {
             costs.legacy_max_operand_depth,
             costs.owned_instructions,
             costs.owned_bridge_exits,
+            costs.owned_sync_call_bridges,
             costs.owned_max_operand_depth
         )
     }

@@ -917,48 +917,17 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
-        if matches!(kind, SpecialKind::Proxy) {
-            return Ok(match self.proxy_get(realm, object, key, receiver)? {
-                Completion::Return(value) => NativeConversion::Value(Some(value)),
-                Completion::Throw(value) => NativeConversion::Throw(value),
-            });
+        if !matches!(kind, SpecialKind::Proxy) {
+            return Err(RuntimeError::Invariant(
+                "prepared property read left a non-Proxy storage boundary",
+            ));
         }
-        if matches!(kind, SpecialKind::TypedArray)
-            && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-        {
-            let value = match numeric {
-                CanonicalNumericIndex::Valid(index) => self
-                    .typed_array_read_index(object, index)?
-                    .unwrap_or(Value::Undefined),
-                CanonicalNumericIndex::Invalid => Value::Undefined,
-            };
-            return Ok(NativeConversion::Value(Some(value)));
-        }
-        let own = self.get_own_property_in_operation(object, key)?;
-        if let Some(own) = own {
-            return match own {
-                CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
-                    Ok(NativeConversion::Value(Some(value)))
-                }
-                CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. } => {
-                    Ok(NativeConversion::Value(Some(Value::Undefined)))
-                }
-                CompleteOrdinaryPropertyDescriptor::Accessor {
-                    get: Some(getter), ..
-                } => Ok(match self.call_internal(realm, &getter, receiver, &[])? {
-                    Completion::Return(value) => NativeConversion::Value(Some(value)),
-                    Completion::Throw(value) => NativeConversion::Throw(value),
-                }),
-            };
-        }
-        let prototype = match self.internal_get_prototype_of(realm, object)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(prototype) = prototype else {
-            return Ok(NativeConversion::Value(None));
-        };
-        self.internal_get_or_missing(realm, &prototype, key, receiver)
+        // Proxy Get observes undefined even when its target lookup is missing.
+        // Non-Proxy descriptor/prototype work is shared by prepared reads.
+        Ok(match self.proxy_get(realm, object, key, receiver)? {
+            Completion::Return(value) => NativeConversion::Value(Some(value)),
+            Completion::Throw(value) => NativeConversion::Throw(value),
+        })
     }
 
     fn proxy_get(

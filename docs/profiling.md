@@ -164,12 +164,21 @@ engines. QuickJS lifecycle CPU times must not be divided by Oxide wall times.
 潜在回调/分配效果是通用语义的保守上界，不能据此断言每次 Number 运算都会调用 JS 或分配。可捕获 JS 异常与引擎分配/不变量错误分开；catch、iterator、gosub 和 resume 的动态验证不会被 nominal 栈数量代替。
 
 The non-default `stack-vm` migration configuration adds `owned_instructions`,
-`owned_bridge_exits`, and `owned_max_operand_depth` to the same cost snapshot.
+`owned_bridge_exits`, `owned_sync_call_bridges`, and `owned_max_operand_depth`
+to the same cost snapshot.
 An owned instruction is counted after its step commits (a call commits when its
 child frame is installed, before the callee returns); a bridge exit is counted
 separately and resumes the untouched opcode in the previous VM. CLI reports use
-`owned-stack-with-legacy-bridge` when either counter is nonzero. This is partial
+`owned-stack-with-legacy-bridge` when an owned counter is nonzero. This is partial
 coverage, not a claim that a whole sample ran in the new core.
+
+`owned_sync_call_bridges` counts selected owned calls dispatched through the
+transitional synchronous Runtime boundary, including callback-free callees.
+It does not count every nested internal callback or domain-step fallback. The
+resident dispatcher returns before this boundary, while owned parent frames and
+operation identities remain live. This remains an internal bridge, not a host
+delimiter or proof of completed S05 callback migration. Its temporary request
+and continuation Box allocations are outside `call_preparation` coverage.
 
 `owned_storage` records successful SlotStore/FrameStore Vec capacity increases,
 per-store capacity and frame-depth peaks, slot initialization, reserved/live slot

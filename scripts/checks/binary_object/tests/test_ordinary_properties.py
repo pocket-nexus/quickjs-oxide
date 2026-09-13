@@ -30,7 +30,7 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         self.assertEqual(self.scan(), [])
 
     def test_bad_boundaries_are_rejected(self):
-        storage, ordinary, dispatch, runtime, heap = ordinary_properties.FILES
+        storage, ordinary, dispatch, runtime, heap, access = ordinary_properties.FILES
         mutations = [
             (storage, "struct OwnSlot", "pub(crate) struct OwnSlot"),
             # Replace every occurrence to simulate removal of the shared class gate.
@@ -39,6 +39,8 @@ class OrdinaryPropertyContracts(unittest.TestCase):
             (dispatch, "impl Runtime {", "fn ordinary_set_fast_path_available() {} impl Runtime {"),
             (ordinary, "self.validate_value_domain(&value,", "self.skip_domain(&value,"),
             (ordinary, "rejected_object.as_ref().unwrap_or(receiver)", "receiver"),
+            (ordinary, "use crate::engine::object::ordinary_storage::ReadProbe;", "self.call_internal(); use crate::engine::object::ordinary_storage::ReadProbe;"),
+            (access, 'self.validate_value_domain(&receiver,', 'self.internal_get(); self.validate_value_domain(&receiver,'),
             (runtime, "if !failure.published", "if failure.published"),
             (heap, ".retain_edges_transactionally(&new_edges)", ".skip_retain(&new_edges)"),
         ]
