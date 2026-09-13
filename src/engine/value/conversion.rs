@@ -1,3 +1,4 @@
+pub(crate) mod descriptor;
 pub(crate) mod primitive;
 
 use crate::engine::api::error::NativeErrorKind;
@@ -6,10 +7,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::heap::ContextId;
 
-use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
-};
+use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol};
 use crate::engine::value::{JsString, Value};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
 
@@ -58,27 +56,6 @@ impl Runtime {
         ))
     }
 
-    pub(crate) fn native_get_present_property(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        name: &str,
-    ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
-        let key = self.intern_property_key(name)?;
-        match self.internal_has_property(realm, object, &key)? {
-            NativeConversion::Value(true) => {}
-            NativeConversion::Value(false) => return Ok(NativeConversion::Value(None)),
-            // Pinned `js_obj_to_desc` uses the tri-state C result directly as
-            // a Boolean. `-1` therefore takes the present branch and a
-            // following successful Get replaces the HasProperty throw.
-            NativeConversion::Throw(_) => {}
-        }
-        match self.get_property_in_realm(realm, object, &key)? {
-            Completion::Return(value) => Ok(NativeConversion::Value(Some(value))),
-            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
-        }
-    }
-
     /// Port of pinned QuickJS `js_obj_to_desc`. Field probes deliberately use
     /// its C order and inherited HasProperty/Get behavior. The release also
     /// replaces a throw from the `get`/`set` field getter with its own
@@ -88,89 +65,24 @@ impl Runtime {
         realm: ContextId,
         value: Value,
     ) -> Result<NativeConversion<OrdinaryPropertyDescriptor>, RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not an object",
-            )?));
-        };
-        let mut descriptor = OrdinaryPropertyDescriptor::new();
-
-        for (name, target) in [
-            ("enumerable", &mut descriptor.enumerable),
-            ("configurable", &mut descriptor.configurable),
-        ] {
-            match self.native_get_present_property(realm, &object, name)? {
-                NativeConversion::Value(Some(value)) => {
-                    *target = DescriptorField::Present(self.value_to_boolean(&value)?);
-                }
-                NativeConversion::Value(None) => {}
-                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-            }
-        }
-        match self.native_get_present_property(realm, &object, "value")? {
-            NativeConversion::Value(Some(value)) => {
-                descriptor.value = DescriptorField::Present(value);
-            }
-            NativeConversion::Value(None) => {}
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        }
-        match self.native_get_present_property(realm, &object, "writable")? {
-            NativeConversion::Value(Some(value)) => {
-                descriptor.writable = DescriptorField::Present(self.value_to_boolean(&value)?);
-            }
-            NativeConversion::Value(None) => {}
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        }
-
-        for (name, target, error_message) in [
-            ("get", &mut descriptor.get, "invalid getter"),
-            ("set", &mut descriptor.set, "invalid setter"),
-        ] {
-            let field = match self.native_get_present_property(realm, &object, name)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(_) => {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        error_message,
-                    )?));
-                }
+        use descriptor::DescriptorStep;
+        let mut step = DescriptorStep::start(self, realm, value)?;
+        loop {
+            step = match step {
+                DescriptorStep::Complete(result) => return Ok(result),
+                DescriptorStep::Has {
+                    object,
+                    key,
+                    resume,
+                } => resume.has(self, self.internal_has_property(realm, &object, &key)?)?,
+                DescriptorStep::Read {
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => resume.read(self, self.internal_get(realm, &object, &key, receiver)?)?,
             };
-            let Some(value) = field else {
-                continue;
-            };
-            let accessor = match value {
-                Value::Undefined => AccessorValue::Undefined,
-                Value::Object(object) => {
-                    let Some(callable) = self.as_callable(&object)? else {
-                        return Ok(NativeConversion::Throw(self.new_native_error(
-                            realm,
-                            NativeErrorKind::Type,
-                            error_message,
-                        )?));
-                    };
-                    AccessorValue::Callable(callable)
-                }
-                _ => {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        error_message,
-                    )?));
-                }
-            };
-            *target = DescriptorField::Present(accessor);
         }
-        if descriptor.is_mixed_descriptor() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "cannot have setter/getter and value or writable",
-            )?));
-        }
-        Ok(NativeConversion::Value(descriptor))
     }
 
     pub(crate) fn native_to_js_string(

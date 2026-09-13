@@ -77,11 +77,6 @@ pub(super) enum Action {
         receiver: Value,
         arguments: Vec<Value>,
     },
-    Get {
-        object: crate::engine::object::ObjectRef,
-        key: crate::engine::object::PropertyKey,
-        receiver: Value,
-    },
 }
 
 pub(super) fn prepare_property(
@@ -138,11 +133,6 @@ impl PendingCall {
                         receiver,
                         arguments,
                     } => runtime.call_internal(realm, &callable, receiver, &arguments),
-                    Action::Get {
-                        object,
-                        key,
-                        receiver,
-                    } => runtime.internal_get(realm, &object, &key, receiver),
                 }
             }
         };

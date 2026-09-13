@@ -81,6 +81,10 @@
 - S05 首批属性读取迁移：object 共享准备阶段覆盖 non-Proxy 描述符/原型查找，保留 Array 孔位、TypedArray 整数索引终止、Arguments/String/namespace/autoinit 的原存储规则。GetField/GetField2 与原语动态键的 GetArrayEl/2/3 由 property_driver 消费已选 getter，原对象键转换/Proxy/Set 等继续待办。相关 getter、receiver、旧键保留、nullish 顺序和请求放弃测试通过。
 - S05 临时同步调用请求先拥有 callee/实参并返回到外层 driver，常驻分派帧退出后才调用未迁移 Runtime 入口；父执行和 operation 代次保留，回收或错误不重放调用。此桥仍可能同步等待内部 JS，不能计作 S05 callback continuation 完成。新增 owned_sync_call_bridges 单独揭示这些调用；原 native 小栈用例保持预算并通过。完整 owned 库 2097 项、默认库 1981 项、新旧常规 oracle 各 907 项（各 1 项手动压力用例本批未重跑）、新旧 CLI profiling 各 5 项、非 profiling 构建、边界扫描/定向 mutation 与源码布局 522 文件通过。第一轮 [121 个直接调用点账本](primitive-vm-sync-callbacks.md) 已建立，间接回调图仍须补全；S05 未验收。
 
+- S05 后续属性迁移：对象键 string-hint 转换、原语 base、bound 字节码 getter 已接入。Proxy Get 的 handler 读取、trap、转发与普通 target invariant 由 object 阶段状态和 owned driver 共用；嵌套 Proxy handler 与字节码回调不再通过原 Get 同步桥。新库 2108 项、旧库 1983 项及新旧 Proxy/Reflect oracle 各 16 项通过；native/Proxy callable、Proxy descriptor target、Set 和其他同步内置仍待迁移。S05 尚未验收；按用户最新指示先完成 S05，再 S06、S07，最后提交完整新旧 VM benchmark/profile 对比到 PR #21 comment。
+
+- S05 查询与调用继续推进：Proxy target GetOwnProperty、descriptor Has/Get、嵌套 Has/IsExtensible 和 ToPrimitive 的 Proxy Get 接入共享 continuation；Proxy apply 读取、可调用标记顺序、转发和 trap 也已接入普通调用/getter/转换/查询路径。最终 owned 库 2117 项、默认库 1986 项、新旧常规 oracle 各 907 项（各 1 项手动压力未运行）、新旧 CLI profiling 各 5 项通过。Set、其他 traps、Object/Reflect native 入口及其余同步内置仍待收口；S05 仍未验收，未提前进入 S06/S07。
+
 ## 1. 提交顺序与关口
 
 | 提交 | 完整交付单元 |

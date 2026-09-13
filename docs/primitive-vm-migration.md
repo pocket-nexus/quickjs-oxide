@@ -67,7 +67,7 @@
 | 转换/异常/finally | conversion/operation/unwind，S04 | getter 次数、不同抛错点、清理优先级、单次释放 | S04 已验收；其余领域回调归 S05 |
 | binding/eval/arguments | resolution/bindings，S04 | captured、每迭代 cell、mapped/unmapped、private/readonly | S04 已验收 |
 | 局部 update/条件融合 | optimize/run/code，S08 | 快照、prefix/postfix/discard、NaN、效果/site/预算 | 待做 |
-| properties/Proxy | object + 对应 builtin，S05 | receiver、trap invariant、递归 getter、PR19 回退用例 | non-Proxy object base/原语键读取已接入；其余待做 |
+| properties/Proxy | object + 对应 builtin，S05 | receiver、trap invariant、递归 getter、PR19 回退用例 | 原语 base/对象键和 Proxy Get 字节码回调已接入；其余待做 |
 | Array/iterator | 对应 builtin，S05 | holes、species、sort、动态 length、IteratorClose | 待做 |
 | String/RegExp/buffer | 对应 builtin，S05 | replacement/Unicode、resize/detach、共享内存与 BigInt | 待做 |
 | 其余同步内置 | 各领域 owner，S05 | intrinsic 逐项审核、toJSON/replacer、修改中迭代、realm | 待做 |
@@ -944,3 +944,72 @@ call_preparation 范围，profiling.md 已明确披露。
 [同步回调调用点账本](primitive-vm-sync-callbacks.md) 记录首轮 121 个直接
 call/construct 表达式及后续阶段责任；间接 helper 调用图仍须补查。
 S05 尚未验收，整体 S01–S10 目标保持不变。
+
+
+## S05 对象键与 Proxy Get 阶段推进（实施中）
+
+Get 的共享准备入口已覆盖原语 base、String code unit/length，以及对象 key
+的 string-hint ToPrimitive；保留先求值的 base、GetArrayEl3 的 canonical key、
+跨 realm 转换错误和异常身份。bound getter 与转换方法共用调用归一化。
+
+Proxy Get 的方法查找、调用和 invariant 阶段归 object/internal_methods/get；
+旧同步入口和 owned VM 消费同一协议。新 proxy_get_driver 在 frame/operation
+身份下安装字节码子帧，嵌套 handler Proxy 的读请求用继续状态栈推进，回复
+不重放 handler getter 或 trap。查找保存的 target/handler 与方法深度 guard
+都有唯一释放责任；null/undefined trap 转发、SameValue（含 NaN 与 ±0）、
+无 getter 的不可配置访问器、异常与读取 realm 保持原规则。
+
+本批新配置库 2108 项、旧配置库 1983 项通过，包含 91 项 owned driver 回归；
+两种配置的 Proxy/Reflect oracle 各 16 项通过。新增丢弃/错误回复测试检查
+roots 与方法 guard 释放；新增源码反例拒绝 Proxy Get 阶段直接执行回调。
+新旧配置完整常规 oracle 各 907 项通过（各 1 项 65K 手动压力测试本批未重跑）。
+边界 scan-only、2 项属性契约/mutation、源码布局 524 文件及格式/diff 通过；
+本批未重跑完整 714 项 boundary，本段不是 S05 阶段验收。
+
+尚未迁移的 Proxy GetOwnProperty target invariant 查询，以及 native/Proxy
+callable 继续通过显式计数的同步桥；Set、Object/Reflect 与其他 S05 内置仍须
+按逐调用点账本收口。用户已再次指定先验收 S05，再依次完成 S06、S07。
+提前准备的 S06 freeze/thaw 改动保存在独立 stash 中，当前生产源码不包含它；
+正式 benchmark/profile 对比与 PR #21 comment 在 S07 完整验证后执行。
+
+
+## S05 属性查询与 Proxy Call continuation（实施中）
+
+Proxy Get 的 target GetOwnProperty 查询已拆为共享阶段；GetOwnProperty 的
+trap 选择、目标 descriptor、IsExtensible、ToPropertyDescriptor 和最终兼容性
+检查保持原顺序。descriptor 转换按 enumerable/configurable/value/writable/
+get/set 的顺序发出 Has/Get，保留 pinned Has 抛错当作存在的行为，以及 get/set
+读取错误在当前操作 realm 替换为 TypeError 的规则。Has 与 IsExtensible 的
+Proxy 依赖也由同一查询状态栈推进；普通存储 Has 准备只返回结果或未处理的 Proxy。
+
+ToPrimitive 的 Proxy 属性读取已接入同一查询协议，最终值回复给原转换状态，
+不向调用者提前压栈或推进 PC。Proxy [[Call]] 的 apply 读取与实际调用另有共享
+阶段，保留逐层 Get 后再检查 cached Call bit、先分配 argv Array 再验证 trap
+以及整个调用保留深度 guard 的规则。普通/尾调用、bound Proxy、Proxy getter、
+转换方法和属性 trap 的 Proxy callable 都由 owned 子帧返回，原 native 和非普通
+字节码调用仍保持可见的同步桥。
+
+本批最终完整 owned 库 2117 项、默认库 1986 项；新旧常规 oracle 各 907 项
+通过，各 1 项手动 65K 压力测试未运行。新旧 CLI profiling 各 5 项通过。
+新增行为用例同时检查旧分派、整帧交接、同步调用桥三个计数为零；放弃
+ToPropertyDescriptor 和 Proxy Call 两种阶段时，源对象、receiver、参数和
+已读取值能释放，Runtime 无 owning cycle，Proxy 深度 guard 恢复为零。
+源码布局为 529 个可达 Rust 文件；2 项属性契约测试包含各阶段隐式同步调用
+反例。Stage3B 的 Proxy Call 顺序契约已随算法移到 read/resume 与旧入口消费器，
+保留调用能力、逐层推进、转发实参和 trap 实参的原反例责任。
+
+自引用 apply trap 的检查发现，显式 query continuation 必须独立检查深度，
+不能再只依赖原生栈地址。查询嵌套现在使用既有 execution frame limit，计入
+当前查询的父操作及已停放帧的查询父操作；原生预算不变。普通 Proxy Call、
+Get trap 和 ToPrimitive 回调的循环 apply 在 32 层测试限额下产生可捕获的
+stack overflow，未安装递归字节码帧，所有 continuation 与 guard 都能释放。
+
+完整 714 项 boundary 在该修正前运行到 300 项后主动停止，不能算作最终
+完整门禁。修正后重新执行源码扫描、属性契约 mutation 和迁移涉及的四项
+Stage3B Proxy Call 顺序/实参反例；S05 最终验收仍须完整门禁。
+
+这仍是 S05 实施证据。Set/其他 Proxy traps、Object/Reflect native 入口、
+Array/iterator、String/RegExp/buffer 及其余同步内置尚未全部迁移；原始
+Earley-Boyer 默认预算的新核心覆盖仍待 S05 最终验收。S06 的提前准备仍只
+保存在独立 stash，只有 S05 完整验收后才恢复；S07 后再运行完整 benchmark/
+profile 并报告到 PR #21。

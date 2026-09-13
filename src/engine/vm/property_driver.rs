@@ -32,7 +32,11 @@ pub(super) struct ConvertedRead {
     pub keep_key: bool,
 }
 
-fn throw_error(runtime: &Runtime, realm: ContextId, error: Error) -> Result<CallStep, Error> {
+pub(super) fn throw_error(
+    runtime: &Runtime,
+    realm: ContextId,
+    error: Error,
+) -> Result<CallStep, Error> {
     let Some(kind) =
         crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
     else {
@@ -200,6 +204,8 @@ fn finish_read(
     };
     let mut request = None;
     let mut deferred = None;
+    let mut proxy = None;
+    let mut proxy_callback = None;
     let value = match read {
         OrdinaryRead::Complete(value) => Some(value.unwrap_or(Value::Undefined)),
         OrdinaryRead::Call { getter, receiver } => {
@@ -228,6 +234,7 @@ fn finish_read(
                 }
                 _ => false,
             };
+            let is_proxy = matches!(classification, CallableExecution::Proxy);
             if let CallableExecution::Bytecode {
                 bytecode,
                 closure_slots,
@@ -255,6 +262,8 @@ fn finish_read(
                         operation: None,
                     },
                 });
+            } else if is_proxy {
+                proxy_callback = Some((callable, receiver, arguments));
             } else {
                 deferred = Some(Action::Call {
                     callable,
@@ -267,13 +276,9 @@ fn finish_read(
         OrdinaryRead::Special {
             object, receiver, ..
         } => {
-            // Only this unresolved step crosses the remaining Proxy bridge.
-            // In particular, an earlier object-key conversion is not replayed.
-            deferred = Some(Action::Get {
-                object,
-                key,
-                receiver,
-            });
+            // The Proxy protocol owns the remaining lookup stages. Earlier
+            // key conversion stays consumed when its callbacks suspend.
+            proxy = Some((object, key, receiver));
             None
         }
     };
@@ -286,6 +291,23 @@ fn finish_read(
     }
     if let Some(key) = retained_key {
         execution.slots.push(&mut frame.window, key)?;
+    }
+    if let Some((object, key, receiver)) = proxy {
+        return super::proxy_get_driver::start(
+            runtime, execution, id, object, key, receiver, depth,
+        );
+    }
+    if let Some((callable, receiver, arguments)) = proxy_callback {
+        return super::proxy_get_driver::start_call(
+            runtime,
+            execution,
+            id,
+            callable.as_object().clone(),
+            receiver,
+            arguments,
+            false,
+            depth,
+        );
     }
     if let Some(action) = deferred {
         return super::call_bridge::prepare_property(execution, id, realm, action, depth);

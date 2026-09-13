@@ -18,7 +18,6 @@ use crate::engine::heap::{ContextId, ObjectPayload, ProxyData};
 use crate::engine::object::operations::{
     InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
     PropertySetRejection, complete_to_validation_record, descriptor_to_validation_record,
-    validation_record_to_complete,
 };
 use crate::engine::object::property::validate_and_apply_property_descriptor;
 use crate::engine::object::{
@@ -32,12 +31,37 @@ use crate::engine::vm::Completion;
 use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarget};
 use std::collections::HashSet;
 
+mod boolean;
+mod call;
+#[cfg(feature = "stack-vm")]
+pub(crate) use call::ProxyCallResume;
+pub(crate) use call::ProxyCallStep;
+mod get;
+mod method;
+mod own_property;
+#[cfg(feature = "stack-vm")]
+pub(crate) use boolean::ProxyBooleanResume;
+pub(crate) use boolean::{ProxyBooleanKind, ProxyBooleanStep};
+#[cfg(feature = "stack-vm")]
+pub(crate) use get::ProxyGetResume;
+use get::ProxyGetStep;
+#[cfg(feature = "stack-vm")]
+pub(crate) use get::ProxyGetStep as OwnedProxyGetStep;
+#[cfg(feature = "stack-vm")]
+pub(crate) use own_property::ProxyOwnResume;
+pub(crate) use own_property::ProxyOwnStep;
+
 #[derive(Clone)]
 struct RootedProxy {
     proxy: ObjectRef,
     data: ProxyData,
     target: ObjectRef,
     handler: ObjectRef,
+}
+
+pub(crate) enum PreparedHas {
+    Complete(bool),
+    Proxy(ObjectRef),
 }
 
 struct ProxyOwnKeys {
@@ -419,64 +443,17 @@ impl Runtime {
         proxy: &ObjectRef,
         name: &'static str,
     ) -> Result<NativeConversion<(RootedProxy, Option<DirectCallTarget>)>, RuntimeError> {
-        if self.proxy_method_stack_would_overflow() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
-        }
-        let _stack_guard = ProxyMethodStackGuard::enter(self);
-        let key = self.intern_property_key(name)?;
-        let mut current = proxy.clone();
-        let chain_limit = self.proxy_method_chain_limit(name);
-        let mut depth = 0_usize;
+        let mut step = method::MethodStep::start(self, realm, proxy.clone(), name)?;
         loop {
-            if chain_limit.is_some_and(|limit| depth == limit) {
-                return Ok(NativeConversion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Internal,
-                    "stack overflow",
-                )?));
-            }
-            let data = self
-                .proxy_snapshot_if_any(&current)?
-                .ok_or(RuntimeError::Invariant(
-                    "Proxy method dispatch reached an ordinary object",
-                ))?;
-            if data.is_revoked {
-                return self.proxy_revoked_throw(realm);
-            }
-            let rooted = self.root_proxy_snapshot(&current, data)?;
-            let method = match self.internal_get(
-                realm,
-                &rooted.handler,
-                &key,
-                Value::Object(rooted.handler.clone()),
-            )? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+            step = match step {
+                method::MethodStep::Complete(result) => return Ok(result),
+                method::MethodStep::Read {
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
             };
-            if matches!(method, Value::Undefined | Value::Null) {
-                if self.proxy_snapshot_if_any(&rooted.target)?.is_some() {
-                    current = rooted.target.clone();
-                    depth = depth.saturating_add(1);
-                    continue;
-                }
-                return Ok(NativeConversion::Value((rooted, None)));
-            }
-            let method = match self.direct_call_target_from_value(method) {
-                Ok(method) => method,
-                Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
-                    return Ok(NativeConversion::Throw(self.new_native_error_from_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        &error,
-                    )?));
-                }
-                Err(error) => return Err(error),
-            };
-            return Ok(NativeConversion::Value((rooted, Some(method))));
         }
     }
 
@@ -711,30 +688,11 @@ impl Runtime {
         let Some(_) = self.proxy_snapshot_if_any(object)? else {
             return self.is_extensible(object).map(NativeConversion::Value);
         };
-        let (rooted, method) = match self.proxy_method(realm, object, "isExtensible")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_is_extensible(realm, &rooted.target);
-        };
-        let result = match self.call_proxy_trap(
+        boolean::finish(
+            self,
             realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone())],
-        )? {
-            Completion::Return(value) => self.value_to_boolean(&value)?,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let target = match self.internal_is_extensible(realm, &rooted.target)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if result != target {
-            return self.proxy_invariant_throw(realm, "isExtensible");
-        }
-        Ok(NativeConversion::Value(result))
+            ProxyBooleanStep::start(self, realm, object.clone(), ProxyBooleanKind::Extensible)?,
+        )
     }
 
     pub(crate) fn internal_prevent_extensions(
@@ -785,51 +743,50 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
+        match self.prepare_has_property(object, key)? {
+            PreparedHas::Complete(value) => Ok(NativeConversion::Value(value)),
+            PreparedHas::Proxy(object) => self.proxy_has_property(realm, &object, key),
+        }
+    }
+
+    /// Probe existing storage without executing a Proxy trap. A Proxy on the
+    /// prototype chain is returned with the already traversed prefix consumed.
+    pub(crate) fn prepare_has_property(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<PreparedHas, RuntimeError> {
         self.validate_object_and_key(object, key)?;
         let mut prototype = None;
         loop {
             let current = prototype.as_ref().unwrap_or(object);
             match self.ordinary_property_flags(current, key)? {
-                Some(Some(_)) => return Ok(NativeConversion::Value(true)),
-                Some(None) => match self.get_prototype_of(current)? {
-                    Some(next) => prototype = Some(next),
-                    None => return Ok(NativeConversion::Value(false)),
-                },
-                None => return self.has_special_property(realm, current, key),
+                Some(Some(_)) => return Ok(PreparedHas::Complete(true)),
+                Some(None) => {}
+                None => {
+                    if self.proxy_snapshot_if_any(current)?.is_some() {
+                        return Ok(PreparedHas::Proxy(current.clone()));
+                    }
+                    if self.typed_array_is_object(current)?
+                        && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
+                    {
+                        return Ok(PreparedHas::Complete(match numeric {
+                            CanonicalNumericIndex::Valid(index) => self
+                                .typed_array_get_index_descriptor(current, index)?
+                                .is_some(),
+                            CanonicalNumericIndex::Invalid => false,
+                        }));
+                    }
+                    if self.has_own_property(current, key)? {
+                        return Ok(PreparedHas::Complete(true));
+                    }
+                }
+            }
+            prototype = self.get_prototype_of(current)?;
+            if prototype.is_none() {
+                return Ok(PreparedHas::Complete(false));
             }
         }
-    }
-
-    fn has_special_property(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<NativeConversion<bool>, RuntimeError> {
-        if self.proxy_snapshot_if_any(object)?.is_some() {
-            return self.proxy_has_property(realm, object, key);
-        }
-        if self.typed_array_is_object(object)?
-            && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-        {
-            return Ok(NativeConversion::Value(match numeric {
-                CanonicalNumericIndex::Valid(index) => self
-                    .typed_array_get_index_descriptor(object, index)?
-                    .is_some(),
-                CanonicalNumericIndex::Invalid => false,
-            }));
-        }
-        if self.has_own_property(object, key)? {
-            return Ok(NativeConversion::Value(true));
-        }
-        let prototype = match self.internal_get_prototype_of(realm, object)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(prototype) = prototype else {
-            return Ok(NativeConversion::Value(false));
-        };
-        self.internal_has_property(realm, &prototype, key)
     }
 
     fn proxy_has_property(
@@ -838,36 +795,16 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
-        let (rooted, method) = match self.proxy_method(realm, object, "has")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_has_property(realm, &rooted.target, key);
-        };
-        let key_value = self.property_key_value(key)?;
-        let result = match self.call_proxy_trap(
+        boolean::finish(
+            self,
             realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone()), key_value],
-        )? {
-            Completion::Return(value) => self.value_to_boolean(&value)?,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if result {
-            return Ok(NativeConversion::Value(true));
-        }
-        let target = match self.internal_get_own_property(realm, &rooted.target, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if let Some(target) = target
-            && (!target.configurable() || !self.raw_extensible_bit(&rooted.target)?)
-        {
-            return self.proxy_invariant_throw(realm, "has");
-        }
-        Ok(NativeConversion::Value(false))
+            ProxyBooleanStep::start(
+                self,
+                realm,
+                object.clone(),
+                ProxyBooleanKind::Has(key.clone()),
+            )?,
+        )
     }
 
     pub(crate) fn internal_get(
@@ -937,56 +874,40 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Completion, RuntimeError> {
-        let (rooted, method) = match self.proxy_method(realm, object, "get")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_get(realm, &rooted.target, key, receiver);
-        };
-        let key_value = self.property_key_value(key)?;
-        let result = match self.call_proxy_trap(
-            realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone()), key_value, receiver],
-        )? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let target = match self.internal_get_own_property(realm, &rooted.target, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        if let Some(target) = target {
-            match target {
-                CompleteOrdinaryPropertyDescriptor::Data {
-                    value,
-                    writable: false,
-                    configurable: false,
-                    ..
-                } if !result.same_value(&value) => {
-                    return Ok(Completion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "proxy: inconsistent get",
-                    )?));
+        let mut step = ProxyGetStep::start(self, realm, object.clone(), key.clone(), receiver)?;
+        loop {
+            step = match step {
+                ProxyGetStep::Complete(completion) => return Ok(completion),
+                ProxyGetStep::Read {
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
+                ProxyGetStep::Call {
+                    target,
+                    receiver,
+                    arguments,
+                    resume,
+                } => {
+                    let completion = match target {
+                        DirectCallTarget::Callable(callable) => {
+                            self.call_internal(realm, &callable, receiver, &arguments)?
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            self.call_proxy(realm, &proxy, receiver, &arguments)?
+                        }
+                    };
+                    resume.resume(self, completion)?
                 }
-                CompleteOrdinaryPropertyDescriptor::Accessor {
-                    get: None,
-                    configurable: false,
-                    ..
-                } if !matches!(result, Value::Undefined) => {
-                    return Ok(Completion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "proxy: inconsistent get",
-                    )?));
-                }
-                _ => {}
-            }
+                ProxyGetStep::Descriptor {
+                    object,
+                    key,
+                    resume,
+                } => resume
+                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
+            };
         }
-        Ok(Completion::Return(result))
     }
 
     pub(crate) fn internal_set(
@@ -1207,85 +1128,52 @@ impl Runtime {
         Ok(object)
     }
 
-    fn complete_proxy_descriptor(
-        &self,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<NativeConversion<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
-        let descriptor = match self.native_to_property_descriptor(realm, value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let descriptor = descriptor_to_validation_record(&descriptor);
-        let complete = validate_and_apply_property_descriptor(
-            true,
-            &descriptor,
-            None,
-            &Value::Undefined,
-            Value::same_value,
-        )
-        .map_err(|_| {
-            RuntimeError::Invariant("validated Proxy descriptor could not be completed")
-        })?;
-        Ok(NativeConversion::Value(validation_record_to_complete(
-            complete,
-        )?))
-    }
-
     fn proxy_get_own_property(
         &self,
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>, RuntimeError> {
-        let (rooted, method) = match self.proxy_method(realm, object, "getOwnPropertyDescriptor")? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let Some(method) = method else {
-            return self.internal_get_own_property(realm, &rooted.target, key);
-        };
-        let key_value = self.property_key_value(key)?;
-        let result = match self.call_proxy_trap(
-            realm,
-            &rooted,
-            &method,
-            &[Value::Object(rooted.target.clone()), key_value],
-        )? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !matches!(result, Value::Undefined | Value::Object(_)) {
-            return self.proxy_invariant_throw(realm, "getOwnPropertyDescriptor");
+        let mut step = ProxyOwnStep::start(self, realm, object.clone(), key.clone())?;
+        loop {
+            step = match step {
+                ProxyOwnStep::Complete(result) => return Ok(result),
+                ProxyOwnStep::Read {
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
+                ProxyOwnStep::Call {
+                    target,
+                    receiver,
+                    arguments,
+                    resume,
+                } => {
+                    let completion = match target {
+                        DirectCallTarget::Callable(callable) => {
+                            self.call_internal(realm, &callable, receiver, &arguments)?
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            self.call_proxy(realm, &proxy, receiver, &arguments)?
+                        }
+                    };
+                    resume.resume(self, completion)?
+                }
+                ProxyOwnStep::Descriptor {
+                    object,
+                    key,
+                    resume,
+                } => resume
+                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
+                ProxyOwnStep::Extensible { object, resume } => {
+                    resume.extensible(self.internal_is_extensible(realm, &object)?)?
+                }
+                ProxyOwnStep::Convert { value, resume } => {
+                    resume.converted(self, self.native_to_property_descriptor(realm, value)?)?
+                }
+            };
         }
-
-        let target_descriptor = match self.internal_get_own_property(realm, &rooted.target, key)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if matches!(result, Value::Undefined) {
-            if let Some(target) = target_descriptor
-                && (!target.configurable() || !self.raw_extensible_bit(&rooted.target)?)
-            {
-                return self.proxy_invariant_throw(realm, "getOwnPropertyDescriptor");
-            }
-            return Ok(NativeConversion::Value(None));
-        }
-
-        // Pinned QuickJS checks target extensibility before converting the
-        // result object to a descriptor.
-        let extensible = match self.internal_is_extensible(realm, &rooted.target)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let result = match self.complete_proxy_descriptor(realm, result)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if !proxy_gopd_descriptor_is_compatible(target_descriptor.as_ref(), &result, extensible) {
-            return self.proxy_invariant_throw(realm, "getOwnPropertyDescriptor");
-        }
-        Ok(NativeConversion::Value(Some(result)))
     }
 
     pub(crate) fn internal_define_own_property(
@@ -1553,99 +1441,42 @@ impl Runtime {
         this_value: Value,
         arguments: &[Value],
     ) -> Result<Completion, RuntimeError> {
-        if self.proxy_method_stack_would_overflow() {
-            return Ok(Completion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
-        }
-        let _stack_guard = ProxyMethodStackGuard::enter(self);
-        let key = self.intern_property_key("apply")?;
-        let chain_limit = self.proxy_method_chain_limit("apply");
-        let mut current = proxy.clone();
-        let mut depth = 0_usize;
-
+        let mut owned_arguments = Vec::new();
+        owned_arguments
+            .try_reserve_exact(arguments.len())
+            .map_err(|_| RuntimeError::Invariant("Proxy call arguments allocation failed"))?;
+        owned_arguments.extend_from_slice(arguments);
+        let mut step =
+            ProxyCallStep::start(self, realm, proxy.clone(), this_value, owned_arguments)?;
         loop {
-            if chain_limit.is_some_and(|limit| depth == limit) {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Internal,
-                    "stack overflow",
-                )?));
-            }
-            let data = self
-                .proxy_snapshot_if_any(&current)?
-                .ok_or(RuntimeError::Invariant(
-                    "Proxy call dispatch reached an ordinary object",
-                ))?;
-            if data.is_revoked {
-                return match self.proxy_revoked_throw(realm)? {
-                    NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
-                    NativeConversion::Value(()) => Err(RuntimeError::Invariant(
-                        "revoked Proxy call returned a value",
-                    )),
-                };
-            }
-            let rooted = self.root_proxy_snapshot(&current, data)?;
-            let method = match self.internal_get(
-                realm,
-                &rooted.handler,
-                &key,
-                Value::Object(rooted.handler.clone()),
-            )? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(Completion::Throw(value)),
-            };
-
-            // Pinned js_proxy_call checks this layer's cached [[Call]] bit
-            // after the observable trap Get and before a missing-trap
-            // fallback reaches another Proxy layer.
-            if !rooted.data.is_callable {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not a function",
-                )?));
-            }
-            if matches!(method, Value::Undefined | Value::Null) {
-                if self.is_proxy_object(&rooted.target)? {
-                    current = rooted.target.clone();
-                    depth = depth.saturating_add(1);
-                    continue;
+            step = match step {
+                ProxyCallStep::Complete(completion) => return Ok(completion),
+                ProxyCallStep::Read {
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => {
+                    let completion = self.internal_get(realm, &object, &key, receiver)?;
+                    resume.resume(self, completion)?
                 }
-                return self.call_value_internal(
-                    realm,
-                    Value::Object(rooted.target.clone()),
-                    this_value,
+                ProxyCallStep::Call {
+                    target,
+                    receiver,
                     arguments,
-                );
-            }
-
-            // Upstream builds the trap argv Array before JS_Call validates
-            // the method's callability.
-            let argument_array = self.new_array_from_values(realm, arguments.to_vec())?;
-            let method = match self.direct_call_target_from_value(method) {
-                Ok(method) => method,
-                Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
-                    return Ok(Completion::Throw(self.new_native_error_from_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        &error,
-                    )?));
+                    resume,
+                } => {
+                    let completion = match target {
+                        DirectCallTarget::Callable(callable) => {
+                            self.call_internal(realm, &callable, receiver, &arguments)?
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            self.call_proxy(realm, &proxy, receiver, &arguments)?
+                        }
+                    };
+                    resume.resume(self, completion)?
                 }
-                Err(error) => return Err(error),
             };
-            return self.call_proxy_trap(
-                realm,
-                &rooted,
-                &method,
-                &[
-                    Value::Object(rooted.target.clone()),
-                    this_value,
-                    Value::Object(argument_array),
-                ],
-            );
         }
     }
 

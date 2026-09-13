@@ -79,6 +79,8 @@ fn prepare(
             class_wait: None,
             has_binding_wait: None,
             iterator_wait: None,
+            property_wait: None,
+            property_generation: 0,
             iterator_generation: 0,
             eval_arguments: None,
             constructor_return: None,
@@ -128,6 +130,8 @@ pub(in crate::engine::vm) fn execute_frame(
         has_binding_wait,
         iterator_wait,
         iterator_generation: _,
+        property_wait,
+        property_generation: _,
         eval_arguments,
         constructor_return: _,
         conversion,
@@ -141,7 +145,8 @@ pub(in crate::engine::vm) fn execute_frame(
         reusable_captured_locals,
         input,
     } = *cold;
-    if conversion.is_some()
+    if property_wait.is_some()
+        || conversion.is_some()
         || constructor_wait.is_some()
         || class_wait.is_some()
         || has_binding_wait.is_some()

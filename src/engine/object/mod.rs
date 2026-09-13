@@ -763,3 +763,17 @@ pub(crate) use ordinary::OrdinaryRead;
 
 #[cfg(test)]
 mod ordinary_tests;
+
+#[cfg(feature = "stack-vm")]
+pub(crate) use internal_methods::{OwnedProxyGetStep as ProxyGetStep, ProxyGetResume};
+#[cfg(feature = "stack-vm")]
+pub(crate) use internal_methods::{ProxyCallResume, ProxyCallStep};
+
+#[cfg(feature = "stack-vm")]
+pub(crate) use internal_methods::{ProxyOwnResume, ProxyOwnStep};
+
+#[cfg(feature = "stack-vm")]
+pub(crate) use internal_methods::PreparedHas;
+
+#[cfg(feature = "stack-vm")]
+pub(crate) use internal_methods::{ProxyBooleanKind, ProxyBooleanResume, ProxyBooleanStep};

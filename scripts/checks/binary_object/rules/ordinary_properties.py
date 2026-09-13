@@ -8,6 +8,12 @@ FILES = (
     "src/engine/heap/runtime/mod.rs",
     "src/engine/heap/object_storage.rs",
     "src/engine/object/access.rs",
+    "src/engine/object/internal_methods/get.rs",
+    "src/engine/object/internal_methods/method.rs",
+    "src/engine/object/internal_methods/own_property.rs",
+    "src/engine/object/internal_methods/boolean.rs",
+    "src/engine/value/conversion/descriptor.rs",
+    "src/engine/object/internal_methods/call.rs",
 )
 
 
@@ -23,7 +29,7 @@ def check(ctx):
             ctx.fail("ordinary-property-source", f"missing regular source: {relative}")
             return
         sources.append(ctx.rust_code_only(path.read_text()))
-    storage, ordinary, dispatch, runtime, heap, access = sources
+    storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call = sources
     compact = lambda text: re.sub(r"\s+", "", text)
     requirements = [
         (not re.search(r"pub(?:\([^)]*\))?\s+struct\s+OwnSlot", storage), "slot positions must remain private to the storage owner"),
@@ -44,6 +50,21 @@ def check(ctx):
     for name in ("prepare_value_property_read", "prepare_string_property_read"):
         prepared, _, _ = ctx.unique_braced_item(access, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", name)
         requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|get_value_property_in_realm|get_string_property_with_receiver)\s*\(", prepared), "primitive property preparation must return callbacks without invoking JavaScript"))
+    has, _, _ = ctx.unique_braced_item(dispatch, re.compile(r"fn\s+prepare_has_property\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-has", "prepared HasProperty")
+    requirements.append(("PreparedHas::Proxy(current.clone())" in compact(has) and "self.validate_object_and_key(object,key)?" in compact(has), "prepared Has must validate its domain and return unresolved Proxy nodes"))
+    protocols = (
+        (proxy_get, ("start", "method", "resume", "descriptor")),
+        (proxy_method, ("start", "read", "resume")),
+        (proxy_own, ("start", "method", "resume", "descriptor", "extensible", "converted")),
+        (proxy_boolean, ("start", "method", "resume", "boolean", "descriptor")),
+        (descriptor, ("start", "next", "has", "read")),
+        (dispatch, ("prepare_has_property",)),
+        (proxy_call, ("start", "read", "resume")),
+    )
+    for source, names in protocols:
+        for name in names:
+            phase, _, _ = ctx.unique_braced_item(source, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "proxy-property-step", name)
+            requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|call_proxy|proxy_method|internal_get|internal_get_own_property|internal_has_property|internal_is_extensible|native_to_property_descriptor)\s*\(", phase), "property and descriptor phases must yield observable requests to their driver"))
     for accepted, message in requirements:
         if not accepted:
             ctx.fail("ordinary-property-contract", message)

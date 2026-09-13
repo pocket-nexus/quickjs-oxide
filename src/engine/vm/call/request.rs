@@ -54,6 +54,8 @@ impl BytecodeCallRequest {
                 class_wait: None,
                 has_binding_wait: None,
                 iterator_wait: None,
+                property_wait: None,
+                property_generation: 0,
                 iterator_generation: 0,
                 eval_arguments: None,
                 constructor_return: None,

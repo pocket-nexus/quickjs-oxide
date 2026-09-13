@@ -133,9 +133,18 @@ impl ConversionTask {
         if target.operation != Some(super::frame::OperationTarget::Conversion(wait.identity)) {
             return Err(Error::internal("conversion reply identity mismatch"));
         }
+        Self::from_wait(runtime, target.frame, wait, completion)
+    }
+
+    pub(super) fn from_wait(
+        runtime: &Runtime,
+        frame: FrameId,
+        wait: ConversionWait,
+        completion: Completion,
+    ) -> Result<Self, Error> {
         Ok(Self {
             finish: wait.finish,
-            frame: target.frame,
+            frame,
             identity: wait.identity,
             step: wait
                 .resume
@@ -270,21 +279,33 @@ impl ConversionTask {
                             .map_err(runtime_error_to_vm_error)?,
                     })),
                     OrdinaryRead::Special { .. } => {
-                        // Only this unresolved read crosses the transitional
-                        // boundary. Earlier getters and calls are never replayed.
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_sync_call_bridge();
-                        let completion = runtime
-                            .get_property_in_realm(realm, &object, &key)
-                            .map_err(runtime_error_to_vm_error)?;
-                        Ok(Progress::Ready(Self {
-                            finish,
+                        match super::proxy_get_driver::start_conversion(
+                            runtime,
+                            execution,
                             frame,
-                            identity,
-                            step: resume
-                                .resume(runtime, completion)
-                                .map_err(runtime_error_to_vm_error)?,
-                        }))
+                            object,
+                            key,
+                            ConversionWait {
+                                finish,
+                                identity,
+                                resume,
+                            },
+                        )? {
+                            super::proxy_get_driver::Progress::Conversion(task) => {
+                                Ok(Progress::Ready(task))
+                            }
+                            super::proxy_get_driver::Progress::Call(
+                                super::driver::CallStep::Entered,
+                            ) => Ok(Progress::Entered),
+                            super::proxy_get_driver::Progress::Call(
+                                super::driver::CallStep::Complete(completion),
+                            ) => Ok(Progress::Complete(completion)),
+                            super::proxy_get_driver::Progress::Call(
+                                super::driver::CallStep::Bridge,
+                            ) => Err(Error::internal(
+                                "conversion property query attempted replay",
+                            )),
+                        }
                     }
                 }
             }
@@ -331,6 +352,32 @@ fn invoke(
             }));
         }
     };
+    if matches!(classification, CallableExecution::Proxy) {
+        return match super::proxy_get_driver::start_conversion_call(
+            runtime,
+            execution,
+            frame,
+            callable.as_object().clone(),
+            receiver,
+            arguments,
+            ConversionWait {
+                finish,
+                identity,
+                resume,
+            },
+        )? {
+            super::proxy_get_driver::Progress::Conversion(task) => Ok(Progress::Ready(task)),
+            super::proxy_get_driver::Progress::Call(super::driver::CallStep::Entered) => {
+                Ok(Progress::Entered)
+            }
+            super::proxy_get_driver::Progress::Call(super::driver::CallStep::Complete(
+                completion,
+            )) => Ok(Progress::Complete(completion)),
+            super::proxy_get_driver::Progress::Call(super::driver::CallStep::Bridge) => {
+                Err(Error::internal("conversion Proxy call attempted replay"))
+            }
+        };
+    }
     if let CallableExecution::Bytecode {
         bytecode,
         closure_slots,

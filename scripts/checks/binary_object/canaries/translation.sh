@@ -86,9 +86,9 @@ expect_full_rewrite_rejected stage3b-native-prototype-helper-bypass \
     '        self.prototype_from_constructor_value(realm, &new_target, |fallback_realm| {' \
     '        self.constructor_prototype_source(realm, &new_target).map(|_| |fallback_realm| {'
 expect_full_rewrite_rejected stage3b-proxy-call-layer-capability \
-    stage3b-proxy-call-order src/engine/object/internal_methods.rs \
-    '            if !rooted.data.is_callable {' \
-    '            if false && !rooted.data.is_callable {'
+    stage3b-proxy-call-order src/engine/object/internal_methods/call.rs \
+    '        if !rooted.data.is_callable {' \
+    '        if false && !rooted.data.is_callable {'
 expect_full_rewrite_rejected stage3b-proxy-construct-callable-narrowing \
     stage3b-proxy-construct-order src/engine/object/internal_methods.rs \
     '                match self.constructor_from_value(realm, Value::Object(rooted.target.clone()))? {' \

@@ -172,13 +172,17 @@ separately and resumes the untouched opcode in the previous VM. CLI reports use
 `owned-stack-with-legacy-bridge` when an owned counter is nonzero. This is partial
 coverage, not a claim that a whole sample ran in the new core.
 
-`owned_sync_call_bridges` counts selected owned calls dispatched through the
-transitional synchronous Runtime boundary, including callback-free callees.
-It does not count every nested internal callback or domain-step fallback. The
-resident dispatcher returns before this boundary, while owned parent frames and
-operation identities remain live. This remains an internal bridge, not a host
-delimiter or proof of completed S05 callback migration. Its temporary request
-and continuation Box allocations are outside `call_preparation` coverage.
+`owned_sync_call_bridges` counts selected owned calls and unresolved domain
+steps dispatched through synchronous Runtime entries, including callback-free
+callees and the remaining native/async callback paths. Proxy target descriptor
+queries, descriptor Has/Get, and Proxy apply continuations in the owned
+property/conversion routes no longer cross this boundary. It does not count every nested
+internal callback or every domain fallback. PendingCall requests return from the
+resident dispatcher before invoking Runtime; remaining conversion and Proxy
+steps can still wait synchronously inside their driver. These are internal
+bridges, not host delimiters or proof of completed S05 callback migration.
+Temporary request/continuation Box allocations and Proxy operation state storage
+are outside `call_preparation` coverage.
 
 `owned_storage` records successful SlotStore/FrameStore Vec capacity increases,
 per-store capacity and frame-depth peaks, slot initialization, reserved/live slot

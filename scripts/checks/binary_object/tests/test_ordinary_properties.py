@@ -30,8 +30,15 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         self.assertEqual(self.scan(), [])
 
     def test_bad_boundaries_are_rejected(self):
-        storage, ordinary, dispatch, runtime, heap, access = ordinary_properties.FILES
+        storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call = ordinary_properties.FILES
         mutations = [
+            (proxy_call, "let guard = ProxyMethodStackGuard::enter(runtime);", "runtime.call_proxy(); let guard = ProxyMethodStackGuard::enter(runtime);"),
+            (dispatch, "PreparedHas::Proxy(current.clone())", "PreparedHas::Complete(false)"),
+            (proxy_method, "let key = runtime.intern_property_key(name)?;", "runtime.internal_get(); let key = runtime.intern_property_key(name)?;"),
+            (proxy_own, "let key_value = runtime.property_key_value(&key)?;", "runtime.internal_get_own_property(); let key_value = runtime.property_key_value(&key)?;"),
+            (proxy_boolean, "let result = runtime.value_to_boolean(&value)?;", "runtime.internal_is_extensible(); let result = runtime.value_to_boolean(&value)?;"),
+            (descriptor, "let key = runtime.intern_property_key(name)?;", "runtime.internal_has_property(); let key = runtime.intern_property_key(name)?;"),
+            (proxy_get, "runtime.validate_object_and_key(&proxy, &key)?;", "runtime.internal_get(); runtime.validate_object_and_key(&proxy, &key)?;"),
             (storage, "struct OwnSlot", "pub(crate) struct OwnSlot"),
             # Replace every occurrence to simulate removal of the shared class gate.
             (storage, "ObjectKind::Ordinary", "ObjectKind::ModuleNamespace"),

@@ -26,6 +26,7 @@ pub(super) struct ReturnTarget {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum OperationTarget {
     Conversion(u64),
+    PropertyGet(u64),
     Constructor(u64),
     ClassDefinition(u64),
     HasBinding(u64),
@@ -39,6 +40,8 @@ pub(super) enum ConstructorReturn {
 }
 
 pub(super) struct FrameCold {
+    pub property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
+    pub property_generation: u64,
     pub iterator_generation: u64,
     pub iterator_wait: Option<Box<crate::engine::vm::iterator_driver::PendingIterator>>,
     pub regions: Vec<crate::engine::vm::VmUnwindRegion>,
@@ -99,6 +102,26 @@ impl FrameStore {
 
     pub(super) fn can_push(&self) -> bool {
         self.frames.len() < self.limit
+    }
+
+    /// Domain continuations replace recursive calls and share the existing
+    /// execution depth ceiling, including calls that install no bytecode frame.
+    pub(super) fn can_push_with_continuations(&self, pending: usize) -> bool {
+        self.frames
+            .len()
+            .checked_add(pending)
+            .and_then(|depth| {
+                self.frames.iter().try_fold(depth, |depth, (_, frame)| {
+                    depth.checked_add(
+                        frame
+                            .cold
+                            .property_wait
+                            .as_ref()
+                            .map_or(0, |wait| wait.continuation_depth()),
+                    )
+                })
+            })
+            .is_some_and(|depth| depth < self.limit)
     }
 
     pub(super) fn current_id(&self) -> Option<FrameId> {
@@ -179,6 +202,8 @@ mod tests {
             class_wait: None,
             has_binding_wait: None,
             iterator_wait: None,
+            property_wait: None,
+            property_generation: 0,
             iterator_generation: 0,
             eval_arguments: None,
             constructor_return: None,

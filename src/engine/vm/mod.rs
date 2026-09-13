@@ -124,3 +124,6 @@ mod call_bridge;
 
 #[cfg(feature = "stack-vm")]
 mod property_driver;
+
+#[cfg(feature = "stack-vm")]
+mod proxy_get_driver;
