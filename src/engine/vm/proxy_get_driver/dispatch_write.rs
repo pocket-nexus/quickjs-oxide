@@ -124,10 +124,15 @@ pub(super) fn keys(
                 key,
                 resume,
             } => {
-                let read = runtime
-                    .prepare_value_property_read(realm, receiver, &key)
-                    .map_err(runtime_error_to_vm_error)?;
-                step = Step::PreparedRead { read, key, resume };
+                step = match runtime
+                    .prepare_value_property_read_completion(realm, receiver, &key)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    NativeConversion::Value(read) => Step::PreparedRead { read, key, resume },
+                    NativeConversion::Throw(reason) => resume
+                        .resume(runtime, Completion::Throw(reason))
+                        .map_err(runtime_error_to_vm_error)?,
+                };
                 continue;
             }
             _ => return Ok(Next::Continue(step)),

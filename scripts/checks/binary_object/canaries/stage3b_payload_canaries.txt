@@ -35,3 +35,4 @@ stage3b-prototype-regexp-fallback-realm|stage3b-native-prototype-family|src/engi
 stage3b-prototype-buffer-callable-narrowing|stage3b-native-prototype-family|src/engine/builtins/array_buffer/constructor.rs|        let prototype = match result {|        let _ = runtime.callable_from_value(self.new_target.clone())?;\n        let prototype = match result {
 stage3b-promise-raw-newtarget|stage3b-promise-constructor|src/engine/builtins/promise/operation.rs|new_target: new_target.clone(),|new_target: Value::Undefined,
 stage3b-promise-fallback-realm|stage3b-native-prototype-family|src/engine/builtins/promise/operation.rs|runtime.promise_realm_data(realm)?.prototype,|runtime.promise_realm_data(self.realm)?.prototype,
+s07-owned-constructor-new-target|stage3b-validated-construction|src/engine/vm/entry.rs|        ConstructNewTarget::Validated(new_target),|        ConstructNewTarget::Validated(constructor.clone()),

@@ -1,3 +1,4 @@
+# S07: binary_publication appends one GC/zero-bridge entry test; every original byte remains unchanged.
 # S02: runtime test helper adapts eval authority through api/compile; test inputs and assertions are unchanged.
 """Pinned data and expected shapes for coercion."""
 
@@ -17,7 +18,7 @@ STAGE3J_RUST_FILE_HASHES = {'src/engine/code/binary_object/function_translate/ca
  'src/engine/heap/runtime/tests/binary_calls.rs': '4e4e6c850244e879030032fb4e5bca92ace90a30f56d918594960d538749da1a',
  'src/engine/heap/runtime/tests/binary_objects.rs': '0633a863aedbe21de26839dab56f90c47e8ceff47b3d75df83a7ff9fdbb8e2f6',
  'src/engine/heap/runtime/tests/binary_property_keys.rs': '677a0828b4eac884df6bf42c85cc43a47c17d38033dcb1148c513442063a0119',
- 'src/engine/heap/runtime/tests/binary_publication.rs': 'e4b41d6aca90b93c885357f9a3cd8bfb19a41036b59a34d1650dfe2acec7f6f0',
+ 'src/engine/heap/runtime/tests/binary_publication.rs': '2b76b9b944e65702c4acff6915561bc23f08960a2a64c248794262140bf5f593',
  'src/engine/heap/runtime/tests/binary_read_only.rs': 'a129a8ba7c4cd0c53862c94f72338f6d59dd69c580a578eaa99dbae66220d279',
  'src/engine/heap/runtime/tests/binary_scalar.rs': '82423d9f161e8b592e52e1a2128fe82651b0d9d8376eac41299c6ceb6b5b4eff',
  'src/engine/heap/runtime/tests/binary_this.rs': 'e0807c78e5abe46f2ebac827f05db6ee72fac2e2dc2ba63498976127af21ba90',

@@ -196,3 +196,8 @@ Omitting `--case` covers all 58 manifest entries. Repeated `--case` options are
 for step-level experiments only. All times include the whole process; these are
 not adaptive harness scores. Preserve build receipts separately and do not run
 benchmarks alongside builds, tests or architecture canaries.
+
+The nondefault owned VM is selected with `build.py --stack-vm`; omitting it builds
+the default VM. The build provenance records the selected `vm_configuration` and
+Cargo features for both plain and profiling binaries. Timing still uses the
+plain binary; profiling remains a separate run.

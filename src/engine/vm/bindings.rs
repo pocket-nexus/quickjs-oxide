@@ -613,3 +613,21 @@ pub(in crate::engine::vm) fn initialize_derived_closure(
         .write_var_ref(root, value)
         .map_err(runtime_error_to_vm_error)
 }
+
+/// Preserve the dedicated import-collision authority at both VM consumers.
+pub(super) fn validate_module_import_collision(descriptor: ClosureVariable) -> Result<(), Error> {
+    if descriptor.source
+        != crate::engine::code::function::metadata::ClosureSource::ModuleImportCollision
+        || !descriptor.is_lexical
+        || !descriptor.is_const
+        || !matches!(
+            descriptor.kind,
+            ClosureVariableKind::Normal | ClosureVariableKind::ModuleImportView
+        )
+    {
+        return Err(Error::internal(
+            "module import collision initialization targeted a non-import binding",
+        ));
+    }
+    Ok(())
+}

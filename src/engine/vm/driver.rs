@@ -322,6 +322,35 @@ pub(super) fn execute(
 }
 
 pub(crate) enum RootOperation {
+    Call {
+        callable: crate::engine::object::CallableRef,
+        receiver: Value,
+        arguments: Vec<Value>,
+    },
+    Construct(super::call::NormalizedConstructor),
+    Get {
+        object: crate::engine::object::ObjectRef,
+        key: crate::engine::object::PropertyKey,
+        receiver: Value,
+    },
+    Own {
+        object: crate::engine::object::ObjectRef,
+        key: crate::engine::object::PropertyKey,
+    },
+    Define {
+        object: crate::engine::object::ObjectRef,
+        key: crate::engine::object::PropertyKey,
+        descriptor: crate::engine::object::OrdinaryPropertyDescriptor,
+    },
+    Set {
+        object: crate::engine::object::ObjectRef,
+        key: crate::engine::object::PropertyKey,
+        value: Value,
+        receiver: Value,
+    },
+    ModuleCallback(crate::engine::modules::callback::CallbackStep),
+    ModuleEvaluation(crate::engine::modules::evaluation::EvaluationStep),
+    ModuleLink(crate::engine::modules::link::LinkStep),
     AsyncGenerator(super::async_generator::AsyncGeneratorStep),
     FromSync(super::async_from_sync_iterator::FromSyncStep),
     Promise(crate::engine::builtins::promise::operation::PromiseStep),
@@ -333,25 +362,55 @@ pub(crate) fn execute_root(
     realm: crate::engine::heap::ContextId,
     operation: RootOperation,
 ) -> Result<Completion, Error> {
-    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default())?;
-    let exit =
-        match super::proxy_get_driver::start_root(&runtime, &mut execution, realm, operation)? {
-            super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
-                return Ok(completion);
+    start_root(runtime.clone(), realm, operation)?.finish(runtime)
+}
+pub(super) fn execute_root_descriptor(
+    runtime: Runtime,
+    realm: crate::engine::heap::ContextId,
+    operation: RootOperation,
+) -> Result<super::entry::DescriptorReply, Error> {
+    let mut exit = start_root(runtime.clone(), realm, operation)?;
+    loop {
+        match exit {
+            RunningExit::RootDescriptor(result) => return Ok(result),
+            RunningExit::Complete(Completion::Throw(value)) => {
+                return Ok(crate::engine::value::conversion::NativeConversion::Throw(
+                    value,
+                ));
             }
-            super::proxy_get_driver::Progress::Call(CallStep::Entered) => {
-                run_frames(&runtime, execution)?
+            RunningExit::Call(mut continuation) => {
+                let forwarded = continuation.invoke(&runtime)?;
+                exit = continuation.resume(&runtime, forwarded)?;
             }
             _ => {
                 return Err(Error::internal(
-                    "root Promise operation returned a bytecode-only continuation",
+                    "descriptor entry returned an untyped terminal result",
                 ));
             }
-        };
-    exit.finish(runtime)
+        }
+    }
+}
+fn start_root(
+    runtime: Runtime,
+    realm: crate::engine::heap::ContextId,
+    operation: RootOperation,
+) -> Result<RunningExit, Error> {
+    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default())?;
+    match super::proxy_get_driver::start_root(&runtime, &mut execution, realm, operation)? {
+        super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
+            Ok(RunningExit::Complete(completion))
+        }
+        super::proxy_get_driver::Progress::Call(CallStep::Entered) => {
+            run_frames(&runtime, execution)
+        }
+        _ => Err(Error::internal(
+            "root operation returned a bytecode-only continuation",
+        )),
+    }
 }
 
 pub(super) enum RunningExit {
+    RootDescriptor(super::entry::DescriptorReply),
     Complete(Completion),
     RootHandoff(Box<super::frame_exit::RootHandoff>),
     Call(Box<CallContinuation>),
@@ -398,6 +457,9 @@ impl RunningExit {
         let mut exit = self;
         loop {
             match exit {
+                Self::RootDescriptor(_) => {
+                    return Err(Error::internal("bytecode entry returned a root descriptor"));
+                }
                 Self::Complete(completion) => {
                     return Ok(super::suspend::VmRunOutcome::Complete(completion));
                 }
@@ -419,6 +481,9 @@ impl RunningExit {
         let mut exit = self;
         loop {
             match exit {
+                Self::RootDescriptor(_) => {
+                    return Err(Error::internal("bytecode entry returned a root descriptor"));
+                }
                 Self::Suspend(_) => return Err(Error::internal("ordinary entry suspended")),
                 Self::Complete(completion) => return Ok(completion),
                 Self::RootHandoff(handoff) => return handoff.execute(runtime),
@@ -456,6 +521,20 @@ fn run_frames_with_state(
     mut next_operation: u64,
 ) -> Result<RunningExit, Error> {
     loop {
+        if let Some(result) = execution.root_descriptor.take() {
+            if execution.frames.current_id().is_some()
+                || execution.root_query.is_some()
+                || execution.pending_call.is_some()
+                || forwarded.is_some()
+                || conversion.is_some()
+            {
+                return Err(Error::internal(
+                    "root descriptor conflicts with an active continuation",
+                ));
+            }
+            return Ok(RunningExit::RootDescriptor(result));
+        }
+
         if execution.pending_call.is_some() {
             if forwarded.is_some() {
                 return Err(Error::internal("pending call conflicts with a completion"));
@@ -759,6 +838,16 @@ fn run_frames_with_state(
                     exit = RunExit::Complete;
                 }
                 CallStep::Bridge => exit = RunExit::Bridge,
+            }
+        }
+        if let RunExit::Import = exit {
+            match super::proxy_get_driver::start_import(runtime, &mut execution, id)? {
+                CallStep::Entered => continue,
+                CallStep::Complete(completion) => {
+                    forwarded = Some(completion);
+                    exit = RunExit::Complete;
+                }
+                CallStep::Bridge => return Err(Error::internal("dynamic import attempted replay")),
             }
         }
         if let RunExit::Predicate(kind) = exit {
@@ -3527,16 +3616,6 @@ mod tests {
                     )
                 })
                 .unwrap();
-            let mut execution =
-                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
-            let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
-            execution.slots.push(&mut frame.window, callee).unwrap();
-            execution
-                .slots
-                .push(&mut frame.window, array.clone())
-                .unwrap();
             let retained = if array_source == "['40+2',{}]" {
                 let Value::Object(carrier) = &array else {
                     unreachable!()
@@ -3551,6 +3630,16 @@ mod tests {
             } else {
                 None
             };
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            let frame = execution.frames.current_mut(id).unwrap();
+            frame.resume_pc = pc;
+            execution.slots.push(&mut frame.window, callee).unwrap();
+            execution
+                .slots
+                .push(&mut frame.window, array.clone())
+                .unwrap();
             let profile = CostProfile::start();
             if let Some(extra) = retained {
                 let RunExit::ApplyEval(environment) = run(&mut execution, id).unwrap() else {
@@ -3988,6 +4077,7 @@ mod tests {
                 let CallStep::Complete(Completion::Throw(Value::Object(error))) = result else {
                     panic!("expected reference error")
                 };
+                drop(execution);
                 assert_eq!(
                     context
                         .get_property(&error, &runtime.intern_property_key("message").unwrap())
@@ -4004,6 +4094,7 @@ mod tests {
                     &Value::Int(42)
                 );
                 assert_eq!(execution.slots.peek(&frame.window, 1).unwrap(), &base);
+                drop(execution);
             }
             assert_eq!(
                 runtime
@@ -4015,7 +4106,6 @@ mod tests {
             );
             assert_eq!(costs.legacy_dispatches, 0);
             assert_eq!(costs.owned_bridge_exits, 0);
-            drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4096,6 +4186,7 @@ mod tests {
                 let CallStep::Complete(Completion::Throw(Value::Object(error))) = result else {
                     panic!("expected lexical rejection")
                 };
+                drop(execution);
                 assert_eq!(
                     context
                         .get_property(&error, &runtime.intern_property_key("message").unwrap())
@@ -4115,6 +4206,7 @@ mod tests {
                         Value::Int(42)
                     }
                 );
+                drop(execution);
             }
             assert_eq!(
                 runtime
@@ -4124,7 +4216,6 @@ mod tests {
                     .id(),
                 root.id()
             );
-            drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4746,6 +4837,7 @@ mod tests {
                 (!computed).then_some(0),
                 method.then_some((DefineMethodKind::Method, true)),
             );
+            drop(execution);
             if method {
                 let Err(error) = result else {
                     panic!("invalid method target must remain an internal error")
@@ -5022,23 +5114,38 @@ mod tests {
                     .new_bound_native_function(
                         &context.function_prototype().unwrap(),
                         context.realm,
-                        crate::engine::builtins::native::NativeFunctionId::ArgumentProbe,
+                        crate::engine::builtins::native::NativeFunctionId::ActiveFrameProbe,
                         2,
                     )
                     .unwrap()
                     .as_object()
                     .clone(),
             );
+            let callback = context.eval("(function(){throw 42})").unwrap();
             let entry = entry(
                 &runtime,
                 &mut context,
-                "(function(f){return f(42)})",
-                vec![callee],
+                "(function(f,callback){return f(callback)})",
+                vec![callee, callback],
             );
             let weak = std::rc::Rc::downgrade(&runtime.0);
-            let pending =
-                super::execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-            assert!(matches!(pending, super::RunningExit::Call(_)));
+            let mut pending = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let parent = push_frame(&mut pending, entry).unwrap();
+            let RunExit::Call {
+                arguments,
+                method,
+                tail,
+            } = run(&mut pending, parent).unwrap()
+            else {
+                panic!("expected native probe call");
+            };
+            assert!(matches!(
+                super::enter_call(&runtime, &mut pending, parent, arguments, method, tail).unwrap(),
+                CallStep::Entered
+            ));
+            let child = pending.frames.current_id().unwrap();
+            assert_ne!(child, parent);
+            assert_eq!(pending.frames.current_mut(child).unwrap().resume_pc, 0);
             assert!(!runtime.0.state.borrow().active_frames.is_empty());
             (weak, pending)
         };

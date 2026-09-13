@@ -90,7 +90,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         "-d",
         "--profile-json",
         "-e",
-        // InstanceOf is owned; print retains the S07 host-call boundary.
+        // InstanceOf and print use the owned driver, including the real output boundary.
         "[] instanceof Array; print((function(x){return x+1})(41))",
     ]);
     assert!(output.status.success());
@@ -105,7 +105,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         assert!(!costs.contains("\"owned_instructions\":0"));
         assert!(costs.contains("\"owned_bridge_exits\":0"));
         assert!(costs.contains("\"legacy_dispatches\":0"));
-        assert!(costs.contains("\"owned_sync_call_bridges\":1,"));
+        assert!(costs.contains("\"owned_sync_call_bridges\":0,"));
         assert!(!costs.contains("\"frames_pushed\":0"));
         assert!(!costs.contains("\"slot_capacity_growths\":0"));
     } else {

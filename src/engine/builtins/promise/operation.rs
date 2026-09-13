@@ -99,15 +99,15 @@ enum Phase {
     },
     ThenConstructor {
         promise: ObjectRef,
-        handlers: [Value; 2],
+        handlers: then::ThenHandlers,
     },
     ThenSpecies {
         promise: ObjectRef,
-        handlers: [Value; 2],
+        handlers: then::ThenHandlers,
     },
     ThenCapability {
         promise: ObjectRef,
-        handlers: [Value; 2],
+        handlers: then::ThenHandlers,
     },
     ResolveThen {
         promise: ObjectRef,

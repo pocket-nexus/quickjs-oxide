@@ -891,8 +891,8 @@ def check(ctx):
         (
             "src/engine/api/context/calls.rs",
             "call",
-            "Context::call must pass call_internal's completion directly to finish_completion",
-            "bf80579858f0ce24fdb44408eb43a1b3a7263bba07ef972026a22a2b1ff0fa89",
+            "Context::call must pass either configured driver's completion directly to finish_completion",
+            "d65c5b20b15e11be485c32b23d69a18598ab06848374b4a5b00582372195e54f",
         ),
         (
             runtime_vm_host_relative,

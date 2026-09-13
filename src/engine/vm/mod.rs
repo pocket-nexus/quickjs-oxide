@@ -55,6 +55,8 @@ mod conversion_driver;
 #[cfg(feature = "stack-vm")]
 mod driver;
 #[cfg(feature = "stack-vm")]
+pub(crate) mod entry;
+#[cfg(feature = "stack-vm")]
 pub(crate) use driver::{RootOperation, execute_root};
 #[cfg(feature = "stack-vm")]
 mod execution;

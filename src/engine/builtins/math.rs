@@ -423,7 +423,7 @@ impl Runtime {
         realm: ContextId,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let seed = self.0.host_services.random_seed();
+        let seed = self.with_host_callback(|| self.0.host_services.random_seed())?;
         self.0
             .state
             .borrow_mut()

@@ -72,8 +72,8 @@ impl PromiseResume {
                     }),
                 })
             }
-            Phase::ThenCapability { promise, handlers } => runtime
-                .finish_promise_then(self.realm, promise, handlers, capability)
+            Phase::ThenCapability { promise, handlers } => handlers
+                .finish(runtime, self.realm, promise, capability)
                 .map(PromiseStep::Complete),
             _ => Err(RuntimeError::Invariant(
                 "Promise capability reply has wrong phase",

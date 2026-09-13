@@ -165,25 +165,37 @@ impl Runtime {
         })
     }
 
+    /// Keep JavaScript-visible read failures as replies to the selected operation.
+    pub(crate) fn prepare_value_property_read_completion(
+        &self,
+        realm: ContextId,
+        receiver: Value,
+        key: &PropertyKey,
+    ) -> Result<NativeConversion<OrdinaryRead>, RuntimeError> {
+        let nullish = matches!(receiver, Value::Null | Value::Undefined);
+        match self.prepare_value_property_read(realm, receiver, key) {
+            Ok(read) => Ok(NativeConversion::Value(read)),
+            Err(RuntimeError::Engine(error)) if nullish && error.kind() == ErrorKind::Type => {
+                Ok(NativeConversion::Throw(self.new_native_error_from_error(
+                    realm,
+                    NativeErrorKind::Type,
+                    &error,
+                )?))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub(crate) fn get_value_property_in_realm(
         &self,
         realm: ContextId,
         receiver: Value,
         key: &PropertyKey,
     ) -> Result<Completion, RuntimeError> {
-        let nullish = matches!(receiver, Value::Null | Value::Undefined);
-        let read = match self.prepare_value_property_read(realm, receiver, key) {
-            Ok(read) => read,
-            Err(RuntimeError::Engine(error)) if nullish && error.kind() == ErrorKind::Type => {
-                return Ok(Completion::Throw(self.new_native_error_from_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    &error,
-                )?));
-            }
-            Err(error) => return Err(error),
-        };
-        self.finish_value_property_read(realm, key, read)
+        match self.prepare_value_property_read_completion(realm, receiver, key)? {
+            NativeConversion::Value(read) => self.finish_value_property_read(realm, key, read),
+            NativeConversion::Throw(reason) => Ok(Completion::Throw(reason)),
+        }
     }
 
     pub(crate) fn get_property_or_missing_in_realm(

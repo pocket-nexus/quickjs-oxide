@@ -11,6 +11,29 @@ use crate::engine::{
     vm::{Completion, exception::runtime_error_to_vm_error},
 };
 
+/// Load a published value constant while its executable owns the raw edge.
+/// Template objects and Symbols need the same checked retain as the old host.
+pub(super) fn load_value_constant(
+    runtime: &Runtime,
+    executable: &PublishedFunctionSnapshot,
+    index: u32,
+) -> Result<Value, Error> {
+    let constant = executable
+        .constant(index)
+        .ok_or_else(|| Error::internal("constant index is out of bounds"))?;
+    match constant {
+        BytecodeConstant::Value(value) => runtime
+            .root_raw_value(value)
+            .map_err(|error| Error::internal(error.to_string())),
+        BytecodeConstant::Function(_) => Err(Error::internal(
+            "child function bytecode was loaded with a value-constant opcode",
+        )),
+        BytecodeConstant::RegExp { .. } => Err(Error::internal(
+            "RegExp program was loaded with a value-constant opcode",
+        )),
+    }
+}
+
 /// QuickJS `OP_typeof` converts one of its predefined type atoms back to
 /// the atom's canonical String cell. Runtime construction pins the full
 /// result set, so every realm reuses the same representation while sibling
@@ -137,6 +160,7 @@ pub(super) fn set_object_prototype(
 #[cfg(feature = "stack-vm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PureOperation {
+    Constant(u32),
     AtomValue(u32),
     RegExp(u32),
     DeleteSuper,
@@ -144,6 +168,7 @@ pub(super) enum PureOperation {
     IteratorCheckObject,
     IteratorMissingThrow,
     InitializeClosure { index: u16, derived: bool },
+    InitializeModuleImportCollision(u16),
     SetPrototype,
     TypeOf,
     IsUndefinedOrNull,
@@ -204,6 +229,16 @@ fn perform(
     let slots = &mut execution.slots;
     use PureOperation as P;
     let result = match operation {
+        P::Constant(index) => {
+            let value = load_value_constant(runtime, &frame.executable, index)?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_storage(
+                crate::engine::api::profiling::OwnedStorageEvent::Copy {
+                    heap_root: matches!(value, Value::Object(_) | Value::Symbol(_)),
+                },
+            );
+            value
+        }
         P::IteratorCheckObject => {
             super::iterator_support::check_result_object(slots.peek(&frame.window, 0)?)?;
             return Ok(None);
@@ -234,6 +269,25 @@ fn perform(
                 ErrorKind::Type,
                 "class constructors must be invoked with 'new'",
             ));
+        }
+        P::InitializeModuleImportCollision(index) => {
+            let value = slots.pop(&mut frame.window)?;
+            let descriptor = frame
+                .executable
+                .closure_variables
+                .get(usize::from(index))
+                .copied()
+                .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
+            super::bindings::validate_module_import_collision(descriptor)?;
+            let root = frame
+                .cold
+                .closure_slots
+                .get(usize::from(index))
+                .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
+            runtime
+                .write_var_ref(root, value)
+                .map_err(runtime_error_to_vm_error)?;
+            return Ok(None);
         }
         P::InitializeClosure { index, derived } => {
             let value = slots.pop(&mut frame.window)?;

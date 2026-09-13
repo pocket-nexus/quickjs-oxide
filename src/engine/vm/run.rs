@@ -21,6 +21,7 @@ pub(super) enum BindingSource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RunExit {
+    Import,
     Pure(super::pure_operations::PureOperation),
     ApplyEval(u16),
     Apply(crate::engine::code::bytecode::ApplyKind),
@@ -623,6 +624,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     super::pure_operations::PureOperation::DeleteSuper,
                 ));
             }
+            Instruction::Import => return Ok(RunExit::Import),
+            Instruction::InitializeModuleImportCollision(index) => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::InitializeModuleImportCollision(*index),
+                ));
+            }
             Instruction::InitializeVarRef(index) | Instruction::InitializeDerivedVarRef(index) => {
                 return Ok(RunExit::Pure(
                     super::pure_operations::PureOperation::InitializeClosure {
@@ -713,7 +720,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.push(window, value)?;
                     true
                 } else {
-                    false
+                    return Ok(RunExit::Pure(
+                        super::pure_operations::PureOperation::Constant(*index),
+                    ));
                 }
             }
             Instruction::GetVarRef(index)
@@ -1211,7 +1220,6 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 crate::engine::api::profiling::record_owned_instruction(observed_depth);
                 return Ok(RunExit::Complete);
             }
-            _ => false,
         };
         if !handled {
             if let Some(kind) = super::numeric::operation::NumericKind::for_instruction(instruction)

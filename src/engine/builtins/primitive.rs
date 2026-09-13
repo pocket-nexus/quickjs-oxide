@@ -720,7 +720,21 @@ impl Runtime {
         realm: ContextId,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        match arguments.readable.first() {
+        super::function::invoke::finish(
+            self,
+            realm,
+            self.prepare_active_frame_probe(realm, arguments)?,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepare_active_frame_probe(
+        &self,
+        _realm: ContextId,
+        arguments: &NativeArguments,
+    ) -> Result<super::function::invoke::InvokeStep, RuntimeError> {
+        use super::function::invoke::InvokeStep;
+        let completion = match arguments.readable.first() {
             Some(Value::Object(value))
                 if matches!(arguments.readable.get(1), Some(Value::Bool(false))) =>
             {
@@ -729,12 +743,11 @@ impl Runtime {
             Some(Value::Object(callback)) => {
                 let callback = self.callable_from_value(Value::Object(callback.clone()))?;
                 let active_function = self.active_function()?;
-                self.call_internal(
-                    realm,
-                    &callback,
-                    Value::Undefined,
-                    &[Value::Object(active_function)],
-                )
+                return Ok(InvokeStep::Call {
+                    target: crate::engine::vm::call::DirectCallTarget::Callable(callback),
+                    receiver: Value::Undefined,
+                    arguments: vec![Value::Object(active_function)],
+                });
             }
             Some(Value::Bool(false)) => Ok(Completion::Throw(Value::String(
                 JsString::from_static("active frame probe throw"),
@@ -754,6 +767,7 @@ impl Runtime {
                     .push(snapshot);
                 Ok(Completion::Return(Value::Undefined))
             }
-        }
+        }?;
+        Ok(InvokeStep::Complete(completion))
     }
 }

@@ -762,6 +762,65 @@ pub(super) fn start_root(
     operation: super::driver::RootOperation,
 ) -> Result<Progress, Error> {
     let step: Step = match operation {
+        super::driver::RootOperation::Call {
+            callable,
+            receiver,
+            arguments,
+        } => Step::Call {
+            target: DirectCallTarget::Callable(callable),
+            receiver,
+            arguments,
+            resume: Resume::Identity,
+        },
+        super::driver::RootOperation::Construct(normalized) => construct::prepared(
+            runtime,
+            ReturnOwner::Root,
+            1,
+            realm,
+            normalized,
+            Resume::Identity,
+        )?,
+        super::driver::RootOperation::Get {
+            object,
+            key,
+            receiver,
+        } => Step::Read {
+            object,
+            key,
+            receiver,
+            resume: Resume::Identity,
+        },
+        super::driver::RootOperation::Own { object, key } => Step::Descriptor {
+            object,
+            key,
+            resume: Resume::RootDescriptor,
+        },
+        super::driver::RootOperation::Define {
+            object,
+            key,
+            descriptor,
+        } => Step::Define {
+            object,
+            key,
+            descriptor,
+            resume: Resume::RootDefine,
+        },
+        super::driver::RootOperation::Set {
+            object,
+            key,
+            value,
+            receiver,
+        } => Step::Set {
+            object,
+            key,
+            value,
+            receiver,
+            resume: Resume::RootSet,
+        },
+
+        super::driver::RootOperation::ModuleCallback(step) => step.into(),
+        super::driver::RootOperation::ModuleEvaluation(step) => step.into(),
+        super::driver::RootOperation::ModuleLink(step) => step.into(),
         super::driver::RootOperation::FromSync(step) => step.into(),
         super::driver::RootOperation::AsyncGenerator(step) => step.into(),
         super::driver::RootOperation::Promise(step) => step.into(),
@@ -893,14 +952,18 @@ fn advance_inner(
             &mut Query,
             Step,
         ) -> Result<Next, Error> = match &step {
-            Step::Complete { .. }
+            Step::RootDescriptor(..)
+            | Step::Complete { .. }
             | Step::ForInComplete { .. }
             | Step::NumericComplete { .. }
             | Step::NativeRawComplete { .. } => dispatch_execution::finish,
             Step::ResumeFrame { .. } | Step::ConstructorReady { .. } | Step::Native { .. } => {
                 dispatch_execution::activation
             }
-            Step::PromiseOperation { .. }
+            Step::ModuleCallbackOperation { .. }
+            | Step::ModuleBodyOperation { .. }
+            | Step::ModuleLink { .. }
+            | Step::PromiseOperation { .. }
             | Step::IntrinsicPromiseResolve { .. }
             | Step::Construct { .. }
             | Step::ConstructProxy { .. }
@@ -1099,15 +1162,16 @@ fn invoke(
         closure_slots,
     } = classification
     {
-        let kind = runtime
+        let metadata = runtime
             .0
             .state
             .borrow()
             .heap
             .function_bytecode(bytecode.bytecode_id())
             .map_err(|error| Error::internal(error.to_string()))?
-            .metadata
-            .function_kind;
+            .metadata;
+        let kind = metadata.function_kind;
+        let module_link = metadata.is_module && receiver == Value::Bool(true);
         {
             if !execution
                 .frames
@@ -1151,7 +1215,7 @@ fn invoke(
                 },
             };
             let entry = request.prepare(runtime)?;
-            let resume = if kind == FunctionKind::Async {
+            let resume = if kind == FunctionKind::Async && !module_link {
                 query
                     .parents
                     .try_reserve(1)
@@ -1877,4 +1941,30 @@ pub(super) fn start_literal_definition(
         step.into(),
         Finish::Discard(depth),
     )
+}
+
+pub(super) fn start_import(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let realm = parent.executable.realm;
+    let options = execution.slots.peek(&parent.window, 0)?.clone();
+    let specifier = execution.slots.peek(&parent.window, 1)?.clone();
+    let result = crate::engine::modules::import::ImportStep::start(
+        runtime,
+        realm,
+        parent.executable.root(),
+        specifier,
+        options,
+    )
+    .map_err(runtime_error_to_vm_error)
+    .and_then(|step| start_instruction(runtime, execution, frame, step.into(), 2));
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal(
+            "dynamic import returned an untyped conversion",
+        )),
+    }
 }

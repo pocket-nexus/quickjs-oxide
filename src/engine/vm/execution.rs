@@ -174,6 +174,11 @@ impl ExecutionGuard {
                 .filter(|boundary| boundary.parent_execution == parent)
                 .map(|boundary| boundary.id)
         });
+        if parent.is_some() && host_boundary.is_none() {
+            return Err(Error::internal(
+                "internal callback attempted a nested root execution",
+            ));
+        }
         let registration = ExecutionRegistration {
             domain,
             id,
@@ -207,6 +212,8 @@ pub(super) struct RunningExecution {
     pub slots: SlotStore,
     /// Cold completion owns its payload before the active window is cleared.
     pub pending: Option<Value>,
+    /// A typed root terminal result; never represented by a manufactured JS Value.
+    pub root_descriptor: Option<super::entry::DescriptorReply>,
     pub root_query: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub pending_call: Option<Box<super::call_bridge::PendingCall>>,
     _guard: ExecutionGuard,
@@ -241,6 +248,7 @@ impl RunningExecution {
             pending: None,
             pending_call: None,
             root_query: None,
+            root_descriptor: None,
             _guard: guard,
         })
     }
@@ -261,6 +269,7 @@ mod tests {
         let before = ACTIVE_EXECUTIONS.with(|active| active.borrow().clone());
         assert_eq!(before.len(), 1);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _boundary = HostBoundaryGuard::enter(&runtime).unwrap();
             let _inner = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             assert_eq!(ACTIVE_EXECUTIONS.with(|active| active.borrow().len()), 2);
             panic!("exercise execution guard unwinding");
@@ -298,11 +307,13 @@ mod tests {
             inner._guard.registration.host_boundary,
             Some(boundary.boundary.id)
         );
-        let internal = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        assert_eq!(internal._guard.registration.host_boundary, None);
+        let internal = RunningExecution::new(&runtime, ExecutionLimits::default());
+        assert!(
+            matches!(internal, Err(error) if error.message() == "internal callback attempted a nested root execution")
+        );
         let foreign = RunningExecution::new(&other_runtime, ExecutionLimits::default()).unwrap();
         assert_eq!(foreign._guard.registration.host_boundary, None);
-        drop((foreign, internal, inner));
+        drop((foreign, inner));
         boundary.finish(&runtime).unwrap();
         assert!(HOST_BOUNDARIES.with(|boundaries| boundaries.borrow().is_empty()));
         drop(outer);

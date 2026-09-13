@@ -1,6 +1,6 @@
 # 栈 VM：一个 PR 内的 10 个 commit
 
-状态：2026-09-13，S01–S06 阶段验收通过，S07–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
+状态：2026-09-14，S01–S07 阶段验收通过，S08–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
 
 目标见[架构计划](primitive-vm-plan.md)，目录与算法见[实施设计](primitive-vm-implementation-plan.md)，能力和结构验收见[迁移清单](primitive-vm-migration.md)。
 
@@ -245,6 +245,61 @@ root 请求持有真实 continuation，不创建占位字节码帧。语言状�
 **验收：**强制 GC、最后引用、半转换失败、单次 completion、重复恢复拒绝、交错请求、yield*、私有/捕获状态与关闭回收。内部 poll 不新增调度时机；不引入 #20 的 Fiber 调度或新的可挂起 host ABI。
 
 ### S07 — `refactor(api): integrate modules host and binary entries with the stack driver`
+
+当前实现（S07 统一验收通过）：模块 link/evaluate 保留原 DFS/SCC 状态机，
+分别由 `modules/link.rs`、`evaluation.rs` 拥有等待状态；body、异步完成回调和
+Import 参数算法归同领域共享 Step/Resume。dynamic import load job 依次进入
+link、evaluate、Promise attach 和 settle 根操作，保留每次操作之间的 RuntimeError
+转换及原有 FIFO 政策。编译请求仍归 API，所有输入仍通过 code 验证/发布。
+
+Context call/construct 和属性 API 使用带原始域验证的 owned 根请求；own descriptor
+通过有类型的根结果返回。binary 翻译后的 callable 使用相同入口。Test262 evalScript、
+Agent 转换及 qjs 输出已经登记；native/web/Test262 构建支持显式 `stack-vm`。
+真实 loader/rejection tracker 边界使用 delimiter 和原 native 栈预算；活跃 Runtime
+内没有真实宿主边界的嵌套根执行被拒绝。HostServices 的时钟/时区仍遵循既有
+禁止同 Runtime 重入的同步值服务契约，未修改其 infallible ABI。
+
+开发回归记录：首次 owned 库完整检查 2203 通过、7 失败。失败暴露了
+ActiveFrameProbe 测试入口误登记为无回调操作，以及 checkpoint 测试在手动暂停
+执行仍登记时调用 Context 的旧做法。probe 改用共享 InvokeStep；测试先准备输入、
+或结束暂停执行再读错误，原错误和 active frame/backtrace 预期不变。放弃测试改在
+实际 JS 子帧尚未执行时停住，继续检查 native owner 与 Runtime 释放。binary 测试
+在原 25642 字节完全不变的文件末尾新增 GC 后执行及零桥接断言。
+
+S07 首次正式 workspace 检查中，owned 库 2211 项、CLI 32 项通过，oracle
+905 通过、6 失败（另 1 项手动压力尚未运行）。六项失败共同暴露模板对象
+`PushConst` 仍走旧整帧交接；补入共享 value-constant 检查/持根冷操作，默认 host
+消费同一规则。原 oracle 输入/预期不变，定向 11 项 QuickJS 对照通过，并增加
+模板对象跨回调/GC 的身份及零桥接测试。失败日志保留，仍是同一次正式验收。
+
+首次完整 owned Test262 执行 102037 variants：79966 pass，比冻结基线少 16。
+新增失败均为 Promise all/allSettled/any/race 的 null/undefined iterable：
+ReadValue 的准备错误越过了选定 continuation。修复复用原 value-property 读取
+的 nullish TypeError → Throw 转换，让 Promise 算法按原阶段拒绝 capability。
+未修改用例、admission、配置或预期；原失败向量与 runner 凭证完整保留，继续同一次验收。
+原 16 项定向复验全部通过；再次完整执行恢复 79982 pass，TSV/JSONL 分类投影
+通过，但冻结 receipt 哈希因首行 current-source 指纹不同而拒绝。逐字节验证确认
+只还原首行指纹即可得到两个原冻结 SHA-256。门禁先认证当前 runner/报告来源，
+再仅在临时副本中还原首行来源字段，严格比较全部结果字节；原报告不修改。
+五项定向门禁检查覆盖有效来源、结果字节篡改、其他 metadata 篡改、错误来源与
+重复来源，均按预期接受/拒绝。门禁修改后重新生成完整新旧 receipt。
+
+
+WASM 首次运行要求有限 1000 层 yield* 溢出，新 VM 返回成功而失败。
+默认配置的原输入/预期保持不变；owned 配置明确验证 1000 层返回 42，再用
+Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改变生产代码或预算。
+两种配置重新构建并通过全部 15 个 playground 示例、metadata 和 Node/WASM 检查。
+
+**S07 统一阶段验收通过（2026-09-14）。** 最终 owned/default workspace 全部通过：
+库测试分别 2212/2035，CLI 各 32，常规 oracle 各 911，另行执行的 65K 实参压力
+各 1，CLI profiling 各 5，Test262 runner 单元测试各 122。两种配置完整 Test262
+均为 102037 variants、80032 eligible、79982 pass；全部结果字节与冻结基线一致，
+只在认证后对临时副本还原首行源码指纹。完整 boundary 726 个反例全部拒绝；
+属性契约 4 项、非 profiling 构建、662 文件布局、格式和 diff 通过。14 项门禁、
+全部失败与修复、原始报告和最终 1163 个源码/构建/fixture 输入哈希保存在
+`target/primitive-vm-s07-acceptance/`，最终判定为 `stage-verdict.json`。
+本阶段只创建一次 commit；随后在该干净 commit 上执行完整 benchmark/profile，
+结果及原始样本说明写入 PR #21 comment。S08/S09 优化、S10 默认切换和旧路径删除未实施。
 
 完成全部既有生产入口的可测新核心路径：
 

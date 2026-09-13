@@ -16,6 +16,21 @@ pub(super) fn finish(
 ) -> Result<Next, Error> {
     loop {
         match step {
+            Step::RootDescriptor(result) => {
+                if !matches!(owner, ReturnOwner::Root)
+                    || !query.parents.is_empty()
+                    || !query.natives.is_empty()
+                    || !matches!(query.finish.take(), Some(Finish::Root))
+                    || execution.root_descriptor.is_some()
+                {
+                    return Err(Error::internal(
+                        "root descriptor reached a non-root continuation",
+                    ));
+                }
+                execution.root_descriptor = Some(result);
+                return Ok(Next::Done(Progress::Call(CallStep::Entered)));
+            }
+
             Step::Complete(completion) => {
                 if let Some(parent) = query.parents.pop() {
                     step = parent
@@ -263,6 +278,90 @@ pub(super) fn prepare(
     loop {
         let realm = query.realm;
         match step {
+            Step::ModuleCallbackOperation {
+                step: callback,
+                resume,
+            } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("module callback continuation allocation failed")
+                })?;
+                query.parents.push(resume);
+                step = (*callback).into();
+            }
+
+            Step::ModuleBodyOperation { step: body, resume } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("module body continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = (*body).into();
+            }
+
+            Step::ModuleLink {
+                realm,
+                callable,
+                resume,
+            } => {
+                let super::CallableExecution::Bytecode {
+                    bytecode,
+                    closure_slots,
+                } = runtime
+                    .bytecode_for_callable(&callable)
+                    .map_err(runtime_error_to_vm_error)?
+                else {
+                    return Err(Error::internal("module link prefix is not bytecode"));
+                };
+                if !runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .function_bytecode(bytecode.bytecode_id())
+                    .map_err(|e| Error::internal(e.to_string()))?
+                    .metadata
+                    .is_module
+                {
+                    return Err(Error::internal(
+                        "module link prefix is not a module executable",
+                    ));
+                }
+                if !execution
+                    .frames
+                    .can_push_with_continuations(query.continuation_depth())
+                    || runtime.bytecode_call_would_overflow()
+                {
+                    let completion = runtime
+                        .bytecode_stack_overflow_completion(realm, &bytecode)
+                        .map_err(runtime_error_to_vm_error)?;
+                    step = resume
+                        .resume(runtime, completion)
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
+                let entry = super::BytecodeCallRequest {
+                    callable,
+                    receiver: Value::Bool(true),
+                    new_target: Value::Undefined,
+                    arguments: Vec::new(),
+                    bytecode,
+                    closure_slots,
+                    caller_realm: realm,
+                    return_to: ReturnTarget {
+                        owner,
+                        value_use: ReturnValue::Push,
+                        tail: false,
+                        operation: Some(OperationTarget::PropertyGet(identity)),
+                    },
+                }
+                .prepare(runtime)?;
+                return Ok(Next::Call {
+                    entry,
+                    pc: 0,
+                    resume,
+                });
+            }
+
             Step::PromiseOperation {
                 step: operation,
                 resume,

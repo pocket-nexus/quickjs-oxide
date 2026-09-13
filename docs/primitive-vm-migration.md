@@ -1,6 +1,6 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-13。用户已确定使用栈 VM，**S01–S06 阶段验收通过，S07–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
+状态：2026-09-14。用户已确定使用栈 VM，**S01–S07 阶段验收通过，S08–S10 尚未开始，整体计划尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
 
 ## 1. 起点与范围
 
@@ -33,25 +33,25 @@
 
 | 状态 | 唯一责任 | 目标不变量 | 状态 |
 | --- | --- | --- | --- |
-| 编译中的 scope/binding/IR | compiler 模型与解析阶段 | lowering 消费已解析身份，复用 binding 事实 | 待做 |
-| code/layout/sites/handlers | code 发布对象 | 继续统一验证后发布，保留已有不可变共享 | 待做 |
-| 当前 frames/pc/sp/slots | RunningExecution 与 frame/stack 模块 | 一份动态状态；host/观察表引用其身份和已发布视图 | 待做 |
-| 参数与局部 owning 值 | SlotStore/binding 布局 | 复用调用容量；原始实参与可写形参保持正确关系 | 待做 |
-| 语义 callback 进度 | value/object/builtins 中的领域状态 | 恢复点显式，VM 不复制领域算法或递归等待内部 JS | 待做 |
-| operation 调用与回复 | VM operation 登记及 driver | 正确 owner、单次回复、getter 不因恢复重复执行 | 待做 |
-| abrupt completion/cleanup | unwind 与有效控制区域 | 统一展开协议，保留各项语言清理优先级 | 待做 |
+| 编译中的 scope/binding/IR | compiler 模型与解析阶段 | lowering 消费已解析身份，复用 binding 事实 | S01 已验收 |
+| code/layout/sites/handlers | code 发布对象 | 继续统一验证后发布，保留已有不可变共享 | S02 已验收；后续融合归 S08 |
+| 当前 frames/pc/sp/slots | RunningExecution 与 frame/stack 模块 | 一份动态状态；host/观察表引用其身份和已发布视图 | S03–S07 执行所有权已验收；PC 优化归 S08 |
+| 参数与局部 owning 值 | SlotStore/binding 布局 | 复用调用容量；原始实参与可写形参保持正确关系 | S03/S04 所有权已验收；调用容量优化归 S09 |
+| 语义 callback 进度 | value/object/builtins 中的领域状态 | 恢复点显式，VM 不复制领域算法或递归等待内部 JS | S05–S07 共享阶段及入口验收通过 |
+| operation 调用与回复 | VM operation 登记及 driver | 正确 owner、单次回复、getter 不因恢复重复执行 | S04–S07 验收通过 |
+| abrupt completion/cleanup | unwind 与有效控制区域 | 统一展开协议，保留各项语言清理优先级 | S04–S07 验收通过 |
 | 长期挂起状态 | heap 原始记录；suspend 负责事务交接 | 无永久 Runtime-owning 环、半恢复或最后 root 丢失 | S06 验收通过；证据见本轮阶段验收 |
-| host 重入观察 | 运行登记 guard/delimiter、已发布状态 | 回调前结束借用、视图准确、退出后解除登记 | 待做 |
-| Number 语义 | value/number | 运行与折叠共用纯算法，通用转换保持独立责任 | 待做 |
+| host 重入观察 | 运行登记 guard/delimiter、已发布状态 | 回调前结束借用、视图准确、退出后解除登记 | S07 验收通过；真实边界与禁止内部嵌套根均已验证 |
+| Number 语义 | value/number | 运行与折叠共用纯算法，通用转换保持独立责任 | S03 已验收 |
 
 代码结构独立验收如下，证据与拆分规则见[实施设计第 15 节](primitive-vm-implementation-plan.md#15-代码结构的独立改进清单)。
 
 | 结构任务 | 提交与验收 | 状态 |
 | --- | --- | --- |
 | compiler 入口、共享模型、解析临时状态 | S01；复用现有阶段，消费式交接，不生成新的巨型 model | S01 阶段验收通过 |
-| host_bridge 的绑定/构帧/挂起/领域操作分归属 | S03–S07；已有读写 helper 复用，测试/恢复特殊验证保留 | 待做 |
+| host_bridge 的绑定/构帧/挂起/领域操作分归属 | S03–S07；已有读写 helper 复用，测试/恢复特殊验证保留 | S03–S07 分责及入口验收通过；旧路径删除归 S10 |
 | 验证大函数、长 tuple 与发布流程 | S02；命名工作项、明确检查顺序，已有 VerifiedFunction 和反例保持 | S02 阶段验收通过 |
-| code/compiler 反向依赖 | S01–S02/S07；发布输入归 code，编译请求编排归 api，生产验证不导入 compiler | S02 阶段验收通过；S07 入口审计待做 |
+| code/compiler 反向依赖 | S01–S02/S07；发布输入归 code，编译请求编排归 api，生产验证不导入 compiler | S02 验收和 S07 入口审计通过 |
 | 显式导入与 Number 文件职责 | S01–S03/S10；imports 可追踪，运算/转换/格式化分责，公有边界不扩大 | 待做 |
 | 测试、物理归属检查与架构/源码契约 | 随迁移更新，S10 收口；旧反例和 mutation 有效，无失联检查 | 待做 |
 
@@ -59,8 +59,8 @@
 
 | 能力 | 目标责任/提交 | 关键验证 | 状态 |
 | --- | --- | --- | --- |
-| 完整语法与名字解析 | parser/model/resolution，S01 | hoist、eval、class/private、错误顺序；无数字子集前端 | 待做 |
-| 栈 lowering/控制流/发布 | lowering/flow/code，S01–S02 | 合流栈形状、异常/恢复、TDZ、源码重定位与畸形 code | 待做 |
+| 完整语法与名字解析 | parser/model/resolution，S01 | hoist、eval、class/private、错误顺序；无数字子集前端 | S01 已验收 |
+| 栈 lowering/控制流/发布 | lowering/flow/code，S01–S02 | 合流栈形状、异常/恢复、TDZ、源码重定位与畸形 code | S01–S02 已验收 |
 | Frame/Slot 容器 | execution/frame/stack，S03 | 区间独立、容量复用、clear/move、原始实参、运行登记 | S03 已验收 |
 | 栈原语与 Number | number/run，S03 | Int/Float、NaN/-0、BigInt/String 慢路、目标旧引用释放 | S03 已验收 |
 | 普通调用/constructor | call/driver，S04 | 限额、参数/this/new.target/realm、bound、derived return | S04 已验收；exotic/native 领域调用点归 S05 |
@@ -74,8 +74,8 @@
 | generator | suspend + generator 驱动，S06 | next/throw/return、yield*、reentry、关闭/失败/GC | S06 验收通过；证据见本轮阶段验收 |
 | async/Promise | suspend/async/jobs，S06 | 同步前缀、assimilation、微任务次序、pending roots | S06 验收通过；证据见本轮阶段验收 |
 | async generator/iteration | 专用队列与恢复，S06 | 交错请求、finally await、异步 close | S06 验收通过；证据见本轮阶段验收 |
-| modules | modules + driver，S07 | cycles/live import、TLA、dynamic import、loader 重入 | 待做 |
-| API/host/binary/platform | 入口适配与统一验证，S07 | 所有入口、delimiter、round trip、畸形输入和平台 | 待做 |
+| modules | modules + driver，S07 | cycles/live import、TLA、dynamic import、loader 重入 | S07 验收通过；新旧完整 oracle/Test262 均通过 |
+| API/host/binary/platform | 入口适配与统一验证，S07 | 所有入口、delimiter、round trip、畸形输入和平台 | S07 验收通过；native/API/binary 及两配置 Node/WASM 通过 |
 | PC/observer/interrupt | observe + run，S08 | fault/resume、GC/release、host/debug、融合 fuel 权重 | 待做 |
 | 调用与布局优化 | call/frame/stack，S09 | 原生帧、峰值槽、复制/retain、缓存物化、编码成本 | 待做 |
 
@@ -1155,3 +1155,22 @@ Async-from-Sync、Promise selector 和 jobs 保留各自状态机，通过 typed
 `target/primitive-vm-s06-acceptance/`，最终判定见 `stage-verdict.json`。
 本节取代历史 S06 待办状态；模块、宿主、API 与二进制入口仍属于 S07。
 默认切换和旧路径删除仍属于 S10，最终 benchmark/profile 尚未执行。
+
+## S07 本轮阶段验收
+
+模块 link/evaluate/Import/body/private handlers 保留原 DFS/SCC、realm、TLA 和 FIFO
+规则，以领域 continuation 和显式根操作进入 driver。Context call/construct/属性及
+binary callable 复用相同入口，真实 host 边界使用 delimiter 和原生预算；没有边界的
+内部嵌套根被拒绝。Test262 host、CLI、native/web adapters 的显式配置均已覆盖。
+
+14 项统一门禁全部通过：owned/default 库 2212/2035、CLI 各 32、常规 oracle 各 911
+加单独压力各 1、CLI profiling 各 5、Test262 runner 单元各 122。两配置完整 Test262
+各 79982 pass / 80032 eligible / 102037 variants，结果字节与冻结基线严格一致。
+两配置 Node/WASM 各 15 个 playground 示例、metadata、有限委托和溢出恢复通过。
+完整边界反例 726 个全部拒绝；属性契约 4 项、非 profiling、662 文件布局、格式/diff 通过。
+首次模板常量、Promise nullish 读取、receipt 来源哈希和 WASM 有限深度预期失败均保留；
+修复与复验仍属同一次 S07 验收，原用例/预算/结果契约的保留情况见逐 commit 计划。
+最终 1163 个源码/构建/fixture 哈希和全部原始证据在
+`target/primitive-vm-s07-acceptance/`，判定见 `stage-verdict.json`。
+本节取代历史 S07 待办状态；S08/S09 优化和 S10 默认切换、旧路径删除未实施。
+完整 benchmark/profile 在本阶段唯一 commit 后执行，另在 PR #21 comment 汇报。

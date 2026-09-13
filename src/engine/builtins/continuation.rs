@@ -14,6 +14,14 @@ use crate::engine::{
 };
 
 pub(crate) enum NativeOperation {
+    #[cfg(test)]
+    ActiveFrameProbe,
+    ModuleCallback(NativeFunctionId),
+    #[cfg(feature = "test262-host")]
+    Test262Agent(super::native::Test262AgentKind),
+    #[cfg(feature = "test262-host")]
+    EvalScript,
+    HostOutput(NativeFunctionId),
     AsyncGenerator(NativeFunctionId),
     FromSync(NativeFunctionId),
     AsyncResume(crate::engine::heap::AsyncFunctionResumeKind),
@@ -120,6 +128,11 @@ pub(crate) enum NativeOperation {
     Predicate(PredicateKind),
 }
 pub(crate) enum NativeStep {
+    ModuleCallback(crate::engine::modules::callback::CallbackStep),
+    #[cfg(feature = "test262-host")]
+    Test262Agent(crate::engine::api::test262_agent::operation::AgentStep),
+    #[cfg(feature = "test262-host")]
+    EvalScript(crate::engine::api::test262_host::operation::EvalScriptStep),
     AsyncGenerator(crate::engine::vm::async_generator::AsyncGeneratorStep),
     FromSync(crate::engine::vm::async_from_sync_iterator::FromSyncStep),
     Async(crate::engine::vm::async_function::AsyncStep),
@@ -225,6 +238,42 @@ pub(crate) enum NativeStep {
 }
 impl NativeOperation {
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
+        if matches!(
+            target,
+            NativeFunctionId::ModuleEvaluation(_) | NativeFunctionId::DynamicImportHandler(_)
+        ) {
+            return Some(Self::ModuleCallback(target));
+        }
+        #[cfg(feature = "test262-host")]
+        match target {
+            NativeFunctionId::Test262Agent(kind) => return Some(Self::Test262Agent(kind)),
+            NativeFunctionId::Test262EvalScript => return Some(Self::EvalScript),
+            NativeFunctionId::Test262DetachArrayBuffer
+            | NativeFunctionId::Test262CreateRealm
+            | NativeFunctionId::Test262IsHtmlDda
+            | NativeFunctionId::Test262Gc => return Some(Self::Pure(target)),
+            _ => {}
+        }
+        #[cfg(test)]
+        if target == NativeFunctionId::ActiveFrameProbe {
+            return Some(Self::ActiveFrameProbe);
+        }
+        #[cfg(test)]
+        if matches!(
+            target,
+            NativeFunctionId::ArgumentProbe
+                | NativeFunctionId::ConstructorProbe
+                | NativeFunctionId::ConstructorOrFunctionProbe
+        ) {
+            return Some(Self::Pure(target));
+        }
+
+        if matches!(
+            target,
+            NativeFunctionId::QjsPrint | NativeFunctionId::QjsConsoleLog
+        ) {
+            return Some(Self::HostOutput(target));
+        }
         if matches!(
             target,
             NativeFunctionId::AsyncGeneratorPrototypeResume(_)
@@ -691,6 +740,10 @@ impl NativeOperation {
         callable: &crate::engine::object::CallableRef,
     ) -> Result<NativeStep, RuntimeError> {
         Ok(match self {
+            #[cfg(test)]
+            Self::ActiveFrameProbe => {
+                NativeStep::Invoke(runtime.prepare_active_frame_probe(realm, arguments)?)
+            }
             Self::AsyncGenerator(target) => NativeStep::AsyncGenerator(
                 crate::engine::vm::async_generator::AsyncGeneratorStep::start(
                     runtime, realm, target, invocation, arguments,
@@ -882,6 +935,38 @@ impl NativeOperation {
                 runtime, realm, invocation, arguments,
             )?),
 
+            #[cfg(feature = "test262-host")]
+            Self::Test262Agent(kind) => NativeStep::Test262Agent(
+                crate::engine::api::test262_agent::operation::AgentStep::start(
+                    runtime,
+                    realm,
+                    kind,
+                    invocation.clone(),
+                    arguments,
+                )?,
+            ),
+            #[cfg(feature = "test262-host")]
+            Self::EvalScript => NativeStep::EvalScript(
+                crate::engine::api::test262_host::operation::EvalScriptStep::start(
+                    realm,
+                    invocation.clone(),
+                    arguments,
+                )?,
+            ),
+            Self::ModuleCallback(target) => {
+                NativeStep::ModuleCallback(crate::engine::modules::callback::CallbackStep::start(
+                    runtime,
+                    realm,
+                    target,
+                    invocation.clone(),
+                    arguments,
+                )?)
+            }
+            Self::HostOutput(target) => NativeStep::Complete(runtime.call_qjs_output(
+                target,
+                invocation.clone(),
+                arguments,
+            )?),
             Self::Pure(target) => NativeStep::Complete(runtime.dispatch_adapted_native_function(
                 callable,
                 target,

@@ -8,9 +8,7 @@ use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::builtins::native::{
-    DynamicImportHandlerKind, NativeFunctionId, PromiseNativeKind, PromiseResolvingKind,
-};
+use crate::engine::builtins::native::{NativeFunctionId, PromiseNativeKind, PromiseResolvingKind};
 use crate::engine::heap::{
     ContextId, InternalCallableData, ObjectData, ObjectId, ObjectPayload, PromiseCapabilityData,
     PromiseCapabilityExecutorData, PromiseReaction, PromiseReactionKind, PromiseRealmData,
@@ -291,16 +289,19 @@ impl Runtime {
         promise: ObjectRef,
         reason: Value,
         handled: bool,
-    ) {
+    ) -> Result<(), RuntimeError> {
         let tracker = self.0.promise_rejection_tracker.borrow().clone();
         if let Some(tracker) = tracker {
-            tracker(PromiseRejectionEvent {
-                context: realm,
-                promise,
-                reason,
-                handled,
-            });
+            self.with_host_callback(|| {
+                tracker(PromiseRejectionEvent {
+                    context: realm,
+                    promise,
+                    reason,
+                    handled,
+                })
+            })?;
         }
+        Ok(())
     }
 
     fn new_promise_object(&self, prototype: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
@@ -740,6 +741,7 @@ impl Runtime {
             prepared_jobs.push(job);
         }
 
+        let prepared_jobs = crate::engine::jobs::PreparedJobs::new(self, prepared_jobs);
         let settlement = (|| -> Result<(), RuntimeError> {
             let mut state_ref = self.0.state.borrow_mut();
             let retained_atom = if let RawValue::Symbol(atom) = &raw {
@@ -762,19 +764,16 @@ impl Runtime {
             };
             state_ref.apply_cleanup(cleanup)
         })();
-        if let Err(error) = settlement {
-            self.discard_prepared_jobs(prepared_jobs)?;
-            return Err(error);
-        }
+        settlement?;
         if state == PromiseState::Rejected && !was_handled {
             self.notify_host_promise_rejection_tracker(
                 realm,
                 promise.clone(),
                 result.clone(),
                 false,
-            );
+            )?;
         }
-        self.publish_prepared_jobs(prepared_jobs);
+        prepared_jobs.publish();
         drop(result);
         Ok(())
     }
@@ -896,7 +895,7 @@ impl Runtime {
                         promise.clone(),
                         reason,
                         true,
-                    );
+                    )?;
                 }
                 self.enqueue_promise_reaction_job(realm, reject, snapshot.result)?;
             }
@@ -1027,22 +1026,18 @@ impl Runtime {
         fulfill: &CallableRef,
         reject: &CallableRef,
     ) -> Result<NativeConversion<()>, RuntimeError> {
-        let constructor = match self.promise_species_constructor(realm, promise)? {
-            NativeConversion::Value(constructor) => constructor,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let capability = match self.new_promise_capability(realm, constructor.as_ref())? {
-            NativeConversion::Value(capability) => capability,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        self.perform_promise_then_with_capability(
+        match operation::PromiseStep::module_then(
+            self,
             realm,
-            promise,
-            Some(fulfill),
-            Some(reject),
-            &capability,
-        )?;
-        Ok(NativeConversion::Value(()))
+            promise.clone(),
+            fulfill.clone(),
+            reject.clone(),
+        )?
+        .finish(self, realm)?
+        {
+            Completion::Return(_) => Ok(NativeConversion::Value(())),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+        }
     }
 
     /// Attach QuickJS's private dynamic-import continuation to the cached
@@ -1057,48 +1052,19 @@ impl Runtime {
         resolve: ObjectId,
         reject: ObjectId,
     ) -> Result<NativeConversion<()>, RuntimeError> {
-        if module.cache != realm {
-            return Err(RuntimeError::Invariant(
-                "dynamic import module belongs to another Context cache",
-            ));
-        }
-        // `JS_LoadModuleInternal` deliberately calls the full private
-        // `js_promise_then`, not merely `PerformPromiseThen`. Preserve the
-        // observable constructor/@@species lookup and its ignored result
-        // capability before attaching the continuation.
-        let constructor = match self.promise_species_constructor(realm, promise)? {
-            NativeConversion::Value(constructor) => constructor,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        let reaction_capability = match self.new_promise_capability(realm, constructor.as_ref())? {
-            NativeConversion::Value(capability) => capability,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-
-        let make_handler = |kind| {
-            self.new_internal_promise_function(
-                realm,
-                NativeFunctionId::DynamicImportHandler(kind),
-                1,
-                0,
-                InternalCallableData::DynamicImportHandler {
-                    module,
-                    resolve,
-                    reject,
-                    kind,
-                },
-            )
-        };
-        let fulfill = make_handler(DynamicImportHandlerKind::Fulfill)?;
-        let reject_handler = make_handler(DynamicImportHandlerKind::Reject)?;
-        self.perform_promise_then_with_capability(
+        match operation::PromiseStep::dynamic_import_then(
+            self,
             realm,
-            promise,
-            Some(&fulfill),
-            Some(&reject_handler),
-            &reaction_capability,
-        )?;
-        Ok(NativeConversion::Value(()))
+            promise.clone(),
+            module,
+            resolve,
+            reject,
+        )?
+        .finish(self, realm)?
+        {
+            Completion::Return(_) => Ok(NativeConversion::Value(())),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+        }
     }
 
     fn perform_promise_then_internal(
@@ -1155,7 +1121,7 @@ impl Runtime {
                         promise.clone(),
                         reason,
                         true,
-                    );
+                    )?;
                 }
                 self.enqueue_promise_reaction_job(realm, reject, snapshot.result)?;
             }

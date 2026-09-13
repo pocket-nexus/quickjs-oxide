@@ -367,11 +367,25 @@ impl Runtime {
         new_target: &CallableRef,
         arguments: &[Value],
     ) -> Result<Completion, RuntimeError> {
+        let (constructor, new_target) =
+            match self.prepare_constructor_pair(caller_realm, constructor, new_target)? {
+                NativeConversion::Value(pair) => pair,
+                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            };
+        self.construct_constructor_internal(caller_realm, &constructor, &new_target, arguments)
+    }
+
+    pub(crate) fn prepare_constructor_pair(
+        &self,
+        caller_realm: ContextId,
+        constructor: &CallableRef,
+        new_target: &CallableRef,
+    ) -> Result<NativeConversion<(ConstructorRef, ConstructorRef)>, RuntimeError> {
         if !constructor.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("constructor"));
         }
         if !self.is_constructor(constructor.as_object())? {
-            return Ok(Completion::Throw(self.new_not_constructor_error(
+            return Ok(NativeConversion::Throw(self.new_not_constructor_error(
                 caller_realm,
                 &Value::Object(constructor.as_object().clone()),
             )?));
@@ -380,14 +394,14 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("constructor"));
         }
         if !self.is_constructor(new_target.as_object())? {
-            return Ok(Completion::Throw(self.new_not_constructor_error(
+            return Ok(NativeConversion::Throw(self.new_not_constructor_error(
                 caller_realm,
                 &Value::Object(new_target.as_object().clone()),
             )?));
         }
         let constructor = ConstructorRef::from_validated_callable(constructor);
         let new_target = ConstructorRef::from_validated_callable(new_target);
-        self.construct_constructor_internal(caller_realm, &constructor, &new_target, arguments)
+        Ok(NativeConversion::Value((constructor, new_target)))
     }
 
     pub(crate) fn construct_constructor_internal(

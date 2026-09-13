@@ -34,7 +34,7 @@ impl PromiseStep {
         ) {
             return super::capability::error(runtime, realm, "not a promise");
         }
-        let handlers = [
+        let handlers = ThenHandlers::Public([
             arguments
                 .readable
                 .first()
@@ -49,7 +49,7 @@ impl PromiseStep {
                 .ok_or(RuntimeError::Invariant(
                     "Promise.then reject argv was not padded",
                 ))?,
-        ];
+        ]);
         Ok(Self::Read {
             receiver: Value::Object(promise.clone()),
             key: runtime.intern_property_key("constructor")?,
@@ -67,7 +67,7 @@ pub(super) fn constructor(
     runtime: &Runtime,
     realm: ContextId,
     promise: ObjectRef,
-    handlers: [Value; 2],
+    handlers: ThenHandlers,
     result: Completion,
 ) -> Result<PromiseStep, RuntimeError> {
     match result {
@@ -92,7 +92,7 @@ pub(super) fn species(
     runtime: &Runtime,
     realm: ContextId,
     promise: ObjectRef,
-    handlers: [Value; 2],
+    handlers: ThenHandlers,
     result: Completion,
 ) -> Result<PromiseStep, RuntimeError> {
     let constructor = match result {
@@ -110,4 +110,128 @@ pub(super) fn species(
         phase: Phase::ThenCapability { promise, handlers },
     })
     .capability(runtime, constructor)
+}
+
+/// Internal handlers are prepared at their original point after species and
+/// capability creation. Their roots remain owned while user code is suspended.
+pub(super) enum ThenHandlers {
+    Public([Value; 2]),
+    Module {
+        fulfill: crate::engine::object::CallableRef,
+        reject: crate::engine::object::CallableRef,
+    },
+    Dynamic {
+        module: crate::engine::heap::RawModuleRef,
+        _root: crate::engine::modules::ModuleBytecodeRef,
+        resolve: ObjectRef,
+        reject: ObjectRef,
+    },
+}
+impl PromiseStep {
+    pub(crate) fn module_then(
+        runtime: &Runtime,
+        realm: ContextId,
+        promise: ObjectRef,
+        fulfill: crate::engine::object::CallableRef,
+        reject: crate::engine::object::CallableRef,
+    ) -> Result<Self, RuntimeError> {
+        Self::internal_then(
+            runtime,
+            realm,
+            promise,
+            ThenHandlers::Module { fulfill, reject },
+        )
+    }
+    pub(crate) fn dynamic_import_then(
+        runtime: &Runtime,
+        realm: ContextId,
+        promise: ObjectRef,
+        module: crate::engine::heap::RawModuleRef,
+        resolve: crate::engine::heap::ObjectId,
+        reject: crate::engine::heap::ObjectId,
+    ) -> Result<Self, RuntimeError> {
+        if module.cache != realm {
+            return Err(RuntimeError::Invariant(
+                "dynamic import module belongs to another Context cache",
+            ));
+        }
+        Self::internal_then(
+            runtime,
+            realm,
+            promise,
+            ThenHandlers::Dynamic {
+                module,
+                _root: runtime.root_module(module)?,
+                resolve: ObjectRef::from_borrowed_handle(runtime.clone(), resolve)?,
+                reject: ObjectRef::from_borrowed_handle(runtime.clone(), reject)?,
+            },
+        )
+    }
+    fn internal_then(
+        runtime: &Runtime,
+        realm: ContextId,
+        promise: ObjectRef,
+        handlers: ThenHandlers,
+    ) -> Result<Self, RuntimeError> {
+        Ok(Self::Read {
+            receiver: Value::Object(promise.clone()),
+            key: runtime.intern_property_key("constructor")?,
+            resume: Box::new(PromiseResume {
+                realm,
+                phase: Phase::ThenConstructor { promise, handlers },
+            }),
+        })
+    }
+}
+impl ThenHandlers {
+    pub(super) fn finish(
+        self,
+        runtime: &Runtime,
+        realm: ContextId,
+        promise: ObjectRef,
+        capability: super::RootedPromiseCapability,
+    ) -> Result<Completion, RuntimeError> {
+        use crate::engine::{
+            builtins::native::{DynamicImportHandlerKind, NativeFunctionId},
+            heap::InternalCallableData,
+        };
+        let (fulfill, reject) = match self {
+            Self::Public(handlers) => {
+                return runtime.finish_promise_then(realm, promise, handlers, capability);
+            }
+            Self::Module { fulfill, reject } => (fulfill, reject),
+            Self::Dynamic {
+                module,
+                _root,
+                resolve,
+                reject,
+            } => {
+                let make_handler = |kind| {
+                    runtime.new_internal_promise_function(
+                        realm,
+                        NativeFunctionId::DynamicImportHandler(kind),
+                        1,
+                        0,
+                        InternalCallableData::DynamicImportHandler {
+                            module,
+                            resolve: resolve.object_id(),
+                            reject: reject.object_id(),
+                            kind,
+                        },
+                    )
+                };
+                let fulfill = make_handler(DynamicImportHandlerKind::Fulfill)?;
+                let reject = make_handler(DynamicImportHandlerKind::Reject)?;
+                (fulfill, reject)
+            }
+        };
+        runtime.perform_promise_then_with_capability(
+            realm,
+            &promise,
+            Some(&fulfill),
+            Some(&reject),
+            &capability,
+        )?;
+        Ok(Completion::Return(Value::Undefined))
+    }
 }

@@ -1,6 +1,6 @@
 # S05 同步回调调用点账本
 
-状态：2026-09-13 当前 S05 工作区源码审计，**S05、S06 统一正式验收通过，S07 待实施**。
+状态：2026-09-14 当前 S07 源码审计，**S05、S06、S07 各自统一正式验收通过**。
 本表替代早期 129 个直接表达式的迁移状态快照；旧行号和已删除函数不再作为待办。
 源码覆盖、定向测试和阶段验收分别记录，不能以注册成功或本表清单清空代替验收。
 
@@ -17,7 +17,7 @@ ToPrimitive/Number/String/BigInt、constructor prototype/species、iterator next
 - **NoJs：**无 JS 回调的存储、品牌检查、纯计算或错误构造，保留普通函数。
 - **S06：**generator/async/Promise/async iterator 的执行与恢复，即便执行同步前缀也不改归 S05。
 - **S07：**module、真实 host、API 和 binary 入口；不能把内部 builtin 回调伪装为 host。
-- **S05 缺口：**当前仍可令同步普通 JS 落回旧 VM 的实际路径，见下文；后续二进制特殊组合仍需 S07 入口验证。
+- **S05 起点缺口：**下文保留迁移前的直接调用快照；本轮已收口并验收。S07 的完整入口配置已通过统一验收。
 
 ## Native 领域与间接调用账本
 
@@ -74,9 +74,9 @@ ToPrimitive/Number/String/BigInt、constructor prototype/species、iterator next
 | Promise全部selector/resolve/capability/finally/聚合、job与thenable | S06 Owned：`promise/operation.rs` 及 capability/resolve/then/jobs/finally/convenience/aggregate；executor、species、thenable 与聚合内部 callback 都显式请求 |
 | AsyncFromSyncIteratorResume/Unwrap/Close | S06 Owned：`vm/async_from_sync_iterator/operation.rs` 的读/调用/Resolve/Close 请求 |
 | ForAwaitOfStart/Next、IteratorGetValueDone、IteratorStart/Next/Call/CheckObject、AsyncIteratorStart、InitialYield/Yield/YieldStar/AsyncYieldStar/Await/ThrowIteratorMissingThrow | S06 Owned：`vm/run.rs`、`iterator_driver/suspension.rs` 和 `suspend` 共用协议。`compiler/generator.rs`生成yield*协议；`compiler/parser/{loops,control}.rs`仅在async迭代/async generator close分支生成相应检查，不是同步destructuring缺口 |
-| InitializeModuleImportCollision、Import、ModuleEvaluation、DynamicImportHandler | S07：module linking/evaluation、dynamic import/TLA入口 |
-| Test262DetachArrayBuffer/EvalScript/CreateRealm/IsHtmlDda/Gc/Agent、QjsPrint/QjsConsoleLog | S07 host/API入口；print等包含ToString回调，当前不得当NoJs，也不能宣称S05 registry覆盖这些host |
-| cfg(test) ArgumentProbe/ConstructorProbe/ConstructorOrFunctionProbe/ActiveFrameProbe | 测试基础设施；S07统一入口审计，非生产ECMAScript intrinsic |
+| InitializeModuleImportCollision、Import、ModuleEvaluation、DynamicImportHandler | S07 已接入共享 binding 验证、Import/Link/Evaluation/Body/Callback 阶段；动态 load job 依次消费根操作，保留错误转换和 FIFO；统一验收通过 |
+| Test262DetachArrayBuffer/EvalScript/CreateRealm/IsHtmlDda/Gc/Agent、QjsPrint/QjsConsoleLog | S07 已登记 host/API 入口；evalScript/Agent 的可观察转换使用 continuation。print/console.log 使用无 JS 回调的 qjs 诊断格式化，保留 WTF-8、实际 argc、换行/flush 与忽略 I/O 失败政策；输出调用是真实 host 边界。S07 统一验收通过 |
+| cfg(test) ArgumentProbe/ConstructorProbe/ConstructorOrFunctionProbe/ActiveFrameProbe | 前三种为无 JS 回调测试叶；ActiveFrameProbe 共享 InvokeStep 保留 native frame 跨 JS 回调；非生产 ECMAScript intrinsic |
 
 ## 本轮 S05 缺口收口与验收
 
@@ -123,14 +123,14 @@ ToPrimitive/Number/String/BigInt、constructor prototype/species、iterator next
 
 ## 直接调用表达式复核
 
-下表保留当前 `object/builtins/value` 中每个生产直接调用表达式的定位；
+下表保留 S05 收口时 `object/builtins/value` 中生产直接调用表达式的定位；
 同一函数内不同调用仍分行。行号为本次审计快照，后续以函数名定位。
 旧consumer中的`call_internal`是保留的同步消费者，不等于owned路径还调用该consumer。
 VM另外保留 `vm/call_bridge.rs::PendingCall::invoke`、
 `vm/conversion_driver.rs::invoke`、`vm/proxy_get_driver.rs::advance_inner`三处
-未迁移callee回退；S05 验收时其剩余分类为 S06/S07 selector 和非 Normal bytecode；S06 当前实现已接入全部挂起族及间接回调，剩余入口为 S07。
+未迁移callee回退；S05 验收时其剩余分类为 S06/S07 selector 和非 Normal bytecode；S06 已接入全部挂起族及间接回调；S07 已登记 module/host/API 余项，完整入口验收通过。
 `vm/host_bridge.rs`及`host_bridge/private_elements.rs`是旧VM消费者，
-owned对应property/private/eval/iterator入口已分离，host/module真实入口留S07。
+owned 对应 property/private/eval/iterator 入口已分离；host/module 的 S07 当前归属见文末。
 
 | 当前调用位置/函数 | 边界 | 分类 |
 | --- | --- | --- |
@@ -206,3 +206,29 @@ owned对应property/private/eval/iterator入口已分离，host/module真实入�
 | [src/engine/object/ordinary.rs:97](../src/engine/object/ordinary.rs#L97) `finish_prepared_read` | `call_internal` | 旧同步consumer；对应领域已Owned |
 | [src/engine/value/conversion/primitive.rs:177](../src/engine/value/conversion/primitive.rs#L177) `finish_primitive_steps` | `call_internal` | 旧同步consumer；对应领域已Owned |
 | [src/engine/value/conversion.rs:150](../src/engine/value/conversion.rs#L150) `native_to_number` | `call_internal` | 旧同步consumer；对应领域已Owned |
+
+### S07 当前入口审计（统一验收通过）
+
+- Context 的 call/construct/get/own/define/set 以根请求进入 owned driver；参数及
+  wrong-runtime 验证保留，descriptor 结果保持原类型。execute 与 binary 翻译后的
+  callable 复用同一入口，外部 code 的验证和发布未旁路。
+- 模块 link/evaluate、TLA body、private completion handler、Import 参数转换拥有
+  领域 continuation。dynamic load job 在原有宿主调度点依次驱动根操作；无内部 drain。
+- FinalizationRegistry cleanup 与动态导入 settler 从作业入口进入根请求。
+- 真实 loader/rejection tracker 重入登记使用 delimiter；正常/异常/panic 均由 guard
+  清除登记。禁止没有 delimiter 的同 Runtime 嵌套根，防止内部同步调用伪装成新执行。
+- 时钟和时区 HostServices 仍为原有禁止重入的 infallible 值服务。未新增 host ABI。
+- 默认配置及旧消费者保留到 S10。`stack-vm` 已显式转发至 native/web/Test262；
+  CLI、Test262 和 WASM 的完整两配置验收通过，证据见逐 commit 计划及迁移清单。
+
+S07 正式门禁发现并修复的调用点：tagged-template 的 Object 常量曾令
+`PushConst` 进入旧整帧交接；现通过 `pure_operations::load_value_constant`
+共用原 host 的类型检查与持根规则，再由 owned 冷操作压栈。模板身份、raw/cooked、
+GC 与 optional-chain member tag 的原 oracle 预期保留，完整门禁复核通过。
+
+同次 Test262 门禁发现 ReadValue 的 nullish 准备错误越过 Promise continuation；
+现与原同步读取共用 TypeError → Throw 回复转换。四种组合方法的 16 项原失败
+均通过，两配置完整向量逐字节对齐冻结基线。最终 owned/default 库 2212/2035、
+常规 oracle 各 911 加压力各 1、完整 Test262 各 79982 pass、两配置 Node/WASM
+及 726 个边界反例均通过。本轮失败、修复和最终证据统一保存在
+`target/primitive-vm-s07-acceptance/`；完整 benchmark/profile 留待本阶段 commit 后。

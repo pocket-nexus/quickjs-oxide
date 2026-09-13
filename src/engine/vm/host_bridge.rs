@@ -14,7 +14,7 @@ use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::atom::{Atom, PropertyKeyKind};
+use crate::engine::atom::Atom;
 use crate::engine::builtins::native::{ArrayIteratorKind, NativeFunctionId, PrimitiveKind};
 use crate::engine::code::bytecode::{
     ApplyKind, ArgumentsKind, DefineMethodKind, DynamicEnvironmentSource, EvalVariableSource,
@@ -30,7 +30,6 @@ use crate::engine::code::runtime::PublishedFunctionData;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::roots::VarRefRoot;
 
-use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
 use crate::engine::heap::{BytecodeConstant, ContextId, ObjectPayload, RawValue};
 
 use crate::engine::object::operations::{InternalSetResult, PropertyDefineOutcome};
@@ -1207,22 +1206,7 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn load_constant(&mut self, index: u32) -> Result<Value, Error> {
-        let constant = self
-            .executable
-            .constant(index)
-            .ok_or_else(|| Error::internal("constant index is out of bounds"))?;
-        match constant {
-            BytecodeConstant::Value(value) => self
-                .runtime
-                .root_raw_value(value)
-                .map_err(|error| Error::internal(error.to_string())),
-            BytecodeConstant::Function(_) => Err(Error::internal(
-                "child function bytecode was loaded with a value-constant opcode",
-            )),
-            BytecodeConstant::RegExp { .. } => Err(Error::internal(
-                "RegExp program was loaded with a value-constant opcode",
-            )),
-        }
+        super::pure_operations::load_value_constant(&self.runtime, &self.executable, index)
     }
 
     fn read_only_error(&mut self, index: u32) -> Result<Error, Error> {
@@ -2315,185 +2299,16 @@ impl VmHost for RuntimeVmHost {
     }
 
     fn dynamic_import(&mut self, specifier: Value, options: Value) -> Result<Completion, Error> {
-        // Final host-policy boundary: reject before filename observation,
-        // Promise allocation, conversion side effects, or loader callbacks.
-        self.runtime
-            .ensure_dynamic_import_bytecode_authorized(self.executable.root())
-            .map_err(runtime_error_to_vm_error)?;
-        // QuickJS snapshots the active Script/Module name before allocating
-        // the caller-facing capability. A missing name is intentionally not
-        // rejected until the later load job.
-        let base_name = self
-            .runtime
-            .active_script_or_module_name()
-            .map_err(runtime_error_to_vm_error)?;
-        let capability = self
-            .runtime
-            .new_default_promise_capability(self.current_realm)
-            .map_err(runtime_error_to_vm_error)?;
-        let reject_and_return = |reason: Value| -> Result<Completion, Error> {
-            match self
-                .runtime
-                .call_internal(
-                    self.current_realm,
-                    &capability.reject,
-                    Value::Undefined,
-                    &[reason],
-                )
-                .map_err(runtime_error_to_vm_error)?
-            {
-                Completion::Return(_) => Ok(Completion::Return(Value::Object(
-                    capability.promise.clone(),
-                ))),
-                Completion::Throw(_) => Err(Error::internal(
-                    "intrinsic dynamic import reject function threw",
-                )),
-            }
-        };
-
-        let specifier = match self
-            .runtime
-            .native_to_js_string(self.current_realm, &specifier)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            NativeConversion::Value(specifier) => specifier,
-            NativeConversion::Throw(reason) => return reject_and_return(reason),
-        };
-
-        let attributes = if matches!(options, Value::Undefined) {
-            ModuleImportAttributes::Absent
-        } else {
-            let Value::Object(options) = options else {
-                let reason = self
-                    .runtime
-                    .new_native_error(
-                        self.current_realm,
-                        NativeErrorKind::Type,
-                        "options must be an object",
-                    )
-                    .map_err(runtime_error_to_vm_error)?;
-                return reject_and_return(reason);
-            };
-            let with_key = self
-                .runtime
-                .intern_property_key("with")
-                .map_err(|error| runtime_error_to_vm_error(error.into()))?;
-            let with = match self
-                .runtime
-                .get_property_in_realm(self.current_realm, &options, &with_key)
-                .map_err(runtime_error_to_vm_error)?
-            {
-                Completion::Return(value) => value,
-                Completion::Throw(reason) => return reject_and_return(reason),
-            };
-            if matches!(with, Value::Undefined) {
-                ModuleImportAttributes::Absent
-            } else {
-                let Value::Object(with) = with else {
-                    let reason = self
-                        .runtime
-                        .new_native_error(
-                            self.current_realm,
-                            NativeErrorKind::Type,
-                            "options.with must be an object",
-                        )
-                        .map_err(runtime_error_to_vm_error)?;
-                    return reject_and_return(reason);
-                };
-
-                // `JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY` is a three-phase
-                // observable snapshot: ownKeys, every string-key descriptor,
-                // then every value Get. Symbols are filtered before any
-                // descriptor trap.
-                let own_keys = match self
-                    .runtime
-                    .internal_own_property_keys(self.current_realm, &with)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    NativeConversion::Value(keys) => keys,
-                    NativeConversion::Throw(reason) => return reject_and_return(reason),
-                };
-                let mut string_keys = Vec::new();
-                for key in own_keys {
-                    let kind = self
-                        .runtime
-                        .0
-                        .state
-                        .borrow()
-                        .atoms
-                        .property_key_kind(key.atom())
-                        .map_err(|error| runtime_error_to_vm_error(error.into()))?;
-                    if kind == PropertyKeyKind::String {
-                        string_keys.push(key);
-                    }
-                }
-                let mut enumerable_keys = Vec::new();
-                for key in string_keys {
-                    let enumerable = match self
-                        .runtime
-                        .internal_snapshot_own_property_is_enumerable(
-                            self.current_realm,
-                            &with,
-                            &key,
-                        )
-                        .map_err(runtime_error_to_vm_error)?
-                    {
-                        NativeConversion::Value(enumerable) => enumerable,
-                        NativeConversion::Throw(reason) => return reject_and_return(reason),
-                    };
-                    if enumerable {
-                        enumerable_keys.push(key);
-                    }
-                }
-                let mut entries = Vec::new();
-                for key in enumerable_keys {
-                    let name = self
-                        .runtime
-                        .property_key_to_js_string(&key)
-                        .map_err(runtime_error_to_vm_error)?;
-                    let value = match self
-                        .runtime
-                        .get_property_in_realm(self.current_realm, &with, &key)
-                        .map_err(runtime_error_to_vm_error)?
-                    {
-                        Completion::Return(value) => value,
-                        Completion::Throw(reason) => return reject_and_return(reason),
-                    };
-                    let Value::String(value) = value else {
-                        let reason = self
-                            .runtime
-                            .new_native_error(
-                                self.current_realm,
-                                NativeErrorKind::Type,
-                                "module attribute values must be strings",
-                            )
-                            .map_err(runtime_error_to_vm_error)?;
-                        return reject_and_return(reason);
-                    };
-                    entries.push(ModuleImportAttribute { key: name, value });
-                }
-                match self
-                    .runtime
-                    .check_dynamic_import_attributes(self.current_realm, &entries)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    NativeConversion::Value(()) => {}
-                    NativeConversion::Throw(reason) => return reject_and_return(reason),
-                }
-                ModuleImportAttributes::Present(entries.into_boxed_slice())
-            }
-        };
-
-        self.runtime
-            .enqueue_dynamic_import_load_job(
-                self.current_realm,
-                &capability,
-                base_name,
-                specifier,
-                attributes,
-            )
-            .map_err(runtime_error_to_vm_error)?;
-        Ok(Completion::Return(Value::Object(capability.promise)))
+        let step = crate::engine::modules::import::ImportStep::start(
+            &self.runtime,
+            self.current_realm,
+            self.executable.root(),
+            specifier,
+            options,
+        )
+        .map_err(runtime_error_to_vm_error)?;
+        crate::engine::modules::import::finish(&self.runtime, self.current_realm, step)
+            .map_err(runtime_error_to_vm_error)
     }
 
     fn call(
@@ -3104,18 +2919,7 @@ impl VmHost for RuntimeVmHost {
             .get(usize::from(index))
             .copied()
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        if descriptor.source != ClosureSource::ModuleImportCollision
-            || !descriptor.is_lexical
-            || !descriptor.is_const
-            || !matches!(
-                descriptor.kind,
-                ClosureVariableKind::Normal | ClosureVariableKind::ModuleImportView
-            )
-        {
-            return Err(Error::internal(
-                "module import collision initialization targeted a non-import binding",
-            ));
-        }
+        super::bindings::validate_module_import_collision(descriptor)?;
         let root = self
             .closure_slots
             .get(usize::from(index))

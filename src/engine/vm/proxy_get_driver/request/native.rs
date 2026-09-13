@@ -5,6 +5,11 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
     fn from(step: crate::engine::builtins::continuation::NativeStep) -> Self {
         use crate::engine::builtins::continuation::NativeStep;
         match step {
+            NativeStep::ModuleCallback(step) => step.into(),
+            #[cfg(feature = "test262-host")]
+            NativeStep::Test262Agent(step) => step.into(),
+            #[cfg(feature = "test262-host")]
+            NativeStep::EvalScript(step) => step.into(),
             NativeStep::Async(step) => step.into(),
             NativeStep::FromSync(step) => step.into(),
             NativeStep::AsyncGenerator(step) => step.into(),
@@ -237,6 +242,44 @@ impl From<crate::engine::vm::async_from_sync_iterator::FromSyncStep> for Step {
                 iterator,
                 completion,
                 resume: Resume::FromSync(resume),
+            },
+        }
+    }
+}
+
+#[cfg(feature = "test262-host")]
+impl From<crate::engine::api::test262_host::operation::EvalScriptStep> for Step {
+    fn from(step: crate::engine::api::test262_host::operation::EvalScriptStep) -> Self {
+        use crate::engine::api::test262_host::operation::EvalScriptStep;
+        match step {
+            EvalScriptStep::Complete(result) => Self::Complete(result),
+            EvalScriptStep::String { value, resume } => Self::String {
+                value,
+                resume: Resume::EvalScript(resume),
+            },
+            EvalScriptStep::Call { callable, receiver } => Self::Call {
+                target: crate::engine::vm::call::DirectCallTarget::Callable(callable),
+                receiver,
+                arguments: Vec::new(),
+                resume: Resume::Identity,
+            },
+        }
+    }
+}
+
+#[cfg(feature = "test262-host")]
+impl From<crate::engine::api::test262_agent::operation::AgentStep> for Step {
+    fn from(step: crate::engine::api::test262_agent::operation::AgentStep) -> Self {
+        use crate::engine::api::test262_agent::operation::AgentStep;
+        match step {
+            AgentStep::Complete(result) => Self::Complete(result),
+            AgentStep::String { value, resume } => Self::String {
+                value,
+                resume: Resume::Test262Agent(resume),
+            },
+            AgentStep::Number { value, resume } => Self::Number {
+                value,
+                resume: Resume::Test262Agent(resume),
             },
         }
     }

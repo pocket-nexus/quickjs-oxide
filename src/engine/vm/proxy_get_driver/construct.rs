@@ -19,11 +19,7 @@ pub(super) fn start(
     arguments: Vec<Value>,
     resume: Resume,
 ) -> Result<Step, Error> {
-    let NormalizedConstructor {
-        target,
-        new_target,
-        arguments,
-    } = match runtime
+    let normalized = match runtime
         .normalize_constructor(realm, constructor, new_target, arguments)
         .map_err(runtime_error_to_vm_error)?
     {
@@ -34,6 +30,22 @@ pub(super) fn start(
                 .map_err(runtime_error_to_vm_error);
         }
     };
+    prepared(runtime, owner, identity, realm, normalized, resume)
+}
+
+pub(super) fn prepared(
+    runtime: &Runtime,
+    owner: ReturnOwner,
+    identity: u64,
+    realm: crate::engine::heap::ContextId,
+    normalized: NormalizedConstructor,
+    resume: Resume,
+) -> Result<Step, Error> {
+    let NormalizedConstructor {
+        target,
+        new_target,
+        arguments,
+    } = normalized;
     let (callable, classification) = match target {
         ConstructorTarget::Proxy(target) => {
             return Ok(Step::ConstructProxy {

@@ -4,6 +4,7 @@ mod buffer;
 mod conversion;
 mod function;
 mod iterator;
+mod module;
 mod native;
 mod object;
 mod object_builtins;
@@ -36,6 +37,18 @@ use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, Type
 use crate::engine::object::{ProxyPrototypeResume, ProxyPrototypeStep};
 
 pub(super) enum Resume {
+    RootDescriptor,
+    RootDefine,
+    RootSet,
+    ModuleCallback(Box<crate::engine::modules::callback::CallbackResume>),
+    ModuleEvaluation(Box<crate::engine::modules::evaluation::EvaluationResume>),
+    ModuleBody(Box<crate::engine::modules::body::BodyResume>),
+    ModuleLink(Box<crate::engine::modules::link::LinkResume>),
+    Import(Box<crate::engine::modules::import::ImportResume>),
+    #[cfg(feature = "test262-host")]
+    Test262Agent(crate::engine::api::test262_agent::operation::AgentResume),
+    #[cfg(feature = "test262-host")]
+    EvalScript(crate::engine::api::test262_host::operation::EvalScriptResume),
     FromSync(Box<crate::engine::vm::async_from_sync_iterator::FromSyncResume>),
     AsyncGenerator(Box<crate::engine::vm::async_generator::AsyncGeneratorResume>),
     Async(Box<crate::engine::vm::async_function::AsyncResume>),
@@ -257,6 +270,20 @@ pub(super) enum Resume {
 }
 
 pub(super) enum Step {
+    RootDescriptor(crate::engine::vm::entry::DescriptorReply),
+    ModuleCallbackOperation {
+        step: Box<crate::engine::modules::callback::CallbackStep>,
+        resume: Resume,
+    },
+    ModuleBodyOperation {
+        step: Box<crate::engine::modules::body::BodyStep>,
+        resume: Resume,
+    },
+    ModuleLink {
+        realm: crate::engine::heap::ContextId,
+        callable: crate::engine::object::CallableRef,
+        resume: Resume,
+    },
     PromiseOperation {
         step: Box<crate::engine::builtins::promise::operation::PromiseStep>,
         resume: Resume,
@@ -600,6 +627,13 @@ impl Resume {
         action: PropertySetAction,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::RootSet => Ok(Step::Complete(match set_result(action)? {
+                NativeConversion::Throw(value) => Completion::Throw(value),
+                NativeConversion::Value(result) => {
+                    Completion::Return(Value::Bool(matches!(result, InternalSetResult::Accepted)))
+                }
+            })),
+
             Self::RegExpMatchAll(resume) => {
                 resume.set(runtime, set_result(action)?).map(Into::into)
             }
@@ -655,6 +689,13 @@ impl Resume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::RootDefine => Ok(Step::Complete(match result {
+                NativeConversion::Throw(value) => Completion::Throw(value),
+                NativeConversion::Value(result) => {
+                    Completion::Return(Value::Bool(matches!(result, InternalDefineResult::Defined)))
+                }
+            })),
+
             Self::LiteralDefinition(resume) => resume.defined(result).map(Into::into),
             Self::PublicField => match Runtime::finish_public_class_field_definition(result)? {
                 crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
@@ -706,6 +747,7 @@ impl Resume {
         result: NativeConversion<bool>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::Import(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::ForIn(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Environment(resume) => resume.boolean(runtime, result).map(Into::into),
 
@@ -770,6 +812,23 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::RootDescriptor | Self::RootDefine | Self::RootSet => {
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "typed root received an untyped reply",
+                ))
+            }
+            Self::ModuleCallback(resume) => resume.resume(completion).map(Into::into),
+            Self::ModuleEvaluation(resume) => resume.resume(completion).map(Into::into),
+            Self::ModuleBody(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::ModuleLink(resume) => {
+                crate::engine::modules::link::resume_reply(runtime, resume.resume(completion))
+                    .map(Into::into)
+            }
+            Self::Import(resume) => resume.resume(runtime, completion).map(Into::into),
+            #[cfg(feature = "test262-host")]
+            Self::Test262Agent(resume) => resume.resume(runtime, completion).map(Into::into),
+            #[cfg(feature = "test262-host")]
+            Self::EvalScript(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::FromSync(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::AsyncGenerator(resume) => resume.resume(completion).map(Into::into),
             Self::Async(resume) => resume.resume(completion).map(Into::into),
@@ -1023,6 +1082,7 @@ impl Resume {
         result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::RootDescriptor => Ok(Step::RootDescriptor(result)),
             Self::OwnFlagReply { enumerable, resume } => resume.boolean(
                 runtime,
                 match result {
@@ -1168,6 +1228,8 @@ impl Resume {
         result: NativeConversion<f64>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            #[cfg(feature = "test262-host")]
+            Self::Test262Agent(resume) => resume.number(runtime, result).map(Into::into),
             Self::Atomics(resume) => resume.number(runtime, result).map(Into::into),
             Self::StringFactory(resume) => resume.number(runtime, result).map(Into::into),
 
@@ -1209,6 +1271,7 @@ impl Resume {
         result: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::Import(resume) => resume.keys(runtime, result).map(Into::into),
             Self::ForIn(resume) => resume.keys(runtime, result).map(Into::into),
             Self::JsonParse(resume) => resume.keys(runtime, result).map(Into::into),
             Self::JsonStringify(resume) => resume.keys(runtime, result).map(Into::into),
@@ -1285,6 +1348,25 @@ impl Resume {
         result: NativeConversion<crate::engine::value::JsString>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::Import(resume) => resume
+                .resume(
+                    runtime,
+                    match result {
+                        NativeConversion::Value(value) => Completion::Return(Value::String(value)),
+                        NativeConversion::Throw(value) => Completion::Throw(value),
+                    },
+                )
+                .map(Into::into),
+
+            #[cfg(feature = "test262-host")]
+            resume @ (Self::EvalScript(_) | Self::Test262Agent(_)) => resume.resume(
+                runtime,
+                match result {
+                    NativeConversion::Value(value) => Completion::Return(Value::String(value)),
+                    NativeConversion::Throw(value) => Completion::Throw(value),
+                },
+            ),
+
             Self::StringFactory(resume) => resume.string(runtime, result).map(Into::into),
 
             Self::RegExpIterator(resume) => resume.string(runtime, result).map(Into::into),
