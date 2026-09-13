@@ -4,10 +4,7 @@ use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::object::{CallableRef, OrdinaryRead};
 use crate::engine::value::Value;
-use crate::engine::value::conversion::{
-    NativeConversion,
-    primitive::{PrimitiveResume, PrimitiveStep},
-};
+use crate::engine::value::conversion::primitive::{PrimitiveResume, PrimitiveStep};
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
@@ -168,17 +165,17 @@ impl ConversionTask {
                                 };
                                 Completion::Return(value)
                             }
-                            Finish::Plus => {
-                                match runtime
-                                    .native_to_number(realm, &value)
-                                    .map_err(runtime_error_to_vm_error)?
-                                {
-                                    NativeConversion::Value(number) => {
-                                        Completion::Return(Value::number(number))
-                                    }
-                                    NativeConversion::Throw(value) => Completion::Throw(value),
+                            Finish::Plus => match super::numeric::unary_plus_primitive(value) {
+                                Ok(value) => Completion::Return(value),
+                                Err(error) => {
+                                    let Some(kind) = crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind()) else { return Err(error); };
+                                    Completion::Throw(
+                                        runtime
+                                            .new_native_error_from_error(realm, kind, &error)
+                                            .map_err(runtime_error_to_vm_error)?,
+                                    )
                                 }
-                            }
+                            },
                         }
                     }
                 };

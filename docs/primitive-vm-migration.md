@@ -1,6 +1,6 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-12。用户已确定使用栈 VM，**S01–S03 阶段验收通过，原语栈核心已交付，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
+状态：2026-09-13。用户已确定使用栈 VM，**S01–S04 阶段验收通过，S05–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
 
 ## 1. 起点与范围
 
@@ -63,9 +63,9 @@
 | 栈 lowering/控制流/发布 | lowering/flow/code，S01–S02 | 合流栈形状、异常/恢复、TDZ、源码重定位与畸形 code | 待做 |
 | Frame/Slot 容器 | execution/frame/stack，S03 | 区间独立、容量复用、clear/move、原始实参、运行登记 | S03 已验收 |
 | 栈原语与 Number | number/run，S03 | Int/Float、NaN/-0、BigInt/String 慢路、目标旧引用释放 | S03 已验收 |
-| 普通调用/constructor | call/driver，S04 | 限额、参数/this/new.target/realm、bound、derived return | 普通字节码 Call/Method/TailCall 已接入；完整语义待做 |
-| 转换/异常/finally | conversion/operation/unwind，S04 | getter 次数、不同抛错点、清理优先级、单次释放 | 待做 |
-| binding/eval/arguments | resolution/bindings，S04 | captured、每迭代 cell、mapped/unmapped、private/readonly | 待做 |
+| 普通调用/constructor | call/driver，S04 | 限额、参数/this/new.target/realm、bound、derived return | S04 已验收；exotic/native 领域调用点归 S05 |
+| 转换/异常/finally | conversion/operation/unwind，S04 | getter 次数、不同抛错点、清理优先级、单次释放 | S04 已验收；其余领域回调归 S05 |
+| binding/eval/arguments | resolution/bindings，S04 | captured、每迭代 cell、mapped/unmapped、private/readonly | S04 已验收 |
 | 局部 update/条件融合 | optimize/run/code，S08 | 快照、prefix/postfix/discard、NaN、效果/site/预算 | 待做 |
 | properties/Proxy | object + 对应 builtin，S05 | receiver、trap invariant、递归 getter、PR19 回退用例 | 待做 |
 | Array/iterator | 对应 builtin，S05 | holes、species、sort、动态 length、IteratorClose | 待做 |
@@ -812,3 +812,95 @@ getter 子帧运行期间删除载体元素，原参数仍由 pending request �
 构建、边界 scan-only 与源码布局（518 文件）通过。生产改动仅在 stack-vm
 配置下，未重复默认 oracle；S04 仍待全局写绑定、host delimiter、readonly
 view/调用成本与小栈等完整验收，尚不表示整个阶段完成。
+
+
+### S04 全局写绑定与小栈恢复（实施中）
+
+PutVar/PutVarInit/DeleteVar 现在与旧入口共享 global binding 分类，保留
+TDZ、const、属性 setter 和删除时先探测存在性的规则。未迁移 callee 使用
+单次同步调用边界，父 owned 帧不重放已经完成的指令；它仍可能递归等待内部
+原生回调，不能计作 S05 continuation 完成。Array 的命名/符号属性缺失可以
+沿普通原型探测，数字索引缺失仍走既有完整数组规则。
+
+GDB 确认了有限 TypedArray 回调的额外原生栈占用：根帧虽然释放 owned
+arena，原 driver 的 Rust 帧却仍等待旧执行器返回。现在 RunningExit 穿过
+owned driver 和入口准备函数，原 bytecode 入口再消费 RootHandoff；原
+ActiveFrameGuard 在交接结果返回后结束。共享构帧及 owned 入口准备均在
+执行前返回，未增加堆分配。旧 Call/CallMethod 分派单独保留原 checked
+argument suffix，扩展调用仍执行原有 tail/eval/construct/import 代码；
+源码契约分别密封两个函数，增加普通/方法 receiver 和扩展路由反例。
+
+原有有限用例和 native 栈预算保持不变：32 层调用、TypedArray join 18 层、
+toLocaleString 20 层及 sort/toSorted 12 层均已通过。旧溢出用例把 1000 层
+有限递归当作必然溢出，这不再适用于显式帧；用 Infinity 作为递归参数后，
+原来的两个 InternalError 与恢复断言同时覆盖新 VM 帧预算和旧 native
+预算。另将 owned 小栈有限递归从 256 层增强到 1000 层，明确断言 1001 个
+显式帧、零旧 VM 分派和零交接。没有提高任何预算或增加 skip。
+
+此版本新旧 native_stack 各 6 项、新旧常规 oracle 各 907 项通过（每配置
+另有 1 项手动压力用例忽略，本轮未运行）；owned driver 76 项、run 9 项、
+eval 142 项、整个 VM 209 项及 modules 134 项通过。非 profiling stack-vm
+构建和源码布局（521 文件）通过。完整边界反例 714 项全部拒绝；真实 host
+重入 delimiter、readonly view 的 owned 定向证据及完整调用成本审计尚待
+完成，S04 仍未验收，S05–S10 尚未开始。
+
+
+### S04 host 重入、只读视图与调用诊断
+
+HostBoundaryGuard 只登记 domain、执行和父 active-frame 身份，回调期间不
+持有内部借用或 Runtime-owning registry entry。同步 module host callback
+在既有 native guard 内建立 delimiter，返回时检查子执行已结束和父帧已
+恢复；错误或 Rust unwind 通过 Drop 清理。它不把内部 native callback
+标成 host，也不新增可挂起 ABI。
+
+实际重入用例通过既有 Promise rejection tracker 触发同步模块编译，在
+owned 父帧仍存活时进入 loader。loader 重入闭包、把捕获绑定从 1 改为 41，
+并调用 GC；正常及 loader 拒绝时父帧继续得到 42，Rust panic 时检查精确
+payload 与登记清理，随后闭包和普通求值仍正常。tracker 只作为测试触发器；
+Promise 和其 host 入口的完整集成仍归 S06/S07，未改变 dynamic import 的
+job 调度。登记生命周期测试共 6 项通过。
+
+模块 live import 的定向测试在模块初始化后分别测量普通读取、exporter
+更新、直接写入和 eval 写入。读取观察到 live cell，写入仍抛出原只读消息，
+失败后保持值 42；每个测量调用均为零旧分派、零交接。此证据验证 S04
+readonly view，不把旧模块初始化计作 S07 完成。
+
+调用准备诊断计入实际参数/局部 Vec 的容量分配和初始化、参数复制中的
+Object/Symbol root 子集、共享构帧的 callee root 复制、owned FrameCold
+Box 及捕获复用表 Vec 分配。incoming argument Vec 的容量只作观察，不能
+与 allocation 相加。CLI JSON 和 human 输出使用同一快照；缺参、多参、
+对象实参及函数体抛错用例验证这些计数。完整调用分配、Runtime retain/
+release、临时 bound/apply buffer 等未覆盖量明确排除，不报成零或正式性能
+成绩；S09 负责完整调用成本审计与优化。
+
+完整库检查补获一元 `+` 的恢复偏差：原恢复调用 generic native_to_number，
+BigInt 消息变为通用转换错误，回调产生的整值 Float 也会被压成 Int。现在
+两条 VM 路径共用 unary_plus_primitive，保留原 BigInt 诊断及 Float tag 和
+bits。既有 binary scalar 断言未修改；新增 ordinary valueOf 回调验证 Float、
+负零、NaN payload 与 BigInt throw，在 2 个显式帧内完成且零旧分派。
+
+修正后完整库测试 owned 2092 项、默认 1981 项通过。以下最终阶段审查
+及同源门禁结果构成 S04 范围内的验收，不代表完整执行迁移完成。
+
+
+S04 逐项阶段审查（已验收）：
+
+| 要求 | 当前实现与本轮证据 | 后续边界 |
+| --- | --- | --- |
+| ordinary/bound/constructor 与 realm | call/construct/apply driver 的显式子帧、原始实参与 this/new.target/derived-return 测试 | exotic/native 领域调用点归 S05 |
+| 一条完整 getter/valueOf 恢复 | conversion 的消费式阶段与父 operation 身份；嵌套回复、单次调用、绑定修改及抛错测试 | 其他同步内置转换归 S05 |
+| catch/finally/return/throw 与 IteratorClose | regions 和 pending completion；for-of/Append 测试覆盖 break、return、next 失败、清理抛错和原异常优先级 | async close 和挂起归 S06 |
+| lexical/capture/eval/private/readonly | driver 的绑定、每迭代 cell、默认参数、mapped/unmapped arguments、with、direct eval、class/private 与 live-import 定向测试 | 模块实际入口归 S07 |
+| native/VM 限额及真实 host 重入 | 原有限小栈回归、1000 层显式帧、可捕获无限递归；真实 loader 重入的 GC/错误/panic 与登记清理 | 全部 host 入口集成归 S07 |
+| 调用存储成本 | 同一 profiling 快照中的构帧分配、初始化和受限引用事件；参数与主体抛错计数测试及 CLI JSON 输出 | 全调用分配、引用总账和布局优化归 S09 |
+
+新旧常规 oracle 各 907 项通过后，另行执行的 65K 实参压力用例也各通过
+1 项，合计每配置 908 项。新旧 CLI profiling 各 5 项以及关闭 profiling 的
+stack-vm 构建通过。上述验证使用一元 `+` 修正后的生产源码；期间仅更新
+迁移文档，没有继续修改生产或 checker 源码。
+
+
+完整 binary-object 门禁最终退出码 0，714 个隔离反例全部拒绝；源码布局
+521 个可达 Rust 文件、格式及 diff 检查通过。修正前那次库检查的一元 `+`
+错误已由共享规则修复；其边界任务因源码变更终止，不计作通过。本次结果
+来自修正后的新任务。S04 阶段验收通过，S05–S10 尚未开始。

@@ -38,16 +38,7 @@ impl VmActivation {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(OperationOutcome::Throw(value)),
         };
-        if matches!(operand, Value::BigInt(_)) {
-            return Err(Error::new(ErrorKind::Type, "bigint argument with unary +"));
-        }
-        match operand {
-            // OP_plus is a no-op for both native numeric tags. In particular,
-            // an integral Float64 must not be compacted to Int32.
-            Value::Int(value) => self.stack.push(Value::Int(value)),
-            Value::Float(value) => self.stack.push(Value::Float(value)),
-            value => self.stack.push(Value::number(value.to_number()?)),
-        }
+        self.stack.push(unary_plus_primitive(operand)?);
         Ok(OperationOutcome::Value(()))
     }
 

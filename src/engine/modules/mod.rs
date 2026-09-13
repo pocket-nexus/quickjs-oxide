@@ -830,7 +830,13 @@ impl Runtime {
                 "stack overflow",
             )?));
         };
-        Ok(ModuleHostCallbackOutcome::Completed(callback(context)))
+        #[cfg(feature = "stack-vm")]
+        let boundary =
+            crate::engine::vm::HostBoundaryGuard::enter(self).map_err(RuntimeError::Engine)?;
+        let result = callback(context);
+        #[cfg(feature = "stack-vm")]
+        boundary.finish(self).map_err(RuntimeError::Engine)?;
+        Ok(ModuleHostCallbackOutcome::Completed(result))
     }
 
     fn propagate_module_host_throw<T>(

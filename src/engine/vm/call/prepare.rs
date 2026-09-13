@@ -49,16 +49,14 @@ impl Runtime {
         let mut frame_arguments = Vec::with_capacity(argument_slots);
         frame_arguments.extend(arguments.iter().cloned().map(FrameBinding::Direct));
         frame_arguments.resize_with(argument_slots, || FrameBinding::Direct(Value::Undefined));
-        let mut frame_locals = local_definitions
-            .iter()
-            .map(|definition| {
-                if definition.is_lexical {
-                    FrameBinding::Uninitialized
-                } else {
-                    FrameBinding::Direct(Value::Undefined)
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut frame_locals = Vec::with_capacity(local_definitions.len());
+        frame_locals.extend(local_definitions.iter().map(|definition| {
+            if definition.is_lexical {
+                FrameBinding::Uninitialized
+            } else {
+                FrameBinding::Direct(Value::Undefined)
+            }
+        }));
         if let Some(index) = metadata.function_name_local {
             let binding =
                 frame_locals
@@ -67,6 +65,21 @@ impl Runtime {
                         "function-name local is outside the frame",
                     ))?;
             *binding = FrameBinding::Direct(Value::Object(callable.as_object().clone()));
+        }
+        #[cfg(feature = "profiling")]
+        if crate::engine::api::profiling::cost_profile_active() {
+            crate::engine::api::profiling::record_call_preparation(
+                frame_arguments.len(),
+                frame_arguments.capacity() * size_of::<FrameBinding>(),
+                frame_locals.len(),
+                frame_locals.capacity() * size_of::<FrameBinding>(),
+                arguments.len(),
+                arguments
+                    .iter()
+                    .filter(|value| matches!(value, Value::Object(_) | Value::Symbol(_)))
+                    .count(),
+                1 + usize::from(metadata.function_name_local.is_some()),
+            );
         }
         Ok(PreparedBytecodeFrame {
             executable,

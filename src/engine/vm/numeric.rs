@@ -111,6 +111,16 @@ pub(in crate::engine::vm) fn to_numeric_primitive(value: Value) -> Result<Numeri
     }
 }
 
+/// OP_plus after ToPrimitive: preserve numeric tags and its specific BigInt
+/// diagnostic. This step cannot invoke user code.
+pub(in crate::engine::vm) fn unary_plus_primitive(value: Value) -> Result<Value, Error> {
+    match value {
+        Value::BigInt(_) => Err(Error::new(ErrorKind::Type, "bigint argument with unary +")),
+        value @ (Value::Int(_) | Value::Float(_)) => Ok(value),
+        value => Ok(Value::number(value.to_number()?)),
+    }
+}
+
 /// ECMAScript `ToInt32`, matching QuickJS's modulo-2^32 conversion for every
 /// finite IEEE-754 input and its zero result for NaN and infinities.
 pub(in crate::engine::vm) fn number_to_int32(value: f64) -> i32 {

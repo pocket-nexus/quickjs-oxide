@@ -12,7 +12,7 @@ Historical measurements and validation evidence:
 its recorded source and build; its optimization ordering is not a current
 backlog. The [stack VM plan](primitive-vm-plan.md) selects this PR's goals
 from [issue #16's post-PR19 investigation](https://github.com/pocket-stack/quickjs-oxide/issues/16#issuecomment-5634660983).
-The redesign remains unimplemented; these links do not claim a new benchmark run.
+The stack VM migration is in progress; these links do not claim a new benchmark run.
 
 ## Build and run
 
@@ -192,3 +192,21 @@ recorded 1,510 owned instructions, 8 legacy dispatches, 2 slot capacity growths,
 2,022 logical slot moves, 604 value copies, and a per-store peak of 6 live slots.
 The script/print wrapper uses the bridge; this sample is explicitly mixed. The
 separately measured ordinary-call regression requires zero legacy dispatches.
+
+
+### 字节码调用准备成本
+
+`oxide-compile-vm-cost-v1.call_preparation` 记录成功完成的字节码构帧准备；
+函数体随后抛错也保留该事件。新旧执行器共用同一准备入口，计数包含参数与
+局部 Vec 的非空 backing allocation、累计实际容量字节、初始化槽数，以及
+参数 Value 复制、其中 Object/Symbol root 复制和准备函数中的 callee root
+复制。缺少实参的 Undefined padding 计作槽初始化，不计作实参复制；额外
+实参保留实际 arity。局部 Vec 显式预留全部定义的容量，填充不再隐含增长。
+
+owned 入口另记录 FrameCold Box 的成功分配、captured-reuse 位标记 Vec
+的非空分配和容量，以及进入该帧时独占的原始实参 Vec 容量。最后一项是
+**buffer 观察，不是实参分配事件总数**：bound/apply 的中间缓冲区、闭包
+快照、原生/旧桥内部容器、暂停 operation 载荷及 allocator 元数据均不在
+此字段覆盖内。所有容量为累计观察值，不是同时存活峰值；不能与
+`owned_storage` 的逐 arena 峰值相加。root 复制也仅覆盖列明的边界，
+不等于全 Runtime retain/release 统计。正式性能仍须使用关闭诊断的构建。

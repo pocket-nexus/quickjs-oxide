@@ -46,7 +46,7 @@ impl BytecodeCallRequest {
             ));
         }
         let local_count = prepared.locals.len();
-        Ok(FrameEntry {
+        let entry = FrameEntry {
             executable: prepared.executable,
             cold: Box::new(FrameCold {
                 regions: Vec::new(),
@@ -74,6 +74,13 @@ impl BytecodeCallRequest {
                 locals: prepared.locals,
                 operands: Vec::new(),
             },
-        })
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_call_storage(
+            size_of::<FrameCold>(),
+            entry.cold.reusable_captured_locals.capacity() * size_of::<bool>(),
+            entry.storage.original_arguments.capacity() * size_of::<Value>(),
+        );
+        Ok(entry)
     }
 }

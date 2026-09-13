@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_bytecode_calls_and_constructors_throw_before_host_stack_overflow() {
+    fn infinite_bytecode_calls_and_constructors_throw_and_recover() {
         on_two_mib_stack(|| {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
@@ -567,9 +567,11 @@ mod tests {
                         }
                         var finite=recurse(8);
                         var callError,constructError;
-                        try{recurse(1000);callError="missing"}
+                        // Infinity stays Infinity after subtraction: exercise
+                        // the execution budget, not an assumed finite depth.
+                        try{recurse(Infinity);callError="missing"}
                         catch(error){callError=error.name+":"+error.message}
-                        try{new Constructor(1000);constructError="missing"}
+                        try{new Constructor(Infinity);constructError="missing"}
                         catch(error){constructError=error.name+":"+error.message}
                         return finite+"|"+callError+"|"+constructError
                     })()"#,

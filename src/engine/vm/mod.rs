@@ -55,6 +55,8 @@ mod driver;
 #[cfg(feature = "stack-vm")]
 mod execution;
 #[cfg(feature = "stack-vm")]
+pub(crate) use execution::HostBoundaryGuard;
+#[cfg(feature = "stack-vm")]
 mod frame;
 #[cfg(feature = "stack-vm")]
 mod run;

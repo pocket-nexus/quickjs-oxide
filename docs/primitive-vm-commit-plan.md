@@ -1,6 +1,6 @@
 # 栈 VM：一个 PR 内的 10 个 commit
 
-状态：2026-09-12，S01–S03 阶段验收通过，S04 实施中；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
+状态：2026-09-13，S01–S04 阶段验收通过，S05–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
 
 目标见[架构计划](primitive-vm-plan.md)，目录与算法见[实施设计](primitive-vm-implementation-plan.md)，能力和结构验收见[迁移清单](primitive-vm-migration.md)。
 
@@ -68,7 +68,15 @@
 - S04 for-of 与同步 IteratorClose 接入 owned 迭代记录和异常区域；Append 状态扩为共享 iterator_driver，按操作区分一次/两次 iterator 查询及 next 失败的关闭策略。普通/保留返回值的关闭、嵌套异常关闭、解构和每迭代捕获用例零旧分派；driver 65 项、eval 142 项、run 9 项、新核心常规 oracle 907 项及构建/边界检查通过。Apply/构造展开入口、host delimiter 与完整阶段验收等仍待完成，尚未进入 S05。
 - S04 Apply/ApplySuper 接入普通/bound 调用及既有构造 continuation，稠密实参快照保留 receiver、new.target 和错误顺序，包括 nullish 列表按普通调用执行的原行为。完整调用/构造/super 展开、递归展开与 prototype getter 跨越实参载体修改通过；driver 69 项、eval 142 项、run 9 项、新核心常规 oracle 907 项及构建/边界检查通过。通用实参读取仍在无副作用预检后交接；全局写绑定、host delimiter 与 S04 完整验收等仍待完成。
 - S04 工作区检查点（2026-09-13）：全局 PutVar/PutVarInit/DeleteVar 接入共享绑定规则；未迁移 callee 使用单次同步调用边界，Array 命名属性缺失可沿普通原型读取。帧退出和冷绑定操作已从常驻 driver 拆出。当前 driver 76 项、run 9 项、eval 142 项及格式/边界扫描/源码布局（521 文件）通过。当前 native_stack 为 3 通过、3 失败：TypedArray 字符串转换、有限嵌套排序、递归调用/构造的旧溢出预期；未修改预算、原测试或 skip。最新冷操作拆分后尚未重跑完整 oracle。此提交仅保存实施中的工作区，S04 未验收，S05–S10 尚未开始；正式十个提交仍需后续整理。
-- **小栈基线仍须解决。** 默认和 profiling debug 构建的 32 层 bytecode 调用、TypedArray 字符串转换两项失败，在隔离导出的改动前提交 5fe11ea 同样复现（native_stack 测试 4 passed、2 failed）。未提高预算、修改预期或增加 skip；S03–S10 必须满足调用与小栈硬门槛。
+- S04 小栈修正：根帧交接通过 RunningExit 返回到原 bytecode 入口后才执行，先退出 owned 准备/driver 的全部 Rust 帧；普通 Call/CallMethod 与旧扩展调用分派分开，准备步骤提前返回。原有 32 层调用及 TypedArray 有限字符串转换、排序用例现已通过，原生栈预算未变。溢出用例改用真正无限递归，保持原错误/恢复断言；owned 有限递归加强为 1000 层、1001 个显式帧且零旧分派。新旧 native_stack 各 6 项、新旧常规 oracle 各 907 项、owned VM 209 项和 modules 134 项通过。完整边界反例 714 项全部拒绝；S04 的 host delimiter、调用成本和阶段审计继续待办。
+- **历史小栈基线已修正。** 默认和 profiling debug 构建的 32 层 bytecode 调用、TypedArray 字符串转换两项失败，曾在隔离导出的改动前提交 5fe11ea 同样复现（native_stack 测试 4 passed、2 failed）。上述 S04 修正后，原有限用例通过，预算保持不变；这段保留为历史基线记录。
+
+
+- S04 host delimiter 骨架已接到真实同步 module host callback，登记只保存 runtime/执行/父帧身份；返回检查父登记恢复，错误和 Rust unwind 自动解除登记。实际 loader 在 owned 父帧存活时重入 JS、更新捕获绑定并执行 GC，正常返回、loader 拒绝及 Rust panic 均验证恢复。普通函数读取和写入模块 import view 的独立测量保持 readonly 规则，零旧分派、零交接；模块实际入口迁移仍属 S07。
+- S04 调用准备诊断已接入同一 CostSnapshot/CLI：参数和局部 Vec 容量分配、初始化、实参/heap-root 复制、owned 冷帧及捕获复用表分配；传入实参 buffer 只统计观察容量，不伪称其分配次数。完整调用分配和全部 retain/release 仍属 S09；统计范围见 profiling.md。缺参/多参/对象实参/主体抛错的诊断测试与两种 CLI 配置均通过。
+- S04 完整库门禁发现并修正了一元 `+` 恢复使用通用 ToNumber 的偏差：新旧执行路径现在共享原语 OP_plus 处理，保持 BigInt 特定消息和 Float 原表示。二进制既有断言未改，回调 Float/-0/NaN 位模式与 BigInt 抛错测试零旧分派通过。修正后新配置库测试 2092 项、默认配置 1981 项通过；最终阶段结果见下条。
+
+- **S04 阶段验收通过（2026-09-13）。** 一元 `+` 修正后的同源门禁：owned 库 2092 项、默认库 1981 项；两种配置的常规 oracle 各 907 项加单独 65K 压力 1 项，合计各 908 项；CLI profiling 各 5 项通过。完整 boundary 714 个反例全部拒绝，退出码 0；非 profiling stack-vm 构建、格式、diff 和源码布局（521 文件）通过。普通调用/构造、完整绑定、同步展开、一条完整转换回调、host delimiter 骨架和初步调用成本按本阶段范围验收；逐项证据与后续边界见迁移账本。S05–S10 尚未开始，整体目标未完成；正式十个提交仍在最终 PR 整理时归并。
 
 ## 1. 提交顺序与关口
 

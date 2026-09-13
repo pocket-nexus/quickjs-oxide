@@ -343,14 +343,28 @@ pub(super) fn execute(
     runtime: Runtime,
     entry: FrameEntry,
     limits: ExecutionLimits,
-) -> Result<Completion, Error> {
+) -> Result<RunningExit, Error> {
     let mut execution = RunningExecution::new(&runtime, limits)?;
     push_frame(&mut execution, entry)?;
-    execute_running(runtime, execution)
+    run_frames(&runtime, execution)
+}
+
+pub(super) enum RunningExit {
+    Complete(Completion),
+    RootHandoff(Box<super::frame_exit::RootHandoff>),
+}
+
+impl RunningExit {
+    pub(super) fn finish(self, runtime: Runtime) -> Result<Completion, Error> {
+        match self {
+            Self::Complete(completion) => Ok(completion),
+            Self::RootHandoff(handoff) => handoff.execute(runtime),
+        }
+    }
 }
 
 #[inline(never)]
-fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<Completion, Error> {
+fn run_frames(runtime: &Runtime, mut execution: RunningExecution) -> Result<RunningExit, Error> {
     let mut forwarded = None;
     let mut conversion = None;
     let mut next_operation = 0_u64;
@@ -366,7 +380,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                 crate::engine::vm::conversion_driver::ConversionTask::operand_count(&task);
             match crate::engine::vm::conversion_driver::ConversionTask::advance(
                 task,
-                &runtime,
+                runtime,
                 &mut execution,
             )? {
                 Progress::Ready(task) => {
@@ -409,7 +423,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                 .checked_add(1)
                 .ok_or_else(|| Error::internal("operation identity exhausted"))?;
             match super::with_driver::start(
-                &runtime,
+                runtime,
                 &mut execution,
                 id,
                 source,
@@ -425,7 +439,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             }
         }
         if let RunExit::Environment(op) = exit {
-            match super::environment_driver::step(&runtime, &mut execution, id, op)? {
+            match super::environment_driver::step(runtime, &mut execution, id, op)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -436,7 +450,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
         }
         if let RunExit::DefineProperty { key, method } = exit {
             match super::construct_driver::define_property(
-                &runtime,
+                runtime,
                 &mut execution,
                 id,
                 key,
@@ -455,7 +469,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                 .checked_add(1)
                 .ok_or_else(|| Error::internal("operation identity exhausted"))?;
             match super::construct_driver::define_class(
-                &runtime,
+                runtime,
                 &mut execution,
                 id,
                 name,
@@ -471,7 +485,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             }
         }
         if let RunExit::ClassInitializer(mode) = exit {
-            match super::construct_driver::initializer(&runtime, &mut execution, id, mode)? {
+            match super::construct_driver::initializer(runtime, &mut execution, id, mode)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -482,7 +496,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                 }
             }
         }
-        if let Some(step) = super::frame_operations::step(&runtime, &mut execution, id, exit)? {
+        if let Some(step) = super::frame_operations::step(runtime, &mut execution, id, exit)? {
             match step {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
@@ -501,17 +515,17 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                 .ok_or_else(|| Error::internal("operation identity exhausted"))?;
             let step = match exit {
                 RunExit::Apply(kind) => {
-                    super::apply_driver::step(&runtime, &mut execution, id, kind, next_operation)?
+                    super::apply_driver::step(runtime, &mut execution, id, kind, next_operation)?
                 }
                 RunExit::Construct(count) => super::construct_driver::enter(
-                    &runtime,
+                    runtime,
                     &mut execution,
                     id,
                     count,
                     next_operation,
                 )?,
                 _ => super::construct_driver::enter_default_derived(
-                    &runtime,
+                    runtime,
                     &mut execution,
                     id,
                     next_operation,
@@ -548,7 +562,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                     .checked_add(1)
                     .ok_or_else(|| Error::internal("conversion identity exhausted"))?;
                 conversion = Some(crate::engine::vm::conversion_driver::ConversionTask::start(
-                    &runtime,
+                    runtime,
                     &mut execution,
                     id,
                     next_operation,
@@ -559,7 +573,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             }
         }
         if let RunExit::ApplyEval(environment) = exit {
-            match super::eval_driver::apply(&runtime, &mut execution, id, environment)? {
+            match super::eval_driver::apply(runtime, &mut execution, id, environment)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -573,7 +587,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             environment,
         } = exit
         {
-            match super::eval_driver::step(&runtime, &mut execution, id, arguments, environment)? {
+            match super::eval_driver::step(runtime, &mut execution, id, arguments, environment)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -587,7 +601,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             keep_receiver,
         } = exit
         {
-            match enter_field(&runtime, &mut execution, id, index, keep_receiver)? {
+            match enter_field(runtime, &mut execution, id, index, keep_receiver)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -602,7 +616,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             tail,
         } = exit
         {
-            match enter_call(&runtime, &mut execution, id, arguments, method, tail)? {
+            match enter_call(runtime, &mut execution, id, arguments, method, tail)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -615,7 +629,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             let Some(Completion::Throw(value)) = forwarded.take() else {
                 unreachable!()
             };
-            match super::iterator_driver::unwind(&runtime, &mut execution, id, value)? {
+            match super::iterator_driver::unwind(runtime, &mut execution, id, value)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => forwarded = Some(completion),
                 CallStep::Bridge => {
@@ -623,31 +637,26 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                 }
             }
         }
-        let (completion, return_to) = match super::frame_exit::finish(
-            &runtime,
-            &mut execution,
-            id,
-            exit,
-            forwarded.take(),
-        )? {
-            super::frame_exit::FrameExit::Complete {
-                completion,
-                return_to,
-            } => (completion, return_to),
-            super::frame_exit::FrameExit::RootHandoff(handoff) => {
-                drop(execution);
-                return handoff.execute(runtime);
-            }
-        };
+        let (completion, return_to) =
+            match super::frame_exit::finish(runtime, &mut execution, id, exit, forwarded.take())? {
+                super::frame_exit::FrameExit::Complete {
+                    completion,
+                    return_to,
+                } => (completion, return_to),
+                super::frame_exit::FrameExit::RootHandoff(handoff) => {
+                    drop(execution);
+                    return Ok(RunningExit::RootHandoff(handoff));
+                }
+            };
         let Some(target) = return_to else {
-            return Ok(completion);
+            return Ok(RunningExit::Complete(completion));
         };
         execution.frames.current_mut(target.frame)?;
         if matches!(
             target.operation,
             Some(super::frame::OperationTarget::Constructor(_))
         ) {
-            match super::construct_driver::reply(&runtime, &mut execution, target, completion)? {
+            match super::construct_driver::reply(runtime, &mut execution, target, completion)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -664,12 +673,8 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
             target.operation,
             Some(super::frame::OperationTarget::ClassDefinition(_))
         ) {
-            match super::construct_driver::reply_class(
-                &runtime,
-                &mut execution,
-                target,
-                completion,
-            )? {
+            match super::construct_driver::reply_class(runtime, &mut execution, target, completion)?
+            {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -685,7 +690,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
                     | super::frame::OperationTarget::Iterator(_)
             )
         ) {
-            match super::environment_driver::reply(&runtime, &mut execution, target, completion)? {
+            match super::environment_driver::reply(runtime, &mut execution, target, completion)? {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
                     forwarded = Some(completion);
@@ -710,7 +715,7 @@ fn execute_running(runtime: Runtime, mut execution: RunningExecution) -> Result<
         }
         if target.operation.is_some() {
             conversion = Some(crate::engine::vm::conversion_driver::ConversionTask::reply(
-                &runtime,
+                runtime,
                 &mut execution,
                 target,
                 completion,
@@ -734,6 +739,18 @@ mod tests {
     use super::*;
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::vm::frame::FrameCold;
+
+    fn execute(
+        runtime: Runtime,
+        entry: FrameEntry,
+        limits: ExecutionLimits,
+    ) -> Result<Completion, Error> {
+        super::execute(runtime.clone(), entry, limits)?.finish(runtime)
+    }
+
+    fn execute_running(runtime: Runtime, execution: RunningExecution) -> Result<Completion, Error> {
+        super::run_frames(&runtime, execution)?.finish(runtime)
+    }
 
     fn entry(
         runtime: &Runtime,
@@ -4371,6 +4388,62 @@ mod tests {
         assert_eq!(profile.snapshot().legacy_dispatches, 0);
         assert_eq!(profile.snapshot().owned_bridge_exits, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn plus_conversion_preserves_callback_numeric_tags_and_bigint_diagnostic() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(factory) = context
+            .eval("(function(v){return {valueOf:function(){return v}}})")
+            .unwrap()
+        else {
+            panic!("expected factory");
+        };
+        let factory = runtime.as_callable(&factory).unwrap().unwrap();
+        for value in [
+            Value::Float(42.0),
+            Value::Float(-0.0),
+            Value::Float(f64::from_bits(0x7ff8_0000_0000_0042)),
+            Value::BigInt(crate::engine::value::bigint::JsBigInt::from(1)),
+        ] {
+            let object = context
+                .call(&factory, Value::Undefined, std::slice::from_ref(&value))
+                .unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function root(o){return +o})",
+                vec![object],
+            );
+            let profile = CostProfile::start();
+            let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
+            let costs = profile.snapshot();
+            assert_eq!(costs.owned_storage.frames_pushed, 2);
+            assert_eq!(costs.legacy_dispatches, 0);
+            assert_eq!(costs.owned_bridge_exits, 0);
+            drop(profile);
+            match (value, completion) {
+                (Value::Float(expected), Completion::Return(Value::Float(actual))) => {
+                    assert_eq!(actual.to_bits(), expected.to_bits());
+                }
+                (Value::BigInt(_), Completion::Throw(Value::Object(error))) => {
+                    for (key, expected) in [
+                        ("name", "TypeError"),
+                        ("message", "bigint argument with unary +"),
+                    ] {
+                        assert_eq!(
+                            context
+                                .get_property(&error, &runtime.intern_property_key(key).unwrap())
+                                .unwrap(),
+                            Value::String(crate::engine::value::JsString::from_static(expected))
+                        );
+                    }
+                }
+                _ => panic!("unexpected unary plus completion"),
+            }
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
     }
 
     #[test]

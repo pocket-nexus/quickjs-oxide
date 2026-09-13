@@ -44,6 +44,31 @@ pub struct OwnedStorageCost {
     pub hot_heap_root_releases: u64,
 }
 
+/// Successful bytecode preparation and owned frame storage only. Capacities
+/// are cumulative observations, not live peaks or allocator usable bytes.
+/// Argument buffer observations do not count intermediate bound/apply scratch
+/// allocations. Root copies cover parameter and preparation callee clones;
+/// they are not total Runtime retain/release activity.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CallPreparationCost {
+    pub frames_prepared: u64,
+    pub parameter_buffer_allocations: u64,
+    pub parameter_capacity_bytes: u64,
+    pub local_buffer_allocations: u64,
+    pub local_capacity_bytes: u64,
+    pub parameter_slots_initialized: u64,
+    pub local_slots_initialized: u64,
+    pub parameter_value_copies: u64,
+    pub parameter_heap_root_copies: u64,
+    pub callee_heap_root_copies: u64,
+    pub owned_frame_allocations: u64,
+    pub owned_frame_bytes: u64,
+    pub owned_captured_reuse_allocations: u64,
+    pub owned_captured_reuse_capacity_bytes: u64,
+    pub owned_argument_buffers_observed: u64,
+    pub owned_argument_capacity_bytes: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CostSnapshot {
     pub parse: PhaseCost,
@@ -70,6 +95,7 @@ pub struct CostSnapshot {
     pub owned_bridge_exits: u64,
     pub owned_max_operand_depth: usize,
     pub owned_storage: OwnedStorageCost,
+    pub call_preparation: CallPreparationCost,
 }
 
 type Collector = RefCell<CostSnapshot>;
@@ -118,6 +144,73 @@ impl Drop for CostProfile {
 
 fn current() -> Option<Rc<Collector>> {
     SCOPES.with(|scopes| scopes.borrow().last().and_then(Weak::upgrade))
+}
+
+pub(crate) fn record_call_preparation(
+    parameter_slots: usize,
+    parameter_bytes: usize,
+    local_slots: usize,
+    local_bytes: usize,
+    argument_copies: usize,
+    argument_root_copies: usize,
+    callee_root_copies: usize,
+) {
+    if let Some(collector) = current() {
+        let mut snapshot = collector.borrow_mut();
+        let cost = &mut snapshot.call_preparation;
+        cost.frames_prepared = cost.frames_prepared.saturating_add(1);
+        cost.parameter_buffer_allocations = cost
+            .parameter_buffer_allocations
+            .saturating_add(u64::from(parameter_bytes != 0));
+        cost.parameter_capacity_bytes = cost
+            .parameter_capacity_bytes
+            .saturating_add(parameter_bytes as u64);
+        cost.local_buffer_allocations = cost
+            .local_buffer_allocations
+            .saturating_add(u64::from(local_bytes != 0));
+        cost.local_capacity_bytes = cost.local_capacity_bytes.saturating_add(local_bytes as u64);
+        cost.parameter_slots_initialized = cost
+            .parameter_slots_initialized
+            .saturating_add(parameter_slots as u64);
+        cost.local_slots_initialized = cost
+            .local_slots_initialized
+            .saturating_add(local_slots as u64);
+        cost.parameter_value_copies = cost
+            .parameter_value_copies
+            .saturating_add(argument_copies as u64);
+        cost.parameter_heap_root_copies = cost
+            .parameter_heap_root_copies
+            .saturating_add(argument_root_copies as u64);
+        cost.callee_heap_root_copies = cost
+            .callee_heap_root_copies
+            .saturating_add(callee_root_copies as u64);
+    }
+}
+
+#[cfg(feature = "stack-vm")]
+pub(crate) fn record_owned_call_storage(
+    frame_bytes: usize,
+    reuse_bytes: usize,
+    argument_bytes: usize,
+) {
+    if let Some(collector) = current() {
+        let mut snapshot = collector.borrow_mut();
+        let cost = &mut snapshot.call_preparation;
+        cost.owned_frame_allocations = cost.owned_frame_allocations.saturating_add(1);
+        cost.owned_frame_bytes = cost.owned_frame_bytes.saturating_add(frame_bytes as u64);
+        cost.owned_captured_reuse_allocations = cost
+            .owned_captured_reuse_allocations
+            .saturating_add(u64::from(reuse_bytes != 0));
+        cost.owned_captured_reuse_capacity_bytes = cost
+            .owned_captured_reuse_capacity_bytes
+            .saturating_add(reuse_bytes as u64);
+        cost.owned_argument_buffers_observed = cost
+            .owned_argument_buffers_observed
+            .saturating_add(u64::from(argument_bytes != 0));
+        cost.owned_argument_capacity_bytes = cost
+            .owned_argument_capacity_bytes
+            .saturating_add(argument_bytes as u64);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -348,6 +441,69 @@ mod tests {
         assert!(unwind.is_err());
         context.eval("42").unwrap();
         assert_eq!(outer.snapshot().parse.attempts, 2);
+    }
+
+    #[test]
+    fn call_preparation_distinguishes_padding_copies_and_owned_storage() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(function) = context.eval("(function(a,b){return a})").unwrap() else {
+            panic!("expected function")
+        };
+        let callable = runtime.as_callable(&function).unwrap().unwrap();
+        let marker = runtime.new_object(None).unwrap();
+        for values in [
+            vec![],
+            vec![Value::Object(marker.clone())],
+            vec![Value::Int(1), Value::Int(2), Value::Int(3)],
+        ] {
+            let profile = CostProfile::start();
+            assert_eq!(
+                context.call(&callable, Value::Undefined, &values).unwrap(),
+                values.first().cloned().unwrap_or(Value::Undefined)
+            );
+            let cost = profile.snapshot().call_preparation;
+            assert_eq!(cost.frames_prepared, 1);
+            assert_eq!(cost.parameter_buffer_allocations, 1);
+            assert_eq!(cost.parameter_slots_initialized, values.len().max(2) as u64);
+            assert_eq!(cost.parameter_value_copies, values.len() as u64);
+            assert_eq!(
+                cost.parameter_heap_root_copies,
+                u64::from(values.len() == 1)
+            );
+            assert_eq!(cost.callee_heap_root_copies, 1);
+            if cfg!(feature = "stack-vm") {
+                assert_eq!(cost.owned_frame_allocations, 1);
+                assert!(cost.owned_frame_bytes > 0);
+                assert_eq!(
+                    cost.owned_argument_buffers_observed,
+                    u64::from(!values.is_empty())
+                );
+                assert_eq!(cost.owned_argument_capacity_bytes == 0, values.is_empty());
+            } else {
+                assert_eq!(cost.owned_frame_allocations, 0);
+                assert_eq!(cost.owned_argument_buffers_observed, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn throwing_body_still_counts_a_prepared_frame() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(function) = context.eval("(function f(){if(f)throw 42})").unwrap() else {
+            panic!("expected function")
+        };
+        let callable = runtime.as_callable(&function).unwrap().unwrap();
+        let profile = CostProfile::start();
+        assert!(context.call(&callable, Value::Undefined, &[]).is_err());
+        let cost = profile.snapshot().call_preparation;
+        assert_eq!(cost.frames_prepared, 1);
+        assert_eq!(cost.parameter_buffer_allocations, 0);
+        assert_eq!(cost.parameter_value_copies, 0);
+        assert_eq!(cost.callee_heap_root_copies, 2);
+        assert!(cost.local_slots_initialized > 0);
+        assert_eq!(context.take_exception().unwrap(), Some(Value::Int(42)));
     }
 }
 

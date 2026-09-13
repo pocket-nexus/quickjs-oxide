@@ -1307,6 +1307,45 @@ impl Runtime {
         }
     }
 
+    // Return all prepared owners before dispatching bytecode or entering a
+    // callback. Preparation temporaries must not consume recursive stack room.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_bytecode_host(
+        &self,
+        caller_realm: ContextId,
+        callable: &CallableRef,
+        this_value: Value,
+        new_target: Value,
+        arguments: &[Value],
+        bytecode: FunctionBytecodeRef,
+        closure_slots: Vec<VarRefRoot>,
+    ) -> Result<(RuntimeVmHost, CallInput, ActiveFrameGuard), RuntimeError> {
+        let crate::engine::vm::call::PreparedBytecodeFrame {
+            executable,
+            active_frame,
+            input,
+            arguments: frame_arguments,
+            locals: frame_locals,
+        } = self.prepare_bytecode_frame(callable, this_value, new_target, arguments, bytecode)?;
+        let realm = executable.realm;
+        let frame_local_count = frame_locals.len();
+        let host = RuntimeVmHost {
+            runtime: self.clone(),
+            active_frame_token: active_frame.token(),
+            current_realm: realm,
+            caller_realm,
+            executable,
+            current_function: Some(callable.as_object().clone()),
+            actual_argument_count: arguments.len(),
+            closure_slots,
+            arguments: frame_arguments,
+            locals: frame_locals,
+            reusable_captured_locals: vec![false; frame_local_count],
+        };
+        Ok((host, input, active_frame))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn execute_bytecode_callable(
         &self,
@@ -1321,29 +1360,16 @@ impl Runtime {
         if self.bytecode_call_would_overflow() {
             return self.bytecode_stack_overflow_completion(caller_realm, &bytecode);
         }
-        let crate::engine::vm::call::PreparedBytecodeFrame {
-            executable,
-            active_frame,
-            input,
-            arguments: frame_arguments,
-            locals: frame_locals,
-        } = self.prepare_bytecode_frame(callable, this_value, new_target, arguments, bytecode)?;
-        let metadata = executable.metadata;
-        let realm = executable.realm;
-        let frame_local_count = frame_locals.len();
-        let mut host = RuntimeVmHost {
-            runtime: self.clone(),
-            active_frame_token: active_frame.token(),
-            current_realm: realm,
+        let (mut host, input, active_frame) = self.prepare_bytecode_host(
             caller_realm,
-            executable,
-            current_function: Some(callable.as_object().clone()),
-            actual_argument_count: arguments.len(),
+            callable,
+            this_value,
+            new_target,
+            arguments,
+            bytecode,
             closure_slots,
-            arguments: frame_arguments,
-            locals: frame_locals,
-            reusable_captured_locals: vec![false; frame_local_count],
-        };
+        )?;
+        let metadata = host.executable.metadata;
         let is_module_link_entry = metadata.is_module && input.this_value == Value::Bool(true);
         // A module callable is deliberately an ordinary hidden function
         // object even though its root bytecode is Async. QuickJS invokes the
@@ -1380,8 +1406,11 @@ impl Runtime {
             }
             FunctionKind::Normal => {}
         }
+        // Root handoff starts only after all owned preparation/driver Rust
+        // frames have returned. The active bytecode guard remains here.
         #[cfg(feature = "stack-vm")]
-        let result = owned::execute(host, input, arguments);
+        let result =
+            owned::execute(host, input, arguments).and_then(|exit| exit.finish(self.clone()));
         #[cfg(not(feature = "stack-vm"))]
         let result = Vm::new().execute_published(input, &mut host);
         active_frame.finish()?;

@@ -315,6 +315,11 @@ mod enabled {
                 "owned_storage={:?} (partial; per-store peaks; logical transfers)",
                 costs.owned_storage
             )?;
+            writeln!(
+                out,
+                "call_preparation={:?} (successful preparation; cumulative capacities; partial root copies)",
+                costs.call_preparation
+            )?;
             return writeln!(
                 out,
                 "legacy_dispatches={} pc_publications={} max_operand_depth={}; all-call allocations and total retain/release accounting unavailable",
@@ -380,6 +385,76 @@ mod enabled {
             (
                 "hot_heap_root_releases",
                 costs.owned_storage.hot_heap_root_releases as u64,
+            ),
+        ] {
+            write!(out, ",\"{}\":{}", name, value)?;
+        }
+        write!(out, "}}")?;
+        write!(
+            out,
+            ",\"call_preparation\":{{\"coverage\":\"bytecode-preparation-and-owned-frame-storage\",\"basis\":\"cumulative-capacities; argument-buffers-are-observations; excludes bound/apply scratch and total Runtime retains\""
+        )?;
+        for (name, value) in [
+            ("frames_prepared", costs.call_preparation.frames_prepared),
+            (
+                "parameter_buffer_allocations",
+                costs.call_preparation.parameter_buffer_allocations,
+            ),
+            (
+                "parameter_capacity_bytes",
+                costs.call_preparation.parameter_capacity_bytes,
+            ),
+            (
+                "local_buffer_allocations",
+                costs.call_preparation.local_buffer_allocations,
+            ),
+            (
+                "local_capacity_bytes",
+                costs.call_preparation.local_capacity_bytes,
+            ),
+            (
+                "parameter_slots_initialized",
+                costs.call_preparation.parameter_slots_initialized,
+            ),
+            (
+                "local_slots_initialized",
+                costs.call_preparation.local_slots_initialized,
+            ),
+            (
+                "parameter_value_copies",
+                costs.call_preparation.parameter_value_copies,
+            ),
+            (
+                "parameter_heap_root_copies",
+                costs.call_preparation.parameter_heap_root_copies,
+            ),
+            (
+                "callee_heap_root_copies",
+                costs.call_preparation.callee_heap_root_copies,
+            ),
+            (
+                "owned_frame_allocations",
+                costs.call_preparation.owned_frame_allocations,
+            ),
+            (
+                "owned_frame_bytes",
+                costs.call_preparation.owned_frame_bytes,
+            ),
+            (
+                "owned_captured_reuse_allocations",
+                costs.call_preparation.owned_captured_reuse_allocations,
+            ),
+            (
+                "owned_captured_reuse_capacity_bytes",
+                costs.call_preparation.owned_captured_reuse_capacity_bytes,
+            ),
+            (
+                "owned_argument_buffers_observed",
+                costs.call_preparation.owned_argument_buffers_observed,
+            ),
+            (
+                "owned_argument_capacity_bytes",
+                costs.call_preparation.owned_argument_capacity_bytes,
             ),
         ] {
             write!(out, ",\"{}\":{}", name, value)?;

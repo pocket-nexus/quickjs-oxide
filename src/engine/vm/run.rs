@@ -1004,13 +1004,13 @@ mod tests {
                 let profile = CostProfile::start();
                 assert_eq!(
                     context
-                        .call(&callable, Value::Undefined, &[Value::Int(256)])
+                        .call(&callable, Value::Undefined, &[Value::Int(1000)])
                         .unwrap(),
-                    Value::Int(256)
+                    Value::Int(1000)
                 );
                 let costs = profile.snapshot();
-                assert_eq!(costs.owned_storage.maximum_frame_depth, 257, "{costs:?}");
-                assert_eq!(costs.owned_storage.frames_pushed, 257, "{costs:?}");
+                assert_eq!(costs.owned_storage.maximum_frame_depth, 1001, "{costs:?}");
+                assert_eq!(costs.owned_storage.frames_pushed, 1001, "{costs:?}");
                 assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
                 assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
                 assert!(runtime.0.state.borrow().active_frames.is_empty());

@@ -90,7 +90,8 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         "-d",
         "--profile-json",
         "-e",
-        "print((function(x){return x+1})(41))",
+        // Keep an explicit unmigrated operation in this mixed-route probe.
+        "'x' in {}; print((function(x){return x+1})(41))",
     ]);
     assert!(output.status.success());
     assert_eq!(output.stdout, b"42\n");
@@ -114,6 +115,11 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     }
     assert!(costs.contains("\"owned_storage\":{\"coverage\":\"partial\""));
     assert!(costs.contains("\"maximum_live_slots\":"));
+    assert!(costs.contains(
+        "\"call_preparation\":{\"coverage\":\"bytecode-preparation-and-owned-frame-storage\""
+    ));
+    assert!(!costs.contains("\"frames_prepared\":0"));
+    assert!(!costs.contains("\"parameter_value_copies\":0"));
     assert!(costs.contains("\"lowered_functions\":2"));
     assert!(costs.contains("\"phase_totals_additive\":false"));
     assert!(!costs.contains("\"legacy_dispatches\":0"));

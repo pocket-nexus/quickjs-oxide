@@ -221,15 +221,24 @@ def check(ctx):
         "e8f523f68ef01df927a8761c6dc92ddafb0471fadee17ab9ead81f71d50287f4",
     )
 
-    call_dispatch_item = ctx.stage3b_function(
+    ordinary_call_dispatch_item = ctx.stage3b_function(
         "src/engine/vm/mod.rs", "execute_call_instruction", "stage3c-tail-vm"
+    )
+    ctx.require_normalized_code_sha256(
+        "stage3c-tail-vm",
+        "ordinary call dispatch must retain checked suffix calls and route every other family to the extended dispatcher",
+        ordinary_call_dispatch_item,
+        "5c4b5d4634aacd818cf1df217c955e19e0cf9362d669a9ac773add938f2ed523",
+    )
+    call_dispatch_item = ctx.stage3b_function(
+        "src/engine/vm/mod.rs", "execute_extended_call_instruction", "stage3c-tail-vm"
     )
 
     ctx.require_normalized_code_sha256(
         "stage3c-tail-vm",
-        "execute_call_instruction must retain its alias-free exhaustive call-family dispatch",
+        "execute_extended_call_instruction must retain its alias-free extended call-family dispatch",
         call_dispatch_item,
-        "a3bd9bbdd07df461a0f2fcbf0b5129bf3b5432eb668629384ccedb9a4a73d978",
+        "1f6f6a2d8e8af24fbacb170f81c43f6b83b6309375d7b129cdf25c728d60bab7",
     )
 
     # Ordinary calls now borrow the activation suffix. Tail/eval/construct
@@ -835,7 +844,7 @@ def check(ctx):
         execute_bytecode_callable_item,
         "FunctionKind::Normal => {}",
         "result.map_err(RuntimeError::Engine) }",
-        "8c41860ef4400fe7aa2d4af5bfcc23ce7b14ca0c1683c1e428e7308a8fad94c6",
+        "1be1adb37dc3ce628b900f090c52c36ba846aad00629402e9821f95fca75b6f6",
     )
 
     call_internal_item = ctx.stage3b_function(

@@ -447,12 +447,38 @@ impl VmActivation {
         Ok(None)
     }
 
+    // Ordinary calls retain only the checked argument suffix across callbacks.
+    // Keep eval/import/construct temporaries off their recursive native path.
+    #[inline(never)]
+    pub(in crate::engine::vm) fn execute_call_instruction(
+        &mut self,
+        instruction: &Instruction,
+        host: &mut impl VmHost,
+    ) -> Result<Option<Completion>, Error> {
+        let completion = match instruction {
+            Instruction::Call(argument_count) => {
+                self.call_from_stack(*argument_count, false, host)?
+            }
+            Instruction::CallMethod(argument_count) => {
+                self.call_from_stack(*argument_count, true, host)?
+            }
+            _ => return self.execute_extended_call_instruction(instruction, host),
+        };
+        match completion {
+            Completion::Return(value) => {
+                self.stack.push(value);
+                Ok(None)
+            }
+            Completion::Throw(value) => Ok(Some(Completion::Throw(value))),
+        }
+    }
+
     // Calls recursively enter bytecode/native execution. Keep their argument
     // vectors and host-completion temporaries out of the interpreter loop's
     // frame so each nested JavaScript call retains only the hot dispatch
     // state on the native stack.
     #[inline(never)]
-    pub(in crate::engine::vm) fn execute_call_instruction(
+    fn execute_extended_call_instruction(
         &mut self,
         instruction: &Instruction,
         host: &mut impl VmHost,
@@ -467,9 +493,6 @@ impl VmActivation {
                 let specifier = self.pop()?;
                 host.dynamic_import(specifier, options)?
             }
-            Instruction::Call(argument_count) => {
-                self.call_from_stack(*argument_count, false, host)?
-            }
             Instruction::TailCall(argument_count) => {
                 let arguments = self.take_call_arguments(*argument_count, 1)?;
                 let function = self.pop()?;
@@ -482,9 +505,6 @@ impl VmActivation {
                 let arguments = self.take_call_arguments(*argument_count, 1)?;
                 let function = self.pop()?;
                 self.execute_eval_call(function, arguments, *environment, host)?
-            }
-            Instruction::CallMethod(argument_count) => {
-                self.call_from_stack(*argument_count, true, host)?
             }
             Instruction::TailCallMethod(argument_count) => {
                 let arguments = self.take_call_arguments(*argument_count, 2)?;

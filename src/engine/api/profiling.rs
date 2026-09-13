@@ -6,11 +6,14 @@
 //! not JS object creation and not a process-wide malloc interceptor.
 
 mod cost;
+pub(crate) use cost::record_call_preparation;
+#[cfg(feature = "stack-vm")]
+pub(crate) use cost::record_owned_call_storage;
+pub use cost::{CallPreparationCost, CostProfile, CostSnapshot, OwnedStorageCost, PhaseCost};
 pub(crate) use cost::{
     CompilePhase, PhaseTimer, cost_profile_active, record_compiler_storage, record_legacy_dispatch,
     record_legacy_pc_publication, record_lowered_function,
 };
-pub use cost::{CostProfile, CostSnapshot, OwnedStorageCost, PhaseCost};
 
 use super::Runtime;
 use crate::engine::heap::HeapCounts;

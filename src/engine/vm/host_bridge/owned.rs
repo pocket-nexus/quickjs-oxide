@@ -15,7 +15,22 @@ pub(super) fn execute(
     host: RuntimeVmHost,
     input: CallInput,
     original_arguments: &[Value],
-) -> Result<Completion, Error> {
+) -> Result<crate::engine::vm::driver::RunningExit, Error> {
+    let (runtime, entry) = prepare(host, input, original_arguments)?;
+    crate::engine::vm::driver::execute(
+        runtime,
+        entry,
+        crate::engine::vm::execution::ExecutionLimits::default(),
+    )
+}
+
+// Preparation does not remain on the native stack during callback reentry.
+#[inline(never)]
+fn prepare(
+    host: RuntimeVmHost,
+    input: CallInput,
+    original_arguments: &[Value],
+) -> Result<(Runtime, FrameEntry), Error> {
     // Preserve the production entry's dynamic authentication, independently
     // of static publication and of dormant-activation resume validation.
     if host.executable.root().is_none() {
@@ -56,39 +71,42 @@ pub(super) fn execute(
     } = host;
     let function = current_function
         .ok_or_else(|| Error::internal("published frame has no current function"))?;
-    crate::engine::vm::driver::execute(
-        runtime,
-        FrameEntry {
-            executable,
-            cold: Box::new(FrameCold {
-                regions: Vec::new(),
-                constructor_wait: None,
-                class_wait: None,
-                has_binding_wait: None,
-                iterator_wait: None,
-                iterator_generation: 0,
-                eval_arguments: None,
-                constructor_return: None,
-                conversion: None,
-                normalized_this: None,
-                return_to: None,
-                entry_guard: None,
-                caller_realm,
-                active_frame: active_frame_token,
-                function,
-                closure_slots,
-                reusable_captured_locals,
-                input,
-            }),
-            storage: FrameStorage {
-                original_arguments,
-                parameters: arguments,
-                locals,
-                operands: Vec::new(),
-            },
+    let entry = FrameEntry {
+        executable,
+        cold: Box::new(FrameCold {
+            regions: Vec::new(),
+            constructor_wait: None,
+            class_wait: None,
+            has_binding_wait: None,
+            iterator_wait: None,
+            iterator_generation: 0,
+            eval_arguments: None,
+            constructor_return: None,
+            conversion: None,
+            normalized_this: None,
+            return_to: None,
+            entry_guard: None,
+            caller_realm,
+            active_frame: active_frame_token,
+            function,
+            closure_slots,
+            reusable_captured_locals,
+            input,
+        }),
+        storage: FrameStorage {
+            original_arguments,
+            parameters: arguments,
+            locals,
+            operands: Vec::new(),
         },
-        crate::engine::vm::execution::ExecutionLimits::default(),
-    )
+    };
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_call_storage(
+        size_of::<FrameCold>(),
+        entry.cold.reusable_captured_locals.capacity() * size_of::<bool>(),
+        entry.storage.original_arguments.capacity() * size_of::<Value>(),
+    );
+    Ok((runtime, entry))
 }
 
 /// Execute only the detached frame supplied by the driver. This adapter does
