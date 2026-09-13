@@ -141,6 +141,8 @@ pub(super) enum PureOperation {
     RegExp(u32),
     DeleteSuper,
     ConstructorWithoutNew,
+    IteratorCheckObject,
+    IteratorMissingThrow,
     InitializeClosure { index: u16, derived: bool },
     SetPrototype,
     TypeOf,
@@ -202,6 +204,11 @@ fn perform(
     let slots = &mut execution.slots;
     use PureOperation as P;
     let result = match operation {
+        P::IteratorCheckObject => {
+            super::iterator_support::check_result_object(slots.peek(&frame.window, 0)?)?;
+            return Ok(None);
+        }
+        P::IteratorMissingThrow => return Err(super::iterator_support::missing_throw()),
         P::AtomValue(value) => Value::String(JsString::from_fresh_decimal_u32(value)),
         P::RegExp(index) => {
             match create_regexp(runtime, frame.executable.realm, &frame.executable, index)? {

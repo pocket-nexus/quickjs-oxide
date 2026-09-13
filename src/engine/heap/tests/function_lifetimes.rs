@@ -764,6 +764,7 @@ fn async_function_state_traces_callbacks_and_transfers_await_activation() {
             callee_global: prototype,
         },
         actual_argument_count: 0,
+        original_arguments: Vec::new(),
         arguments: Vec::new(),
         locals: Vec::new(),
         reusable_captured_locals: Vec::new(),

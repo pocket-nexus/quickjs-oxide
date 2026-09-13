@@ -1,6 +1,6 @@
 # S05 同步回调调用点账本
 
-状态：2026-09-13 当前 S05 工作区源码审计，**S05 统一正式验收通过，S06/S07 仍待实施**。
+状态：2026-09-13 当前 S05 工作区源码审计，**S05、S06 统一正式验收通过，S07 待实施**。
 本表替代早期 129 个直接表达式的迁移状态快照；旧行号和已删除函数不再作为待办。
 源码覆盖、定向测试和阶段验收分别记录，不能以注册成功或本表清单清空代替验收。
 
@@ -70,10 +70,10 @@ ToPrimitive/Number/String/BigInt、constructor prototype/species、iterator next
 | literal definition、class heritage/public field/private initializer | Owned：`vm/{array_driver,construct_driver}.rs`、`object/class_fields.rs`；computed raw key的LiteralDefinition查询由当前工作区接入；authored常规键已覆盖 |
 | PushAtomValueIndex/RegExp/ThrowDeleteSuper/InitializeVarRef/InitializeDerivedVarRef/SetProto/TypeOf/Is族/对象条件分支/CheckCtor | NoJs冷路径：`vm/pure_operations.rs::{step,perform}`；共享旧Runtime叶，错误留在owned unwind |
 | 普通调用拒绝、默认派生构造器非法super | `vm/driver.rs::{enter_call,rejected_call}`、`construct_driver.rs::enter_default_derived`已改owned错误；非callable Proxy仍先由ProxyCall请求读apply再拒绝，不能提前纯TypeError |
-| generator/async native selector | S06：GeneratorPrototypeResume、AsyncGeneratorPrototypeResume、AsyncFunctionResume、AsyncGeneratorResume，见`vm/{generator,async_function,async_generator}.rs` |
-| Promise全部selector/resolve/capability/finally/聚合、job与thenable | S06：`builtins/promise.rs`、`promise/{all,convenience,finally}.rs`；同步executor/then getter也包含在本阶段状态机 |
-| AsyncFromSyncIteratorResume/Unwrap/Close | S06：`vm/async_from_sync_iterator.rs` |
-| ForAwaitOfStart/Next、IteratorGetValueDone、IteratorStart/Next/Call/CheckObject、AsyncIteratorStart、InitialYield/Yield/YieldStar/AsyncYieldStar/Await/ThrowIteratorMissingThrow | S06：`vm/run.rs`尚无arm。`compiler/generator.rs`生成yield*协议；`compiler/parser/{loops,control}.rs`仅在async迭代/async generator close分支生成相应检查，不是同步destructuring缺口 |
+| generator/async native selector | S06 Owned：GeneratorStep、AsyncStep、AsyncGeneratorStep，共用 ResumeFrame/完成/挂起回复 |
+| Promise全部selector/resolve/capability/finally/聚合、job与thenable | S06 Owned：`promise/operation.rs` 及 capability/resolve/then/jobs/finally/convenience/aggregate；executor、species、thenable 与聚合内部 callback 都显式请求 |
+| AsyncFromSyncIteratorResume/Unwrap/Close | S06 Owned：`vm/async_from_sync_iterator/operation.rs` 的读/调用/Resolve/Close 请求 |
+| ForAwaitOfStart/Next、IteratorGetValueDone、IteratorStart/Next/Call/CheckObject、AsyncIteratorStart、InitialYield/Yield/YieldStar/AsyncYieldStar/Await/ThrowIteratorMissingThrow | S06 Owned：`vm/run.rs`、`iterator_driver/suspension.rs` 和 `suspend` 共用协议。`compiler/generator.rs`生成yield*协议；`compiler/parser/{loops,control}.rs`仅在async迭代/async generator close分支生成相应检查，不是同步destructuring缺口 |
 | InitializeModuleImportCollision、Import、ModuleEvaluation、DynamicImportHandler | S07：module linking/evaluation、dynamic import/TLA入口 |
 | Test262DetachArrayBuffer/EvalScript/CreateRealm/IsHtmlDda/Gc/Agent、QjsPrint/QjsConsoleLog | S07 host/API入口；print等包含ToString回调，当前不得当NoJs，也不能宣称S05 registry覆盖这些host |
 | cfg(test) ArgumentProbe/ConstructorProbe/ConstructorOrFunctionProbe/ActiveFrameProbe | 测试基础设施；S07统一入口审计，非生产ECMAScript intrinsic |
@@ -128,7 +128,7 @@ ToPrimitive/Number/String/BigInt、constructor prototype/species、iterator next
 旧consumer中的`call_internal`是保留的同步消费者，不等于owned路径还调用该consumer。
 VM另外保留 `vm/call_bridge.rs::PendingCall::invoke`、
 `vm/conversion_driver.rs::invoke`、`vm/proxy_get_driver.rs::advance_inner`三处
-未迁移callee回退；其剩余分类是上述S06/S07 selector和非Normal bytecode。
+未迁移callee回退；S05 验收时其剩余分类为 S06/S07 selector 和非 Normal bytecode；S06 当前实现已接入全部挂起族及间接回调，剩余入口为 S07。
 `vm/host_bridge.rs`及`host_bridge/private_elements.rs`是旧VM消费者，
 owned对应property/private/eval/iterator入口已分离，host/module真实入口留S07。
 

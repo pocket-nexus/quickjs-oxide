@@ -840,18 +840,12 @@ impl VmActivation {
                 }
             }
             Instruction::IteratorCheckObject => {
-                if !matches!(self.stack.last(), Some(Value::Object(_))) {
-                    return Err(Error::new(
-                        ErrorKind::Type,
-                        "iterator must return an object",
-                    ));
-                }
+                super::iterator_support::check_result_object(
+                    self.stack.last().unwrap_or(&Value::Undefined),
+                )?;
             }
             Instruction::ThrowIteratorMissingThrow => {
-                return Err(Error::new(
-                    ErrorKind::Type,
-                    "iterator does not have a throw method",
-                ));
+                return Err(super::iterator_support::missing_throw());
             }
             Instruction::MarkSuperCall => {}
             Instruction::ThrowReadOnly(index) => {

@@ -800,7 +800,7 @@ def check(ctx):
         "stage3d-throw-critical-route",
         "execute_hot_instruction must enter its unique match before handling Throw and retain the exact dispatch body",
         execute_hot_item,
-        "2b6f0378a1ab5e2a7fec880e88ee7ad700f6cdb9872828d0ed86ab164ec6dde0",
+        "7944d4d1f0e754651978060a9e62562dcac239abb6d5ecc9142c10235015ecb7",
     )
 
     execute_published_item = ctx.stage3b_function(

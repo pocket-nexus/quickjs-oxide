@@ -1,5 +1,6 @@
 //! Shared synchronous iterator calls with operation-specific close and record policies.
 mod regions;
+pub(super) mod suspension;
 use super::{
     Completion,
     driver::CallStep,
@@ -32,19 +33,37 @@ enum Stage {
     Value,
     ReturnMethod,
     ReturnResult,
+    AsyncMethod,
+    DelegateMethod,
+    ResumeResult,
+    DoneProperty,
+    ValueProperty,
 }
 
 #[derive(Clone, Copy)]
 enum Mode {
     Append,
-    Start,
-    Next { record_base: usize },
-    Close { _instruction_depth: usize },
+    Start {
+        asynchronous: bool,
+        delegating: bool,
+    },
+    Invoke,
+    Delegate(crate::engine::code::bytecode::IteratorCallKind),
+    Parse {
+        record_base: usize,
+    },
+    Next {
+        record_base: usize,
+    },
+    Close {
+        _instruction_depth: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Operation {
     Start,
+    Suspend(suspension::Operation),
     Next(usize),
     Close,
     ClosePreserve,
@@ -70,12 +89,15 @@ pub(super) struct PendingIterator {
     fast: Option<std::vec::IntoIter<Value>>,
     ready: bool,
     abrupt: Option<Value>,
+    argument: Value,
+    sync_fallback: bool,
 }
 
 /// A query driver consumes these actions in its existing dispatch loop.
 pub(super) enum IteratorAction {
     Read(Value, PropertyKey),
     Call(CallableRef, Value),
+    Invoke(super::call::DirectCallTarget, Value, Vec<Value>),
     Next(CallableRef, Value),
     Finish,
 }
@@ -83,6 +105,7 @@ pub(super) enum IteratorAction {
 enum Action {
     Read(Value, PropertyKey),
     Call(CallableRef, Value),
+    Invoke(super::call::DirectCallTarget, Value, Vec<Value>),
     Next(CallableRef, Value),
     Reply(Completion),
     Finish,
@@ -137,8 +160,18 @@ pub(super) fn operation(
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
     let pending = match operation {
+        Operation::Suspend(operation) => {
+            return suspension::start(runtime, execution, id, operation);
+        }
         Operation::Start => {
-            let mut pending = PendingIterator::new(frame, id, Mode::Start)?;
+            let mut pending = PendingIterator::new(
+                frame,
+                id,
+                Mode::Start {
+                    asynchronous: false,
+                    delegating: false,
+                },
+            )?;
             pending.iterable = execution.slots.pop(&mut frame.window)?;
             return drive(runtime, execution, pending, None);
         }
@@ -248,7 +281,7 @@ pub(super) fn finish(
     #[cfg(feature = "profiling")]
     let depth = match pending.mode {
         Mode::Close { _instruction_depth } => _instruction_depth,
-        Mode::Start => execution.slots.depth(&frame.window) + 1,
+        Mode::Start { .. } => execution.slots.depth(&frame.window) + 1,
         _ => execution.slots.depth(&frame.window),
     };
     match pending.mode {
@@ -271,21 +304,56 @@ pub(super) fn finish(
                     .push(&mut frame.window, Value::Int(pending.position as i32))?;
             }
         }
-        Mode::Start => {
+        Mode::Start {
+            asynchronous,
+            delegating,
+        } => {
             if pending.abrupt.is_none() {
                 let record_base = execution.slots.depth(&frame.window);
-                frame
-                    .cold
-                    .regions
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("iterator region allocation failed"))?;
+                if !delegating {
+                    frame
+                        .cold
+                        .regions
+                        .try_reserve(1)
+                        .map_err(|_| Error::internal("iterator region allocation failed"))?;
+                }
                 execution.slots.push(&mut frame.window, pending.iterator)?;
                 execution.slots.push(&mut frame.window, pending.next)?;
-                frame.cold.regions.push(super::VmUnwindRegion::Iterator {
-                    record_base,
-                    enabled: true,
-                    asynchronous: false,
-                });
+                if delegating {
+                    execution.slots.push(&mut frame.window, Value::Undefined)?;
+                } else {
+                    frame.cold.regions.push(super::VmUnwindRegion::Iterator {
+                        record_base,
+                        enabled: true,
+                        asynchronous,
+                    });
+                }
+            }
+        }
+        Mode::Invoke => {
+            if pending.abrupt.is_none() {
+                execution.slots.push(&mut frame.window, pending.yielded)?;
+            }
+        }
+        Mode::Delegate(_) => {
+            if pending.abrupt.is_none() {
+                if !pending.done {
+                    execution
+                        .slots
+                        .replace_operand(&frame.window, 0, pending.yielded)?;
+                }
+                execution
+                    .slots
+                    .push(&mut frame.window, Value::Bool(pending.done))?;
+            }
+        }
+        Mode::Parse { record_base } => {
+            if pending.abrupt.is_none() {
+                suspension::enable(frame, record_base)?;
+                execution.slots.push(&mut frame.window, pending.yielded)?;
+                execution
+                    .slots
+                    .push(&mut frame.window, Value::Bool(pending.done))?;
             }
         }
         Mode::Next { record_base } => {
@@ -322,13 +390,13 @@ pub(super) fn reply(
 ) -> Result<CallStep, Error> {
     let pending = execution
         .frames
-        .current_mut(target.frame)?
+        .current_mut(target.frame()?)?
         .cold
         .iterator_wait
         .take()
         .ok_or_else(|| Error::internal("iterator reply has no owner"))?;
     if target.operation != Some(OperationTarget::Iterator(pending.generation))
-        || pending.frame != target.frame
+        || pending.frame != target.frame()?
     {
         return Err(Error::internal("iterator reply identity mismatch"));
     }
@@ -361,6 +429,11 @@ fn drive(
         IteratorAction::Call(callable, receiver) => super::proxy_get_driver::start_iterator_call(
             runtime, execution, pending, callable, receiver,
         ),
+        IteratorAction::Invoke(target, receiver, arguments) => {
+            super::proxy_get_driver::start_iterator_invoke(
+                runtime, execution, pending, target, receiver, arguments,
+            )
+        }
         IteratorAction::Next(callable, receiver) => super::proxy_get_driver::start_iterator_next(
             runtime, execution, pending, receiver, callable,
         ),
@@ -405,6 +478,9 @@ impl PendingIterator {
                 }
                 Action::Call(callable, receiver) => {
                     return Ok(IteratorAction::Call(callable, receiver));
+                }
+                Action::Invoke(target, receiver, arguments) => {
+                    return Ok(IteratorAction::Invoke(target, receiver, arguments));
                 }
                 Action::Next(callable, receiver) => {
                     return Ok(IteratorAction::Next(callable, receiver));
@@ -464,6 +540,8 @@ impl PendingIterator {
             fast: None,
             ready: false,
             abrupt: None,
+            argument: Value::Undefined,
+            sync_fallback: false,
         }))
     }
 
@@ -506,6 +584,26 @@ impl PendingIterator {
                     self.key(runtime, "return")?,
                 ))
             }
+            Stage::AsyncMethod
+            | Stage::DelegateMethod
+            | Stage::ResumeResult
+            | Stage::DoneProperty
+            | Stage::ValueProperty => self.advance_suspension(runtime, value),
+            Stage::Start
+                if matches!(
+                    self.mode,
+                    Mode::Start {
+                        asynchronous: true,
+                        ..
+                    }
+                ) =>
+            {
+                self.stage = Stage::AsyncMethod;
+                Ok(Action::Read(
+                    self.iterable.clone(),
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::AsyncIterator)),
+                ))
+            }
             Stage::Start => {
                 self.stage = if matches!(self.mode, Mode::Append) {
                     Stage::Probe
@@ -532,9 +630,17 @@ impl PendingIterator {
                 ))
             }
             Stage::Method => {
-                let callable = callable(runtime, value, "value is not iterable")?;
+                let callable = callable(
+                    runtime,
+                    value,
+                    if self.sync_fallback {
+                        "not a function"
+                    } else {
+                        "value is not iterable"
+                    },
+                )?;
                 self.stage = Stage::Iterator;
-                let receiver = if matches!(self.mode, Mode::Start) {
+                let receiver = if matches!(self.mode, Mode::Start { .. }) {
                     std::mem::replace(&mut self.iterable, Value::Undefined)
                 } else {
                     self.iterable.clone()
@@ -552,9 +658,24 @@ impl PendingIterator {
                     self.key(runtime, "next")?,
                 ))
             }
+            Stage::NextMethod if self.sync_fallback => {
+                let Value::Object(iterator) = &self.iterator else {
+                    return Err(Error::internal("async fallback lost its iterator"));
+                };
+                self.iterator = Value::Object(
+                    runtime
+                        .new_async_from_sync_iterator(self.realm, iterator, &value)
+                        .map_err(runtime_error_to_vm_error)?,
+                );
+                self.sync_fallback = false;
+                Ok(Action::Read(
+                    self.iterator.clone(),
+                    self.key(runtime, "next")?,
+                ))
+            }
             Stage::NextMethod => {
                 self.next = value;
-                if matches!(self.mode, Mode::Start) {
+                if matches!(self.mode, Mode::Start { .. }) {
                     return Ok(Action::Finish);
                 }
                 self.fast = super::iterator_support::append_fast_array_values(

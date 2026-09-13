@@ -5,6 +5,7 @@ use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::ContextId;
 use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::object::ObjectRef;
+use crate::engine::value::Value;
 use crate::engine::vm::CallInput;
 use crate::engine::vm::frames::{ActiveFrameGuard, ActiveFrameToken};
 use crate::engine::vm::stack::{FrameStorage, FrameWindow};
@@ -18,9 +19,31 @@ pub(super) enum ReturnValue {
 #[derive(Clone, Copy)]
 pub(super) struct ReturnTarget {
     pub value_use: ReturnValue,
-    pub frame: FrameId,
+    pub owner: ReturnOwner,
     pub tail: bool,
     pub operation: Option<OperationTarget>,
+}
+
+/// A continuation may belong to a bytecode frame or a root native/job request.
+#[derive(Clone, Copy)]
+pub(super) enum ReturnOwner {
+    Frame(FrameId),
+    Root,
+}
+impl ReturnOwner {
+    pub(super) fn frame(self) -> Result<FrameId, Error> {
+        match self {
+            Self::Frame(id) => Ok(id),
+            Self::Root => Err(Error::internal(
+                "root request used a bytecode-only operation",
+            )),
+        }
+    }
+}
+impl ReturnTarget {
+    pub(super) fn frame(self) -> Result<FrameId, Error> {
+        self.owner.frame()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -41,6 +64,7 @@ pub(super) struct FrameCold {
     pub property_generation: u64,
     pub iterator_generation: u64,
     pub iterator_wait: Option<Box<crate::engine::vm::iterator_driver::PendingIterator>>,
+    pub resume_throw: Option<Value>,
     pub regions: Vec<crate::engine::vm::VmUnwindRegion>,
     pub eval_arguments: Option<Vec<crate::engine::value::Value>>,
     pub constructor_return: Option<ConstructorReturn>,
@@ -223,6 +247,7 @@ mod tests {
             .unwrap();
         let function = runtime.new_object(None).unwrap();
         let cold = Box::new(FrameCold {
+            resume_throw: None,
             regions: Vec::new(),
             iterator_wait: None,
             property_wait: None,

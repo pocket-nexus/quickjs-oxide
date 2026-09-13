@@ -1,6 +1,6 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-13。用户已确定使用栈 VM，**S01–S05 阶段验收通过，S06–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
+状态：2026-09-13。用户已确定使用栈 VM，**S01–S06 阶段验收通过，S07–S10 尚未开始，完整执行迁移尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
 
 ## 1. 起点与范围
 
@@ -40,7 +40,7 @@
 | 语义 callback 进度 | value/object/builtins 中的领域状态 | 恢复点显式，VM 不复制领域算法或递归等待内部 JS | 待做 |
 | operation 调用与回复 | VM operation 登记及 driver | 正确 owner、单次回复、getter 不因恢复重复执行 | 待做 |
 | abrupt completion/cleanup | unwind 与有效控制区域 | 统一展开协议，保留各项语言清理优先级 | 待做 |
-| 长期挂起状态 | heap 原始记录；suspend 负责事务交接 | 无永久 Runtime-owning 环、半恢复或最后 root 丢失 | 待做 |
+| 长期挂起状态 | heap 原始记录；suspend 负责事务交接 | 无永久 Runtime-owning 环、半恢复或最后 root 丢失 | S06 验收通过；证据见本轮阶段验收 |
 | host 重入观察 | 运行登记 guard/delimiter、已发布状态 | 回调前结束借用、视图准确、退出后解除登记 | 待做 |
 | Number 语义 | value/number | 运行与折叠共用纯算法，通用转换保持独立责任 | 待做 |
 
@@ -71,9 +71,9 @@
 | Array/iterator | 对应 builtin，S05 | holes、species、sort、动态 length、IteratorClose | callback/sort/species/同步迭代与 close 已接入；S05 已验收 |
 | String/RegExp/buffer | 对应 builtin，S05 | replacement/Unicode、resize/detach、共享内存与 BigInt | String/RegExp 协议、buffer/TypedArray/Atomics 转换已接入；S05 已验收 |
 | 其余同步内置 | 各领域 owner，S05 | intrinsic 逐项审核、toJSON/replacer、修改中迭代、realm | Function/scalar/Math/collections/Date/JSON/Error/weak 已接入；逐调用点审计与 S05 统一验收通过 |
-| generator | suspend + generator 驱动，S06 | next/throw/return、yield*、reentry、关闭/失败/GC | 待做 |
-| async/Promise | suspend/async/jobs，S06 | 同步前缀、assimilation、微任务次序、pending roots | 待做 |
-| async generator/iteration | 专用队列与恢复，S06 | 交错请求、finally await、异步 close | 待做 |
+| generator | suspend + generator 驱动，S06 | next/throw/return、yield*、reentry、关闭/失败/GC | S06 验收通过；证据见本轮阶段验收 |
+| async/Promise | suspend/async/jobs，S06 | 同步前缀、assimilation、微任务次序、pending roots | S06 验收通过；证据见本轮阶段验收 |
+| async generator/iteration | 专用队列与恢复，S06 | 交错请求、finally await、异步 close | S06 验收通过；证据见本轮阶段验收 |
 | modules | modules + driver，S07 | cycles/live import、TLA、dynamic import、loader 重入 | 待做 |
 | API/host/binary/platform | 入口适配与统一验证，S07 | 所有入口、delimiter、round trip、畸形输入和平台 | 待做 |
 | PC/observer/interrupt | observe + run，S08 | fault/resume、GC/release、host/debug、融合 fuel 权重 | 待做 |
@@ -1141,3 +1141,17 @@ preventExtensions 的 owned 域查询测试不代表 Object/Reflect native 入�
 初次组合诊断的 600 秒外部超时保持失败记录；放宽外部 watchdog 的完整归因运行
 退出 0，未改变 VM 预算或脚本，也不作为性能测量。详见逐 commit 计划当前实施记录
 和同步回调账本。本节取代上方各历史 checkpoint 的 S05 待办状态；S06/S07 仍未实施。
+
+## S06 本轮阶段验收
+
+五类挂起共用 freeze/thaw 与真实 owned frame；generator、async、async generator、
+Async-from-Sync、Promise selector 和 jobs 保留各自状态机，通过 typed continuation 推进。
+原始 argv 的 raw/Atom 边、恢复持根、放弃状态和最后引用在统一门禁中复核。
+新库 2208、旧库 2035；新旧 oracle 各 911 加压力各 1；CLI profiling 各 5 通过。
+非 profiling 构建、属性契约 4 项、完整边界反例 725 项、653 文件布局及格式/diff 通过。
+既有小栈测试要求查询分派拆成有界 Rust 帧；77 个原分支保持原转换。
+有限 1000 层委托零桥接用例通过，无限委托保留原溢出和恢复断言，预算未变。
+单次验收内所有失败、修复及最终 1024 个源码/构建输入哈希保存在
+`target/primitive-vm-s06-acceptance/`，最终判定见 `stage-verdict.json`。
+本节取代历史 S06 待办状态；模块、宿主、API 与二进制入口仍属于 S07。
+默认切换和旧路径删除仍属于 S10，最终 benchmark/profile 尚未执行。

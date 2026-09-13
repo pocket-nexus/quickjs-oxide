@@ -203,7 +203,7 @@ impl ConversionTask {
         target: ReturnTarget,
         completion: Completion,
     ) -> Result<Self, Error> {
-        let parent = execution.frames.current_mut(target.frame)?;
+        let parent = execution.frames.current_mut(target.frame()?)?;
         let wait = parent
             .cold
             .conversion
@@ -212,7 +212,7 @@ impl ConversionTask {
         if target.operation != Some(super::frame::OperationTarget::Conversion(wait.identity)) {
             return Err(Error::internal("conversion reply identity mismatch"));
         }
-        Self::from_wait(runtime, target.frame, wait, completion)
+        Self::from_wait(runtime, target.frame()?, wait, completion)
     }
 
     pub(super) fn from_wait(
@@ -454,7 +454,21 @@ fn invoke(
     let is_proxy = matches!(classification, CallableExecution::Proxy);
     let is_owned_native = matches!(&classification, CallableExecution::Native { target, .. }
         if crate::engine::builtins::continuation::NativeOperation::for_target(*target).is_some());
-    if is_proxy || is_owned_native {
+    let is_resumable = if let CallableExecution::Bytecode { bytecode, .. } = &classification {
+        runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .function_bytecode(bytecode.bytecode_id())
+            .map_err(|error| Error::internal(error.to_string()))?
+            .metadata
+            .function_kind
+            != FunctionKind::Normal
+    } else {
+        false
+    };
+    if is_proxy || is_owned_native || is_resumable {
         let wait = ConversionWait {
             finish,
             identity,
@@ -526,7 +540,7 @@ fn invoke(
                 caller_realm: realm,
                 return_to: ReturnTarget {
                     value_use: crate::engine::vm::frame::ReturnValue::Push,
-                    frame,
+                    owner: crate::engine::vm::frame::ReturnOwner::Frame(frame),
                     tail: false,
                     operation: Some(super::frame::OperationTarget::Conversion(identity)),
                 },

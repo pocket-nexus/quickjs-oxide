@@ -263,6 +263,8 @@ pub(super) fn read_prepared(
                 }
                 _ => false,
             };
+            let is_resumable =
+                matches!(classification, CallableExecution::Bytecode { .. }) && !normal;
             let is_proxy = matches!(classification, CallableExecution::Proxy);
             let is_owned_native = matches!(&classification, CallableExecution::Native { target, .. }
                 if crate::engine::builtins::continuation::NativeOperation::for_target(*target).is_some());
@@ -288,14 +290,14 @@ pub(super) fn read_prepared(
                     caller_realm: realm,
                     return_to: ReturnTarget {
                         value_use: super::frame::ReturnValue::Push,
-                        frame: id,
+                        owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
                         tail: false,
                         operation: None,
                     },
                 });
             } else if is_proxy {
                 proxy_callback = Some((callable, receiver, arguments));
-            } else if is_owned_native {
+            } else if is_owned_native || is_resumable {
                 native_callback = Some((callable, receiver, arguments));
             } else {
                 deferred = Some(Action::Call {
@@ -345,7 +347,7 @@ pub(super) fn read_prepared(
         );
     }
     if let Some((callable, receiver, arguments)) = native_callback {
-        return super::proxy_get_driver::start_native_call(
+        return super::proxy_get_driver::start_callback_call(
             runtime, execution, id, callable, receiver, arguments, false, depth,
         );
     }

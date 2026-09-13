@@ -79,28 +79,6 @@ def check(ctx):
     ) != 2:
         ctx.fail("stage3b-function-realm", "bound and Proxy realm traversal must each advance to their target")
 
-    prototype_helper = ctx.stage3b_function(
-        "src/engine/heap/runtime/mod.rs", "prototype_from_constructor_value", "stage3b-constructor-prototype"
-    )
-
-    if re.search(r"\b(?:CallableRef|callable_from_value|as_callable)\b", prototype_helper):
-        ctx.fail("stage3b-constructor-prototype", "prototype fallback must consume raw newTarget")
-
-    native_owned_prototype_consumers = deepcopy(evidence.NATIVE_OWNED_PROTOTYPE_CONSUMERS)
-
-    native_prototype_consumers = (
-        *((relative, function_name, "&new_target") for relative, function_name in native_owned_prototype_consumers),
-    )
-
-    for ctx.relative, ctx.function_name, new_target_argument in native_prototype_consumers:
-        ctx.item = ctx.stage3b_function(ctx.relative, ctx.function_name, "stage3b-native-prototype-family")
-        if (
-            " ".join(ctx.item.split()).count("prototype_from_constructor_value(") != 1
-            or " ".join(ctx.item.split()).count(f", {new_target_argument},") != 1
-            or re.search(r"\b(?:CallableRef|callable_from_value)\b", ctx.item)
-        ):
-            ctx.fail("stage3b-native-prototype-family", f"{ctx.relative}::{ctx.function_name} bypasses the raw helper payload")
-
     for diagnostic, relative, name, payload in evidence.CONSTRUCTION_CAPABILITIES:
         item = ctx.unique_braced_item(
             ctx.stage3b_code(relative),

@@ -1,0 +1,276 @@
+//! Bounded native-stack dispatch for iteration requests.
+use super::{
+    DirectCallTarget, Error, Finish, IteratorProgress, Next, Progress, Query, Resume, ReturnOwner,
+    RunningExecution, Runtime, Step, Value, continue_iterator, runtime_error_to_vm_error,
+};
+
+#[inline(never)]
+pub(super) fn advance(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    _owner: ReturnOwner,
+    _identity: u64,
+    query: &mut Query,
+    mut step: Step,
+) -> Result<Next, Error> {
+    loop {
+        let realm = query.realm;
+        match step {
+            Step::RegExpSpecies { regexp, resume } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("RegExp species continuation allocation failed")
+                })?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::RegExpSpeciesStep::start(runtime, realm, regexp)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                continue;
+            }
+            Step::RegExpSpeciesComplete(result) => {
+                let resume = query
+                    .parents
+                    .pop()
+                    .ok_or_else(|| Error::internal("RegExp species lost parent"))?;
+                step = resume
+                    .regexp_species(runtime, result)
+                    .map_err(runtime_error_to_vm_error)?;
+                continue;
+            }
+            Step::Aggregate { iterable, resume } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("AggregateError continuation allocation failed")
+                })?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::AggregateStep::start(runtime, realm, iterable)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
+                continue;
+            }
+            Step::ArraySpecies {
+                source,
+                length,
+                resume,
+            } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("Array species continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::ArraySpeciesStep::start(
+                    runtime, realm, &source, length,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::ArrayPush {
+                object,
+                value,
+                resume,
+            } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("Array push continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::ArrayMutationStep::start_values(
+                    runtime,
+                    realm,
+                    crate::engine::builtins::ArrayMutationKind::Push(
+                        crate::engine::builtins::native::ArrayPushKind::Push,
+                    ),
+                    Value::Object(object),
+                    vec![value],
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::IteratorNext {
+                iterator,
+                method,
+                resume,
+            } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("iterator continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::IteratorNextStep::start(
+                    runtime, realm, iterator, method,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::IteratorNextComplete(result) => {
+                if let Some(parent) = query.parents.pop() {
+                    step = parent
+                        .iterator_next(runtime, result)
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
+                let Some(Finish::IteratorNext(mut pending)) = query.finish.take() else {
+                    return Err(Error::internal("iterator lost its continuation"));
+                };
+                let action = pending.next_query(runtime, result)?;
+                match continue_iterator(runtime, execution, query, pending, action)? {
+                    IteratorProgress::Step(next) => {
+                        step = next;
+                        continue;
+                    }
+                    IteratorProgress::Done(result) => {
+                        return Ok(Next::Done(Progress::Call(result)));
+                    }
+                }
+            }
+
+            Step::IteratorCall {
+                callable,
+                iterator,
+                resume,
+            } => {
+                let metadata = runtime
+                    .direct_native_callable_metadata(&callable)
+                    .map_err(runtime_error_to_vm_error)?;
+                if let Some((target, defining_realm, min_readable_args)) = metadata
+                    && target.descriptor().cproto
+                        == crate::engine::builtins::native::NativeCProto::IteratorNext
+                {
+                    step = Step::Native {
+                        callable,
+                        target,
+                        defining_realm,
+                        min_readable_args,
+                        mode: super::super::call::NativeInvokeMode::IteratorNextRaw,
+                        invocation: super::super::call::NativeInvocation::Call {
+                            this_value: Value::Object(iterator),
+                        },
+                        arguments: Vec::new(),
+                        resume: Resume::IteratorNext(resume),
+                    };
+                } else {
+                    step = Step::Call {
+                        target: DirectCallTarget::Callable(callable),
+                        receiver: Value::Object(iterator),
+                        arguments: Vec::new(),
+                        resume: Resume::IteratorNext(resume),
+                    };
+                }
+                continue;
+            }
+            Step::IteratorClose {
+                iterator,
+                completion,
+            } => {
+                step = crate::engine::builtins::IteratorCloseStep::start(
+                    runtime, realm, iterator, completion,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+
+            Step::ObjectTag { receiver } => {
+                step = crate::engine::builtins::ObjectStringStep::start(
+                    runtime,
+                    realm,
+                    crate::engine::builtins::ObjectStringKind::Tag,
+                    &super::super::call::NativeInvocation::Call {
+                        this_value: receiver,
+                    },
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::RegExpExec {
+                regexp,
+                input,
+                resume,
+            } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("RegExp exec continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::RegExpExecStep::abstract_exec(
+                    runtime, realm, regexp, input,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::IteratorCloseWithResume {
+                iterator,
+                completion,
+                resume,
+            } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("iterator close continuation allocation failed")
+                })?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::IteratorCloseStep::start(
+                    runtime, realm, iterator, completion,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+
+            Step::OrdinaryInstance {
+                constructor,
+                value,
+                resume,
+            } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("instance continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::InstanceStep::ordinary(
+                    runtime,
+                    realm,
+                    &constructor,
+                    value,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+            Step::ParseIterator { result, resume } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("iterator parse continuation allocation failed")
+                })?;
+                query.parents.push(resume);
+                step =
+                    crate::engine::builtins::IteratorNextStep::parse_result(runtime, realm, result)
+                        .map_err(runtime_error_to_vm_error)?
+                        .into();
+                continue;
+            }
+            Step::ArrayCopy {
+                object,
+                to,
+                from,
+                count,
+                backwards,
+                resume,
+            } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("Array copy continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = crate::engine::builtins::ArrayCopyStep::start(
+                    runtime, realm, object, to, from, count, backwards,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
+                continue;
+            }
+
+            _ => return Ok(Next::Continue(step)),
+        }
+    }
+}

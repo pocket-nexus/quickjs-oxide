@@ -14,6 +14,11 @@ use crate::engine::{
 };
 
 pub(crate) enum NativeOperation {
+    AsyncGenerator(NativeFunctionId),
+    FromSync(NativeFunctionId),
+    AsyncResume(crate::engine::heap::AsyncFunctionResumeKind),
+    Promise(NativeFunctionId),
+    GeneratorResume(super::native::GeneratorResumeKind),
     Atomics(super::native::AtomicsNativeKind),
     TypedCreate(super::native::TypedArrayNativeKind),
     SharedBufferConstructor,
@@ -115,6 +120,11 @@ pub(crate) enum NativeOperation {
     Predicate(PredicateKind),
 }
 pub(crate) enum NativeStep {
+    AsyncGenerator(crate::engine::vm::async_generator::AsyncGeneratorStep),
+    FromSync(crate::engine::vm::async_from_sync_iterator::FromSyncStep),
+    Async(crate::engine::vm::async_function::AsyncStep),
+    Promise(super::promise::operation::PromiseStep),
+    GeneratorResume(crate::engine::vm::generator::GeneratorStep),
     Atomics(super::AtomicsStep),
     TypedCreate(super::TypedCreateStep),
     BufferSlice(super::BufferSliceStep),
@@ -215,6 +225,54 @@ pub(crate) enum NativeStep {
 }
 impl NativeOperation {
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
+        if matches!(
+            target,
+            NativeFunctionId::AsyncGeneratorPrototypeResume(_)
+                | NativeFunctionId::AsyncGeneratorResume(_)
+        ) {
+            return Some(Self::AsyncGenerator(target));
+        }
+        if matches!(
+            target,
+            NativeFunctionId::AsyncFromSyncIteratorResume(_)
+                | NativeFunctionId::AsyncFromSyncIteratorUnwrap
+                | NativeFunctionId::AsyncFromSyncIteratorClose
+        ) {
+            return Some(Self::FromSync(target));
+        }
+        if let NativeFunctionId::AsyncFunctionResume(kind) = target {
+            return Some(Self::AsyncResume(kind));
+        }
+        if matches!(
+            target,
+            NativeFunctionId::PromiseResolving(_)
+                | NativeFunctionId::PromiseAllResolveElement
+                | NativeFunctionId::PromiseAllSettledElement(_)
+                | NativeFunctionId::PromiseAnyRejectElement
+                | NativeFunctionId::PromiseCapabilityExecutor
+                | NativeFunctionId::PromiseFinallyHandler(_)
+                | NativeFunctionId::PromiseFinallyThunk(_)
+                | NativeFunctionId::Promise(
+                    super::native::PromiseNativeKind::Constructor
+                        | super::native::PromiseNativeKind::Species
+                        | super::native::PromiseNativeKind::Then
+                        | super::native::PromiseNativeKind::Catch
+                        | super::native::PromiseNativeKind::Resolve
+                        | super::native::PromiseNativeKind::Reject
+                        | super::native::PromiseNativeKind::Try
+                        | super::native::PromiseNativeKind::WithResolvers
+                        | super::native::PromiseNativeKind::Finally
+                        | super::native::PromiseNativeKind::All
+                        | super::native::PromiseNativeKind::AllSettled
+                        | super::native::PromiseNativeKind::Any
+                        | super::native::PromiseNativeKind::Race
+                )
+        ) {
+            return Some(Self::Promise(target));
+        }
+        if let NativeFunctionId::GeneratorPrototypeResume(kind) = target {
+            return Some(Self::GeneratorResume(kind));
+        }
         match target {
             NativeFunctionId::RegExp(super::native::RegExpNativeKind::MatchAll) => {
                 return Some(Self::RegExpMatchAll);
@@ -633,6 +691,35 @@ impl NativeOperation {
         callable: &crate::engine::object::CallableRef,
     ) -> Result<NativeStep, RuntimeError> {
         Ok(match self {
+            Self::AsyncGenerator(target) => NativeStep::AsyncGenerator(
+                crate::engine::vm::async_generator::AsyncGeneratorStep::start(
+                    runtime, realm, target, invocation, arguments,
+                )?,
+            ),
+            Self::FromSync(target) => NativeStep::FromSync(
+                crate::engine::vm::async_from_sync_iterator::FromSyncStep::start(
+                    runtime, realm, target, invocation, arguments,
+                )?,
+            ),
+            Self::AsyncResume(kind) => NativeStep::Async(runtime.start_async_function_resume(
+                realm,
+                kind,
+                invocation.clone(),
+                arguments,
+            )?),
+            Self::Promise(target) => {
+                NativeStep::Promise(super::promise::operation::PromiseStep::start(
+                    runtime, realm, target, invocation, arguments,
+                )?)
+            }
+            Self::GeneratorResume(kind) => {
+                NativeStep::GeneratorResume(runtime.start_generator_prototype_resume(
+                    realm,
+                    kind,
+                    invocation.clone(),
+                    arguments,
+                )?)
+            }
             Self::Atomics(kind) => {
                 NativeStep::Atomics(super::AtomicsStep::start(runtime, realm, kind, arguments)?)
             }

@@ -644,23 +644,6 @@ impl Runtime {
         )))
     }
 
-    pub(crate) fn prototype_from_constructor_value(
-        &self,
-        caller_realm: ContextId,
-        new_target: &Value,
-        fallback: impl FnOnce(ContextId) -> Result<ObjectRef, RuntimeError>,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
-        match self.constructor_prototype_source(caller_realm, new_target)? {
-            NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => {
-                Ok(NativeConversion::Value(prototype))
-            }
-            NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {
-                fallback(realm).map(NativeConversion::Value)
-            }
-            NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn construct_native_function(
         &self,

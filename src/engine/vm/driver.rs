@@ -223,7 +223,7 @@ pub(super) fn enter_call(
                 } else {
                     Value::Undefined
                 };
-                return super::proxy_get_driver::start_native_call(
+                return super::proxy_get_driver::start_callback_call(
                     runtime,
                     execution,
                     id,
@@ -250,11 +250,6 @@ pub(super) fn enter_call(
         .map_err(|error| Error::internal(error.to_string()))?
         .metadata
         .function_kind;
-    if kind != FunctionKind::Normal {
-        let overflow = (!execution.frames.can_push() || runtime.bytecode_call_would_overflow())
-            .then_some(bytecode);
-        return super::call_bridge::prepare(runtime, execution, id, count, method, tail, overflow);
-    }
     #[cfg(feature = "profiling")]
     let observed_depth = execution.slots.depth(window);
     if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
@@ -284,6 +279,12 @@ pub(super) fn enter_call(
         arguments = normalized;
     }
     let receiver = bound_receiver.unwrap_or(receiver);
+    if kind != FunctionKind::Normal {
+        let depth = execution.slots.depth(&frame.window) + count + 1 + usize::from(method);
+        return super::proxy_get_driver::start_callback_call(
+            runtime, execution, id, callable, receiver, arguments, tail, depth,
+        );
+    }
     let request = BytecodeCallRequest {
         callable,
         receiver,
@@ -294,7 +295,7 @@ pub(super) fn enter_call(
         caller_realm: realm,
         return_to: ReturnTarget {
             value_use: crate::engine::vm::frame::ReturnValue::Push,
-            frame: id,
+            owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
             tail,
             operation: None,
         },
@@ -320,10 +321,41 @@ pub(super) fn execute(
     run_frames(&runtime, execution)
 }
 
+pub(crate) enum RootOperation {
+    AsyncGenerator(super::async_generator::AsyncGeneratorStep),
+    FromSync(super::async_from_sync_iterator::FromSyncStep),
+    Promise(crate::engine::builtins::promise::operation::PromiseStep),
+    Async(super::async_function::AsyncStep),
+}
+
+pub(crate) fn execute_root(
+    runtime: Runtime,
+    realm: crate::engine::heap::ContextId,
+    operation: RootOperation,
+) -> Result<Completion, Error> {
+    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default())?;
+    let exit =
+        match super::proxy_get_driver::start_root(&runtime, &mut execution, realm, operation)? {
+            super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
+                return Ok(completion);
+            }
+            super::proxy_get_driver::Progress::Call(CallStep::Entered) => {
+                run_frames(&runtime, execution)?
+            }
+            _ => {
+                return Err(Error::internal(
+                    "root Promise operation returned a bytecode-only continuation",
+                ));
+            }
+        };
+    exit.finish(runtime)
+}
+
 pub(super) enum RunningExit {
     Complete(Completion),
     RootHandoff(Box<super::frame_exit::RootHandoff>),
     Call(Box<CallContinuation>),
+    Suspend(Box<super::suspend::OwnedSuspension>),
 }
 
 pub(super) struct CallContinuation {
@@ -359,10 +391,35 @@ impl CallContinuation {
 }
 
 impl RunningExit {
+    pub(super) fn finish_suspending(
+        self,
+        runtime: Runtime,
+    ) -> Result<super::suspend::VmRunOutcome, Error> {
+        let mut exit = self;
+        loop {
+            match exit {
+                Self::Complete(completion) => {
+                    return Ok(super::suspend::VmRunOutcome::Complete(completion));
+                }
+                Self::Suspend(suspension) => {
+                    return suspension
+                        .freeze(runtime)
+                        .map_err(runtime_error_to_vm_error);
+                }
+                Self::RootHandoff(handoff) => return handoff.execute_suspending(runtime),
+                Self::Call(mut continuation) => {
+                    let forwarded = continuation.invoke(&runtime)?;
+                    exit = continuation.resume(&runtime, forwarded)?;
+                }
+            }
+        }
+    }
+
     pub(super) fn finish(self, runtime: Runtime) -> Result<Completion, Error> {
         let mut exit = self;
         loop {
             match exit {
+                Self::Suspend(_) => return Err(Error::internal("ordinary entry suspended")),
                 Self::Complete(completion) => return Ok(completion),
                 Self::RootHandoff(handoff) => return handoff.execute(runtime),
                 Self::Call(mut continuation) => {
@@ -372,6 +429,17 @@ impl RunningExit {
             }
         }
     }
+}
+
+/// Install an authenticated dormant frame and inject abrupt resumption into
+/// the same unwinder used by ordinary child-frame throws.
+pub(super) fn resume(runtime: Runtime, entry: FrameEntry, pc: usize) -> Result<RunningExit, Error> {
+    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default())?;
+    let id = push_frame(&mut execution, entry)?;
+    let frame = execution.frames.current_mut(id)?;
+    frame.resume_pc = pc;
+    frame.fault_pc = pc.saturating_sub(1);
+    run_frames_with_state(&runtime, execution, None, None, 0)
 }
 
 #[inline(never)]
@@ -402,6 +470,15 @@ fn run_frames_with_state(
             .frames
             .current_id()
             .ok_or_else(|| Error::internal("driver lost its current frame"))?;
+        if forwarded.is_none() {
+            forwarded = execution
+                .frames
+                .current_mut(id)?
+                .cold
+                .resume_throw
+                .take()
+                .map(Completion::Throw);
+        }
         let mut exit = if let Some(task) = conversion.take() {
             use crate::engine::vm::conversion_driver::Progress;
             #[cfg(feature = "profiling")]
@@ -850,12 +927,66 @@ fn run_frames_with_state(
                 }
             }
         }
+        if let RunExit::Suspend(kind) = exit {
+            let suspension = super::suspend::OwnedSuspension::detach(&mut execution, id, kind)?;
+            if let Some(target) = suspension.return_to {
+                let outcome = Box::new(suspension)
+                    .freeze(runtime.clone())
+                    .map_err(runtime_error_to_vm_error)?;
+                match super::proxy_get_driver::reply_suspended(
+                    runtime,
+                    &mut execution,
+                    target,
+                    outcome,
+                )? {
+                    super::proxy_get_driver::Progress::Conversion(task) => conversion = Some(task),
+                    super::proxy_get_driver::Progress::Call(CallStep::Entered) => {}
+                    super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
+                        if matches!(target.owner, super::frame::ReturnOwner::Root) {
+                            return Ok(RunningExit::Complete(completion));
+                        }
+                        forwarded = Some(completion);
+                    }
+                    super::proxy_get_driver::Progress::Call(CallStep::Bridge) => {
+                        return Err(Error::internal("suspension reply attempted replay"));
+                    }
+                }
+                continue;
+            }
+            drop(execution);
+            return Ok(RunningExit::Suspend(Box::new(suspension)));
+        }
         let (completion, return_to) =
             match super::frame_exit::finish(runtime, &mut execution, id, exit, forwarded.take())? {
                 super::frame_exit::FrameExit::Complete {
                     completion,
                     return_to,
                 } => (completion, return_to),
+                super::frame_exit::FrameExit::Suspended { outcome, target } => {
+                    match super::proxy_get_driver::reply_suspended(
+                        runtime,
+                        &mut execution,
+                        target,
+                        outcome,
+                    )? {
+                        super::proxy_get_driver::Progress::Conversion(task) => {
+                            conversion = Some(task)
+                        }
+                        super::proxy_get_driver::Progress::Call(CallStep::Entered) => {}
+                        super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
+                            if matches!(target.owner, super::frame::ReturnOwner::Root) {
+                                return Ok(RunningExit::Complete(completion));
+                            }
+                            forwarded = Some(completion);
+                        }
+                        super::proxy_get_driver::Progress::Call(CallStep::Bridge) => {
+                            return Err(Error::internal(
+                                "handoff suspension reply attempted replay",
+                            ));
+                        }
+                    }
+                    continue;
+                }
                 super::frame_exit::FrameExit::RootHandoff(handoff) => {
                     drop(execution);
                     return Ok(RunningExit::RootHandoff(handoff));
@@ -864,7 +995,20 @@ fn run_frames_with_state(
         let Some(target) = return_to else {
             return Ok(RunningExit::Complete(completion));
         };
-        execution.frames.current_mut(target.frame)?;
+        if matches!(target.owner, super::frame::ReturnOwner::Root) {
+            match super::proxy_get_driver::reply(runtime, &mut execution, target, completion)? {
+                super::proxy_get_driver::Progress::Call(CallStep::Entered) => continue,
+                super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
+                    return Ok(RunningExit::Complete(completion));
+                }
+                _ => {
+                    return Err(Error::internal(
+                        "root reply returned a bytecode-only continuation",
+                    ));
+                }
+            }
+        }
+        execution.frames.current_mut(target.frame()?)?;
         if matches!(
             target.operation,
             Some(super::frame::OperationTarget::PropertyGet(_))
@@ -903,7 +1047,7 @@ fn run_frames_with_state(
             }
         }
         if let Some(super::frame::OperationTarget::Eval(arguments)) = target.operation {
-            let parent = execution.frames.current_mut(target.frame)?;
+            let parent = execution.frames.current_mut(target.frame()?)?;
             parent.cold.eval_arguments = None;
             for _ in 0..=arguments {
                 execution.slots.pop(&mut parent.window)?;
@@ -925,7 +1069,7 @@ fn run_frames_with_state(
         }
         match completion {
             Completion::Return(value) if !target.tail => {
-                let parent = execution.frames.current_mut(target.frame)?;
+                let parent = execution.frames.current_mut(target.frame()?)?;
                 if matches!(target.value_use, super::frame::ReturnValue::Push) {
                     execution.slots.push(&mut parent.window, value)?;
                 }
@@ -993,6 +1137,7 @@ mod tests {
         FrameEntry {
             executable: prepared.executable,
             cold: Box::new(FrameCold {
+                resume_throw: None,
                 regions: Vec::new(),
                 iterator_wait: None,
                 property_wait: None,
@@ -6404,7 +6549,7 @@ mod tests {
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         let id = push_frame(&mut execution, entry).unwrap();
         assert!(matches!(
-            super::super::proxy_get_driver::start_native_call(
+            super::super::proxy_get_driver::start_callback_call(
                 &runtime,
                 &mut execution,
                 id,

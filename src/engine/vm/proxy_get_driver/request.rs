@@ -36,6 +36,13 @@ use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, Type
 use crate::engine::object::{ProxyPrototypeResume, ProxyPrototypeStep};
 
 pub(super) enum Resume {
+    FromSync(Box<crate::engine::vm::async_from_sync_iterator::FromSyncResume>),
+    AsyncGenerator(Box<crate::engine::vm::async_generator::AsyncGeneratorResume>),
+    Async(Box<crate::engine::vm::async_function::AsyncResume>),
+    Promise(Box<crate::engine::builtins::promise::operation::PromiseResume>),
+    GeneratorCreate(crate::engine::vm::suspend::creation::GeneratorCreation),
+    GeneratorPrototype(Box<crate::engine::vm::suspend::creation::GeneratorPrototype>),
+    Generator(Box<crate::engine::vm::generator::GeneratorResume>),
     ForIn(crate::engine::vm::for_in::operation::ForInResume),
     Atomics(crate::engine::builtins::AtomicsResume),
     PublicField,
@@ -250,6 +257,20 @@ pub(super) enum Resume {
 }
 
 pub(super) enum Step {
+    PromiseOperation {
+        step: Box<crate::engine::builtins::promise::operation::PromiseStep>,
+        resume: Resume,
+    },
+    IntrinsicPromiseResolve {
+        value: Value,
+        realm: crate::engine::heap::ContextId,
+        resume: Resume,
+    },
+    ResumeFrame {
+        activation: Box<crate::engine::vm::suspend::RootedVmActivation>,
+        input: crate::engine::vm::suspend::VmActivationResume,
+        resume: Resume,
+    },
     ForInComplete {
         value: Value,
         done: Option<bool>,
@@ -727,12 +748,44 @@ impl Resume {
         }
     }
 
+    pub(super) fn suspended(
+        self,
+        runtime: &Runtime,
+        outcome: crate::engine::vm::suspend::VmRunOutcome,
+    ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
+        match self {
+            Self::AsyncGenerator(resume) => resume.body(outcome).map(Into::into),
+            Self::Async(resume) => resume.body(outcome).map(Into::into),
+            Self::GeneratorCreate(creation) => creation.initial(runtime, outcome).map(Into::into),
+            Self::Generator(resume) => resume.resume(outcome).map(Into::into),
+            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "ordinary callback returned a suspension",
+            )),
+        }
+    }
+
     pub(super) fn resume(
         self,
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::FromSync(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::AsyncGenerator(resume) => resume.resume(completion).map(Into::into),
+            Self::Async(resume) => resume.resume(completion).map(Into::into),
+            Self::Promise(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::GeneratorCreate(creation) => creation
+                .initial(
+                    runtime,
+                    crate::engine::vm::suspend::VmRunOutcome::Complete(completion),
+                )
+                .map(Into::into),
+            Self::GeneratorPrototype(resume) => resume.resume(runtime, completion).map(Into::into),
+            Self::Generator(resume) => resume
+                .resume(crate::engine::vm::suspend::VmRunOutcome::Complete(
+                    completion,
+                ))
+                .map(Into::into),
             Self::ForIn(_) => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "for-in requires typed reply",
             )),
@@ -1193,6 +1246,7 @@ impl Resume {
         result: crate::engine::builtins::ObjectIteratorStep,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::Promise(resume) => resume.next(runtime, result).map(Into::into),
             Self::Sum(resume) => resume.item(runtime, result).map(Into::into),
             Self::Aggregate(resume) => resume.item(runtime, result).map(Into::into),
 
@@ -1263,6 +1317,7 @@ impl Resume {
         result: NativeConversion<crate::engine::vm::call::ConstructorPrototypeSource>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::Promise(resume) => resume.prototype(runtime, result).map(Into::into),
             Self::TypedCreate(resume) => resume.prototype(runtime, result).map(Into::into),
 
             Self::WeakConstructor(resume) => resume.prototype(runtime, result).map(Into::into),

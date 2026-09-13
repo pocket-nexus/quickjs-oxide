@@ -207,6 +207,7 @@ pub(super) struct RunningExecution {
     pub slots: SlotStore,
     /// Cold completion owns its payload before the active window is cleared.
     pub pending: Option<Value>,
+    pub root_query: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub pending_call: Option<Box<super::call_bridge::PendingCall>>,
     _guard: ExecutionGuard,
 }
@@ -227,6 +228,7 @@ impl Drop for RunningExecution {
             drop(frame.cold);
             drop(frame.executable);
         }
+        drop(self.root_query.take());
     }
 }
 
@@ -238,6 +240,7 @@ impl RunningExecution {
             slots: SlotStore::new(limits.slots),
             pending: None,
             pending_call: None,
+            root_query: None,
             _guard: guard,
         })
     }

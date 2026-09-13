@@ -49,6 +49,7 @@ impl BytecodeCallRequest {
         let entry = FrameEntry {
             executable: prepared.executable,
             cold: Box::new(FrameCold {
+                resume_throw: None,
                 regions: Vec::new(),
                 iterator_wait: None,
                 property_wait: None,

@@ -17,6 +17,10 @@ pub(super) enum FrameExit {
         completion: Completion,
         return_to: Option<ReturnTarget>,
     },
+    Suspended {
+        outcome: super::suspend::VmRunOutcome,
+        target: ReturnTarget,
+    },
     RootHandoff(Box<RootHandoff>),
 }
 
@@ -29,6 +33,24 @@ pub(super) struct RootHandoff {
 }
 
 impl RootHandoff {
+    #[inline(never)]
+    pub(super) fn execute_suspending(
+        self: Box<Self>,
+        runtime: Runtime,
+    ) -> Result<super::suspend::VmRunOutcome, Error> {
+        let Self {
+            entry,
+            pc,
+            guard,
+            _constructor_return,
+        } = *self;
+        let result = super::host_bridge::owned::run_frame(runtime, entry, pc);
+        if let Some(guard) = guard {
+            guard.finish().map_err(runtime_error_to_vm_error)?;
+        }
+        result
+    }
+
     #[inline(never)]
     pub(super) fn execute(self: Box<Self>, runtime: Runtime) -> Result<Completion, Error> {
         let Self {
@@ -68,7 +90,7 @@ pub(super) fn finish(
         };
         // Install the completion owner before releasing any window root.
         execution.slots.clear_frame(frame.window)?;
-        Ok(completion)
+        Ok(super::suspend::VmRunOutcome::Complete(completion))
     } else {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_bridge();
@@ -86,12 +108,25 @@ pub(super) fn finish(
                 _constructor_return: constructor_return,
             })));
         }
-        super::host_bridge::owned::execute_frame(runtime.clone(), entry, frame.resume_pc)
+        super::host_bridge::owned::run_frame(runtime.clone(), entry, frame.resume_pc)
     };
     if let Some(guard) = guard {
         guard.finish().map_err(runtime_error_to_vm_error)?;
     }
-    let completion = match (result?, constructor_return) {
+    let completion = match result? {
+        super::suspend::VmRunOutcome::Complete(completion) => completion,
+        outcome @ super::suspend::VmRunOutcome::Suspend { .. } => {
+            if constructor_return.is_some() {
+                return Err(Error::internal("constructor handoff suspended"));
+            }
+            return Ok(FrameExit::Suspended {
+                outcome,
+                target: return_to
+                    .ok_or_else(|| Error::internal("child suspension lost its return target"))?,
+            });
+        }
+    };
+    let completion = match (completion, constructor_return) {
         (Completion::Return(value), Some(ConstructorReturn::Base(receiver))) => {
             Completion::Return(if matches!(value, Value::Object(_)) {
                 value

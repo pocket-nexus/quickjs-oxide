@@ -188,7 +188,7 @@ fn prepare_and_enter(
                 caller_realm: realm,
                 return_to: ReturnTarget {
                     value_use: ReturnValue::Push,
-                    frame: id,
+                    owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
                     tail: false,
                     operation: Some(OperationTarget::Eval(arguments)),
                 },
@@ -318,7 +318,7 @@ pub(super) fn apply(
         caller_realm: realm,
         return_to: ReturnTarget {
             value_use: ReturnValue::Push,
-            frame: id,
+            owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
             tail: false,
             operation: Some(OperationTarget::Eval(1)),
         },

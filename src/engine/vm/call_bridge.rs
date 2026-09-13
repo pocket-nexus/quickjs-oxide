@@ -1,4 +1,4 @@
-//! Temporary single-call boundary for callable families awaiting S05/S06 continuations.
+//! Temporary single-call boundary for callable families awaiting S07 entry integration.
 //! The caller stays owned; no completed prefix is replayed by handing off its whole frame.
 use super::{
     Completion, driver::CallStep, exception::runtime_error_to_vm_error,
@@ -60,7 +60,7 @@ pub(super) fn prepare(
 }
 
 /// Transitional internal call, owned while the resident dispatcher returns.
-/// This is not an external-host delimiter or a completed S05 continuation.
+/// This is not an external-host delimiter or an owned domain continuation.
 pub(super) struct PendingCall {
     frame: FrameId,
     realm: crate::engine::heap::ContextId,

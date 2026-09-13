@@ -11,7 +11,7 @@ use crate::engine::vm::frame::{FrameCold, FrameEntry};
 use crate::engine::vm::stack::{FrameStorage, copy_value};
 use crate::engine::vm::{CallInput, Completion, VmActivation};
 
-pub(super) fn execute(
+pub(in crate::engine::vm) fn execute(
     host: RuntimeVmHost,
     input: CallInput,
     original_arguments: &[Value],
@@ -26,7 +26,7 @@ pub(super) fn execute(
 
 // Preparation does not remain on the native stack during callback reentry.
 #[inline(never)]
-fn prepare(
+pub(in crate::engine::vm) fn prepare(
     host: RuntimeVmHost,
     input: CallInput,
     original_arguments: &[Value],
@@ -74,6 +74,7 @@ fn prepare(
     let entry = FrameEntry {
         executable,
         cold: Box::new(FrameCold {
+            resume_throw: None,
             regions: Vec::new(),
             iterator_wait: None,
             property_wait: None,
@@ -115,6 +116,36 @@ pub(in crate::engine::vm) fn execute_frame(
     entry: FrameEntry,
     resume_pc: usize,
 ) -> Result<Completion, Error> {
+    let (mut host, activation, _original_arguments) = detach_frame(runtime, entry, resume_pc)?;
+    let code = host.executable.code.clone();
+    activation.execute(&code, &mut host)
+}
+
+/// The remaining S07 opcode bridge must return either terminal form. It may
+/// not turn an authored await into an execute-to-completion invariant error.
+pub(in crate::engine::vm) fn run_frame(
+    runtime: Runtime,
+    entry: FrameEntry,
+    resume_pc: usize,
+) -> Result<super::super::suspend::VmRunOutcome, Error> {
+    let (mut host, activation, originals) = detach_frame(runtime, entry, resume_pc)?;
+    let code = host.executable.code.clone();
+    match activation.run(&code, &mut host)? {
+        super::super::VmExit::Complete(completion) => {
+            Ok(super::super::suspend::VmRunOutcome::Complete(completion))
+        }
+        super::super::VmExit::Suspend(suspension) => {
+            super::super::suspend::finish_suspension(host, suspension, originals)
+                .map_err(super::super::exception::runtime_error_to_vm_error)
+        }
+    }
+}
+
+pub(in crate::engine::vm) fn detach_frame(
+    runtime: Runtime,
+    entry: FrameEntry,
+    resume_pc: usize,
+) -> Result<(RuntimeVmHost, VmActivation, Vec<Value>), Error> {
     let FrameEntry {
         executable,
         cold,
@@ -122,6 +153,7 @@ pub(in crate::engine::vm) fn execute_frame(
     } = entry;
     let FrameCold {
         regions,
+        resume_throw,
         iterator_wait,
         iterator_generation: _,
         property_wait,
@@ -139,7 +171,8 @@ pub(in crate::engine::vm) fn execute_frame(
         reusable_captured_locals,
         input,
     } = *cold;
-    if property_wait.is_some()
+    if resume_throw.is_some()
+        || property_wait.is_some()
         || conversion.is_some()
         || iterator_wait.is_some()
         || eval_arguments.is_some()
@@ -161,7 +194,7 @@ pub(in crate::engine::vm) fn execute_frame(
     activation.normalized_this = normalized_this;
     activation.stack = storage.operands;
     activation.pc = resume_pc;
-    let mut host = RuntimeVmHost {
+    let host = RuntimeVmHost {
         runtime,
         active_frame_token: active_frame,
         current_realm: executable.realm,
@@ -174,7 +207,5 @@ pub(in crate::engine::vm) fn execute_frame(
         locals: storage.locals,
         reusable_captured_locals,
     };
-    drop(storage.original_arguments);
-    let code = host.executable.code.clone();
-    activation.execute(&code, &mut host)
+    Ok((host, activation, storage.original_arguments))
 }

@@ -1674,6 +1674,8 @@ impl Heap {
                     )
                     || function.is_constructor
                     || activation.arguments.len() < usize::from(bytecode.metadata.argument_count)
+                    || activation.actual_argument_count > activation.arguments.len()
+                    || activation.original_arguments.len() != activation.actual_argument_count
                     || activation.locals.len() != usize::from(bytecode.metadata.local_count)
                     || activation.reusable_captured_locals.len() != activation.locals.len()
                     || vm.stack.len() > usize::from(bytecode.metadata.max_stack)
@@ -1703,6 +1705,7 @@ impl Heap {
                 for value in vm
                     .stack
                     .iter()
+                    .chain(activation.original_arguments.iter())
                     .chain(std::iter::once(&vm.this_value))
                     .chain(vm.normalized_this.iter())
                     .chain(std::iter::once(&vm.new_target))

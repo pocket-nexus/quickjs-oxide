@@ -542,7 +542,9 @@ mod tests {
                                 return yield* (depth?chain(depth-1):[42])
                             }
                             try{
-                                chain(1000).next();
+                                // Infinity remains Infinity after subtraction; a finite
+                                // chain can finish once delegation uses owned frames.
+                                chain(Infinity).next();
                                 return "missing"
                             }catch(error){
                                 return error.name+":"+error.message

@@ -113,6 +113,7 @@ pub(super) enum RunExit {
         keep_top: bool,
     },
     Complete,
+    Suspend(super::VmSuspendKind),
     Bridge,
 }
 
@@ -461,6 +462,39 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::ForInStart => return Ok(RunExit::ForIn(false)),
             Instruction::ForInNext => return Ok(RunExit::ForIn(true)),
+            Instruction::IteratorStart
+            | Instruction::AsyncIteratorStart
+            | Instruction::ForAwaitOfStart
+            | Instruction::ForAwaitOfNext
+            | Instruction::IteratorNext
+            | Instruction::IteratorCall(_)
+            | Instruction::IteratorGetValueDone => {
+                use super::iterator_driver::suspension::Operation;
+                let operation = match instruction {
+                    Instruction::IteratorStart => Operation::Start {
+                        asynchronous: false,
+                        delegating: true,
+                    },
+                    Instruction::AsyncIteratorStart => Operation::Start {
+                        asynchronous: true,
+                        delegating: true,
+                    },
+                    Instruction::ForAwaitOfStart => Operation::Start {
+                        asynchronous: true,
+                        delegating: false,
+                    },
+                    Instruction::ForAwaitOfNext => Operation::AwaitNext,
+                    Instruction::IteratorNext => Operation::Next,
+                    Instruction::IteratorCall(kind) => Operation::Call(*kind),
+                    Instruction::IteratorGetValueDone => Operation::Parse,
+                    _ => unreachable!(),
+                };
+                return Ok(RunExit::Environment(
+                    super::environment_driver::Operation::Iterator(
+                        super::iterator_driver::Operation::Suspend(operation),
+                    ),
+                ));
+            }
             Instruction::ForOfStart
             | Instruction::ForOfNext(_)
             | Instruction::IteratorClose
@@ -600,6 +634,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::SetProto => {
                 return Ok(RunExit::Pure(
                     super::pure_operations::PureOperation::SetPrototype,
+                ));
+            }
+            Instruction::IteratorCheckObject => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::IteratorCheckObject,
+                ));
+            }
+            Instruction::ThrowIteratorMissingThrow => {
+                return Ok(RunExit::Pure(
+                    super::pure_operations::PureOperation::IteratorMissingThrow,
                 ));
             }
             Instruction::TypeOf
@@ -1131,6 +1175,27 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     return Err(Error::internal("invalid gosub cleanup value"));
                 }
                 true
+            }
+            Instruction::InitialYield
+            | Instruction::Yield
+            | Instruction::YieldStar
+            | Instruction::AsyncYieldStar
+            | Instruction::Await => {
+                let kind = match instruction {
+                    Instruction::InitialYield => super::VmSuspendKind::Initial,
+                    Instruction::Yield => super::VmSuspendKind::Yield,
+                    Instruction::YieldStar => super::VmSuspendKind::YieldStar,
+                    Instruction::AsyncYieldStar => super::VmSuspendKind::AsyncYieldStar,
+                    Instruction::Await => super::VmSuspendKind::Await,
+                    _ => unreachable!(),
+                };
+                if kind != super::VmSuspendKind::Initial {
+                    slots.peek(window, 0)?;
+                }
+                frame.resume_pc = next_pc;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_instruction(observed_depth);
+                return Ok(RunExit::Suspend(kind));
             }
             Instruction::Return => {
                 execution.pending = Some(slots.pop(window)?);

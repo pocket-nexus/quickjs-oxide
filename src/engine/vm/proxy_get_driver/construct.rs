@@ -1,8 +1,8 @@
 //! Constructor dispatch returns owned requests; bytecode bodies use ordinary child frames.
 use super::{
-    BytecodeCallRequest, CallableExecution, Completion, Error, FrameId, NativeConversion, Next,
-    OperationTarget, Query, Resume, ReturnTarget, ReturnValue, RunningExecution, Runtime, Step,
-    Value, overflow, runtime_error_to_vm_error,
+    BytecodeCallRequest, CallableExecution, Completion, Error, NativeConversion, Next,
+    OperationTarget, Query, Resume, ReturnOwner, ReturnTarget, ReturnValue, RunningExecution,
+    Runtime, Step, Value, overflow, runtime_error_to_vm_error,
 };
 use crate::engine::{
     code::function::metadata::ConstructorKind,
@@ -11,7 +11,7 @@ use crate::engine::{
 
 pub(super) fn start(
     runtime: &Runtime,
-    frame: FrameId,
+    owner: ReturnOwner,
     identity: u64,
     realm: crate::engine::heap::ContextId,
     constructor: ConstructorRef,
@@ -87,7 +87,7 @@ pub(super) fn start(
                 closure_slots,
                 caller_realm: realm,
                 return_to: ReturnTarget {
-                    frame,
+                    owner,
                     value_use: ReturnValue::Push,
                     tail: false,
                     operation: Some(OperationTarget::PropertyGet(identity)),
@@ -179,5 +179,9 @@ pub(super) fn ready(
     } else {
         crate::engine::vm::frame::ConstructorReturn::Base(receiver)
     });
-    Ok(Ok(Next::Call { entry, resume }))
+    Ok(Ok(Next::Call {
+        entry,
+        pc: 0,
+        resume,
+    }))
 }

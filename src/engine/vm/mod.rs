@@ -30,6 +30,8 @@ pub(crate) mod for_in;
 
 pub(crate) mod generator;
 
+pub(crate) mod suspend;
+
 pub(crate) mod native_stack;
 
 #[cfg(feature = "stack-vm")]
@@ -52,6 +54,8 @@ mod construct_driver;
 mod conversion_driver;
 #[cfg(feature = "stack-vm")]
 mod driver;
+#[cfg(feature = "stack-vm")]
+pub(crate) use driver::{RootOperation, execute_root};
 #[cfg(feature = "stack-vm")]
 mod execution;
 #[cfg(feature = "stack-vm")]

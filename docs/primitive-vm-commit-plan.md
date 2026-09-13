@@ -1,6 +1,6 @@
 # 栈 VM：一个 PR 内的 10 个 commit
 
-状态：2026-09-13，S01–S05 阶段验收通过，S06–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
+状态：2026-09-13，S01–S06 阶段验收通过，S07–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
 
 目标见[架构计划](primitive-vm-plan.md)，目录与算法见[实施设计](primitive-vm-implementation-plan.md)，能力和结构验收见[迁移清单](primitive-vm-migration.md)。
 
@@ -209,6 +209,30 @@ S05 阶段验收通过；以本阶段计划消息提交一次后，才恢复 S06
 **验收：**trap invariant、holes/原型访问器、修改 length、排序/迭代副作用、IteratorClose、Unicode/零长度匹配、resize/detach、共享内存、BigInt 与 GC；保留 PR19 的 Array/TypedArray 回退。全部内部同步回调由 driver 推进，不递归等待 JS，也不假装成外部 host。默认预算原始 Earley-Boyer 进行新核心覆盖筛查；异步/模块/API 余项明确归 S06/S07。
 
 ### S06 — `refactor(vm): unify suspension across generators and async execution`
+
+语言状态机实现已收口，S06 统一阶段验收通过。挂起记录保存独立原始 argv
+及对应 raw/Atom 边；共同 freeze/thaw 与 owned frame 处理五类挂起、恢复输入
+和异常展开。generator 创建、resume、async body/await/settle、async generator
+队列/await/completed return、Async-from-Sync、Promise 全部 selector 和作业均
+通过有类型的请求/回复推进；getter、转换中的非 Normal 字节码也接入同一路径。
+root 请求持有真实 continuation，不创建占位字节码帧。语言状态机保留原有
+同步前缀、队列重入与微任务政策；模块和宿主入口按计划留在 S07。
+开发定向 oracle、逐作业 GC/零桥接测试、原始实参与放弃状态检查已完成；
+这些不单独计作阶段验收；半转换失败、wrong-runtime、最后引用等已在该次
+完整新旧配置验收中一并复核。默认旧 VM 保留到 S10，freeze/thaw 表示适配
+本身不执行旧分派。S07 尚未迁移的 opcode 仍可进入已计数的过渡桥；该桥
+必须同时返回完成或挂起，避免 async 中 await import 被错误当作同步终点。
+既有 256 KiB 模块图测试暴露查询 dispatcher 的 debug 原生帧过大；
+仅按请求领域拆分原有分派和调用准备，保持状态转换、测试栈及预算不变。
+旧 generator 栈测试假定 1000 层有限委托必然溢出；改用 Infinity 验证同一
+溢出错误与恢复断言，并把 owned 的零桥接有限委托/finally 用例加强到 1000 层。
+
+本阶段唯一统一验收结果：owned 库 2208 项、默认库 2035 项；新旧 oracle
+各 911 项及单独 65K 实参压力各 1 项；CLI profiling 各 5 项通过。
+非 profiling 构建、4 项属性契约测试、725 个完整边界反例、653 文件布局、
+格式与 diff 检查通过。全部失败和修复日志保留在
+`target/primitive-vm-s06-acceptance/`；最终 1024 个源码/构建输入哈希与
+`stage-verdict.json` 记录同一次阶段验收，不创建 checkpoint commit。
 
 共用 frame/stack/control 与 freeze/thaw，分清各语言状态机：
 

@@ -5,6 +5,11 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
     fn from(step: crate::engine::builtins::continuation::NativeStep) -> Self {
         use crate::engine::builtins::continuation::NativeStep;
         match step {
+            NativeStep::Async(step) => step.into(),
+            NativeStep::FromSync(step) => step.into(),
+            NativeStep::AsyncGenerator(step) => step.into(),
+            NativeStep::Promise(step) => step.into(),
+            NativeStep::GeneratorResume(step) => step.into(),
             NativeStep::Atomics(step) => step.into(),
             NativeStep::TypedCreate(step) => step.into(),
             NativeStep::BufferSlice(step) => step.into(),
@@ -102,6 +107,137 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
             NativeStep::Complete(result) => Self::Complete(result),
             NativeStep::Definitions(step) => step.into(),
             NativeStep::Predicate(step) => step.into(),
+        }
+    }
+}
+
+impl From<crate::engine::vm::generator::GeneratorStep> for Step {
+    fn from(step: crate::engine::vm::generator::GeneratorStep) -> Self {
+        match step {
+            crate::engine::vm::generator::GeneratorStep::Complete(outcome) => {
+                Self::NativeRawComplete(outcome)
+            }
+            crate::engine::vm::generator::GeneratorStep::Run {
+                activation,
+                input,
+                resume,
+            } => Self::ResumeFrame {
+                activation,
+                input,
+                resume: Resume::Generator(resume),
+            },
+        }
+    }
+}
+
+impl From<crate::engine::builtins::promise::operation::PromiseStep> for Step {
+    fn from(step: crate::engine::builtins::promise::operation::PromiseStep) -> Self {
+        use crate::engine::builtins::promise::operation::PromiseStep as P;
+        match step {
+            P::Nested { step, resume } => Self::PromiseOperation {
+                step,
+                resume: Resume::Promise(resume),
+            },
+            P::Next {
+                iterator,
+                method,
+                resume,
+            } => Self::IteratorNext {
+                iterator,
+                method,
+                resume: Resume::Promise(resume),
+            },
+            P::Close {
+                iterator,
+                completion,
+                resume,
+            } => Self::IteratorCloseWithResume {
+                iterator,
+                completion,
+                resume: Resume::Promise(resume),
+            },
+            P::Complete(completion) => Self::Complete(completion),
+            P::Read {
+                receiver,
+                key,
+                resume,
+            } => Self::ReadValue {
+                receiver,
+                key,
+                resume: Resume::Promise(resume),
+            },
+            P::Call {
+                callable,
+                receiver,
+                arguments,
+                resume,
+            } => Self::Call {
+                target: super::DirectCallTarget::Callable(callable),
+                receiver,
+                arguments,
+                resume: Resume::Promise(resume),
+            },
+            P::Construct {
+                target,
+                arguments,
+                resume,
+            } => Self::Construct {
+                new_target: crate::engine::vm::call::ConstructNewTarget::Validated(target.clone()),
+                target,
+                arguments,
+                resume: Resume::Promise(resume),
+            },
+            P::Prototype { new_target, resume } => Self::ConstructorSource {
+                new_target,
+                resume: Resume::Promise(resume),
+            },
+        }
+    }
+}
+
+impl From<crate::engine::vm::async_from_sync_iterator::FromSyncStep> for Step {
+    fn from(step: crate::engine::vm::async_from_sync_iterator::FromSyncStep) -> Self {
+        use crate::engine::vm::async_from_sync_iterator::FromSyncStep as S;
+        match step {
+            S::Complete(completion) => Self::Complete(completion),
+            S::Read {
+                receiver,
+                key,
+                resume,
+            } => Self::ReadValue {
+                receiver,
+                key,
+                resume: Resume::FromSync(resume),
+            },
+            S::Call {
+                callable,
+                receiver,
+                arguments,
+                resume,
+            } => Self::Call {
+                target: super::DirectCallTarget::Callable(callable),
+                receiver,
+                arguments,
+                resume: Resume::FromSync(resume),
+            },
+            S::Resolve {
+                value,
+                realm,
+                resume,
+            } => Self::IntrinsicPromiseResolve {
+                value,
+                realm,
+                resume: Resume::FromSync(resume),
+            },
+            S::Close {
+                iterator,
+                completion,
+                resume,
+            } => Self::IteratorCloseWithResume {
+                iterator,
+                completion,
+                resume: Resume::FromSync(resume),
+            },
         }
     }
 }

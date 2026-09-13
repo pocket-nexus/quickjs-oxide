@@ -80,3 +80,20 @@ pub(super) fn append_fast_array_values(
         .fast_array_like_values(source, fast_len)
         .map_err(runtime_error_to_vm_error)
 }
+
+pub(super) fn check_result_object(value: &Value) -> Result<(), Error> {
+    if !matches!(value, Value::Object(_)) {
+        return Err(Error::new(
+            crate::engine::api::ErrorKind::Type,
+            "iterator must return an object",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn missing_throw() -> Error {
+    Error::new(
+        crate::engine::api::ErrorKind::Type,
+        "iterator does not have a throw method",
+    )
+}

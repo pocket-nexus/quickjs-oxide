@@ -203,10 +203,13 @@ pub(crate) use array::species::{
 pub(crate) use array_buffer::{
     BufferMutationResume, BufferMutationStep, DataViewAccessResume, DataViewAccessStep,
 };
+pub(crate) use iterator::step::CloseStep as IteratorCloseStep;
+#[cfg(not(feature = "stack-vm"))]
+pub(crate) use iterator::step::finish_close as finish_iterator_close;
 #[cfg(feature = "stack-vm")]
 pub(crate) use iterator::step::{
-    CloseResume as IteratorCloseResume, CloseStep as IteratorCloseStep,
-    NextResume as IteratorNextResume, NextStep as IteratorNextStep,
+    CloseResume as IteratorCloseResume, NextResume as IteratorNextResume,
+    NextStep as IteratorNextStep,
 };
 #[cfg(feature = "stack-vm")]
 pub(crate) use object::iteration::{

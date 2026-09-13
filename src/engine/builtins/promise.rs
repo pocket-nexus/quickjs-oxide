@@ -30,6 +30,7 @@ use std::rc::Rc;
 mod all;
 mod convenience;
 mod finally;
+pub(crate) mod operation;
 
 /// One notification from QuickJS's host Promise rejection tracker boundary.
 ///
@@ -465,7 +466,21 @@ impl Runtime {
                 self.new_default_promise_capability(realm)?,
             ));
         };
-        let executor = self.new_internal_promise_function(
+        let executor = self.prepare_promise_capability_executor(realm)?;
+        let completion = self.construct_constructor_internal(
+            realm,
+            constructor,
+            constructor,
+            &[Value::Object(executor.as_object().clone())],
+        )?;
+        self.finish_promise_capability(realm, &executor, completion)
+    }
+
+    fn prepare_promise_capability_executor(
+        &self,
+        realm: ContextId,
+    ) -> Result<CallableRef, RuntimeError> {
+        self.new_internal_promise_function(
             realm,
             NativeFunctionId::PromiseCapabilityExecutor,
             2,
@@ -473,13 +488,15 @@ impl Runtime {
             InternalCallableData::PromiseCapabilityExecutor(
                 PromiseCapabilityExecutorData::default(),
             ),
-        )?;
-        let completion = self.construct_constructor_internal(
-            realm,
-            constructor,
-            constructor,
-            &[Value::Object(executor.as_object().clone())],
-        )?;
+        )
+    }
+
+    fn finish_promise_capability(
+        &self,
+        realm: ContextId,
+        executor: &CallableRef,
+        completion: Completion,
+    ) -> Result<NativeConversion<RootedPromiseCapability>, RuntimeError> {
         let promise = match completion {
             Completion::Return(Value::Object(promise)) => promise,
             Completion::Return(_) => {
@@ -551,17 +568,6 @@ impl Runtime {
         }))
     }
 
-    fn promise_prototype_from_new_target(
-        &self,
-        realm: ContextId,
-        new_target: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
-        self.prototype_from_constructor_value(realm, &new_target, |fallback_realm| {
-            let prototype = self.promise_realm_data(fallback_realm)?.prototype;
-            Ok(ObjectRef::from_borrowed_handle(self.clone(), prototype)?)
-        })
-    }
-
     pub(crate) fn call_promise_native(
         &self,
         realm: ContextId,
@@ -607,44 +613,14 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Construct { new_target } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Promise constructor did not receive a constructor invocation",
-            ));
-        };
-        let executor = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise executor argv was not padded",
-            ))?;
-
-        // Pinned QuickJS checks callability before the observable prototype
-        // lookup on `new.target`.
-        let executor = self.callable_from_value(executor)?;
-        let prototype = match self.promise_prototype_from_new_target(realm, new_target)? {
-            NativeConversion::Value(prototype) => prototype,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let promise = self.new_promise_object(&prototype)?;
-        let (resolve, reject) = self.create_promise_resolving_functions(realm, &promise)?;
-        let completion = self.call_internal(
+        operation::PromiseStep::start(
+            self,
             realm,
-            &executor,
-            Value::Undefined,
-            &[
-                Value::Object(resolve.as_object().clone()),
-                Value::Object(reject.as_object().clone()),
-            ],
-        )?;
-        if let Completion::Throw(reason) = completion {
-            match self.call_internal(realm, &reject, Value::Undefined, &[reason])? {
-                Completion::Return(_) => {}
-                Completion::Throw(value) => return Ok(Completion::Throw(value)),
-            }
-        }
-        Ok(Completion::Return(Value::Object(promise)))
+            NativeFunctionId::Promise(PromiseNativeKind::Constructor),
+            &invocation,
+            arguments,
+        )?
+        .finish(self, realm)
     }
 
     pub(crate) fn call_promise_resolving(
@@ -654,86 +630,14 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Promise resolving function received a constructor invocation",
-            ));
-        };
-        let active = self.active_function()?;
-        let internal = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .native_internal_callable(active.object_id())?
-            .ok_or(RuntimeError::Invariant(
-                "Promise resolving function had no internal capture",
-            ))?;
-        let InternalCallableData::PromiseResolving {
-            promise,
-            already_resolved,
-            kind,
-        } = internal
-        else {
-            return Err(RuntimeError::Invariant(
-                "Promise resolving function had the wrong internal capture",
-            ));
-        };
-        if kind != target_kind {
-            return Err(RuntimeError::Invariant(
-                "Promise resolving target disagreed with its capture",
-            ));
-        }
-        if already_resolved.replace(true) {
-            return Ok(Completion::Return(Value::Undefined));
-        }
-        let resolution = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise resolving argv was not padded",
-            ))?;
-        let promise_root = ObjectRef::from_borrowed_handle(self.clone(), promise)?;
-
-        if kind == PromiseResolvingKind::Reject {
-            self.settle_promise(realm, &promise_root, PromiseState::Rejected, resolution)?;
-            return Ok(Completion::Return(Value::Undefined));
-        }
-        let Value::Object(resolution_object) = resolution.clone() else {
-            self.settle_promise(realm, &promise_root, PromiseState::Fulfilled, resolution)?;
-            return Ok(Completion::Return(Value::Undefined));
-        };
-        if resolution_object == promise_root {
-            let reason =
-                self.new_native_error(realm, NativeErrorKind::Type, "promise self resolution")?;
-            self.settle_promise(realm, &promise_root, PromiseState::Rejected, reason)?;
-            return Ok(Completion::Return(Value::Undefined));
-        }
-
-        let then_key = self.intern_property_key("then")?;
-        let then = match self.get_property_in_realm(realm, &resolution_object, &then_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(reason) => {
-                self.settle_promise(realm, &promise_root, PromiseState::Rejected, reason)?;
-                return Ok(Completion::Return(Value::Undefined));
-            }
-        };
-        let then = match then {
-            Value::Object(object) => self.as_callable(&object)?,
-            _ => None,
-        };
-        if let Some(then) = then {
-            self.enqueue_promise_resolve_thenable_job(
-                realm,
-                promise,
-                resolution_object.object_id(),
-                then.as_object().object_id(),
-            )?;
-        } else {
-            self.settle_promise(realm, &promise_root, PromiseState::Fulfilled, resolution)?;
-        }
-        Ok(Completion::Return(Value::Undefined))
+        operation::PromiseStep::start(
+            self,
+            realm,
+            NativeFunctionId::PromiseResolving(target_kind),
+            &invocation,
+            arguments,
+        )?
+        .finish(self, realm)
     }
 
     pub(crate) fn call_promise_capability_executor(
@@ -882,30 +786,8 @@ impl Runtime {
         thenable: ObjectId,
         then: ObjectId,
     ) -> Result<Completion, RuntimeError> {
-        let promise = ObjectRef::from_borrowed_handle(self.clone(), promise)?;
-        let thenable = ObjectRef::from_borrowed_handle(self.clone(), thenable)?;
-        let then = ObjectRef::from_borrowed_handle(self.clone(), then)?;
-        let then = self.as_callable(&then)?.ok_or(RuntimeError::Invariant(
-            "queued Promise then action was no longer callable",
-        ))?;
-        // This pair must be fresh: the resolving function that enqueued this
-        // job has already flipped its own shared first-call bit.
-        let (resolve, reject) = self.create_promise_resolving_functions(realm, &promise)?;
-        let completion = self.call_internal(
-            realm,
-            &then,
-            Value::Object(thenable),
-            &[
-                Value::Object(resolve.as_object().clone()),
-                Value::Object(reject.as_object().clone()),
-            ],
-        )?;
-        match completion {
-            Completion::Return(value) => Ok(Completion::Return(value)),
-            Completion::Throw(reason) => {
-                self.call_internal(realm, &reject, Value::Undefined, &[reason])
-            }
-        }
+        operation::PromiseStep::thenable_job(self, realm, promise, thenable, then)?
+            .finish(self, realm)
     }
 
     pub(crate) fn execute_promise_reaction_job(
@@ -914,34 +796,7 @@ impl Runtime {
         reaction: &PromiseReaction,
         argument: &RawValue,
     ) -> Result<Completion, RuntimeError> {
-        let argument = self.root_raw_value(argument)?;
-        let handler_completion = if let Some(handler) = reaction.handler {
-            let handler = ObjectRef::from_borrowed_handle(self.clone(), handler)?;
-            let handler = self.as_callable(&handler)?.ok_or(RuntimeError::Invariant(
-                "queued Promise reaction handler was no longer callable",
-            ))?;
-            self.call_internal(realm, &handler, Value::Undefined, &[argument])?
-        } else if reaction.kind == PromiseReactionKind::Reject {
-            Completion::Throw(argument)
-        } else {
-            Completion::Return(argument)
-        };
-        let Some(capability) = reaction.capability else {
-            // QuickJS's await extension installs `undefined` resolving
-            // functions. The continuation's completion (including a throw)
-            // is intentionally consumed instead of creating and settling an
-            // unobservable Promise.
-            return Ok(Completion::Return(Value::Undefined));
-        };
-        let (target, value) = match handler_completion {
-            Completion::Return(value) => (capability.resolve, value),
-            Completion::Throw(value) => (capability.reject, value),
-        };
-        let target = ObjectRef::from_borrowed_handle(self.clone(), target)?;
-        let target = self.as_callable(&target)?.ok_or(RuntimeError::Invariant(
-            "Promise reaction capability was no longer callable",
-        ))?;
-        self.call_internal(realm, &target, Value::Undefined, &[value])
+        operation::PromiseStep::reaction_job(self, realm, reaction, argument)?.finish(self, realm)
     }
 
     fn promise_species_constructor(
@@ -985,41 +840,23 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Promise.prototype.then received a constructor invocation",
-            ));
-        };
-        let Value::Object(promise) = this_value else {
-            return Ok(Completion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not a promise",
-            )?));
-        };
-        if !matches!(
-            self.0
-                .state
-                .borrow()
-                .heap
-                .object(promise.object_id())?
-                .payload,
-            ObjectPayload::Promise(_)
-        ) {
-            return Ok(Completion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not a promise",
-            )?));
-        }
-        let constructor = match self.promise_species_constructor(realm, &promise)? {
-            NativeConversion::Value(constructor) => constructor,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let capability = match self.new_promise_capability(realm, constructor.as_ref())? {
-            NativeConversion::Value(capability) => capability,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
+        operation::PromiseStep::start(
+            self,
+            realm,
+            NativeFunctionId::Promise(PromiseNativeKind::Then),
+            &invocation,
+            arguments,
+        )?
+        .finish(self, realm)
+    }
+
+    fn finish_promise_then(
+        &self,
+        realm: ContextId,
+        promise: ObjectRef,
+        handlers: [Value; 2],
+        capability: RootedPromiseCapability,
+    ) -> Result<Completion, RuntimeError> {
         let handler_id = |value: &Value| -> Result<Option<ObjectId>, RuntimeError> {
             let Value::Object(object) = value else {
                 return Ok(None);
@@ -1028,16 +865,12 @@ impl Runtime {
         };
         let fulfill = PromiseReaction {
             kind: PromiseReactionKind::Fulfill,
-            handler: handler_id(arguments.readable.first().ok_or(RuntimeError::Invariant(
-                "Promise.then fulfill argv was not padded",
-            ))?)?,
+            handler: handler_id(&handlers[0])?,
             capability: Some(capability.raw()),
         };
         let reject = PromiseReaction {
             kind: PromiseReactionKind::Reject,
-            handler: handler_id(arguments.readable.get(1).ok_or(RuntimeError::Invariant(
-                "Promise.then reject argv was not padded",
-            ))?)?,
+            handler: handler_id(&handlers[1])?,
             capability: Some(capability.raw()),
         };
         let snapshot = self
@@ -1082,43 +915,14 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Promise.prototype.catch received a constructor invocation",
-            ));
-        };
-        let then_key = self.intern_property_key("then")?;
-        let then = match self.get_value_property_in_realm(realm, this_value.clone(), &then_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let then = match then {
-            Value::Object(object) => match self.as_callable(&object)? {
-                Some(callable) => callable,
-                None => {
-                    return Ok(Completion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "not a function",
-                    )?));
-                }
-            },
-            _ => {
-                return Ok(Completion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not a function",
-                )?));
-            }
-        };
-        let on_rejected = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise.catch reject argv was not padded",
-            ))?;
-        self.call_internal(realm, &then, this_value, &[Value::Undefined, on_rejected])
+        operation::PromiseStep::start(
+            self,
+            realm,
+            NativeFunctionId::Promise(PromiseNativeKind::Catch),
+            &invocation,
+            arguments,
+        )?
+        .finish(self, realm)
     }
 
     fn call_promise_static_resolve(
@@ -1150,53 +954,8 @@ impl Runtime {
         this_value: Value,
         argument: Value,
     ) -> Result<Completion, RuntimeError> {
-        let Value::Object(constructor_object) = this_value.clone() else {
-            return Ok(Completion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not an object",
-            )?));
-        };
-        if kind == PromiseNativeKind::Resolve
-            && let Value::Object(promise) = &argument
-            && matches!(
-                self.0
-                    .state
-                    .borrow()
-                    .heap
-                    .object(promise.object_id())?
-                    .payload,
-                ObjectPayload::Promise(_)
-            )
-        {
-            let constructor_key = self.intern_property_key("constructor")?;
-            let promise_constructor =
-                match self.get_property_in_realm(realm, promise, &constructor_key)? {
-                    Completion::Return(value) => value,
-                    Completion::Throw(value) => return Ok(Completion::Throw(value)),
-                };
-            if promise_constructor.same_value(&this_value) {
-                return Ok(Completion::Return(argument));
-            }
-        }
-        let constructor =
-            match self.constructor_from_value(realm, Value::Object(constructor_object))? {
-                NativeConversion::Value(constructor) => constructor,
-                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-            };
-        let capability = match self.new_promise_capability(realm, Some(&constructor))? {
-            NativeConversion::Value(capability) => capability,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        let target = if kind == PromiseNativeKind::Reject {
-            &capability.reject
-        } else {
-            &capability.resolve
-        };
-        match self.call_internal(realm, target, Value::Undefined, &[argument])? {
-            Completion::Return(_) => Ok(Completion::Return(Value::Object(capability.promise))),
-            Completion::Throw(value) => Ok(Completion::Throw(value)),
-        }
+        operation::PromiseStep::static_resolve(self, realm, kind, this_value, argument)?
+            .finish(self, realm)
     }
 
     /// QuickJS's `js_promise_resolve(ctx, ctx->promise_ctor, ...)` boundary
@@ -1208,9 +967,19 @@ impl Runtime {
         realm: ContextId,
         value: Value,
     ) -> Result<Completion, RuntimeError> {
+        self.prepare_intrinsic_promise_resolve(realm, value)?
+            .finish(self, realm)
+    }
+
+    pub(crate) fn prepare_intrinsic_promise_resolve(
+        &self,
+        realm: ContextId,
+        value: Value,
+    ) -> Result<operation::PromiseStep, RuntimeError> {
         let constructor = self.promise_realm_data(realm)?.constructor;
         let constructor = ObjectRef::from_borrowed_handle(self.clone(), constructor)?;
-        self.promise_static_resolve_core(
+        operation::PromiseStep::static_resolve(
+            self,
             realm,
             PromiseNativeKind::Resolve,
             Value::Object(constructor),

@@ -203,7 +203,7 @@ pub(super) fn initializer(
                 closure_slots,
                 caller_realm: realm,
                 return_to: ReturnTarget {
-                    frame: id,
+                    owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
                     tail: false,
                     operation: None,
                     value_use: super::frame::ReturnValue::Discard,
