@@ -82,7 +82,7 @@ pub(in crate::engine::vm) struct FrameStorage {
 
 mod number;
 mod window;
-pub(in crate::engine::vm) use window::RunSlots;
+pub(in crate::engine::vm) use window::{LinkedReadCompletion, RunSlots};
 
 impl SlotStore {
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
@@ -138,6 +138,49 @@ impl SlotStore {
             size_of::<Value>(),
         );
         Ok(arguments)
+    }
+
+    /// Native argv is an owning tail transfer, authenticated once. The caller
+    /// has already validated domains in receiver/left-to-right argument order.
+    /// Allocation and slot checks precede consumption; then only infallible
+    /// moves occur until the original callee-release boundary.
+    pub(in crate::engine::vm) fn take_native_call_operands(
+        &mut self,
+        window: &mut FrameWindow,
+        count: usize,
+        method: bool,
+    ) -> Result<(Vec<Value>, Value), Error> {
+        self.check_current(window)?;
+        let mut arguments = self.take_native_argument_buffer(count)?;
+        for offset in 0..count + 1 + usize::from(method) {
+            self.peek_current(window, offset)?;
+        }
+        let start = window.operands().start + window.depth - count;
+        for index in start..start + count {
+            let Some(FrameBinding::Direct(value)) = self.slots[index].take() else {
+                unreachable!("native operand transaction authenticated each slot")
+            };
+            arguments.push(value);
+        }
+        window.depth -= count;
+        #[cfg(feature = "profiling")]
+        {
+            self.live_slots -= count;
+            record_owned_storage(Cost::Move(count));
+            crate::engine::api::profiling::record_owned_execution_event(
+                "native_argv_transferred_in_order",
+            );
+            crate::engine::api::profiling::record_call_buffer_moves("call.native_argv", count);
+        }
+        // Match the previous callee then receiver pop/drop order. The classified
+        // callable owner pins the callee throughout this transfer.
+        drop(self.pop_current(window)?);
+        let receiver = if method {
+            self.pop_current(window)?
+        } else {
+            Value::Undefined
+        };
+        Ok((arguments, receiver))
     }
 
     /// Cleanup cannot allocate or retain JavaScript owners. Producers outside
@@ -507,6 +550,8 @@ impl SlotStore {
         count: usize,
         method: bool,
     ) -> Result<bool, Error> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
         // An ordinary zero-argument call had no domain-check reads at all.
         if count == 0 && !method {
             return Ok(true);
@@ -662,13 +707,17 @@ impl SlotStore {
         else {
             return Err(Error::internal("owned operand slot is not a value"));
         };
-        let Value::Int(key) = key else {
-            return Ok(false);
+        let index_key = match key {
+            Value::Int(key) if *key >= 0 => *key as u32,
+            Value::String(key) if key.release_keeps_storage_alive() => {
+                let Some(index) = crate::engine::atom::AtomTable::canonical_array_index(key) else {
+                    return Ok(false);
+                };
+                index
+            }
+            _ => return Ok(false),
         };
-        if *key < 0 {
-            return Ok(false);
-        }
-        let Some(value) = runtime.try_array_immediate_read(base, *key as u32) else {
+        let Some(value) = runtime.try_array_immediate_read(base, index_key) else {
             return Ok(false);
         };
         // The scalar result owns no heap root. Preflight proved that releasing
@@ -768,6 +817,15 @@ impl SlotStore {
 
     #[inline]
     fn push_current(&mut self, window: &mut FrameWindow, value: Value) -> Result<(), Error> {
+        self.push_pending_current(window, &mut Some(value))
+    }
+
+    #[inline]
+    fn push_pending_current(
+        &mut self,
+        window: &mut FrameWindow,
+        value: &mut Option<Value>,
+    ) -> Result<(), Error> {
         if window.depth >= window.operands().len() {
             return Err(Error::internal(
                 "owned operand stack exceeds verified capacity",
@@ -779,7 +837,9 @@ impl SlotStore {
                 "owned operand push would replace a live value",
             ));
         }
-        *slot = Some(FrameBinding::Direct(value));
+        *slot = Some(FrameBinding::Direct(
+            value.take().expect("pending operand owner"),
+        ));
         window.depth += 1;
         #[cfg(feature = "profiling")]
         {
@@ -1030,11 +1090,21 @@ impl SlotStore {
         index: u16,
         value: FrameBinding,
     ) -> Result<FrameBinding, Error> {
+        self.replace_local_pending_current(window, index, &mut Some(value))
+    }
+
+    #[inline]
+    fn replace_local_pending_current(
+        &mut self,
+        window: &FrameWindow,
+        index: u16,
+        value: &mut Option<FrameBinding>,
+    ) -> Result<FrameBinding, Error> {
         self.local_current(window, index)?;
         #[cfg(feature = "profiling")]
         record_owned_storage(Cost::Move(2));
         Ok(self.slots[window.locals().start + usize::from(index)]
-            .replace(value)
+            .replace(value.take().expect("pending local owner"))
             .unwrap())
     }
 
@@ -1292,6 +1362,46 @@ mod tests {
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
     use crate::engine::value::Value;
     use crate::engine::vm::bindings::FrameBinding;
+
+    #[test]
+    fn native_argument_transaction_preserves_order_and_surviving_owners() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 6;
+        let mut slots = SlotStore::new(6);
+        let mut window = slots
+            .push_frame(&owner.frame_layout(), empty_storage())
+            .unwrap();
+        let receiver = context.eval("({tag:1})").unwrap();
+        let argument = context.eval("({tag:2})").unwrap();
+        let callable = context.eval("Math.min").unwrap();
+        for value in [
+            Value::Int(99),
+            receiver.clone(),
+            callable,
+            Value::Int(1),
+            argument.clone(),
+            Value::Int(3),
+        ] {
+            slots.push(&mut window, value).unwrap();
+        }
+        assert!(
+            slots
+                .validate_call_value_domains(&window, &runtime, 3, true)
+                .unwrap()
+        );
+        let (arguments, moved_receiver) = slots
+            .take_native_call_operands(&mut window, 3, true)
+            .unwrap();
+        assert_eq!(arguments, [Value::Int(1), argument, Value::Int(3)]);
+        assert_eq!(moved_receiver, receiver);
+        assert_eq!(slots.depth(&window), 1);
+        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(99));
+        drop(arguments);
+        drop(moved_receiver);
+        slots.clear_frame(window).unwrap();
+    }
 
     #[cfg(feature = "stack-vm")]
     #[test]
@@ -1642,6 +1752,53 @@ mod tests {
             Some(Value::Int(17))
         );
         slots.clear_frame(window).unwrap();
+    }
+
+    #[cfg(feature = "stack-vm")]
+    #[test]
+    fn recovery_string_index_leaf_preserves_spelling_and_final_key_owner() {
+        for (text, retained, expected) in [
+            ("0", true, true),
+            ("0", false, false),
+            ("01", true, false),
+            ("-0", true, false),
+            ("4294967295", true, false),
+            ("1e0", true, false),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let base = context.eval("[42]").unwrap();
+            let keep_base = base.clone();
+            let key = crate::engine::value::JsString::try_from_utf8(text).unwrap();
+            let keep_key = retained.then(|| key.clone());
+            let mut code = PublishedFunctionSnapshot::empty_for_test(context.realm);
+            code.metadata.max_stack = 2;
+            let mut store = SlotStore::new(2);
+            let mut window = store
+                .push_frame(&code.frame_layout(), empty_storage())
+                .unwrap();
+            store.push(&mut window, base).unwrap();
+            store.push(&mut window, Value::String(key)).unwrap();
+            assert_eq!(
+                store
+                    .run_window(&mut window)
+                    .unwrap()
+                    .array_immediate_read(&runtime)
+                    .unwrap(),
+                expected,
+                "{text}/{retained}"
+            );
+            if expected {
+                assert_eq!(store.peek(&window, 0).unwrap(), &Value::Int(42));
+                assert_eq!(window.depth, 1);
+            } else {
+                assert_eq!(window.depth, 2);
+                assert!(matches!(store.peek(&window, 0).unwrap(), Value::String(_)));
+            }
+            store.clear_frame(window).unwrap();
+            drop(keep_key);
+            drop(keep_base);
+        }
     }
 
     #[cfg(feature = "stack-vm")]

@@ -65,28 +65,7 @@ impl SliceStep {
                 } if direct_indexed_target(runtime, &object, &key)? => {
                     // An integer property on an ordinary object/Array cannot
                     // perform length or typed-element conversion or invoke JS.
-                    let result = match runtime.define_own_property_in_realm(
-                        Some(realm),
-                        &object,
-                        &key,
-                        &descriptor,
-                    )? {
-                        crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
-                            NativeConversion::Value(InternalDefineResult::Defined)
-                        }
-                        crate::engine::object::operations::PropertyDefineOutcome::Defined(
-                            false,
-                        ) => {
-                            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object))
-                        }
-                        crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
-                            NativeConversion::Throw(value)
-                        }
-                    };
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "array_slice_local_define",
-                    );
+                    let result = define_local(runtime, realm, &object, &key, &descriptor)?;
                     resume.defined_once(runtime, result)?
                 }
                 step => return Ok(step),
@@ -95,7 +74,30 @@ impl SliceStep {
     }
 }
 
-fn direct_indexed_target(
+pub(super) fn define_local(
+    runtime: &Runtime,
+    realm: ContextId,
+    object: &ObjectRef,
+    key: &PropertyKey,
+    descriptor: &OrdinaryPropertyDescriptor,
+) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
+    let result = match runtime.define_own_property_in_realm(Some(realm), object, key, descriptor)? {
+        crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
+            NativeConversion::Value(InternalDefineResult::Defined)
+        }
+        crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
+            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object.clone()))
+        }
+        crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+            NativeConversion::Throw(value)
+        }
+    };
+    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    crate::engine::api::profiling::record_owned_execution_event("array_slice_local_define");
+    Ok(result)
+}
+
+pub(super) fn direct_indexed_target(
     runtime: &Runtime,
     object: &ObjectRef,
     key: &PropertyKey,

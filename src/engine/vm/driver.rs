@@ -182,6 +182,43 @@ pub(super) fn enter_call(
     let mut bound_arguments = None;
     let mut bound_receiver = None;
     let (bytecode, closure_slots) = loop {
+        if let Some(mut selected) = super::frames::NativeClassification::select(runtime, &callable)
+            .map_err(runtime_error_to_vm_error)?
+            && let Some(kind) = selected.take_operation()
+        {
+            let target = selected.target();
+            let defining_realm = selected.defining_realm();
+            let min_readable_args = selected.minimum();
+            let depth = execution.slots.depth(window);
+            execution.slots.reserve_native_argument_depth(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .active_frames
+                    .len()
+                    .saturating_add(1),
+            )?;
+            let (arguments, receiver) = execution
+                .slots
+                .take_native_call_operands(window, count, method)?;
+            return super::proxy_get_driver::start_native_with_classification(
+                runtime,
+                execution,
+                id,
+                callable,
+                target,
+                defining_realm,
+                min_readable_args,
+                bound_receiver.unwrap_or(receiver),
+                bound_arguments.unwrap_or(arguments),
+                tail,
+                depth,
+                Some(selected),
+                Some(kind),
+            );
+        }
+
         match runtime
             .bytecode_for_callable(&callable)
             .map_err(runtime_error_to_vm_error)?
@@ -268,22 +305,9 @@ pub(super) fn enter_call(
                         .len()
                         .saturating_add(1),
                 )?;
-                let mut arguments = execution.slots.take_native_argument_buffer(count)?;
-                for _ in 0..count {
-                    arguments.push(execution.slots.pop(window)?);
-                }
-                arguments.reverse();
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_call_buffer_moves(
-                    "call.native_argv",
-                    arguments.len(),
-                );
-                execution.slots.pop(window)?;
-                let receiver = if method {
-                    execution.slots.pop(window)?
-                } else {
-                    Value::Undefined
-                };
+                let (arguments, receiver) = execution
+                    .slots
+                    .take_native_call_operands(window, count, method)?;
                 return super::proxy_get_driver::start_classified_native_call(
                     runtime,
                     execution,

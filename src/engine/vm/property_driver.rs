@@ -86,8 +86,59 @@ pub(super) fn read_progress(
 ) -> Result<PropertyProgress, Error> {
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
-    let base = execution.slots.peek(&frame.window, usize::from(computed))?;
     let realm = frame.executable.realm;
+    let mut selected_read = None;
+    if let ReadKey::Static(index) = key_kind {
+        use super::stack::LinkedReadCompletion;
+        let depth = execution.slots.depth(&frame.window);
+        let mut preserved_receiver = None;
+        let mut retained_key = None;
+        let result = execution.slots.with_linked_own_read(
+            &mut frame.window,
+            runtime,
+            &frame.executable,
+            index,
+            |slots, value| {
+                // Lookup has finished and retained the result. Move the base
+                // owner into the enclosing driver scope before publication.
+                preserved_receiver = Some(slots.pop()?);
+                publish_read_result(
+                    slots,
+                    &mut frame.resume_pc,
+                    frame.fault_pc,
+                    &mut preserved_receiver,
+                    &mut retained_key,
+                    keep_receiver,
+                    value,
+                )
+            },
+        );
+        match result {
+            Ok(LinkedReadCompletion::Completed) => {
+                record_read_completion(depth);
+                #[cfg(feature = "profiling")]
+                if preserved_receiver.is_some() {
+                    // One actual driver-scope owner drop, not a claim that
+                    // this was the runtime's final root or that GC ran.
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "linked_read_base_owner_drop",
+                    );
+                }
+                return Ok(PropertyProgress::Completed);
+            }
+            Ok(LinkedReadCompletion::Pending(read)) => selected_read = Some(read),
+            Ok(LinkedReadCompletion::Declined) => {}
+            Ok(LinkedReadCompletion::LookupError(error)) => {
+                return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
+            }
+            Err(error) => {
+                drop(retained_key);
+                drop(preserved_receiver);
+                return Err(error);
+            }
+        }
+    }
+    let base = execution.slots.peek(&frame.window, usize::from(computed))?;
     if computed && matches!(base, Value::Null | Value::Undefined) {
         let key = execution.slots.peek(&frame.window, 0)?;
         let message = if matches!(key_kind, ReadKey::Computed { keep_key: true })
@@ -118,11 +169,11 @@ pub(super) fn read_progress(
             else {
                 return Err(Error::internal("property read has no linked key"));
             };
-            (
+            let key = Some(
                 PropertyKey::from_borrowed_atom(runtime.clone(), atom)
                     .map_err(|error| Error::internal(error.to_string()))?,
-                None,
-            )
+            );
+            (key, None)
         }
         ReadKey::Computed { keep_key } => {
             let value = execution.slots.peek(&frame.window, 0)?;
@@ -148,13 +199,22 @@ pub(super) fn read_progress(
                     value => value.to_js_string().map(Value::String),
                 })
                 .transpose()?;
-            (key, retained)
+            (Some(key), retained)
         }
     };
     let depth = execution.slots.depth(&frame.window);
     // Lookup borrows the original rooted operand. Only a pending callback
     // needs a second receiver owner; completed reads move this slot directly.
-    let read = match runtime.prepare_value_property_read_borrowed(realm, base, &key) {
+    let read = match selected_read.map(Ok).unwrap_or_else(|| {
+        runtime.prepare_value_property_read_borrowed(
+            realm,
+            base,
+            key.as_ref()
+                .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "fallback read lost its key",
+                ))?,
+        )
+    }) {
         Ok(read) => read,
         Err(error) => {
             return throw_error(runtime, realm, runtime_error_to_vm_error(error))
@@ -180,7 +240,7 @@ pub(super) fn read_progress(
                 execution,
                 id,
                 preserved_receiver,
-                key,
+                key.ok_or_else(|| Error::internal("pending read lost its key"))?,
                 read,
                 retained_key,
                 keep_receiver,
@@ -430,23 +490,15 @@ fn publish_read_result(
     value: &mut Option<Value>,
 ) -> Result<(), Error> {
     if keep_receiver {
-        slots.push(
-            preserved_receiver
-                .take()
-                .ok_or_else(|| Error::internal("property read lost its receiver"))?,
-        )?;
+        slots.push_pending(preserved_receiver)?;
     }
-    if let Some(key) = retained_key.take() {
-        slots.push(key)?;
+    if retained_key.is_some() {
+        slots.push_pending(retained_key)?;
     }
     *resume_pc = fault_pc
         .checked_add(1)
         .ok_or_else(|| Error::internal("property resume PC overflow"))?;
-    slots.push(
-        value
-            .take()
-            .ok_or_else(|| Error::internal("property read lost its result"))?,
-    )?;
+    slots.push_pending(value)?;
     Ok(())
 }
 
@@ -620,6 +672,34 @@ fn read_pending(
 #[cfg(test)]
 mod read_completion_tests {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn linked_owning_read_transaction_preserves_method_receiver_and_selected_errors() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let log='', marker={}, old;
+            let o={tag:42,method(){return this.tag},get x(){log+='g';return marker}};
+            old=o.x;
+            if(old!==marker||o.method()!==42)return false;
+            Object.defineProperty(o,'x',{get(){log+='t';throw marker}});
+            try{o.x;return false}catch(e){if(e!==marker)return false}finally{log+='f'}
+            let p=new Proxy({x:marker},{get(t,k,r){log+='p';return Reflect.get(t,k,r)}});
+            if(p.x!==marker)return false;
+            let inherited=Object.create({get x(){log+='h';return this.tag}});inherited.tag=42;
+            if(inherited.x!==42)return false;
+            return log==='gtfph' && ({x:{tag:42}}).x.tag===42;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
 
     #[test]
     fn completed_reads_keep_last_receiver_and_result_owners() {

@@ -6,6 +6,15 @@ impl From<crate::engine::builtins::ArrayMutationStep> for Step {
         use crate::engine::builtins::ArrayMutationStep as T;
         match step {
             T::Complete(result) => Self::Complete(result),
+            T::PreparedRead { read, key, resume } => Self::PreparedRead {
+                read,
+                key,
+                resume: Resume::ArrayMutation(resume),
+            },
+            T::PreparedSet { step, key, resume } => Self::PreparedSet {
+                step,
+                resume: Resume::ArrayMutationSet { key, resume },
+            },
             T::Read {
                 object,
                 key,

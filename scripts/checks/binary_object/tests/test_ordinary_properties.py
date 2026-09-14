@@ -76,7 +76,7 @@ class OrdinaryPropertyContracts(unittest.TestCase):
             (storage, "fn locate(", "fn bad() { self.call_internal(); } fn locate("),
             (dispatch, "impl Runtime {", "fn ordinary_set_fast_path_available() {} impl Runtime {"),
             (ordinary_set, "runtime.validate_value_domain(value,", "runtime.skip_domain(value,"),
-            (ordinary_set, "rejected_object.as_ref().unwrap_or(&receiver)", "&receiver"),
+            (ordinary_set, "rejected_object.as_ref().unwrap_or(receiver)", "receiver"),
             (ordinary, "use crate::engine::object::ordinary_storage::ReadProbe;", "self.call_internal(); use crate::engine::object::ordinary_storage::ReadProbe;"),
             (access, 'self.validate_value_domain(receiver,', 'self.internal_get(); self.validate_value_domain(receiver,'),
             (runtime, "if !failure.published", "if failure.published"),
@@ -146,6 +146,12 @@ class OrdinaryPropertyContracts(unittest.TestCase):
             (path, 'let reply = runtime.internal_has_own_property(resume.realm, &object, &key)?;', 'let reply = runtime.internal_has_own_property(resume.realm, &other, &key)?;'),
             (path, 'let keys = runtime.own_property_keys(&object)?;', 'runtime.call_internal(); let keys = runtime.own_property_keys(&object)?;'),
             (path, 'step => return Ok(step),', 'step => return Ok(Self::Complete { value: Value::Undefined, done: None }),'),
+            (path, 'if runtime.is_proxy_object(&object)? {', 'if false {'),
+            (path, 'runtime.internal_has_own_property(realm, &object, &key)?', 'runtime.internal_has_own_property(realm, &other, &key)?'),
+            (path, 'if !runtime.is_proxy_object(&pending.object)? {', 'if !runtime.is_proxy_object(&other)? {'),
+            (path, 'if !runtime.is_proxy_object(&prototype)? {', 'if !runtime.is_proxy_object(&other)? {'),
+            (path, 'let enumerable = match runtime.internal_snapshot_own_property_is_enumerable(', 'runtime.call_internal(); let enumerable = match runtime.internal_snapshot_own_property_is_enumerable('),
+            (path, 'if !runtime.is_proxy_object(&prototype)? {', 'if !runtime.is_proxy_object(&prototype)? { runtime.call_internal();'),
             ('src/engine/object/internal_methods.rs', 'self.proxy_snapshot_if_any(object)\n            .map(|value| value.is_some())', 'Ok(false)'),
             ('src/engine/object/internal_methods.rs', 'return Ok(NativeConversion::Value(flags.is_some()));', 'self.call_internal(); return Ok(NativeConversion::Value(flags.is_some()));'),
             ('src/engine/object/properties.rs', 'self.get_own_property_in_operation(object, key)', 'self.internal_get_own_property(realm, object, key)'),
@@ -154,6 +160,37 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         for mutation in mutations:
             with self.subTest(mutation=mutation):
                 self.assertTrue(self.scan([mutation]))
+
+    def test_local_mutation_delete_requires_same_receiver_and_shared_kernel(self):
+        path = 'src/engine/builtins/array/mutation.rs'
+        guard = 'MutationAction::Delete(key) if !runtime.is_proxy_object(&self.object)? =>'
+        mutations = [
+            (path, guard, 'MutationAction::Delete(key) =>'),
+            (path, guard, 'MutationAction::Delete(key) if runtime.is_proxy_object(&self.object)? =>'),
+            (path, guard, 'MutationAction::Delete(key) if !runtime.is_proxy_object(&other)? =>'),
+            (path, 'runtime.internal_delete_property(self.realm, &self.object, &key)?', 'runtime.internal_delete_property(self.realm, &other, &key)?'),
+            (path, 'runtime.internal_delete_property(self.realm, &self.object, &key)?', 'runtime.internal_delete_property(self.realm, &self.object, &other_key)?'),
+            (path, guard + ' {', guard + ' { runtime.call_internal();'),
+            (path, 'self.boolean_once(runtime, reply)?', 'self.boolean_once(runtime, NativeConversion::Value(true))?'),
+            (path, 'action => return Ok(self.wait(action)),', 'action => return Ok(MutationStep::Complete(Value::Undefined)),'),
+            ('src/engine/object/internal_methods.rs', '.delete_property(object, key)', '.delete_property(other, key)'),
+            ('src/engine/object/properties.rs', 'let arguments_index = self', 'self.call_internal(); let arguments_index = self'),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.scan([mutation]))
+
+    def test_resident_set_selectors_cannot_hide_a_callback(self):
+        path = 'src/engine/object/ordinary/set.rs'
+        mutations = [
+            ('fn select_receiver(&mut self, runtime: &Runtime) -> Result<SelectedSet, RuntimeError> {', 'fn select_receiver(&mut self, runtime: &Runtime) -> Result<SelectedSet, RuntimeError> { runtime.call_internal();'),
+            ('let existing = match result {', 'runtime.internal_get(); let existing = match result {'),
+            ('let rejected_object = match result {', 'runtime.internal_set(); let rejected_object = match result {'),
+            ('fn descriptor(&self, existing: bool) -> OrdinaryPropertyDescriptor {', 'fn descriptor(&self, existing: bool) -> OrdinaryPropertyDescriptor { runtime.call_internal();'),
+        ]
+        for before, after in mutations:
+            with self.subTest(mutation=before):
+                self.assertTrue(self.scan([(path, before, after)]))
 
     def test_numeric_extraction_preserves_connected_owned_route(self):
         parent = 'src/engine/vm/frame_operations.rs'

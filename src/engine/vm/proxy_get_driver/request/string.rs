@@ -6,6 +6,11 @@ impl From<crate::engine::builtins::StringReplaceStep> for Step {
         use crate::engine::builtins::StringReplaceStep as T;
         match step {
             T::Complete(result) => Self::Complete(result),
+            T::PreparedRead { read, key, resume } => Self::PreparedRead {
+                read,
+                key,
+                resume: Resume::StringReplace(resume),
+            },
             T::Primitive { value, resume } => Self::Primitive {
                 value,
                 hint: crate::engine::vm::ToPrimitiveHint::String,
@@ -103,6 +108,15 @@ impl From<crate::engine::builtins::RegExpReplaceStep> for Step {
         use crate::engine::builtins::RegExpReplaceStep as T;
         match step {
             T::Complete(result) => Self::Complete(result),
+            T::PreparedSet { step, resume } => Self::PreparedSet {
+                step,
+                resume: Resume::RegExpReplace(resume),
+            },
+            T::PreparedRead { read, key, resume } => Self::PreparedRead {
+                read,
+                key,
+                resume: Resume::RegExpReplace(resume),
+            },
             T::Read {
                 object,
                 key,

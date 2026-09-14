@@ -151,7 +151,7 @@ impl ForInStep {
     pub(in crate::engine::vm) fn next(
         runtime: &Runtime,
         realm: ContextId,
-        iterator: ObjectRef,
+        iterator: &ObjectRef,
     ) -> Result<Self, RuntimeError> {
         if !iterator.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("for-in iterator"));
@@ -181,67 +181,94 @@ fn done() -> ForInStep {
 fn advance(
     runtime: &Runtime,
     realm: ContextId,
-    iterator: ObjectRef,
+    iterator: &ObjectRef,
 ) -> Result<ForInStep, RuntimeError> {
-    let candidate = runtime
-        .0
-        .state
-        .borrow_mut()
-        .heap
-        .next_for_in_candidate(iterator.object_id())?;
-    match candidate {
-        ForInCandidate::Done => Ok(done()),
-        ForInCandidate::BaseComplete { object, fast_array } => {
-            let base = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
-            Ok(ForInStep::Prototype {
-                object: base.clone(),
+    loop {
+        let candidate = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .next_for_in_candidate(iterator.object_id())?;
+        let (object, name, key) = match candidate {
+            ForInCandidate::Done => return Ok(done()),
+            ForInCandidate::BaseComplete { object, fast_array } => {
+                let base = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
+                return Ok(ForInStep::Prototype {
+                    object: base.clone(),
+                    resume: ForInResume {
+                        realm,
+                        phase: Phase::ProbePrototype(Probe {
+                            iterator: iterator.clone(),
+                            base,
+                            fast_array,
+                        }),
+                    },
+                });
+            }
+            ForInCandidate::LevelComplete(object) => {
+                return Ok(ForInStep::Prototype {
+                    object: ObjectRef::from_borrowed_handle(runtime.clone(), object)?,
+                    resume: ForInResume {
+                        realm,
+                        phase: Phase::LevelPrototype {
+                            iterator: iterator.clone(),
+                        },
+                    },
+                });
+            }
+            ForInCandidate::ArrayIndex { object, index } => {
+                let name = JsString::try_from_utf8(&index.to_string())?;
+                let key = if crate::engine::atom::Atom::from_immediate_integer(index).is_some() {
+                    runtime.property_key_for_index(u64::from(index))?
+                } else {
+                    // Reuse the required JS key spelling for a non-immediate
+                    // atom instead of formatting the same large index again.
+                    runtime.intern_property_key_js_string(&name)?
+                };
+                (object, name, key)
+            }
+            ForInCandidate::Property { object, name } => {
+                let key = runtime.intern_property_key_js_string(&name)?;
+                (object, name, key)
+            }
+        };
+        let object = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
+        if runtime.is_proxy_object(&object)? {
+            return Ok(ForInStep::Own {
+                object,
+                key,
                 resume: ForInResume {
                     realm,
-                    phase: Phase::ProbePrototype(Probe {
-                        iterator,
-                        base,
-                        fast_array,
-                    }),
+                    phase: Phase::Candidate {
+                        iterator: iterator.clone(),
+                        name,
+                    },
                 },
-            })
+            });
         }
-        ForInCandidate::LevelComplete(object) => {
-            let current = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
-            Ok(ForInStep::Prototype {
-                object: current,
-                resume: ForInResume {
-                    realm,
-                    phase: Phase::LevelPrototype { iterator },
-                },
-            })
-        }
-        ForInCandidate::ArrayIndex { object, index } => {
-            let name = JsString::try_from_utf8(&index.to_string())?;
-            candidate_key(runtime, realm, iterator, object, name)
-        }
-        ForInCandidate::Property { object, name } => {
-            candidate_key(runtime, realm, iterator, object, name)
+        // The iterator's resident snapshot owns the current object. No callback
+        // can intervene here, so an ordinary candidate needs no resume owner.
+        let reply = runtime.internal_has_own_property(realm, &object, &key)?;
+        record_local_step();
+        match reply {
+            NativeConversion::Value(true) => {
+                return Ok(ForInStep::Complete {
+                    value: Value::String(name),
+                    done: Some(false),
+                });
+            }
+            NativeConversion::Value(false) => {}
+            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
         }
     }
 }
-fn candidate_key(
-    runtime: &Runtime,
-    realm: ContextId,
-    iterator: ObjectRef,
-    object: crate::engine::heap::ObjectId,
-    name: JsString,
-) -> Result<ForInStep, RuntimeError> {
-    let object = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
-    let key = runtime.intern_property_key_js_string(&name)?;
-    Ok(ForInStep::Own {
-        object,
-        key,
-        resume: ForInResume {
-            realm,
-            phase: Phase::Candidate { iterator, name },
-        },
-    })
+
+fn record_local_step() {
+    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    crate::engine::api::profiling::record_owned_execution_event("for_in_local_step");
 }
+
 impl ForInResume {
     pub(in crate::engine::vm) fn keys(
         self,
@@ -308,7 +335,7 @@ impl ForInResume {
                         done: Some(false),
                     })
                 } else {
-                    advance(runtime, self.realm, iterator)
+                    advance(runtime, self.realm, &iterator)
                 }
             }
             _ => Err(RuntimeError::Invariant(
@@ -371,6 +398,23 @@ fn snapshot_next(
             continue;
         }
         let name = runtime.property_key_to_js_string(&key)?;
+        if !runtime.is_proxy_object(&pending.object)? {
+            let enumerable = match runtime.internal_snapshot_own_property_is_enumerable(
+                realm,
+                &pending.object,
+                &key,
+            )? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+            };
+            pending
+                .properties
+                .try_reserve(1)
+                .map_err(|_| RuntimeError::Invariant("for-in snapshot allocation failed"))?;
+            pending.properties.push(ForInProperty { name, enumerable });
+            record_local_step();
+            continue;
+        }
         return Ok(ForInStep::Enumerable {
             object: pending.object.clone(),
             key,
@@ -413,7 +457,7 @@ fn snapshot_next(
                 Some(pending.object.object_id()),
                 pending.properties,
             )?;
-            advance(runtime, realm, iterator)
+            advance(runtime, realm, &iterator)
         }
     }
 }
@@ -433,6 +477,19 @@ fn probe_keys(
             .property_key_kind(key.atom())?
             != PropertyKeyKind::String
         {
+            continue;
+        }
+        if !runtime.is_proxy_object(&prototype)? {
+            let enumerable = match runtime
+                .internal_snapshot_own_property_is_enumerable(realm, &prototype, &key)?
+            {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+            };
+            record_local_step();
+            if enumerable {
+                return enter_prototypes(runtime, realm, probe);
+            }
             continue;
         }
         return Ok(ForInStep::Enumerable {
@@ -522,6 +579,28 @@ pub(in crate::engine::vm) fn finish(
                 resume.prototype(runtime, runtime.internal_get_prototype_of(realm, &object)?)?
             }
         };
+    }
+}
+
+#[cfg(test)]
+mod resident_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn resident_for_in_keeps_snapshot_shadowing_and_live_own_checks() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let gets=0;const proto={p:1,hidden:2},a=[3,4,5];
+            Object.setPrototypeOf(a,proto);
+            Object.defineProperty(a,'hidden',{value:3,enumerable:false});
+            Object.defineProperty(a,'access',{get(){gets++;throw 1;},enumerable:true});
+            let names='';for(const k in a){names+=k+',';if(k==='0')delete a[1];}
+            if(names!=='0,2,access,p,' || gets!==0)return false;
+            let n=0;const proxy=new Proxy({a:1},{ownKeys(){return ['a'];},getOwnPropertyDescriptor(){n++;return {value:1,writable:true,enumerable:n===1,configurable:true};},getPrototypeOf(){return null;}});
+            names='';for(const k in proxy)names+=k;
+            return names==='a' && n===2;
+        })()"#).unwrap(), Value::Bool(true));
     }
 }
 

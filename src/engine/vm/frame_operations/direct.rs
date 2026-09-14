@@ -1,6 +1,5 @@
 //! Same-frame slot ownership transitions outside the resident RunSlots borrow.
 use crate::engine::api::error::Error;
-use crate::engine::vm::driver::CallStep;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::run::RunExit;
@@ -9,7 +8,7 @@ pub(in crate::engine::vm) fn complete(
     execution: &mut RunningExecution,
     id: FrameId,
     exit: RunExit,
-) -> Result<Option<CallStep>, Error> {
+) -> Result<bool, Error> {
     if let RunExit::ReplaceBinding {
         source,
         index,
@@ -61,7 +60,7 @@ pub(in crate::engine::vm) fn complete(
             .ok_or_else(|| Error::internal("binding release resume PC overflow"))?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(depth);
-        return Ok(Some(CallStep::Entered));
+        return Ok(true);
     }
     if let RunExit::ReleaseOperand { keep_top } = exit {
         let frame = execution.frames.current_mut(id)?;
@@ -87,7 +86,7 @@ pub(in crate::engine::vm) fn complete(
             .ok_or_else(|| Error::internal("release resume PC overflow"))?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(depth);
-        return Ok(Some(CallStep::Entered));
+        return Ok(true);
     }
-    Ok(None)
+    Ok(false)
 }

@@ -4,7 +4,10 @@
 mod direct;
 mod numeric;
 pub(super) use direct::complete as complete_owned_slot;
-pub(super) use numeric::{NumericProgress, complete as complete_numeric};
+pub(super) use numeric::{
+    NumericProgress, commit_output as commit_numeric_output, complete as complete_numeric,
+    try_complete_primitive as try_complete_primitive_numeric,
+};
 
 use super::Completion;
 use super::driver::{CallStep, prepare_captured_reuse};
@@ -40,8 +43,8 @@ pub(super) fn step(
     }
     let original = exit;
     let mut forwarded = None;
-    if let Some(step) = direct::complete(execution, id, exit)? {
-        return Ok(Some(step));
+    if direct::complete(execution, id, exit)? {
+        return Ok(Some(CallStep::Entered));
     }
     if exit == RunExit::HomeObject {
         let frame = execution.frames.current_mut(id)?;
@@ -150,7 +153,7 @@ pub(super) fn step(
                     "for-in next received a non-object iterator",
                 ));
             };
-            super::for_in::operation::ForInStep::next(runtime, realm, iterator.clone())
+            super::for_in::operation::ForInStep::next(runtime, realm, iterator)
         } else {
             let value = execution.slots.pop(&mut frame.window)?;
             super::for_in::operation::ForInStep::start(runtime, realm, value)

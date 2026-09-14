@@ -46,6 +46,15 @@ macro_rules! completion_domain {
 }
 completion_domain!(crate::engine::builtins::MathStep, Math);
 completion_domain!(crate::engine::builtins::GlobalStep, Global);
+completion_domain!(crate::engine::builtins::ArrayMutationStep, ArrayMutation);
+completion_domain!(
+    crate::engine::builtins::PrimitiveConstructorStep,
+    PrimitiveConstructor
+);
+completion_domain!(crate::engine::builtins::RegExpExecStep, RegExpExec);
+completion_domain!(crate::engine::builtins::RegExpReplaceStep, RegExpReplace);
+completion_domain!(crate::engine::builtins::StringReplaceStep, StringReplace);
+
 impl InitialOutput for crate::engine::builtins::ArrayNextStep {
     #[inline]
     fn split(self) -> Result<NativeInvokeOutcome, Self> {

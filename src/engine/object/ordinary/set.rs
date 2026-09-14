@@ -1,6 +1,37 @@
 //! Ordinary Set phases. Storage probes never retain a borrow across a request.
 use super::*;
 
+// Scoped logical clone counts. They are not global RC traffic: immediate
+// PropertyKeys/Values may clone without a heap retain, and final releases are
+// deliberately left to the unchanged ownership kernel.
+#[inline]
+fn clone_set_object(value: &ObjectRef) -> ObjectRef {
+    let copy = value.clone();
+    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.ObjectRef");
+    copy
+}
+#[inline]
+fn clone_set_key(value: &PropertyKey) -> PropertyKey {
+    let copy = value.clone();
+    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.PropertyKey");
+    copy
+}
+#[inline]
+fn clone_set_value(value: &Value) -> Value {
+    let copy = value.clone();
+    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    crate::engine::api::profiling::record_owned_execution_event(match value {
+        Value::Object(_) => "set_value_clone.Object",
+        Value::Symbol(_) => "set_value_clone.Symbol",
+        Value::String(_) => "set_value_clone.String",
+        Value::BigInt(_) => "set_value_clone.BigInt",
+        _ => "set_value_clone.Immediate",
+    });
+    copy
+}
+
 pub(crate) enum SetStep {
     Complete(PropertySetAction),
     Continue {
@@ -100,7 +131,7 @@ fn initial_set(
         // The shared converter reacquires the view before writing. Object
         // conversion, Proxy receivers and non-canonical keys retain their
         // original state machine; no callback is hidden in this shortcut.
-        #[cfg(feature = "profiling")]
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event(
             "typed_write_completed_without_set_state",
         );
@@ -184,8 +215,8 @@ impl SetStep {
             return start_waiting(
                 runtime,
                 Some(realm),
-                object.clone(),
-                key.clone(),
+                clone_set_object(&object),
+                clone_set_key(&key),
                 value,
                 receiver,
                 probe,
@@ -248,6 +279,20 @@ impl SetStep {
                     };
                     resume.special(runtime, result)?
                 }
+                Self::ArrayLength {
+                    object,
+                    key,
+                    value,
+                    resume,
+                } if !matches!(value, Value::Object(_)) => {
+                    let action = runtime.prepare_set_array_length(
+                        resume.state.realm,
+                        &object,
+                        &key,
+                        value,
+                    )?;
+                    resume.forward(action)?
+                }
                 Self::Descriptor {
                     object,
                     key,
@@ -284,7 +329,7 @@ impl SetStep {
                         }
                         PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
                     };
-                    #[cfg(feature = "profiling")]
+                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "set_definition_completed_without_query",
                     );
@@ -404,19 +449,29 @@ fn start_waiting(
     mut waiting: impl FnMut(SetStep),
     operation: crate::engine::heap::runtime::RuntimeOperation<'_>,
 ) -> Result<Option<PropertySetAction>, RuntimeError> {
-    let step = State {
+    let mut state = State {
         realm,
-        _target: object.clone(),
+        _target: clone_set_object(&object),
         key,
         value,
         receiver,
+    };
+    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    crate::engine::api::profiling::record_owned_execution_event("set_state_created");
+    let selected = state.select_walk_probe(runtime, object, probe)?;
+    if let SelectedSet::Complete(action) = selected {
+        // Initial completed selection used to drop State under this guard.
+        drop(state);
+        drop(operation);
+        return Ok(Some(action));
     }
-    .walk_probe(runtime, object, probe)?;
+    // Extra synchronous phases occur only after the original start guard ends.
     drop(operation);
-    match step {
-        SetStep::Complete(action) => Ok(Some(action)),
-        step => {
-            waiting(step);
+    let selected = state.advance_selected(runtime, selected)?;
+    match selected {
+        SelectedSet::Complete(action) => Ok(Some(action)),
+        selected => {
+            waiting(state.publish_selected(selected)?);
             Ok(None)
         }
     }
@@ -424,12 +479,6 @@ fn start_waiting(
 
 fn complete(action: PropertySetAction) -> Result<SetStep, RuntimeError> {
     Ok(SetStep::Complete(action))
-}
-fn rejected(reason: PropertySetRejection) -> Result<SetStep, RuntimeError> {
-    complete(PropertySetAction::Rejected(reason))
-}
-fn stored(accepted: bool) -> Result<SetStep, RuntimeError> {
-    complete(stored_action(accepted))
 }
 fn stored_action(accepted: bool) -> PropertySetAction {
     if accepted {
@@ -439,38 +488,70 @@ fn stored_action(accepted: bool) -> PropertySetAction {
     }
 }
 
+/// A selected phase carries no duplicate key/value/receiver or entire State.
+/// Only publication of a real waiting request constructs SetStep/SetResume.
+enum SelectedSet {
+    Complete(PropertySetAction),
+    Walk(ObjectRef),
+    Proxy(ObjectRef),
+    Special(ObjectRef),
+    ArrayLength(ObjectRef),
+    Descriptor(ObjectRef),
+    Define(ObjectRef, bool),
+}
+
 impl State {
-    fn walk(self, runtime: &Runtime, current: ObjectRef) -> Result<SetStep, RuntimeError> {
-        let same_receiver = matches!(&self.receiver,Value::Object(target) if target==&current);
-        let probe = runtime.ordinary_set_probe(&current, &self.key, &self.value, same_receiver)?;
-        self.walk_probe(runtime, current, probe)
+    fn walk(mut self, runtime: &Runtime, current: ObjectRef) -> Result<SetStep, RuntimeError> {
+        let selected = self.select_walk(runtime, current)?;
+        self.finish_selected(runtime, selected)
     }
 
-    fn walk_probe(
-        self,
+    fn select_walk(
+        &mut self,
+        runtime: &Runtime,
+        current: ObjectRef,
+    ) -> Result<SelectedSet, RuntimeError> {
+        let same_receiver = matches!(&self.receiver,Value::Object(target) if target==&current);
+        let probe = runtime.ordinary_set_probe(&current, &self.key, &self.value, same_receiver)?;
+        self.select_walk_probe(runtime, current, probe)
+    }
+
+    fn select_walk_probe(
+        &mut self,
         runtime: &Runtime,
         mut current: ObjectRef,
         mut probe: SetProbe,
-    ) -> Result<SetStep, RuntimeError> {
+    ) -> Result<SelectedSet, RuntimeError> {
         loop {
+            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            crate::engine::api::profiling::record_owned_execution_event(match &probe {
+                SetProbe::Stored(_) => "set_selected.Stored",
+                SetProbe::Writable => "set_selected.Writable",
+                SetProbe::Setter(_) => "set_selected.Setter",
+                SetProbe::Missing(_) => "set_selected.Missing",
+                SetProbe::Special(_) => "set_selected.Special",
+            });
             match probe {
-                SetProbe::Stored(accepted) => return stored(accepted),
-                SetProbe::Writable => return self.receiver(runtime),
+                SetProbe::Stored(accepted) => {
+                    return Ok(SelectedSet::Complete(stored_action(accepted)));
+                }
+                SetProbe::Writable => return self.select_receiver(runtime),
                 SetProbe::Setter(set) => {
-                    return complete(match set {
+                    let action = match set {
                         Some(setter) => PropertySetAction::Call {
                             setter: crate::engine::object::CallableRef::from_validated_object(
                                 ObjectRef::from_borrowed_handle(runtime.clone(), setter)?,
                             ),
-                            receiver: self.receiver,
-                            argument: self.value,
+                            receiver: std::mem::replace(&mut self.receiver, Value::Undefined),
+                            argument: std::mem::replace(&mut self.value, Value::Undefined),
                         },
                         None => PropertySetAction::Rejected(PropertySetRejection::NoSetter),
-                    });
+                    };
+                    return Ok(SelectedSet::Complete(action));
                 }
                 SetProbe::Missing(next) => {
                     let Some(next) = next else {
-                        return self.receiver(runtime);
+                        return self.select_receiver(runtime);
                     };
                     current = next;
                     let same_receiver =
@@ -487,19 +568,12 @@ impl State {
                         if self.realm.is_none() {
                             return Err(RuntimeError::Invariant("exotic Set requires a realm"));
                         }
-                        return Ok(SetStep::Proxy {
-                            object: current,
-                            key: self.key.clone(),
-                            value: self.value.clone(),
-                            receiver: self.receiver.clone(),
-                            resume: SetResume {
-                                state: self,
-                                phase: Phase::Forward,
-                            },
-                        });
+                        return Ok(SelectedSet::Proxy(current));
                     }
                     if self.realm.is_some() && matches!(kind, SpecialKind::ModuleNamespace) {
-                        return rejected(PropertySetRejection::ReadOnly);
+                        return Ok(SelectedSet::Complete(PropertySetAction::Rejected(
+                            PropertySetRejection::ReadOnly,
+                        )));
                     }
                     if self.realm.is_some()
                         && matches!(kind, SpecialKind::TypedArray)
@@ -507,24 +581,28 @@ impl State {
                             .typed_array_canonical_numeric_index(&self.key)?
                             .is_some()
                     {
-                        return Ok(SetStep::Special {
-                            object: current.clone(),
-                            key: self.key.clone(),
-                            value: self.value.clone(),
-                            receiver: self.receiver.clone(),
-                            resume: SetResume {
-                                state: self,
-                                phase: Phase::Special(current),
-                            },
-                        });
+                        return Ok(SelectedSet::Special(current));
                     }
-                    return self.special_own(runtime, current);
+                    return self.select_special_own(runtime, current);
                 }
             }
         }
     }
 
-    fn special_own(self, runtime: &Runtime, current: ObjectRef) -> Result<SetStep, RuntimeError> {
+    fn special_own(
+        mut self,
+        runtime: &Runtime,
+        current: ObjectRef,
+    ) -> Result<SetStep, RuntimeError> {
+        let selected = self.select_special_own(runtime, current)?;
+        self.finish_selected(runtime, selected)
+    }
+
+    fn select_special_own(
+        &mut self,
+        runtime: &Runtime,
+        current: ObjectRef,
+    ) -> Result<SelectedSet, RuntimeError> {
         let same_receiver = matches!(&self.receiver,Value::Object(target) if target==&current);
         if let Some(property) = runtime.get_own_property(&current, &self.key)? {
             match property {
@@ -532,91 +610,306 @@ impl State {
                     if same_receiver
                         && runtime.array_own_key(&current, &self.key)? == ArrayOwnKey::Length
                     {
-                        return Ok(SetStep::ArrayLength {
-                            object: current,
-                            key: self.key.clone(),
-                            value: self.value.clone(),
-                            resume: SetResume {
-                                state: self,
-                                phase: Phase::Forward,
-                            },
-                        });
+                        return Ok(SelectedSet::ArrayLength(current));
                     }
                     if !writable {
-                        return rejected(PropertySetRejection::ReadOnly);
+                        return Ok(SelectedSet::Complete(PropertySetAction::Rejected(
+                            PropertySetRejection::ReadOnly,
+                        )));
                     }
-                    return self.receiver(runtime);
+                    return self.select_receiver(runtime);
                 }
                 CompleteOrdinaryPropertyDescriptor::Accessor { set, .. } => {
-                    return complete(match set {
+                    return Ok(SelectedSet::Complete(match set {
                         Some(setter) => PropertySetAction::Call {
                             setter,
-                            receiver: self.receiver,
-                            argument: self.value,
+                            receiver: std::mem::replace(&mut self.receiver, Value::Undefined),
+                            argument: std::mem::replace(&mut self.value, Value::Undefined),
                         },
                         None => PropertySetAction::Rejected(PropertySetRejection::NoSetter),
-                    });
+                    }));
                 }
             }
         }
         match runtime.get_prototype_of(&current)? {
-            Some(next) => Ok(SetStep::Continue {
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Walk(next),
-                },
-            }),
-            None => self.receiver(runtime),
+            Some(next) => Ok(SelectedSet::Walk(next)),
+            None => self.select_receiver(runtime),
         }
     }
 
-    fn receiver(self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
+    fn select_receiver(&mut self, runtime: &Runtime) -> Result<SelectedSet, RuntimeError> {
         let Value::Object(receiver) = &self.receiver else {
-            return rejected(PropertySetRejection::NotObject);
+            return Ok(SelectedSet::Complete(PropertySetAction::Rejected(
+                PropertySetRejection::NotObject,
+            )));
         };
-        let receiver = receiver.clone();
-        match runtime.ordinary_set_probe(&receiver, &self.key, &self.value, true)? {
-            SetProbe::Stored(accepted) => stored(accepted),
-            SetProbe::Setter(set) => rejected(if set.is_some() {
-                PropertySetRejection::ReadOnly
-            } else {
-                PropertySetRejection::NoSetter
-            }),
-            SetProbe::Missing(_) => self.define(receiver, false),
-            SetProbe::Special(_) => Ok(SetStep::Descriptor {
-                object: receiver,
-                key: self.key.clone(),
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Receiver,
-                },
-            }),
-            SetProbe::Writable => unreachable!("receiver probe commits a writable data slot"),
-        }
+        let receiver = clone_set_object(receiver);
+        Ok(
+            match runtime.ordinary_set_probe(&receiver, &self.key, &self.value, true)? {
+                SetProbe::Stored(accepted) => SelectedSet::Complete(stored_action(accepted)),
+                SetProbe::Setter(set) => {
+                    SelectedSet::Complete(PropertySetAction::Rejected(if set.is_some() {
+                        PropertySetRejection::ReadOnly
+                    } else {
+                        PropertySetRejection::NoSetter
+                    }))
+                }
+                SetProbe::Missing(_) => SelectedSet::Define(receiver, false),
+                SetProbe::Special(_) => SelectedSet::Descriptor(receiver),
+                SetProbe::Writable => unreachable!("receiver probe commits a writable data slot"),
+            },
+        )
     }
 
-    fn define(self, receiver: ObjectRef, existing: bool) -> Result<SetStep, RuntimeError> {
-        let descriptor = if existing {
+    fn select_descriptor(
+        &mut self,
+        runtime: &Runtime,
+        result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+    ) -> Result<SelectedSet, RuntimeError> {
+        let existing = match result {
+            NativeConversion::Value(value) => value,
+            NativeConversion::Throw(value) => {
+                return Ok(SelectedSet::Complete(PropertySetAction::Throw(value)));
+            }
+        };
+        let Value::Object(receiver) = &self.receiver else {
+            return Err(RuntimeError::Invariant("Set receiver lost its object"));
+        };
+        let receiver = clone_set_object(receiver);
+        Ok(match existing {
+            Some(CompleteOrdinaryPropertyDescriptor::Data {
+                writable: false, ..
+            }) => {
+                SelectedSet::Complete(PropertySetAction::Rejected(PropertySetRejection::ReadOnly))
+            }
+            Some(CompleteOrdinaryPropertyDescriptor::Accessor { set, .. }) => {
+                SelectedSet::Complete(PropertySetAction::Rejected(if set.is_some() {
+                    PropertySetRejection::ReadOnly
+                } else {
+                    PropertySetRejection::NoSetter
+                }))
+            }
+            Some(CompleteOrdinaryPropertyDescriptor::Data { .. }) => {
+                if runtime.set_arguments_index_value(&receiver, &self.key, &self.value)? {
+                    SelectedSet::Complete(PropertySetAction::Complete)
+                } else {
+                    SelectedSet::Define(receiver, true)
+                }
+            }
+            None => SelectedSet::Define(receiver, false),
+        })
+    }
+
+    fn descriptor(&self, existing: bool) -> OrdinaryPropertyDescriptor {
+        if existing {
             OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(self.value.clone()),
+                value: DescriptorField::Present(clone_set_value(&self.value)),
                 ..OrdinaryPropertyDescriptor::new()
             }
         } else {
             OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(self.value.clone()),
+                value: DescriptorField::Present(clone_set_value(&self.value)),
                 writable: DescriptorField::Present(true),
                 enumerable: DescriptorField::Present(true),
                 configurable: DescriptorField::Present(true),
                 ..OrdinaryPropertyDescriptor::new()
             }
+        }
+    }
+
+    fn defined_action(
+        &self,
+        runtime: &Runtime,
+        receiver: &ObjectRef,
+        result: NativeConversion<InternalDefineResult>,
+    ) -> Result<PropertySetAction, RuntimeError> {
+        let rejected_object = match result {
+            NativeConversion::Value(InternalDefineResult::Defined) => {
+                return Ok(PropertySetAction::Complete);
+            }
+            NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
+                return Ok(PropertySetAction::RejectedProxyTrap);
+            }
+            NativeConversion::Throw(value) => return Ok(PropertySetAction::Throw(value)),
+            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object)) => Some(object),
         };
-        Ok(SetStep::Define {
-            object: receiver.clone(),
-            key: self.key.clone(),
-            descriptor,
-            resume: SetResume {
-                state: self,
-                phase: Phase::Define(receiver),
+        let receiver = rejected_object.as_ref().unwrap_or(receiver);
+        Ok(PropertySetAction::Rejected(
+            if !runtime.has_own_property(receiver, &self.key)?
+                && !runtime.is_extensible(receiver)?
+            {
+                PropertySetRejection::NotExtensible
+            } else if matches!(
+                runtime.array_own_key(receiver, &self.key)?,
+                ArrayOwnKey::Index(_)
+            ) && !runtime.array_length_state(receiver)?.1
+            {
+                PropertySetRejection::ArrayLengthReadOnly
+            } else {
+                PropertySetRejection::ReadOnly
+            },
+        ))
+    }
+
+    fn finish_selected(
+        mut self,
+        runtime: &Runtime,
+        selected: SelectedSet,
+    ) -> Result<SetStep, RuntimeError> {
+        let selected = self.advance_selected(runtime, selected)?;
+        self.publish_selected(selected)
+    }
+
+    fn advance_selected(
+        &mut self,
+        runtime: &Runtime,
+        #[allow(unused_mut)] mut selected: SelectedSet,
+    ) -> Result<SelectedSet, RuntimeError> {
+        #[cfg(feature = "stack-vm")]
+        loop {
+            selected = match selected {
+                SelectedSet::Walk(object) => self.select_walk(runtime, object)?,
+                SelectedSet::Descriptor(object)
+                    if matches!(
+                        runtime.array_own_key(&object, &self.key)?,
+                        ArrayOwnKey::Index(_)
+                    ) =>
+                {
+                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "set_local_descriptor_read",
+                    );
+                    let descriptor = runtime.get_own_property(&object, &self.key)?;
+                    self.select_descriptor(runtime, NativeConversion::Value(descriptor))?
+                }
+                SelectedSet::Define(object, existing)
+                    if matches!(
+                        runtime.array_own_key(&object, &self.key)?,
+                        ArrayOwnKey::Index(_)
+                    ) || matches!(
+                        runtime.ordinary_property_flags(&object, &self.key)?,
+                        Some(None)
+                    ) =>
+                {
+                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "set_local_define_attempt",
+                    );
+                    let descriptor = self.descriptor(existing);
+                    let result = match runtime.define_own_property_in_realm(
+                        self.realm,
+                        &object,
+                        &self.key,
+                        &descriptor,
+                    )? {
+                        PropertyDefineOutcome::Defined(true) => {
+                            NativeConversion::Value(InternalDefineResult::Defined)
+                        }
+                        PropertyDefineOutcome::Defined(false) => NativeConversion::Value(
+                            InternalDefineResult::RejectedOrdinary(clone_set_object(&object)),
+                        ),
+                        PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
+                    };
+                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "set_definition_completed_without_query",
+                    );
+                    SelectedSet::Complete(self.defined_action(runtime, &object, result)?)
+                }
+                SelectedSet::ArrayLength(object) if !matches!(self.value, Value::Object(_)) => {
+                    // to_array_length itself drives the authoritative ArrayLengthStep;
+                    // non-objects cannot call JS. It re-reads writable/length only
+                    // after both conversions and uses the canonical truncate kernel.
+                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "set_local_array_length_attempt",
+                    );
+                    let action = runtime.prepare_set_array_length(
+                        self.realm,
+                        &object,
+                        &self.key,
+                        clone_set_value(&self.value),
+                    )?;
+                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "set_array_length_completed_without_query",
+                    );
+                    SelectedSet::Complete(action)
+                }
+                selected => break Ok(selected),
+            };
+        }
+        #[cfg(not(feature = "stack-vm"))]
+        {
+            let _ = runtime;
+            Ok(selected)
+        }
+    }
+
+    fn publish_selected(self, selected: SelectedSet) -> Result<SetStep, RuntimeError> {
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        crate::engine::api::profiling::record_owned_execution_event(match &selected {
+            SelectedSet::Complete(_) => "set_completion_adapter",
+            SelectedSet::Walk(_) => "set_request_publish.Walk",
+            SelectedSet::Proxy(_) => "set_request_publish.Proxy",
+            SelectedSet::Special(_) => "set_request_publish.Special",
+            SelectedSet::ArrayLength(_) => "set_request_publish.ArrayLength",
+            SelectedSet::Descriptor(_) => "set_request_publish.Descriptor",
+            SelectedSet::Define(..) => "set_request_publish.Define",
+        });
+        Ok(match selected {
+            SelectedSet::Complete(action) => SetStep::Complete(action),
+            SelectedSet::Walk(object) => SetStep::Continue {
+                resume: SetResume {
+                    state: self,
+                    phase: Phase::Walk(object),
+                },
+            },
+            SelectedSet::Proxy(object) => SetStep::Proxy {
+                object,
+                key: clone_set_key(&self.key),
+                value: clone_set_value(&self.value),
+                receiver: clone_set_value(&self.receiver),
+                resume: SetResume {
+                    state: self,
+                    phase: Phase::Forward,
+                },
+            },
+            SelectedSet::Special(object) => SetStep::Special {
+                object: clone_set_object(&object),
+                key: clone_set_key(&self.key),
+                value: clone_set_value(&self.value),
+                receiver: clone_set_value(&self.receiver),
+                resume: SetResume {
+                    state: self,
+                    phase: Phase::Special(object),
+                },
+            },
+            SelectedSet::ArrayLength(object) => SetStep::ArrayLength {
+                object,
+                key: clone_set_key(&self.key),
+                value: clone_set_value(&self.value),
+                resume: SetResume {
+                    state: self,
+                    phase: Phase::Forward,
+                },
+            },
+            SelectedSet::Descriptor(object) => SetStep::Descriptor {
+                object,
+                key: clone_set_key(&self.key),
+                resume: SetResume {
+                    state: self,
+                    phase: Phase::Receiver,
+                },
+            },
+            SelectedSet::Define(object, existing) => SetStep::Define {
+                object: clone_set_object(&object),
+                key: clone_set_key(&self.key),
+                descriptor: self.descriptor(existing),
+                resume: SetResume {
+                    state: self,
+                    phase: Phase::Define(object),
+                },
             },
         })
     }
@@ -691,38 +984,11 @@ impl SetResume {
                 "Set continuation received a descriptor reply",
             ));
         }
-        let existing = match result {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return complete(PropertySetAction::Throw(value)),
-        };
-        let Value::Object(receiver) = &self.state.receiver else {
-            return Err(RuntimeError::Invariant("Set receiver lost its object"));
-        };
-        let receiver = receiver.clone();
-        match existing {
-            Some(CompleteOrdinaryPropertyDescriptor::Data {
-                writable: false, ..
-            }) => rejected(PropertySetRejection::ReadOnly),
-            Some(CompleteOrdinaryPropertyDescriptor::Accessor { set, .. }) => {
-                rejected(if set.is_some() {
-                    PropertySetRejection::ReadOnly
-                } else {
-                    PropertySetRejection::NoSetter
-                })
-            }
-            Some(CompleteOrdinaryPropertyDescriptor::Data { .. }) => {
-                if runtime.set_arguments_index_value(
-                    &receiver,
-                    &self.state.key,
-                    &self.state.value,
-                )? {
-                    return complete(PropertySetAction::Complete);
-                }
-                self.state.define(receiver, true)
-            }
-            None => self.state.define(receiver, false),
-        }
+        let mut state = self.state;
+        let selected = state.select_descriptor(runtime, result)?;
+        state.finish_selected(runtime, selected)
     }
+
     pub(crate) fn defined(
         self,
         runtime: &Runtime,
@@ -733,32 +999,7 @@ impl SetResume {
                 "Set continuation received a define reply",
             ));
         };
-        let rejected_object = match result {
-            NativeConversion::Value(InternalDefineResult::Defined) => {
-                return complete(PropertySetAction::Complete);
-            }
-            NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
-                return complete(PropertySetAction::RejectedProxyTrap);
-            }
-            NativeConversion::Throw(value) => return complete(PropertySetAction::Throw(value)),
-            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object)) => Some(object),
-        };
-        let receiver = rejected_object.as_ref().unwrap_or(&receiver);
-        rejected(
-            if !runtime.has_own_property(receiver, &self.state.key)?
-                && !runtime.is_extensible(receiver)?
-            {
-                PropertySetRejection::NotExtensible
-            } else if matches!(
-                runtime.array_own_key(receiver, &self.state.key)?,
-                ArrayOwnKey::Index(_)
-            ) && !runtime.array_length_state(receiver)?.1
-            {
-                PropertySetRejection::ArrayLengthReadOnly
-            } else {
-                PropertySetRejection::ReadOnly
-            },
-        )
+        complete(self.state.defined_action(runtime, &receiver, result)?)
     }
 }
 
@@ -1069,6 +1310,54 @@ mod tests {
 
     #[cfg(feature = "stack-vm")]
     #[test]
+    fn resident_set_array_length_primitive_completion_uses_original_conversion() {
+        for (source, expected) in [("2", 2), ("' 2 '", 2), ("true", 1), ("null", 0), ("-0", 0)] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let Value::Object(array) = context.eval("[1,2,3]").unwrap() else {
+                panic!("array");
+            };
+            let value = context.eval(source).unwrap();
+            let action = SetStep::start_receiver_into(
+                &runtime,
+                context.realm,
+                &runtime.intern_property_key("length").unwrap(),
+                value,
+                Value::Object(array.clone()),
+                |_| panic!("primitive Array length published a waiting request"),
+            )
+            .unwrap();
+            assert!(matches!(action, Some(PropertySetAction::Complete)));
+            assert_eq!(runtime.array_length_state(&array).unwrap().0, expected);
+        }
+    }
+
+    #[cfg(feature = "stack-vm")]
+    #[test]
+    fn resident_set_array_length_keeps_callbacks_partial_shrink_and_readonly_order() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let a=[0,1,2,3], trace='', value={valueOf(){trace+='v';return 2}};
+            a.length=value;
+            if(trace!=='vv'||a.length!==2)return false;
+            a=[0,1,2,3];Object.defineProperty(a,'2',{configurable:false});
+            if(Reflect.set(a,'length','1')!==false||a.length!==3||3 in a||!(2 in a))return false;
+            a=[0,1];Object.defineProperty(a,'length',{writable:false});
+            let thrown=false;try{a.length=Symbol()}catch(e){thrown=e instanceof TypeError}
+            if(!thrown||a.length!==2)return false;
+            a=[0,1,2];trace='';
+            value={valueOf(){trace+='x';if(trace.length===2)Object.defineProperty(a,'length',{writable:false});return 1}};
+            if(Reflect.set(a,'length',value)!==false||trace!=='xx'||a.length!==3)return false;
+            let marker={};trace='';
+            try{a.length={valueOf(){trace+='t';throw marker}}}catch(e){if(e!==marker)return false}
+            return trace==='t' && a.length===3;
+        })()"#).unwrap(), Value::Bool(true));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[cfg(feature = "stack-vm")]
+    #[test]
     fn local_new_property_definition_uses_selected_receiver_and_shared_rejection() {
         for (source, name, rejected) in [
             ("({})", "x", false),
@@ -1085,6 +1374,8 @@ mod tests {
             let key = runtime.intern_property_key(name).unwrap();
             let mut deliveries = 0;
             let mut action = None;
+            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            let profile = crate::engine::api::profiling::CostProfile::start();
             let initial = SetStep::start_receiver_into(
                 &runtime,
                 context.realm,
@@ -1102,8 +1393,30 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(initial.is_none());
-            assert_eq!(deliveries, 1);
+            assert_eq!(deliveries, 0, "ordinary definition stays resident");
+            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            {
+                let costs = profile.snapshot();
+                for event in [
+                    "set_state_created",
+                    "set_local_define_attempt",
+                    "set_owner_clone.PropertyKey",
+                ] {
+                    assert_eq!(
+                        costs.owned_execution_events.get(event).copied(),
+                        Some(1),
+                        "{event}"
+                    );
+                }
+                assert!(
+                    !costs
+                        .owned_execution_events
+                        .keys()
+                        .any(|key| key.starts_with("set_request_publish."))
+                );
+                drop(profile);
+            }
+            let action = initial.or(action);
             if rejected {
                 assert!(matches!(
                     action,
@@ -1134,7 +1447,7 @@ mod tests {
     fn local_new_property_definition_preserves_prototype_callbacks_and_key_order() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        #[cfg(feature = "profiling")]
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context
@@ -1162,7 +1475,7 @@ mod tests {
                 .unwrap(),
             Value::Bool(true)
         );
-        #[cfg(feature = "profiling")]
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         assert!(
             profile
                 .snapshot()

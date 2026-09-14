@@ -534,6 +534,12 @@ pub(super) enum Step {
         resume: SetResume,
     },
     SetComplete(PropertySetAction),
+    // An internal domain has already selected this effect. Only a real wait
+    // owns this box; dispatch must not repeat the initial storage probe.
+    PreparedSet {
+        step: Box<SetStep>,
+        resume: Resume,
+    },
     SetContinue(SetResume),
     SetSpecial {
         object: ObjectRef,

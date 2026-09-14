@@ -71,7 +71,7 @@ impl Runtime {
         realm: ContextId,
         iterator: &ObjectRef,
     ) -> Result<(Value, bool), RuntimeError> {
-        let step = operation::ForInStep::next(self, realm, iterator.clone())?;
+        let step = operation::ForInStep::next(self, realm, iterator)?;
         let (value, done) = operation::finish(self, realm, step)?;
         let done = done.ok_or(RuntimeError::Invariant(
             "for-in next returned a start result",

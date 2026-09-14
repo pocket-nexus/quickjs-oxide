@@ -59,32 +59,23 @@ pub(super) fn run(
                 id = execution.frames.current_id().unwrap();
             }
             RunExit::ReplaceBinding { .. } | RunExit::ReleaseOperand { .. } => {
-                match crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)?
-                {
-                    Some(CallStep::Entered) => {}
-                    _ => {
-                        return Err(Error::internal(
-                            "direct slot completion changed its frame protocol",
-                        ));
-                    }
+                if !crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)? {
+                    return Err(Error::internal(
+                        "direct slot completion changed its frame protocol",
+                    ));
                 }
             }
+
             RunExit::Numeric(kind) => {
-                let frame = execution.frames.current_mut(id)?;
-                // No operand is moved before this guard. Objects keep the
-                // outer callback path and cannot replay a partial conversion.
-                for offset in 0..if kind.unary() { 1 } else { 2 } {
-                    if matches!(
-                        execution.slots.peek(&frame.window, offset),
-                        Err(_) | Ok(crate::engine::value::Value::Object(_))
-                    ) {
-                        return Ok(Boundary::Exit(exit));
-                    }
-                }
                 use crate::engine::vm::frame_operations::NumericProgress;
-                match crate::engine::vm::frame_operations::complete_numeric(
-                    runtime, execution, id, kind,
-                )? {
+                let Some(progress) =
+                    crate::engine::vm::frame_operations::try_complete_primitive_numeric(
+                        runtime, execution, id, kind,
+                    )?
+                else {
+                    return Ok(Boundary::Exit(exit));
+                };
+                match progress {
                     NumericProgress::Completed => {
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -102,35 +93,25 @@ pub(super) fn run(
             }
             RunExit::ConvertPlus | RunExit::ConvertAdd => {
                 let addition = exit == RunExit::ConvertAdd;
-                let frame = execution.frames.current_mut(id)?;
-                let mut invalid = false;
-                for offset in (0..=usize::from(addition)).rev() {
-                    invalid |= runtime
-                        .validate_value_domain(
-                            execution.slots.peek(&frame.window, offset)?,
-                            "conversion operand",
-                        )
-                        .is_err();
-                }
-                if invalid {
-                    return Ok(Boundary::Exit(RunExit::Bridge));
-                }
-                *next_operation = next_operation
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("conversion identity exhausted"))?;
+                use crate::engine::vm::conversion_driver::PrimitiveCompletion;
                 match crate::engine::vm::conversion_driver::complete_primitives(
-                    runtime, execution, id, addition,
+                    runtime,
+                    execution,
+                    id,
+                    addition,
+                    next_operation,
                 )? {
-                    Some(CallStep::Entered) => {}
-                    Some(CallStep::Complete(completion)) => {
-                        return Ok(Boundary::Complete(completion));
+                    PrimitiveCompletion::Completed => {}
+                    PrimitiveCompletion::Throw(value) => {
+                        return Ok(Boundary::Complete(Completion::Throw(value)));
                     }
-                    Some(CallStep::Bridge) => {
-                        return Err(Error::internal("primitive conversion attempted replay"));
+                    PrimitiveCompletion::InvalidDomain => {
+                        return Ok(Boundary::Exit(RunExit::Bridge));
                     }
-                    None => return Ok(Boundary::Conversion(exit)),
+                    PrimitiveCompletion::Declined => return Ok(Boundary::Conversion(exit)),
                 }
             }
+
             RunExit::GetField {
                 index,
                 keep_receiver,

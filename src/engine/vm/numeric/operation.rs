@@ -82,10 +82,51 @@ impl NumericKind {
                 | Self::PostDec
         )
     }
+    pub(in crate::engine::vm) fn primitive_arithmetic(self) -> bool {
+        !self.comparison() && !matches!(self, Self::Eq | Self::Neq)
+    }
     fn comparison(self) -> bool {
         matches!(self, Self::Lt | Self::Lte | Self::Gt | Self::Gte)
     }
 }
+pub(in crate::engine::vm) struct NumericOutput {
+    pub value: Value,
+    pub previous: Option<Value>,
+}
+impl NumericOutput {
+    fn value(value: Value) -> Self {
+        Self {
+            value,
+            previous: None,
+        }
+    }
+    fn into_step(self) -> NumericStep {
+        NumericStep::Complete {
+            value: self.value,
+            previous: self.previous,
+        }
+    }
+}
+
+/// Primitive arithmetic uses the same conversion and operator kernels as resumes.
+/// Parsing, allocation and final primitive-owner release require a driver boundary.
+pub(in crate::engine::vm) fn primitive_output(
+    kind: NumericKind,
+    left: Value,
+    right: Option<Value>,
+) -> Result<NumericOutput, Error> {
+    if kind.unary() {
+        return unary_output(kind, left);
+    }
+    let right = right.ok_or_else(|| Error::internal("binary numeric operator lost RHS"))?;
+    if kind == NumericKind::Add {
+        return add_primitives(left, right).map(NumericOutput::value);
+    }
+    let left = to_numeric_primitive(left)?;
+    let right = to_numeric_primitive(right)?;
+    binary(kind, left, right).map(NumericOutput::value)
+}
+
 pub(in crate::engine::vm) enum NumericStep {
     Complete {
         value: Value,
@@ -229,21 +270,26 @@ impl NumericResume {
     }
 }
 fn unary(kind: NumericKind, value: Value) -> Result<NumericStep, Error> {
+    unary_output(kind, value).map(NumericOutput::into_step)
+}
+fn unary_output(kind: NumericKind, value: Value) -> Result<NumericOutput, Error> {
     if kind == NumericKind::Plus {
-        return Ok(complete(unary_plus_primitive(value)?));
+        return Ok(NumericOutput::value(unary_plus_primitive(value)?));
     }
     if kind == NumericKind::Neg {
-        return Ok(complete(if let Some(number) = value.as_number_repr() {
-            number.negate().into()
-        } else {
-            match value {
-                Value::BigInt(value) => Value::BigInt(value.neg().map_err(bigint_error)?),
-                value => Value::number(-value.to_number()?),
-            }
-        }));
+        return Ok(NumericOutput::value(
+            if let Some(number) = value.as_number_repr() {
+                number.negate().into()
+            } else {
+                match value {
+                    Value::BigInt(value) => Value::BigInt(value.neg().map_err(bigint_error)?),
+                    value => Value::number(-value.to_number()?),
+                }
+            },
+        ));
     }
     if kind == NumericKind::BitNot {
-        return Ok(complete(match to_numeric_primitive(value)? {
+        return Ok(NumericOutput::value(match to_numeric_primitive(value)? {
             NumericValue::BigInt(value) => Value::BigInt(value.bit_not().map_err(bigint_error)?),
             NumericValue::Number(value) => Value::Int(!number_to_int32(value)),
         }));
@@ -272,7 +318,7 @@ fn unary(kind: NumericKind, value: Value) -> Result<NumericStep, Error> {
             }
         }
     };
-    Ok(NumericStep::Complete {
+    Ok(NumericOutput {
         value: next,
         previous: postfix.then_some(old),
     })

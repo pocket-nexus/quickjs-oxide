@@ -289,14 +289,20 @@ impl RegExpExecResume {
                 "RegExp object expected",
             )?)));
         }
-        Ok(RegExpExecStep::Primitive {
-            value: self.input.clone(),
-            hint: ToPrimitiveHint::String,
-            resume: Self {
-                phase: ExecPhase::Input,
-                ..self
-            },
-        })
+        let input = self.input.clone();
+        let resume = Self {
+            phase: ExecPhase::Input,
+            ..self
+        };
+        if matches!(input, Value::Object(_)) {
+            Ok(RegExpExecStep::Primitive {
+                value: input,
+                hint: ToPrimitiveHint::String,
+                resume,
+            })
+        } else {
+            resume.resume(runtime, Completion::Return(input))
+        }
     }
     pub(crate) fn resume(
         self,
@@ -364,14 +370,21 @@ impl RegExpExecResume {
                     ));
                 };
                 let value = runtime.regexp_last_index_value(object)?;
-                Ok(RegExpExecStep::Primitive {
-                    value,
-                    hint: ToPrimitiveHint::Number,
-                    resume: Self {
-                        phase: ExecPhase::LastIndex(input),
-                        ..self
-                    },
-                })
+                let resume = Self {
+                    phase: ExecPhase::LastIndex(input),
+                    ..self
+                };
+                if matches!(value, Value::Object(_)) {
+                    Ok(RegExpExecStep::Primitive {
+                        value,
+                        hint: ToPrimitiveHint::Number,
+                        resume,
+                    })
+                } else {
+                    // No callback: the branded receiver and input stay owned by
+                    // this domain; the generic conversion/Query is never built.
+                    resume.resume(runtime, Completion::Return(value))
+                }
             }
             ExecPhase::LastIndex(input) => {
                 if matches!(value, Value::Object(_)) {
@@ -446,5 +459,50 @@ fn finish(
                 )?
             }
         };
+    }
+}
+
+#[cfg(test)]
+mod local_exec_tests {
+    use super::*;
+
+    #[test]
+    fn primitive_regexp_exec_completes_inside_its_domain() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let invocation = NativeInvocation::Call {
+            this_value: context.eval("/a/g").unwrap(),
+        };
+        let arguments = NativeArguments {
+            actual_arg_count: 1,
+            readable: vec![Value::String(JsString::from_static("a"))],
+        };
+        assert!(matches!(
+            RegExpExecStep::start(
+                &runtime,
+                context.realm,
+                RegExpNativeKind::Exec,
+                &invocation,
+                &arguments
+            )
+            .unwrap(),
+            RegExpExecStep::Complete(Completion::Return(Value::Object(_)))
+        ));
+    }
+
+    #[test]
+    fn regexp_local_conversion_preserves_reentry_and_live_program() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let trace='', re=/a/g;
+            const input={toString(){trace+='i';re.lastIndex={valueOf(){trace+='l';return 0}};return 'a'}};
+            if(re.exec(input)[0]!=='a'||trace!=='il'||re.lastIndex!==1)return false;
+            const marker={};re.lastIndex={valueOf(){throw marker}};
+            try{re.exec('a');return false}catch(e){if(e!==marker)return false}
+            const frozen=/a/g;Object.defineProperty(frozen,'lastIndex',{writable:false});
+            try{frozen.exec('a');return false}catch(e){if(!(e instanceof TypeError))return false}
+            return /é/.exec('é')[0]==='é' && /a/.test('a');
+        })()"#).unwrap(),Value::Bool(true));
     }
 }

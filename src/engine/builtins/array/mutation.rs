@@ -29,6 +29,18 @@ impl MutationKind {
 }
 pub(crate) enum MutationStep {
     Complete(Completion),
+    #[cfg(feature = "stack-vm")]
+    PreparedRead {
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+        resume: MutationResume,
+    },
+    #[cfg(feature = "stack-vm")]
+    PreparedSet {
+        step: Box<crate::engine::object::SetStep>,
+        key: PropertyKey,
+        resume: MutationResume,
+    },
     Read {
         object: ObjectRef,
         key: PropertyKey,
@@ -81,6 +93,25 @@ pub(crate) struct MutationResume {
     cursor: u64,
     result: Value,
 }
+// This enum carries only the selected effect. The source, arguments and result
+// remain in one MutationResume until a real callback requires owned transport.
+enum MutationAction {
+    Complete(Completion),
+    Read(PropertyKey),
+    Number(Value),
+    Copy {
+        to: u64,
+        from: u64,
+        count: u64,
+        backwards: bool,
+    },
+    Set {
+        key: PropertyKey,
+        value: Value,
+    },
+    Delete(PropertyKey),
+}
+
 impl MutationStep {
     pub(crate) fn start(
         runtime: &Runtime,
@@ -140,22 +171,20 @@ impl MutationStep {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-        Ok(Self::Read {
-            object: object.clone(),
-            key: runtime.intern_property_key("length")?,
-            resume: MutationResume {
-                realm,
-                kind,
-                object,
-                arguments,
-                inline_argument: inline.is_some(),
-                phase: Phase::Length,
-                length: 0,
-                new_length: 0,
-                cursor: 0,
-                result: inline.unwrap_or(Value::Undefined),
-            },
-        })
+        let action = MutationAction::Read(runtime.intern_property_key("length")?);
+        MutationResume {
+            realm,
+            kind,
+            object,
+            arguments,
+            inline_argument: inline.is_some(),
+            phase: Phase::Length,
+            length: 0,
+            new_length: 0,
+            cursor: 0,
+            result: inline.unwrap_or(Value::Undefined),
+        }
+        .drive(runtime, action)
     }
 }
 impl MutationResume {
@@ -173,24 +202,21 @@ impl MutationResume {
             self.arguments.get(index)
         }
     }
-    pub(crate) fn resume(
-        mut self,
+    fn resume_once(
+        &mut self,
         runtime: &Runtime,
         result: Completion,
-    ) -> Result<MutationStep, RuntimeError> {
+    ) -> Result<MutationAction, RuntimeError> {
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(MutationStep::Complete(Completion::Throw(value)));
+                return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
         match self.phase {
             Phase::Length => {
                 self.phase = Phase::Number;
-                Ok(MutationStep::Number {
-                    value,
-                    resume: self,
-                })
+                Ok(MutationAction::Number(value))
             }
             Phase::Result => {
                 self.result = value;
@@ -202,11 +228,11 @@ impl MutationResume {
             )),
         }
     }
-    pub(crate) fn number(
-        mut self,
+    fn number_once(
+        &mut self,
         runtime: &Runtime,
         result: NativeConversion<f64>,
-    ) -> Result<MutationStep, RuntimeError> {
+    ) -> Result<MutationAction, RuntimeError> {
         if !matches!(self.phase, Phase::Number) {
             return Err(RuntimeError::Invariant(
                 "Array mutation number phase mismatch",
@@ -215,14 +241,14 @@ impl MutationResume {
         self.length = match result {
             NativeConversion::Value(number) => Runtime::length_from_number(number),
             NativeConversion::Throw(value) => {
-                return Ok(MutationStep::Complete(Completion::Throw(value)));
+                return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
         match self.kind {
             MutationKind::Push(_) => {
                 self.new_length = self.length.saturating_add(self.argument_count() as u64);
                 if self.new_length > (1_u64 << 53) - 1 {
-                    return Ok(MutationStep::Complete(Completion::Throw(
+                    return Ok(MutationAction::Complete(Completion::Throw(
                         runtime.new_native_error(
                             self.realm,
                             NativeErrorKind::Type,
@@ -243,15 +269,11 @@ impl MutationResume {
                     self.new_length
                 };
                 self.phase = Phase::Result;
-                Ok(MutationStep::Read {
-                    object: self.object.clone(),
-                    key: runtime.property_key_for_index(index)?,
-                    resume: self,
-                })
+                Ok(MutationAction::Read(runtime.property_key_for_index(index)?))
             }
         }
     }
-    fn copy_next(mut self, runtime: &Runtime) -> Result<MutationStep, RuntimeError> {
+    fn copy_next(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
         let (to, from, count, backwards) = match self.kind {
             MutationKind::Push(ArrayPushKind::Unshift) if self.argument_count() != 0 => {
                 (self.argument_count() as u64, 0, self.length, true)
@@ -260,41 +282,35 @@ impl MutationResume {
             _ => return self.copied(runtime),
         };
         self.phase = Phase::Copy;
-        Ok(MutationStep::Copy {
-            object: self.object.clone(),
+        Ok(MutationAction::Copy {
             to,
             from,
             count,
             backwards,
-            resume: self,
         })
     }
-    fn copied(mut self, runtime: &Runtime) -> Result<MutationStep, RuntimeError> {
+    fn copied(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
         self.cursor = 0;
         match self.kind {
             MutationKind::Push(_) => self.write_next(runtime),
             MutationKind::Pop(_) => {
                 self.phase = Phase::DeleteLast;
-                Ok(MutationStep::Delete {
-                    object: self.object.clone(),
-                    key: runtime.property_key_for_index(self.new_length)?,
-                    resume: self,
-                })
+                Ok(MutationAction::Delete(
+                    runtime.property_key_for_index(self.new_length)?,
+                ))
             }
         }
     }
-    fn write_next(mut self, runtime: &Runtime) -> Result<MutationStep, RuntimeError> {
+    fn write_next(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
         if let Some(value) = self.argument(self.cursor as usize).cloned() {
             let from = match self.kind {
                 MutationKind::Push(ArrayPushKind::Unshift) if self.argument_count() != 0 => 0,
                 _ => self.length,
             };
             self.phase = Phase::Write;
-            return Ok(MutationStep::Set {
-                object: self.object.clone(),
+            return Ok(MutationAction::Set {
                 key: runtime.property_key_for_index(from + self.cursor)?,
                 value,
-                resume: self,
             });
         }
         let redundant = matches!(self.kind, MutationKind::Push(ArrayPushKind::Push))
@@ -306,38 +322,36 @@ impl MutationResume {
             self.write_length(runtime)
         }
     }
-    fn write_length(mut self, runtime: &Runtime) -> Result<MutationStep, RuntimeError> {
+    fn write_length(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
         self.phase = Phase::LengthWrite;
-        Ok(MutationStep::Set {
-            object: self.object.clone(),
+        Ok(MutationAction::Set {
             key: runtime.intern_property_key("length")?,
             value: Value::number(self.new_length as f64),
-            resume: self,
         })
     }
-    fn complete(self) -> Result<MutationStep, RuntimeError> {
-        Ok(MutationStep::Complete(Completion::Return(
+    fn complete(&mut self) -> Result<MutationAction, RuntimeError> {
+        Ok(MutationAction::Complete(Completion::Return(
             match self.kind {
                 MutationKind::Push(_) => Value::number(self.new_length as f64),
-                MutationKind::Pop(_) => self.result,
+                MutationKind::Pop(_) => std::mem::replace(&mut self.result, Value::Undefined),
             },
         )))
     }
-    pub(crate) fn boolean(
-        self,
+    fn boolean_once(
+        &mut self,
         runtime: &Runtime,
         result: NativeConversion<bool>,
-    ) -> Result<MutationStep, RuntimeError> {
+    ) -> Result<MutationAction, RuntimeError> {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(MutationStep::Complete(Completion::Throw(value)));
+                return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
         match self.phase {
             Phase::DeleteLast => {
                 if !value {
-                    return Ok(MutationStep::Complete(Completion::Throw(
+                    return Ok(MutationAction::Complete(Completion::Throw(
                         runtime.new_native_error(
                             self.realm,
                             NativeErrorKind::Type,
@@ -352,14 +366,14 @@ impl MutationResume {
             )),
         }
     }
-    pub(crate) fn set(
-        mut self,
+    fn set_once(
+        &mut self,
         runtime: &Runtime,
         key: PropertyKey,
         result: NativeConversion<InternalSetResult>,
-    ) -> Result<MutationStep, RuntimeError> {
+    ) -> Result<MutationAction, RuntimeError> {
         if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
-            return Ok(MutationStep::Complete(Completion::Throw(value)));
+            return Ok(MutationAction::Complete(Completion::Throw(value)));
         }
         match self.phase {
             Phase::Write => {
@@ -371,6 +385,194 @@ impl MutationResume {
         }
     }
 }
+impl MutationResume {
+    pub(crate) fn resume(
+        mut self,
+        runtime: &Runtime,
+        reply: Completion,
+    ) -> Result<MutationStep, RuntimeError> {
+        let action = self.resume_once(runtime, reply)?;
+        self.drive(runtime, action)
+    }
+    pub(crate) fn number(
+        mut self,
+        runtime: &Runtime,
+        reply: NativeConversion<f64>,
+    ) -> Result<MutationStep, RuntimeError> {
+        let action = self.number_once(runtime, reply)?;
+        self.drive(runtime, action)
+    }
+    pub(crate) fn boolean(
+        mut self,
+        runtime: &Runtime,
+        reply: NativeConversion<bool>,
+    ) -> Result<MutationStep, RuntimeError> {
+        let action = self.boolean_once(runtime, reply)?;
+        self.drive(runtime, action)
+    }
+    pub(crate) fn set(
+        mut self,
+        runtime: &Runtime,
+        key: PropertyKey,
+        reply: NativeConversion<InternalSetResult>,
+    ) -> Result<MutationStep, RuntimeError> {
+        let action = self.set_once(runtime, key, reply)?;
+        self.drive(runtime, action)
+    }
+    fn drive(
+        mut self,
+        runtime: &Runtime,
+        mut action: MutationAction,
+    ) -> Result<MutationStep, RuntimeError> {
+        loop {
+            #[cfg(feature = "stack-vm")]
+            {
+                use crate::engine::object::{OrdinaryRead, SetStep};
+                use crate::engine::value::conversion::number::NumberStep;
+                action = match action {
+                    MutationAction::Read(key) => {
+                        let receiver = Value::Object(self.object.clone());
+                        match runtime.prepare_ordinary_read_borrowed(
+                            &self.object,
+                            &key,
+                            &receiver,
+                        )? {
+                            OrdinaryRead::Complete(value) => self.resume_once(
+                                runtime,
+                                Completion::Return(value.unwrap_or(Value::Undefined)),
+                            )?,
+                            read => {
+                                return Ok(MutationStep::PreparedRead {
+                                    read,
+                                    key,
+                                    resume: self,
+                                });
+                            }
+                        }
+                    }
+                    MutationAction::Number(value) if !matches!(value, Value::Object(_)) => {
+                        let NumberStep::Complete(reply) =
+                            NumberStep::start(runtime, self.realm, value)?
+                        else {
+                            return Err(RuntimeError::Invariant(
+                                "primitive mutation number suspended",
+                            ));
+                        };
+                        self.number_once(runtime, reply)?
+                    }
+                    MutationAction::Set { key, value } => {
+                        let mut pending = None;
+                        let selected = SetStep::start_receiver_into(
+                            runtime,
+                            self.realm,
+                            &key,
+                            value,
+                            Value::Object(self.object.clone()),
+                            |step| pending = Some(step),
+                        )?;
+                        let step = match selected {
+                            Some(action) => SetStep::Complete(action),
+                            None => pending
+                                .ok_or(RuntimeError::Invariant(
+                                    "mutation Set lost selected effect",
+                                ))?
+                                .advance_without_callback(runtime)?,
+                        };
+                        match step {
+                            SetStep::Complete(action)
+                                if !matches!(
+                                    action,
+                                    crate::engine::object::operations::PropertySetAction::Call { .. }
+                                ) =>
+                            {
+                                self.set_once(runtime, key, local_set_result(action)?)?
+                            }
+                            step => {
+                                return Ok(MutationStep::PreparedSet {
+                                    step: Box::new(step),
+                                    key,
+                                    resume: self,
+                                });
+                            }
+                        }
+                    }
+                    MutationAction::Delete(key) if !runtime.is_proxy_object(&self.object)? => {
+                        let reply =
+                            runtime.internal_delete_property(self.realm, &self.object, &key)?;
+                        self.boolean_once(runtime, reply)?
+                    }
+                    action => return Ok(self.wait(action)),
+                };
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "array_mutation_local_stage",
+                );
+            }
+            #[cfg(not(feature = "stack-vm"))]
+            return Ok(self.wait(action));
+        }
+    }
+    fn wait(self, action: MutationAction) -> MutationStep {
+        match action {
+            MutationAction::Complete(result) => MutationStep::Complete(result),
+            MutationAction::Read(key) => MutationStep::Read {
+                object: self.object.clone(),
+                key,
+                resume: self,
+            },
+            MutationAction::Number(value) => MutationStep::Number {
+                value,
+                resume: self,
+            },
+            MutationAction::Copy {
+                to,
+                from,
+                count,
+                backwards,
+            } => MutationStep::Copy {
+                object: self.object.clone(),
+                to,
+                from,
+                count,
+                backwards,
+                resume: self,
+            },
+            MutationAction::Set { key, value } => MutationStep::Set {
+                object: self.object.clone(),
+                key,
+                value,
+                resume: self,
+            },
+            MutationAction::Delete(key) => MutationStep::Delete {
+                object: self.object.clone(),
+                key,
+                resume: self,
+            },
+        }
+    }
+}
+
+#[cfg(feature = "stack-vm")]
+fn local_set_result(
+    action: crate::engine::object::operations::PropertySetAction,
+) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
+    use crate::engine::object::operations::PropertySetAction;
+    Ok(match action {
+        PropertySetAction::Complete => NativeConversion::Value(InternalSetResult::Accepted),
+        PropertySetAction::Rejected(reason) => {
+            NativeConversion::Value(InternalSetResult::Rejected(reason))
+        }
+        PropertySetAction::RejectedProxyTrap => {
+            NativeConversion::Value(InternalSetResult::RejectedProxyTrap)
+        }
+        PropertySetAction::Throw(value) => NativeConversion::Throw(value),
+        PropertySetAction::Call { .. } => {
+            return Err(RuntimeError::Invariant(
+                "mutation completed before setter returned",
+            ));
+        }
+    })
+}
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
@@ -379,6 +581,45 @@ pub(crate) fn finish(
     loop {
         step = match step {
             MutationStep::Complete(result) => return Ok(result),
+            #[cfg(feature = "stack-vm")]
+            MutationStep::PreparedRead { read, key, resume } => {
+                let reply = match runtime.finish_prepared_read(realm, &key, read)? {
+                    NativeConversion::Value(value) => {
+                        Completion::Return(value.unwrap_or(Value::Undefined))
+                    }
+                    NativeConversion::Throw(value) => Completion::Throw(value),
+                };
+                resume.resume(runtime, reply)?
+            }
+            #[cfg(feature = "stack-vm")]
+            MutationStep::PreparedSet { step, key, resume } => {
+                use crate::engine::object::{SetStep, operations::PropertySetAction};
+                let mut step = *step;
+                let result = loop {
+                    match step {
+                        SetStep::Complete(PropertySetAction::Call {
+                            setter,
+                            receiver,
+                            argument,
+                        }) => {
+                            break match runtime.call_internal(
+                                realm,
+                                &setter,
+                                receiver,
+                                &[argument],
+                            )? {
+                                Completion::Return(_) => {
+                                    NativeConversion::Value(InternalSetResult::Accepted)
+                                }
+                                Completion::Throw(value) => NativeConversion::Throw(value),
+                            };
+                        }
+                        SetStep::Complete(action) => break local_set_result(action)?,
+                        request => step = request.finish_sync(runtime)?,
+                    }
+                };
+                resume.set(runtime, key, result)?
+            }
             MutationStep::Read {
                 object,
                 key,
@@ -439,12 +680,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_mutation_keeps_selected_setter_and_proxy_once() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let trace='', stored;
+            const proto={set 0(value){trace+='s';stored=value;}};
+            const target=Object.create(proto);target.length=0;
+            Object.defineProperty(target,'length',{get(){trace+='g';return 0;},set(value){trace+='l'+value;},configurable:true});
+            if(Array.prototype.push.call(target,7)!==1 || stored!==7 || trace!=='gsl1')return false;
+            trace='';const data={length:0};
+            const proxy=new Proxy(data,{get(o,k,r){if(k==='length')trace+='g';return Reflect.get(o,k,r);},set(o,k,v,r){trace+='s'+k;return Reflect.set(o,k,v,r);}});
+            if(Array.prototype.push.call(proxy,8)!==1 || trace!=='gs0slength' || data[0]!==8)return false;
+            trace=''; const pop=Object.create({get 1(){trace+='r';return 9;}});
+            Object.defineProperty(pop,'length',{get(){trace+='g';return 2;},set(v){trace+='l'+v;}});
+            return Array.prototype.pop.call(pop)===9 && trace==='grl1';
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn local_mutation_keeps_partial_effects_on_rejected_length_or_delete() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            const a=[1,2];Object.defineProperty(a,'1',{configurable:false});
+            let rejected=false;try{a.pop();}catch(e){rejected=e instanceof TypeError;}
+            if(!rejected || a.length!==2 || a[1]!==2)return false;
+            const target={length:0};Object.defineProperty(target,'length',{writable:false});
+            rejected=false;try{Array.prototype.push.call(target,3);}catch(e){rejected=e instanceof TypeError;}
+            if(!rejected || target[0]!==3 || target.length!==0)return false;
+            const b=[1];Object.defineProperty(b,'length',{writable:false});
+            rejected=false;try{b.push(4);}catch(e){rejected=e instanceof TypeError;}
+            return rejected && b.length===1 && !(1 in b);
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
     fn push_inline_argument_uses_actual_count_and_retains_immediate_payload() {
         let runtime = Runtime::new();
         let context = runtime.new_context();
-        let invocation = NativeInvocation::Call {
-            this_value: Value::Object(runtime.new_array(context.realm).unwrap()),
-        };
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         let profile = crate::engine::api::profiling::CostProfile::start();
         for value in [
@@ -454,47 +728,53 @@ mod tests {
             Value::Int(42),
             Value::Float(-0.0),
         ] {
+            let array = runtime.new_array(context.realm).unwrap();
+            let invocation = NativeInvocation::Call {
+                this_value: Value::Object(array.clone()),
+            };
             let arguments = NativeArguments {
                 actual_arg_count: 1,
                 readable: vec![value.clone(), Value::Undefined],
             };
-            let MutationStep::Read { resume, .. } = MutationStep::start(
+            let step = MutationStep::start(
                 &runtime,
                 context.realm,
                 MutationKind::Push(ArrayPushKind::Push),
                 &invocation,
                 &arguments,
             )
-            .unwrap() else {
-                panic!("expected length read");
+            .unwrap();
+            let result = finish(&runtime, context.realm, step).unwrap();
+            assert!(matches!(result, Completion::Return(Value::Int(1))));
+            let key = runtime.property_key_for_index(0).unwrap();
+            let Completion::Return(actual) = runtime
+                .get_property_in_realm(context.realm, &array, &key)
+                .unwrap()
+            else {
+                panic!("element read threw")
             };
-            assert!(resume.inline_argument);
-            assert_eq!(resume.arguments.capacity(), 0);
-            assert_eq!(resume.argument_count(), 1);
-            assert!(
-                resume
-                    .argument(0)
-                    .unwrap()
-                    .same_quickjs_representation(&value)
-            );
-            assert!(resume.argument(1).is_none());
+            assert!(actual.same_quickjs_representation(&value));
         }
+        let array = runtime.new_array(context.realm).unwrap();
+        let invocation = NativeInvocation::Call {
+            this_value: Value::Object(array),
+        };
         let arguments = NativeArguments {
             actual_arg_count: 0,
             readable: vec![Value::Undefined],
         };
-        let MutationStep::Read { resume, .. } = MutationStep::start(
+        let step = MutationStep::start(
             &runtime,
             context.realm,
             MutationKind::Push(ArrayPushKind::Push),
             &invocation,
             &arguments,
         )
-        .unwrap() else {
-            panic!("expected length read");
-        };
-        assert!(!resume.inline_argument);
-        assert_eq!(resume.argument_count(), 0);
+        .unwrap();
+        assert!(matches!(
+            finish(&runtime, context.realm, step).unwrap(),
+            Completion::Return(Value::Int(0))
+        ));
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         assert_eq!(
             profile
@@ -503,7 +783,7 @@ mod tests {
                 .get("array_mutation_inline_argument")
                 .copied()
                 .unwrap_or(0),
-            5,
+            5
         );
     }
 

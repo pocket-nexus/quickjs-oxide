@@ -195,6 +195,52 @@ pub(super) fn operation(
                     "ForOfNext offset does not reach its iterator record",
                 ));
             }
+            if !enabled {
+                return finish_next(execution, id, record_base, Value::Undefined, true, None);
+            }
+            // The record already owns receiver and captured method. Classify
+            // before building a general iterator operation or its waiting box.
+            let next = execution.slots.peek(&frame.window, offset)?;
+            let metadata = if let Value::Object(method) = next {
+                if method.belongs_to(runtime) {
+                    let state = runtime.0.state.borrow();
+                    match &state
+                        .heap
+                        .object(method.object_id())
+                        .map_err(|error| runtime_error_to_vm_error(error.into()))?
+                        .payload
+                    {
+                        ObjectPayload::NativeFunction { data, .. }
+                            if data.target == NativeFunctionId::ArrayIteratorNext =>
+                        {
+                            Some(())
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if metadata.is_some() {
+                let callable = callable(runtime, next.clone(), "not a function")?;
+                let (_, defining_realm, min_readable_args) = runtime
+                    .direct_native_callable_metadata(&callable)
+                    .map_err(runtime_error_to_vm_error)?
+                    .ok_or_else(|| Error::internal("Array-next lost native metadata"))?;
+                let iterator = execution.slots.peek(&frame.window, offset + 1)?.clone();
+                return super::proxy_get_driver::start_array_next_without_pending(
+                    runtime,
+                    execution,
+                    id,
+                    record_base,
+                    callable,
+                    defining_realm,
+                    min_readable_args,
+                    iterator,
+                );
+            }
             let mut pending = PendingIterator::new(frame, id, Mode::Next { record_base })?;
             pending.iterator = execution.slots.peek(&frame.window, offset + 1)?.clone();
             pending.next = execution.slots.peek(&frame.window, offset)?.clone();
@@ -366,15 +412,14 @@ pub(super) fn finish(
             }
         }
         Mode::Next { record_base } => {
-            if pending.done || pending.abrupt.is_some() {
-                regions::disable(frame, &mut execution.slots, record_base)?;
-            }
-            if pending.abrupt.is_none() {
-                execution.slots.push(&mut frame.window, pending.yielded)?;
-                execution
-                    .slots
-                    .push(&mut frame.window, Value::Bool(pending.done))?;
-            }
+            apply_next(
+                frame,
+                &mut execution.slots,
+                record_base,
+                pending.yielded,
+                pending.done,
+                pending.abrupt.is_some(),
+            )?;
         }
         Mode::Close { .. } => {}
     }
@@ -388,6 +433,69 @@ pub(super) fn finish(
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
+}
+
+fn apply_next(
+    frame: &mut super::frame::Frame,
+    slots: &mut super::stack::SlotStore,
+    record_base: usize,
+    value: Value,
+    done: bool,
+    abrupt: bool,
+) -> Result<(), Error> {
+    if done || abrupt {
+        regions::disable(frame, slots, record_base)?;
+    }
+    if !abrupt {
+        let mut window = slots.run_window(&mut frame.window)?;
+        window.push(value)?;
+        window.push(Value::Bool(done))?;
+    }
+    Ok(())
+}
+
+pub(super) fn finish_next(
+    execution: &mut RunningExecution,
+    id: FrameId,
+    record_base: usize,
+    value: Value,
+    done: bool,
+    abrupt: Option<Value>,
+) -> Result<CallStep, Error> {
+    let frame = execution.frames.current_mut(id)?;
+    #[cfg(feature = "profiling")]
+    let depth = execution.slots.depth(&frame.window);
+    apply_next(
+        frame,
+        &mut execution.slots,
+        record_base,
+        value,
+        done,
+        abrupt.is_some(),
+    )?;
+    if let Some(value) = abrupt {
+        return Ok(CallStep::Complete(Completion::Throw(value)));
+    }
+    frame.resume_pc = frame
+        .fault_pc
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("iterator resume PC overflow"))?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_instruction(depth);
+    Ok(CallStep::Entered)
+}
+
+pub(super) fn next_wait(
+    execution: &mut RunningExecution,
+    id: FrameId,
+    record_base: usize,
+) -> Result<Box<PendingIterator>, Error> {
+    let frame = execution.frames.current_mut(id)?;
+    let mut pending = PendingIterator::new(frame, id, Mode::Next { record_base })?;
+    pending.stage = Stage::Next;
+    // The live stack record and the native activation retain the receiver and
+    // method. The suspended finish only consumes a raw value/done reply.
+    Ok(pending)
 }
 
 #[inline(never)]
@@ -789,4 +897,66 @@ fn callable(runtime: &Runtime, value: Value, message: &str) -> Result<CallableRe
         }
     }
     Err(Error::new(ErrorKind::Type, message))
+}
+
+#[cfg(test)]
+mod resident_next_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn synchronous_array_next_keeps_live_cursor_and_captured_method() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            const a=[1,2,3], it=a.values(); let nested=0;
+            Object.defineProperty(a,'0',{get(){nested=it.next().value;return 1;}});
+            const iterable={[Symbol.iterator](){return it;}};
+            let result='';
+            for(const x of iterable){result+=x;if(x===1)it.next=()=>({done:true});}
+            const b=[4], seen=[];
+            for(const x of b){seen.push(x);if(x===4)b.push(5);}
+            return result==='13' && nested===2 && seen.join(',')==='4,5';
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn selected_array_next_getter_is_not_replayed_and_close_policy_is_kept() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let reads=0, closes=0; const marker={}, a=[1], it=a.values();
+            Object.defineProperty(a,'0',{get(){reads++;throw marker;}});
+            it.return=()=>{closes++;return {};};
+            let caught=false;
+            try{for(const x of {[Symbol.iterator](){return it;}}){}}catch(e){caught=e===marker;}
+            if(!caught || reads!==1 || closes!==0)return false;
+            const b=[2], jt=b.values();jt.return=()=>{closes++;return {};};
+            try{for(const x of {[Symbol.iterator](){return jt;}}){throw marker;}}catch(e){if(e!==marker)return false;}
+            const bad={next:Object.getPrototypeOf([].values()).next,return(){closes++;return {};},[Symbol.iterator](){return this;}};
+            let brand=false;try{for(const x of bad){}}catch(e){brand=e instanceof TypeError;}
+            return closes===1 && brand;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_destructuring_keeps_elision_rest_and_early_close() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let count=0, closed=0;
+            function make(){let n=0;return {[Symbol.iterator](){return this;},next(){count++;return {value:++n,done:n>4};},return(){closed++;return {};}};}
+            let a,rest; [a,,...rest]=make();
+            if(a!==1 || rest.join(',')!=='3,4' || count!==5 || closed!==0)return false;
+            [a]=make();
+            let x,y,tail;[x,,y,...tail]=[7];
+            return a===1 && closed===1 && x===7 && y===undefined && tail.length===0;
+        })()"#).unwrap(), Value::Bool(true));
+    }
 }

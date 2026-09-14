@@ -314,6 +314,12 @@ impl From<crate::engine::builtins::ObjectCopyStep> for Step {
         use crate::engine::builtins::ObjectCopyStep as T;
         match step {
             T::Complete(result) => Self::Complete(result),
+            #[cfg(feature = "stack-vm")]
+            T::PreparedRead(prepared) => Self::PreparedRead {
+                read: prepared.read,
+                key: prepared.key,
+                resume: Resume::ObjectCopy(prepared.resume),
+            },
             T::Read {
                 object,
                 key,

@@ -5,7 +5,7 @@ use crate::engine::{
         function::metadata::FunctionKind, rooted::FunctionBytecodeRef,
         runtime::PublishedFunctionSnapshot,
     },
-    heap::ObjectPayload,
+    heap::{FunctionBytecodeId, ObjectPayload, VarRefId},
     object::ObjectRef,
     value::Value,
     vm::{closure::ClosureSlots, frames::ActiveFrameGuard},
@@ -17,46 +17,78 @@ pub(in crate::engine::vm) struct OrdinaryCall {
     executable: PublishedFunctionSnapshot,
     closure: ClosureSlots,
 }
+// Selection may read metadata but does not publish a frame or consume operands.
+// Any malformed metadata error is returned only after the original domain check.
+pub(in crate::engine::vm) struct OrdinarySelection<'a> {
+    function: &'a ObjectRef,
+    bytecode: FunctionBytecodeId,
+    closure: std::cell::Ref<'a, std::rc::Rc<[VarRefId]>>,
+}
 impl OrdinaryCall {
-    pub(in crate::engine::vm) fn authenticate(
-        runtime: &Runtime,
-        value: &Value,
-    ) -> Result<Option<Self>, RuntimeError> {
+    pub(in crate::engine::vm) fn select<'a>(
+        runtime: &'a Runtime,
+        value: &'a Value,
+    ) -> Result<Option<OrdinarySelection<'a>>, RuntimeError> {
         let Value::Object(function) = value else {
             return Ok(None);
         };
         if !function.belongs_to(runtime) {
             return Ok(None);
         }
-        let (bytecode, closure) = {
-            let state = runtime.0.state.borrow();
-            let object = state.heap.object(function.object_id())?;
-            let ObjectPayload::BytecodeFunction {
-                bytecode,
-                closure_slots,
-                ..
-            } = &object.payload
-            else {
-                return Ok(None);
-            };
-            let data = state.heap.function_bytecode(*bytecode)?;
-            if data.metadata.function_kind != FunctionKind::Normal {
-                return Ok(None);
+        let mut selected_bytecode = None;
+        let mut failure = None;
+        let closure = std::cell::Ref::filter_map(runtime.0.state.borrow(), |state| {
+            let selected = (|| {
+                let object = state.heap.object(function.object_id())?;
+                let ObjectPayload::BytecodeFunction {
+                    bytecode,
+                    closure_slots,
+                    ..
+                } = &object.payload
+                else {
+                    return Ok(None);
+                };
+                let data = state.heap.function_bytecode(*bytecode)?;
+                if data.metadata.function_kind != FunctionKind::Normal {
+                    return Ok(None);
+                }
+                if closure_slots.len() != usize::from(data.metadata.closure_count) {
+                    return Err(RuntimeError::Invariant(
+                        "function object closure slot count does not match bytecode metadata",
+                    ));
+                }
+                selected_bytecode = Some(*bytecode);
+                Ok(Some(closure_slots))
+            })();
+            match selected {
+                Ok(closure) => closure,
+                Err(error) => {
+                    failure = Some(error);
+                    None
+                }
             }
-            if closure_slots.len() != usize::from(data.metadata.closure_count) {
-                return Err(RuntimeError::Invariant(
-                    "function object closure slot count does not match bytecode metadata",
-                ));
-            }
-            (*bytecode, closure_slots.clone())
-        };
-        let bytecode = FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), bytecode)?;
-        let executable = runtime.snapshot_function_bytecode_owned(bytecode)?;
-        Ok(Some(Self {
-            function: function.clone(),
-            executable,
-            closure: ClosureSlots::shared(function.clone(), closure),
-        }))
+        });
+        match closure {
+            Ok(closure) => Ok(Some(OrdinarySelection {
+                function,
+                bytecode: selected_bytecode
+                    .ok_or(RuntimeError::Invariant("ordinary selection lost bytecode"))?,
+                closure,
+            })),
+            Err(_) => match failure {
+                Some(error) => Err(error),
+                None => Ok(None),
+            },
+        }
+    }
+    #[cfg(test)]
+    pub(in crate::engine::vm) fn authenticate(
+        runtime: &Runtime,
+        value: &Value,
+    ) -> Result<Option<Self>, RuntimeError> {
+        Self::select(runtime, value)?
+            .map(|selected| selected.authenticate(runtime))
+            .transpose()
     }
     pub(in crate::engine::vm) fn function(&self) -> &ObjectRef {
         &self.function
@@ -154,5 +186,25 @@ impl OrdinaryCall {
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
         Ok(())
+    }
+}
+
+impl OrdinarySelection<'_> {
+    pub(in crate::engine::vm) fn authenticate(
+        self,
+        runtime: &Runtime,
+    ) -> Result<OrdinaryCall, RuntimeError> {
+        // Domain/slot validation has succeeded. Only now promote the selected
+        // shared environment and owner, after ending the read-only heap borrow.
+        let closure = std::rc::Rc::clone(&self.closure);
+        drop(self.closure);
+        let function = self.function.clone();
+        let bytecode = FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), self.bytecode)?;
+        let executable = runtime.snapshot_function_bytecode_owned(bytecode)?;
+        Ok(OrdinaryCall {
+            closure: ClosureSlots::shared(function.clone(), closure),
+            function,
+            executable,
+        })
     }
 }

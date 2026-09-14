@@ -5,7 +5,7 @@ use super::{NativeArguments, NativeInvocation, NativeInvokeMode, NativeInvokeOut
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,
-    heap::{ContextId, ObjectPayload},
+    heap::ContextId,
     object::CallableRef,
     value::Value,
     vm::{Completion, frames::ActiveFrameGuard},
@@ -76,6 +76,8 @@ impl Runtime {
             NativeArgumentInput::Borrowed(arguments),
             mode,
             false,
+            #[cfg(feature = "stack-vm")]
+            None,
         )
     }
 
@@ -101,6 +103,8 @@ impl Runtime {
             NativeArgumentInput::Owned(arguments),
             mode,
             false,
+            #[cfg(feature = "stack-vm")]
+            None,
         )
     }
 
@@ -125,6 +129,81 @@ impl Runtime {
             NativeArgumentInput::Owned(arguments),
             mode,
             true,
+            None,
+        )
+    }
+
+    /// Array iterator-next has no JavaScript arguments. Keep the same owning
+    /// activation/publication ABI without entering general argv construction.
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn prepare_array_next_owned(
+        &self,
+        callable: CallableRef,
+        realm: ContextId,
+        min_readable_args: u8,
+        receiver: Value,
+    ) -> Result<PreparedNativeCall, RuntimeError> {
+        let target = NativeFunctionId::ArrayIteratorNext;
+        let mode = NativeInvokeMode::IteratorNextRaw;
+        let invocation = NativeInvocation::Call {
+            this_value: receiver,
+        };
+        if min_readable_args != 0 {
+            return self.prepare_native_continuation_owned(
+                callable,
+                realm,
+                target,
+                min_readable_args,
+                invocation,
+                Vec::new(),
+                mode,
+            );
+        }
+        let publication = super::super::frames::NativePublicationWitness::validate(
+            self, &callable, realm, target, 0, mode,
+        )?;
+        let active_frame = publication.publish(0, 0, true)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
+        Ok(PreparedNativeCall {
+            activation: NativeActivation {
+                callable,
+                realm,
+                target,
+                mode,
+                arguments: NativeArguments {
+                    actual_arg_count: 0,
+                    readable: Vec::new(),
+                },
+                active_frame,
+            },
+            invocation,
+        })
+    }
+
+    #[cfg(feature = "stack-vm")]
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn prepare_native_continuation_selected(
+        &self,
+        callable: CallableRef,
+        realm: ContextId,
+        target: NativeFunctionId,
+        min_readable_args: u8,
+        invocation: NativeInvocation,
+        arguments: Vec<Value>,
+        mode: NativeInvokeMode,
+        selected: Option<super::super::frames::NativeClassification>,
+    ) -> Result<PreparedNativeCall, RuntimeError> {
+        self.prepare_native_arguments(
+            NativeCallableInput::Owned(callable),
+            realm,
+            target,
+            min_readable_args,
+            invocation,
+            NativeArgumentInput::Owned(arguments),
+            mode,
+            true,
+            selected,
         )
     }
 
@@ -139,45 +218,40 @@ impl Runtime {
         arguments: NativeArgumentInput<'_>,
         mode: NativeInvokeMode,
         continuation: bool,
+        #[cfg(feature = "stack-vm")] selected: Option<super::super::frames::NativeClassification>,
     ) -> Result<PreparedNativeCall, RuntimeError> {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("native.prepare");
         let callable = callable_input.as_ref();
-        if !callable.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("native callable"));
-        }
-        // The callable root held by the caller owns the native payload and its
-        // defining-realm edge for the whole invocation. Revalidate the
-        // detached snapshot before recording raw identities in the frame.
-        // Class-call and CFunctionData-style internal functions deliberately
-        // execute in `realm`, which is the calling realm rather than the
-        // separately retained defining realm.
-        {
-            let state = self.0.state.borrow();
-            state.heap.context(realm)?;
-            let object = state.heap.object(callable.as_object().object_id())?;
-            let ObjectPayload::NativeFunction { data, .. } = &object.payload else {
-                return Err(RuntimeError::Invariant(
-                    "native invocation target was not a native function",
-                ));
-            };
-            let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
-                "native function lost its defining realm",
-            ))?;
-            if data.target != target
-                || (matches!(mode, NativeInvokeMode::Ordinary)
-                    && !target.uses_calling_realm()
-                    && defining_realm != realm)
-                || data.min_readable_args != min_readable_args
-            {
-                return Err(RuntimeError::Invariant(
-                    "native invocation metadata changed after snapshot",
-                ));
-            }
-            if defining_realm != realm {
-                state.heap.context(defining_realm)?;
-            }
-        }
+        #[cfg(feature = "stack-vm")]
+        let publication = match selected.as_ref() {
+            Some(selected) => super::super::frames::NativePublicationWitness::from_classification(
+                self,
+                callable,
+                realm,
+                target,
+                min_readable_args,
+                mode,
+                selected,
+            )?,
+            None => super::super::frames::NativePublicationWitness::validate(
+                self,
+                callable,
+                realm,
+                target,
+                min_readable_args,
+                mode,
+            )?,
+        };
+        #[cfg(not(feature = "stack-vm"))]
+        let publication = super::super::frames::NativePublicationWitness::validate(
+            self,
+            callable,
+            realm,
+            target,
+            min_readable_args,
+            mode,
+        )?;
 
         let actual_arg_count = match &arguments {
             NativeArgumentInput::Borrowed(values) => values.len(),
@@ -238,42 +312,8 @@ impl Runtime {
             actual_arg_count,
             readable,
         };
-        let active_frame = if continuation {
-            #[cfg(feature = "stack-vm")]
-            {
-                self.push_native_continuation_active_frame(
-                    callable.as_object().clone(),
-                    realm,
-                    target,
-                    actual_arg_count,
-                    available_arg_count,
-                    matches!(mode, NativeInvokeMode::IteratorNextRaw),
-                )?
-            }
-            #[cfg(not(feature = "stack-vm"))]
-            {
-                return Err(RuntimeError::Invariant(
-                    "owned native continuation requires stack VM",
-                ));
-            }
-        } else {
-            match mode {
-                NativeInvokeMode::Ordinary => self.push_native_active_frame(
-                    callable.as_object().clone(),
-                    realm,
-                    target,
-                    actual_arg_count,
-                    available_arg_count,
-                )?,
-                NativeInvokeMode::IteratorNextRaw => self.push_native_iterator_next_active_frame(
-                    callable.as_object().clone(),
-                    realm,
-                    target,
-                    actual_arg_count,
-                    available_arg_count,
-                )?,
-            }
-        };
+        let active_frame =
+            publication.publish(actual_arg_count, available_arg_count, continuation)?;
 
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
@@ -1096,6 +1136,236 @@ mod continuation_publication_tests {
                 .native_continuation
         );
         drop(legacy);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod publication_witness_tests {
+    use super::*;
+    use crate::engine::vm::call::CallableExecution;
+    use crate::engine::vm::frames::{ActiveFrameKind, NativePublicationWitness};
+
+    #[test]
+    fn publication_witness_matches_checked_registration_and_keeps_count_guard() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for source in [
+            "Map.prototype.set",
+            "Math.min",
+            "Reflect.get",
+            "Array.prototype.push",
+        ] {
+            let callable = runtime
+                .callable_from_value(context.eval(source).unwrap())
+                .unwrap();
+            let CallableExecution::Native {
+                target,
+                realm,
+                min_readable_args,
+            } = runtime.bytecode_for_callable(&callable).unwrap()
+            else {
+                panic!("native")
+            };
+            let count = usize::from(min_readable_args);
+            let checked = runtime
+                .push_native_active_frame(callable.as_object().clone(), realm, target, 0, count)
+                .unwrap();
+            let original = *runtime.0.state.borrow().active_frames.last().unwrap();
+            checked.finish().unwrap();
+            let witness = NativePublicationWitness::validate(
+                &runtime,
+                &callable,
+                realm,
+                target,
+                min_readable_args,
+                NativeInvokeMode::Ordinary,
+            )
+            .unwrap();
+            let published = witness.publish(0, count, false).unwrap();
+            let current = *runtime.0.state.borrow().active_frames.last().unwrap();
+            assert_eq!(original.function, current.function);
+            assert_eq!(original.realm, current.realm);
+            assert_eq!(original.native_continuation, current.native_continuation);
+            assert!(
+                matches!(current.kind, ActiveFrameKind::Native { target: actual_target, actual_arg_count: 0, readable_arg_count } if actual_target == target && readable_arg_count == count)
+            );
+            published.finish().unwrap();
+            let token = runtime.0.state.borrow().next_active_frame_token;
+            let witness = NativePublicationWitness::validate(
+                &runtime,
+                &callable,
+                realm,
+                target,
+                min_readable_args,
+                NativeInvokeMode::Ordinary,
+            )
+            .unwrap();
+            assert!(matches!(
+                witness.publish(0, count + 1, false),
+                Err(RuntimeError::Invariant(
+                    "native active frame disagrees with its rooted callable"
+                ))
+            ));
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            assert_eq!(runtime.0.state.borrow().next_active_frame_token, token);
+        }
+    }
+
+    #[test]
+    fn publication_witness_preserves_foreign_realm_metadata_and_token_error_order() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let other_context = runtime.new_context();
+        let callable = runtime
+            .callable_from_value(context.eval("Reflect.get").unwrap())
+            .unwrap();
+        let CallableExecution::Native {
+            target,
+            realm,
+            min_readable_args,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("native")
+        };
+        let foreign = Runtime::new();
+        assert!(matches!(
+            NativePublicationWitness::validate(
+                &foreign,
+                &callable,
+                other_context.realm,
+                target,
+                min_readable_args + 1,
+                NativeInvokeMode::Ordinary
+            ),
+            Err(RuntimeError::WrongRuntime("native callable"))
+        ));
+        let token = runtime.0.state.borrow().next_active_frame_token;
+        for (selected_realm, minimum) in [
+            (other_context.realm, min_readable_args),
+            (realm, min_readable_args + 1),
+        ] {
+            assert!(matches!(
+                NativePublicationWitness::validate(
+                    &runtime,
+                    &callable,
+                    selected_realm,
+                    target,
+                    minimum,
+                    NativeInvokeMode::Ordinary
+                ),
+                Err(RuntimeError::Invariant(
+                    "native invocation metadata changed after snapshot"
+                ))
+            ));
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            assert_eq!(runtime.0.state.borrow().next_active_frame_token, token);
+        }
+        runtime.0.state.borrow_mut().next_active_frame_token = u64::MAX;
+        let result = runtime.prepare_native_invocation(
+            &callable,
+            realm,
+            target,
+            min_readable_args,
+            NativeInvocation::Call {
+                this_value: Value::Undefined,
+            },
+            &[],
+            NativeInvokeMode::Ordinary,
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Invariant(
+                "active-frame token space was exhausted"
+            ))
+        ));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert_eq!(runtime.0.state.borrow().next_active_frame_token, u64::MAX);
+        runtime.0.state.borrow_mut().next_active_frame_token = token;
+    }
+
+    #[test]
+    fn publication_witness_keeps_native_reentry_throw_and_following_result() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for source in [
+            "(function(){var m=new Map(),n=0,o={valueOf(){n++;m.set('x',41);return m.get('x')}};return Math.min(o,99)+n})()",
+            "(function(){var marker={},m=new Map(),n=0;try{Math.min({valueOf(){n++;m.set('x',41);throw marker}},0);return 0}catch(e){return e===marker&&n===1?m.get('x')+1:0}})()",
+            "(function(){var n=0,a={get length(){n++;return 0},set length(v){}};Array.prototype.push.call(a,41);return a[0]+n})()",
+        ] {
+            assert_eq!(context.eval(source).unwrap(), Value::Int(42));
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+}
+
+#[cfg(all(test, feature = "stack-vm"))]
+mod classified_preparation_tests {
+    use super::*;
+    use crate::engine::vm::{call::CallableExecution, frames::NativeClassification};
+
+    #[test]
+    fn selected_native_payload_is_bound_to_its_call_owner() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let callable = runtime
+            .callable_from_value(context.eval("Math.min").unwrap())
+            .unwrap();
+        let CallableExecution::Native {
+            target,
+            realm,
+            min_readable_args,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("native")
+        };
+        let selection = NativeClassification::select(&runtime, &callable)
+            .unwrap()
+            .unwrap();
+        let prepared = runtime
+            .prepare_native_continuation_selected(
+                callable.clone(),
+                realm,
+                target,
+                min_readable_args,
+                NativeInvocation::Call {
+                    this_value: Value::Undefined,
+                },
+                vec![Value::Int(3), Value::Int(2)],
+                NativeInvokeMode::Ordinary,
+                Some(selection),
+            )
+            .unwrap();
+        assert_eq!(prepared.activation.arguments.actual_arg_count, 2);
+        prepared
+            .activation
+            .finish(Ok(NativeInvokeOutcome::Completion(Completion::Return(
+                Value::Int(2),
+            ))))
+            .unwrap();
+        let selection = NativeClassification::select(&runtime, &callable)
+            .unwrap()
+            .unwrap();
+        let other = runtime
+            .callable_from_value(context.eval("Math.max").unwrap())
+            .unwrap();
+        assert!(matches!(
+            runtime.prepare_native_continuation_selected(
+                other,
+                realm,
+                target,
+                min_readable_args,
+                NativeInvocation::Call {
+                    this_value: Value::Undefined
+                },
+                vec![],
+                NativeInvokeMode::Ordinary,
+                Some(selection)
+            ),
+            Err(RuntimeError::Invariant(
+                "native invocation metadata changed after snapshot"
+            ))
+        ));
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

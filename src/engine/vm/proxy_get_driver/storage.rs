@@ -33,9 +33,30 @@ pub(super) struct Buffers {
 #[derive(Default)]
 pub(in crate::engine::vm) struct QueryStorage {
     free: Vec<Buffers>,
+    native_waits: Vec<Vec<super::native::NativeWaitRecord>>,
 }
 
 impl QueryStorage {
+    pub(super) fn take_native_wait(
+        &mut self,
+    ) -> Result<Vec<super::native::NativeWaitRecord>, crate::engine::api::Error> {
+        let mut waiting = self.native_waits.pop().unwrap_or_default();
+        debug_assert!(waiting.is_empty());
+        reserve(&mut waiting, 1, "query.native_wait_payload").map_err(|_| {
+            crate::engine::api::Error::internal("native waiting payload allocation failed")
+        })?;
+        Ok(waiting)
+    }
+
+    pub(super) fn recycle_native_wait(&mut self, waiting: Vec<super::native::NativeWaitRecord>) {
+        debug_assert!(waiting.is_empty());
+        if waiting.is_empty()
+            && reserve(&mut self.native_waits, 1, "query.native_wait_pool").is_ok()
+        {
+            self.native_waits.push(waiting);
+        }
+    }
+
     pub(super) fn has_cached_entry(&self) -> bool {
         !self.free.is_empty()
     }

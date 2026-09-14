@@ -98,6 +98,201 @@ fn apply_into(
     Ok(())
 }
 
+/// Registered synchronous families need no Query identity or waiting buffers.
+/// The caller checked budgets before reaching any body; preparation still owns
+/// padding, metadata validation and the observable native diagnostic frame.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn begin_synchronous(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    realm: crate::engine::heap::ContextId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: Value,
+    arguments: Vec<Value>,
+    kind: crate::engine::builtins::continuation::SynchronousNative,
+    selected: Option<super::super::frames::NativeClassification>,
+) -> Result<Completion, Error> {
+    slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
+    let native_realm = if target.uses_calling_realm() {
+        realm
+    } else {
+        defining_realm
+    };
+    let call = runtime
+        .prepare_native_continuation_selected(
+            callable,
+            native_realm,
+            target,
+            min_readable_args,
+            super::super::call::NativeInvocation::Call {
+                this_value: receiver,
+            },
+            arguments,
+            super::super::call::NativeInvokeMode::Ordinary,
+            selected,
+        )
+        .map_err(runtime_error_to_vm_error)?;
+    let result = (|| {
+        let result = match runtime.adapt_native_invocation_borrowed(
+            target,
+            native_realm,
+            &call.invocation,
+            &call.activation.arguments,
+        )? {
+            super::super::call::NativeInvocationAdaptation::Complete(result) => result,
+            super::super::call::NativeInvocationAdaptation::Invoke(invocation) => kind.start(
+                runtime,
+                native_realm,
+                &invocation,
+                &call.activation.arguments,
+                &call.activation.callable,
+            )?,
+        };
+        Ok(NativeInvokeOutcome::Completion(result))
+    })()
+    .map_err(runtime_error_to_vm_error);
+    #[cfg(feature = "profiling")]
+    {
+        crate::engine::api::profiling::record_owned_execution_event(
+            "native_completed_without_waiting_scope",
+        );
+        crate::engine::api::profiling::record_owned_execution_event("native_synchronous_entry");
+    }
+    identity_completion(finish_result(runtime, slots, call, result)?)
+}
+
+pub(super) struct NativeWaitRecord {
+    pub(super) call: Option<PreparedNativeCall>,
+    pub(super) step: Step,
+}
+
+/// The synchronous ABI contains no generic Step/Resume. Their reusable owning
+/// record is allocated only after the domain selects an actual waiting effect.
+pub(super) enum LocalNativeResult {
+    Complete(Completion),
+    Waiting(Vec<NativeWaitRecord>),
+}
+
+// Keep the generic waiting enum out of begin_local's stack frame. Completed
+// non-migrated domains also avoid allocation; only a true effect owns a record.
+#[inline(never)]
+fn capture_native_step(
+    storage: &mut storage::QueryStorage,
+    step: crate::engine::builtins::continuation::NativeStep,
+    pending: &mut Option<Vec<NativeWaitRecord>>,
+) -> Result<Option<NativeInvokeOutcome>, Error> {
+    let mut step: Step = step.into();
+    if let Some(result) = take_immediate(&mut step) {
+        return Ok(Some(result));
+    }
+    let mut records = storage.take_native_wait()?;
+    records.push(NativeWaitRecord { call: None, step });
+    *pending = Some(records);
+    Ok(None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn begin_local(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    storage: &mut storage::QueryStorage,
+    realm: crate::engine::heap::ContextId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: Value,
+    arguments: Vec<Value>,
+    kind: crate::engine::builtins::continuation::NativeOperation,
+    selected: Option<super::super::frames::NativeClassification>,
+) -> Result<LocalNativeResult, Error> {
+    slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
+    let native_realm = if target.uses_calling_realm() {
+        realm
+    } else {
+        defining_realm
+    };
+    let call = runtime
+        .prepare_native_continuation_selected(
+            callable,
+            native_realm,
+            target,
+            min_readable_args,
+            super::super::call::NativeInvocation::Call {
+                this_value: receiver,
+            },
+            arguments,
+            super::super::call::NativeInvokeMode::Ordinary,
+            selected,
+        )
+        .map_err(runtime_error_to_vm_error)?;
+    let mut pending = None;
+    let mut pending_error = None;
+    let mut transported_completion = None;
+    let started = (|| match runtime
+        .adapt_native_invocation_borrowed(
+            target,
+            native_realm,
+            &call.invocation,
+            &call.activation.arguments,
+        )
+        .map_err(runtime_error_to_vm_error)?
+    {
+        super::super::call::NativeInvocationAdaptation::Complete(result) => {
+            Ok(Some(NativeInvokeOutcome::Completion(result)))
+        }
+        super::super::call::NativeInvocationAdaptation::Invoke(invocation) => kind
+            .start_into(
+                runtime,
+                native_realm,
+                &invocation,
+                &call.activation.arguments,
+                &call.activation.callable,
+                |step| match capture_native_step(storage, step, &mut pending) {
+                    Ok(result) => transported_completion = result,
+                    Err(error) => pending_error = Some(error),
+                },
+            )
+            .map_err(runtime_error_to_vm_error),
+    })();
+    let immediate = match started {
+        Ok(Some(result)) => Some(Ok(result)),
+        Err(error) => Some(Err(error)),
+        Ok(None) => match pending_error {
+            Some(error) => Some(Err(error)),
+            None => match transported_completion {
+                Some(result) => Some(Ok(result)),
+                None if pending.is_some() => None,
+                None => Some(Err(Error::internal(
+                    "native start omitted its waiting step",
+                ))),
+            },
+        },
+    };
+    if let Some(result) = immediate {
+        let result = finish_result(runtime, slots, call, result).and_then(identity_completion);
+        if let Some(mut records) = pending {
+            records.clear();
+            storage.recycle_native_wait(records);
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "native_completed_without_waiting_scope",
+        );
+        return result.map(LocalNativeResult::Complete);
+    }
+    let mut records = pending.expect("native waiting output");
+    records[0].call = Some(call);
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "native_activation_transported_to_wait",
+    );
+    Ok(LocalNativeResult::Waiting(records))
+}
+
 // Non-migrated domains can still adapt an immediate result through NativeStep.
 // Take only that small payload, leaving the wide output enum in its destination.
 fn take_immediate(output: &mut Step) -> Option<NativeInvokeOutcome> {
@@ -128,6 +323,39 @@ pub(super) fn start_into(
     arguments: Vec<Value>,
     mut resume: Resume,
     output: &mut Step,
+) -> Result<(), Error> {
+    start_selected_into(
+        runtime,
+        execution,
+        query,
+        callable,
+        target,
+        defining_realm,
+        min_readable_args,
+        mode,
+        invocation,
+        arguments,
+        resume,
+        output,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_selected_into(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    query: &mut Query,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    mode: super::super::call::NativeInvokeMode,
+    invocation: super::super::call::NativeInvocation,
+    arguments: Vec<Value>,
+    mut resume: Resume,
+    output: &mut Step,
+    selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<(), Error> {
     let realm = query.realm;
     let Some(kind) = crate::engine::builtins::continuation::NativeOperation::for_target(target)
@@ -173,7 +401,7 @@ pub(super) fn start_into(
     )
     .map_err(|_| Error::internal("native parent storage allocation failed"))?;
     let mut waiting_call = None;
-    let immediate = begin_into(
+    let immediate = begin_selected_into(
         runtime,
         &mut execution.slots,
         realm,
@@ -187,6 +415,7 @@ pub(super) fn start_into(
         kind,
         output,
         &mut waiting_call,
+        selected,
     )?;
     if let Some(result) = immediate {
         return apply_into(runtime, &mut resume, result, output);
@@ -217,6 +446,41 @@ pub(super) fn begin_into(
     output: &mut Step,
     waiting_call: &mut Option<PreparedNativeCall>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
+    begin_selected_into(
+        runtime,
+        slots,
+        realm,
+        callable,
+        target,
+        defining_realm,
+        min_readable_args,
+        mode,
+        invocation,
+        arguments,
+        kind,
+        output,
+        waiting_call,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn begin_selected_into(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    realm: crate::engine::heap::ContextId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    mode: super::super::call::NativeInvokeMode,
+    invocation: super::super::call::NativeInvocation,
+    arguments: Vec<Value>,
+    kind: crate::engine::builtins::continuation::NativeOperation,
+    output: &mut Step,
+    waiting_call: &mut Option<PreparedNativeCall>,
+    selected: Option<super::super::frames::NativeClassification>,
+) -> Result<Option<NativeInvokeOutcome>, Error> {
     debug_assert!(waiting_call.is_none());
     slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
     let native_realm = if matches!(mode, super::super::call::NativeInvokeMode::IteratorNextRaw)
@@ -227,7 +491,7 @@ pub(super) fn begin_into(
         defining_realm
     };
     let call = runtime
-        .prepare_native_continuation_owned(
+        .prepare_native_continuation_selected(
             callable,
             native_realm,
             target,
@@ -235,6 +499,7 @@ pub(super) fn begin_into(
             invocation,
             arguments,
             mode,
+            selected,
         )
         .map_err(runtime_error_to_vm_error)?;
     let mut waiting_written = false;
@@ -306,6 +571,70 @@ pub(super) fn begin_into(
     crate::engine::api::profiling::record_owned_execution_event(
         "native_activation_transported_to_wait",
     );
+    Ok(None)
+}
+
+/// Already selected Array-next, before a PendingIterator/Query is installed.
+/// The caller performs logical/host budget checks before entering this function.
+/// Only a real selected wait transfers the native activation to its output.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compact_array_next_into(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    realm: crate::engine::heap::ContextId,
+    callable: crate::engine::object::CallableRef,
+    _defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: Value,
+    output: &mut Step,
+    waiting_call: &mut Option<PreparedNativeCall>,
+) -> Result<Option<NativeInvokeOutcome>, Error> {
+    debug_assert!(waiting_call.is_none());
+    slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
+    let call = runtime
+        .prepare_array_next_owned(callable, realm, min_readable_args, receiver)
+        .map_err(runtime_error_to_vm_error)?;
+    let mut waiting_written = false;
+    let started = (|| match runtime.adapt_native_invocation_borrowed(
+        call.activation.target,
+        realm,
+        &call.invocation,
+        &call.activation.arguments,
+    )? {
+        super::super::call::NativeInvocationAdaptation::Complete(result) => {
+            Ok(Some(NativeInvokeOutcome::Completion(result)))
+        }
+        super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
+            crate::engine::builtins::continuation::start_array_next_into(
+                runtime,
+                realm,
+                &invocation,
+                |step| {
+                    *output = step.into();
+                    waiting_written = true;
+                },
+            )
+        }
+    })()
+    .map_err(runtime_error_to_vm_error);
+    let immediate = match started {
+        Ok(Some(result)) => Some(Ok(result)),
+        Err(error) => Some(Err(error)),
+        Ok(None) if waiting_written => take_immediate(output).map(Ok),
+        Ok(None) => Some(Err(Error::internal("Array-next omitted its waiting step"))),
+    };
+    if let Some(result) = immediate {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "native_raw_completed_without_waiting_scope",
+        );
+        return finish_result(runtime, slots, call, result).map(Some);
+    }
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "native_activation_transported_to_wait",
+    );
+    *waiting_call = Some(call);
     Ok(None)
 }
 
@@ -592,21 +921,27 @@ mod tests {
             Value::Bool(true)
         );
         let costs = profile.snapshot();
+        let count = |name| costs.owned_execution_events.get(name).copied().unwrap_or(0);
+        let synchronous = count("native_synchronous_entry");
+        let domain = count("native_domain_completed_without_waiting_payload");
+        let waiting = count("native_activation_transported_to_wait");
+        let identity = count("native_identity_completed_in_place");
+        // The ten primitive Math.max calls, ten throwing primitive Math.min
+        // calls and final Math.min now use the narrow entry rather than the
+        // domain-output adapter. Extra Pure calls (e.g. Symbol) can add hits.
+        assert!(synchronous >= 21, "narrow completion: {synchronous}");
+        // The ten ordinary iterator.next calls still produce raw domain output
+        // before materializing their JS result under the native activation.
+        assert!(domain >= 10, "raw domain completion: {domain}");
+        // Each loop really waits in the outer Math.min, parseInt, Array.map and
+        // callback Math.min. The two parseInt coercions share one activation.
+        assert!(waiting >= 40, "native waiting activations: {waiting}");
+        assert!(count("native_call_direct_wait") >= 40);
+        // Every narrow entry and all ten direct raw-next completions consume
+        // the identity result once; resumed waiting native calls add more.
         assert!(
-            costs
-                .owned_execution_events
-                .get("native_domain_completed_without_waiting_payload")
-                .copied()
-                .unwrap_or(0)
-                > 20
-        );
-        assert!(
-            costs
-                .owned_execution_events
-                .get("native_identity_completed_in_place")
-                .copied()
-                .unwrap_or(0)
-                > 20
+            identity >= synchronous + 10,
+            "identity: {identity}, narrow: {synchronous}"
         );
         assert_eq!(costs.owned_bridge_exits, 0);
         assert_eq!(costs.owned_sync_call_bridges, 0);

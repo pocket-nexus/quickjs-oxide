@@ -1,7 +1,7 @@
 """Property kernel ownership guards; behavioral coverage remains in Rust/JS."""
 import re
 
-from .for_in_local import DEPENDENCY_FILES, check_local_arms
+from .for_in_local import DEPENDENCY_FILES, check_local_arms, check_local_dependencies, check_mutation_local_delete
 
 FILES = (
     "src/engine/object/ordinary_storage.rs",
@@ -53,7 +53,6 @@ def check(ctx):
         ("(ObjectKind::Ordinary,ObjectPayload::Ordinary)" in compact(storage), "ordinary eligibility must include the semantic class"),
         (not re.search(r"\.(?:call_internal|internal_set|materialize_auto_init_property)\s*\(", storage), "storage must not execute callbacks or observable internal methods"),
         ("ordinary_set_fast_path_available" not in ordinary + ordinary_set + dispatch, "ordinary Set must not pre-scan the prototype chain"),
-        ("rejected_object.as_ref().unwrap_or(&receiver)" in compact(ordinary_set), "Proxy forwarding diagnostics must use the rejected target"),
         ("if!failure.published{self.release_atoms(atoms)?;}" in compact(runtime), "only pre-publication failures may roll back replacement Atoms"),
     ]
     body, _, _ = ctx.unique_braced_item(heap, re.compile(r"fn\s+replace_object_slot_with_status\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-transaction", "slot replacement")
@@ -79,6 +78,10 @@ def check(ctx):
     requirements.append((not re.search(r"\.(?:call_internal|internal_delete_property|native_to_property_key|to_primitive)\s*\(", primitive_delete), "primitive Delete must not run key conversion or object internal methods"))
     has, _, _ = ctx.unique_braced_item(dispatch, re.compile(r"fn\s+prepare_has_property\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-has", "prepared HasProperty")
     requirements.append(("PreparedHas::Proxy(current.clone())" in compact(has) and "self.validate_object_and_key(object,key)?" in compact(has), "prepared Has must validate its domain and return unresolved Proxy nodes"))
+    set_state, _, _ = ctx.unique_braced_item(ordinary_set, re.compile(r"impl\s+State\s*\{"), "ordinary-property-state", "resident Set owner")
+    set_resume, _, _ = ctx.unique_braced_item(ordinary_set, re.compile(r"impl\s+SetResume\s*\{"), "ordinary-property-state", "waiting Set owner")
+    rejected, _, _ = ctx.unique_braced_item(set_state, re.compile(r"fn\s+defined_action\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-state", "selected Set rejection")
+    requirements.append(("letreceiver=rejected_object.as_ref().unwrap_or(receiver);" in compact(rejected), "Proxy forwarding diagnostics must use the rejected target"))
     protocols = (
         (builtin_prototype, ("start", "start_invocation", "prototype", "boolean")),
         (builtin_predicate, ("start", "key", "boolean", "defined", "descriptor", "prototype")),
@@ -95,7 +98,9 @@ def check(ctx):
         (descriptor, ("start", "next", "has", "read")),
         (dispatch, ("prepare_has_property", "prepare_typed_array_set", "prepare_typed_array_set_in_realm", "try_typed_array_set_primitive", "select_typed_array_set")),
         (proxy_call, ("start", "read", "resume")),
-        (ordinary_set, ("initial_set", "start", "start_into", "start_receiver_into", "start_waiting", "walk", "special_own", "receiver", "define", "advance", "forward", "special", "descriptor", "defined", "array_length")),
+        (ordinary_set, ("initial_set", "start", "start_into", "start_receiver_into", "start_waiting")),
+        (set_state, ("walk", "select_walk", "select_walk_probe", "special_own", "select_special_own", "select_receiver", "select_descriptor", "descriptor", "defined_action", "finish_selected", "publish_selected")),
+        (set_resume, ("advance", "forward", "special", "descriptor", "defined", "array_length")),
         (proxy_set, ("start", "method", "resume", "set", "descriptor")),
         (proxy_define, ("start", "method", "resume", "defined", "descriptor")),
         (array_length, ("start", "number")),
@@ -148,7 +153,7 @@ S05_ROUTES = {
     "src/engine/vm/private_access.rs": ("private_bindings::branded_receiver(", "proxy_get_driver::start_vm_call("),
     "src/engine/vm/construct_driver.rs": ("runtime.validate_class_parent(", "proxy_get_driver::start_class_parent(", "proxy_get_driver::start_public_field("),
     "src/engine/vm/array_driver.rs": ("LiteralDefinitionStep::start(", "proxy_get_driver::start_literal_definition("),
-    "src/engine/vm/frame_operations.rs": ("modnumeric;", "numeric::{NumericProgress,completeascomplete_numeric}", "RunExit::Numeric(kind)", "complete_numeric(runtime,execution,id,kind)", "RunExit::ForIn(next)", "proxy_get_driver::start_for_in_query("),
+    "src/engine/vm/frame_operations.rs": ("modnumeric;", "numeric::{NumericProgress,commit_outputascommit_numeric_output,completeascomplete_numeric,try_complete_primitiveastry_complete_primitive_numeric}", "RunExit::Numeric(kind)", "complete_numeric(runtime,execution,id,kind)", "RunExit::ForIn(next)", "proxy_get_driver::start_for_in_query("),
     "src/engine/vm/frame_operations/numeric.rs": ("NumericStep::start(kind,left,right)", "proxy_get_driver::start_numeric(runtime,execution,id,step,depth)", "letright=execution.slots.pop(&mutframe.window)?;", "(execution.slots.pop(&mutframe.window)?,Some(right))"),
     "src/engine/vm/run.rs": ("RunExit::Numeric(kind)", "Instruction::ForInStart=>returnOk(RunExit::ForIn(false))", "Instruction::ForInNext=>returnOk(RunExit::ForIn(true))"),
     "src/engine/vm/proxy_get_driver.rs": ("fnstart_numeric(", "fnstart_for_in_query(", "fnstart_environment(", "fnstart_class_parent(", "fnstart_public_field(", "fnstart_literal_definition("),
@@ -191,6 +196,7 @@ def check_synchronous_domains(ctx):
             ctx.fail("synchronous-domain-source", f"missing regular source: {relative}")
             continue
         sources[relative] = production_code(ctx, ctx.rust_code_only(path.read_text()))
+    check_local_dependencies(ctx, sources)
     for relative, (step, resume) in S05_PROTOCOLS.items():
         code = sources.get(relative, "")
         if not re.search(r"enum\s+" + step + r"\b", code) or not re.search(r"(?:struct|enum)\s+" + resume + r"\b", code):
@@ -208,7 +214,9 @@ def check_synchronous_domains(ctx):
                 ctx.fail("synchronous-domain-contract", f"{relative}: legacy consumer lost its typed Step input")
             code = code[:start] + ctx.blank(code[start:end]) + code[end:]
         if relative == "src/engine/vm/for_in/operation.rs":
-            code = check_local_arms(ctx, code, sources)
+            code = check_local_arms(ctx, code)
+        if relative == "src/engine/builtins/array/mutation.rs":
+            code = check_mutation_local_delete(ctx, code)
         if SYNC_CALLBACK.search(code) or re.search(r"\b(?:RuntimeVmHost|VmHost|Future|poll_fn)\b", code):
             ctx.fail("synchronous-domain-contract", f"{relative}: a domain phase synchronously waits on JavaScript")
         if re.search(r"use\s+(?:super::)+\*\s*;", code):
@@ -216,7 +224,10 @@ def check_synchronous_domains(ctx):
     for relative, fragments in S05_ROUTES.items():
         code = re.sub(r"\s+", "", sources.get(relative, ""))
         for fragment in fragments:
-            if fragment not in code:
+            # rustfmt adds a semantically inert trailing comma to grouped uses.
+            # Keep every required name/order, accepting only that final comma.
+            with_trailing_comma = fragment[:-1] + ",}" if fragment.endswith("}") else fragment
+            if fragment not in code and with_trailing_comma not in code:
                 ctx.fail("synchronous-domain-route", f"{relative}: production route missing {fragment}")
     for relative in ("src/engine/vm/frame_operations/numeric.rs", "src/engine/vm/proxy_get_driver/request/array.rs", "src/engine/vm/proxy_get_driver/request/scalar.rs", "src/engine/vm/proxy_get_driver/request/vm.rs"):
         if SYNC_CALLBACK.search(sources.get(relative, "")):

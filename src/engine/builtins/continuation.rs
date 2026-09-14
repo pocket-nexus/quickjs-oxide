@@ -15,6 +15,50 @@ use crate::engine::{
 
 mod output;
 
+/// Closed synchronous entry families. The ordinary native ABI remains shared;
+/// only the generic waiting dispatcher is absent from this corridor.
+pub(crate) enum SynchronousNative {
+    Pure(NativeFunctionId),
+    PrimitiveConstructor(super::native::PrimitiveKind),
+    Math(super::math::operation::MathKind),
+}
+impl SynchronousNative {
+    pub(crate) fn start(
+        self,
+        runtime: &Runtime,
+        realm: ContextId,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+        callable: &crate::engine::object::CallableRef,
+    ) -> Result<crate::engine::vm::Completion, RuntimeError> {
+        match self {
+            Self::Pure(target) => runtime.dispatch_adapted_native_function(
+                callable,
+                target,
+                realm,
+                invocation.clone(),
+                arguments,
+            ),
+            Self::PrimitiveConstructor(kind) => match super::PrimitiveConstructorStep::start(
+                runtime, realm, kind, invocation, arguments,
+            )? {
+                super::PrimitiveConstructorStep::Complete(result) => Ok(result),
+                _ => Err(RuntimeError::Invariant(
+                    "synchronous primitive constructor unexpectedly waited",
+                )),
+            },
+            Self::Math(kind) => {
+                match super::MathStep::start(runtime, realm, kind, invocation, arguments)? {
+                    super::MathStep::Complete(result) => Ok(result),
+                    _ => Err(RuntimeError::Invariant(
+                        "synchronous Math unexpectedly required conversion",
+                    )),
+                }
+            }
+        }
+    }
+}
+
 pub(crate) enum NativeOperation {
     #[cfg(test)]
     ActiveFrameProbe,
@@ -239,6 +283,38 @@ pub(crate) enum NativeStep {
     Predicate(PredicateStep),
 }
 impl NativeOperation {
+    pub(crate) fn synchronous(
+        &self,
+        arguments: &[crate::engine::value::Value],
+    ) -> Option<SynchronousNative> {
+        match self {
+            Self::Pure(target) => Some(SynchronousNative::Pure(*target)),
+            Self::PrimitiveConstructor(kind)
+                if matches!(kind, super::native::PrimitiveKind::Boolean)
+                    || !matches!(
+                        arguments.first(),
+                        Some(crate::engine::value::Value::Object(_))
+                    ) =>
+            {
+                Some(SynchronousNative::PrimitiveConstructor(*kind))
+            }
+            Self::Math(kind) => {
+                use super::math::operation::MathKind;
+                let count = match kind {
+                    MathKind::Unary(_) | MathKind::Clz32 => 1,
+                    MathKind::Binary(_) | MathKind::Imul => 2,
+                    _ => arguments.len(),
+                };
+                arguments
+                    .iter()
+                    .take(count)
+                    .all(|value| !matches!(value, crate::engine::value::Value::Object(_)))
+                    .then_some(SynchronousNative::Math(*kind))
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         if matches!(
             target,
@@ -930,9 +1006,12 @@ impl NativeOperation {
                 runtime, realm, invocation, arguments,
             )?),
             Self::PrimitiveConstructor(kind) => {
-                NativeStep::PrimitiveConstructor(super::PrimitiveConstructorStep::start(
-                    runtime, realm, kind, invocation, arguments,
-                )?)
+                return Ok(output::deliver(
+                    super::PrimitiveConstructorStep::start(
+                        runtime, realm, kind, invocation, arguments,
+                    )?,
+                    &mut waiting,
+                ));
             }
             Self::Global(kind) => {
                 return Ok(output::deliver(
@@ -1092,15 +1171,21 @@ impl NativeOperation {
                 arguments,
                 crate::engine::value::JsString::MAX_LEN,
             )?),
-            Self::RegExpExec(kind) => NativeStep::RegExpExec(super::RegExpExecStep::start(
-                runtime, realm, kind, invocation, arguments,
-            )?),
+            Self::RegExpExec(kind) => {
+                return Ok(output::deliver(
+                    super::RegExpExecStep::start(runtime, realm, kind, invocation, arguments)?,
+                    &mut waiting,
+                ));
+            }
             Self::RegExpPresentation(kind) => NativeStep::RegExpPresentation(
                 super::RegExpPresentationStep::start(runtime, realm, kind, invocation)?,
             ),
-            Self::RegExpReplace => NativeStep::RegExpReplace(super::RegExpReplaceStep::start(
-                runtime, realm, invocation, arguments,
-            )?),
+            Self::RegExpReplace => {
+                return Ok(output::deliver(
+                    super::RegExpReplaceStep::start(runtime, realm, invocation, arguments)?,
+                    &mut waiting,
+                ));
+            }
             Self::IteratorConsume(kind) => NativeStep::IteratorConsume(
                 super::IteratorConsumeStep::start(runtime, realm, kind, invocation, arguments)?,
             ),
@@ -1125,18 +1210,24 @@ impl NativeOperation {
                 }
                 _ => unreachable!("closed pure iterator registration"),
             }),
-            Self::ArrayMutation(kind) => NativeStep::ArrayMutation(
-                super::ArrayMutationStep::start(runtime, realm, kind, invocation, arguments)?,
-            ),
+            Self::ArrayMutation(kind) => {
+                return Ok(output::deliver(
+                    super::ArrayMutationStep::start(runtime, realm, kind, invocation, arguments)?,
+                    &mut waiting,
+                ));
+            }
             Self::ArrayCallback(kind) => NativeStep::ArrayCallback(
                 super::ArrayCallbackStep::start(runtime, realm, kind, invocation, arguments)?,
             ),
             Self::ObjectIteration(kind) => NativeStep::ObjectIteration(
                 super::ObjectIterationStep::start(runtime, realm, kind, invocation, arguments)?,
             ),
-            Self::StringReplace(kind) => NativeStep::StringReplace(
-                super::StringReplaceStep::start(runtime, realm, kind, invocation, arguments)?,
-            ),
+            Self::StringReplace(kind) => {
+                return Ok(output::deliver(
+                    super::StringReplaceStep::start(runtime, realm, kind, invocation, arguments)?,
+                    &mut waiting,
+                ));
+            }
             Self::DataView(kind) => NativeStep::DataView(super::DataViewAccessStep::start(
                 runtime, realm, kind, invocation, arguments,
             )?),

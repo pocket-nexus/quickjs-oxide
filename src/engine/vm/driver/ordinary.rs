@@ -22,18 +22,22 @@ pub(super) fn enter(
     execution
         .slots
         .peek(&frame.window, count + usize::from(method))?;
+    let selected = OrdinaryCall::select(runtime, execution.slots.peek(&frame.window, count)?);
+    if matches!(selected, Ok(None)) {
+        return Ok(false);
+    }
     if !execution
         .slots
         .validate_call_value_domains(&frame.window, runtime, count, method)?
     {
         return Ok(false);
     }
-    let Some(call) =
-        OrdinaryCall::authenticate(runtime, execution.slots.peek(&frame.window, count)?)
-            .map_err(runtime_error_to_vm_error)?
-    else {
+    let Some(selected) = selected.map_err(runtime_error_to_vm_error)? else {
         return Ok(false);
     };
+    let call = selected
+        .authenticate(runtime)
+        .map_err(runtime_error_to_vm_error)?;
     if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
         return Ok(false);
     }

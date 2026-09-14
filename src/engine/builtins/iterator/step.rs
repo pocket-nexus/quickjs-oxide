@@ -88,6 +88,13 @@ impl NextStep {
     }
 }
 impl NextResume {
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn for_raw(realm: ContextId) -> Self {
+        Self {
+            realm,
+            phase: NextPhase::Result,
+        }
+    }
     pub(crate) fn raw(
         self,
         runtime: &Runtime,

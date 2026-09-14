@@ -386,33 +386,121 @@ impl SliceResume {
         }
     }
     fn collect(mut self, runtime: &Runtime) -> Result<SliceStep, RuntimeError> {
-        if matches!(self.kind, SliceKind::ToSpliced) {
-            if self.cursor == self.start {
-                for index in 0..self.items {
-                    self.values[(self.start + index) as usize] = self.argument(index as usize + 2);
+        loop {
+            if matches!(self.kind, SliceKind::ToSpliced) {
+                if self.cursor == self.start {
+                    for index in 0..self.items {
+                        self.values[(self.start + index) as usize] =
+                            self.argument(index as usize + 2);
+                    }
+                    self.cursor += self.items;
                 }
-                self.cursor += self.items;
+                if self.cursor == self.new_length {
+                    return Ok(SliceStep::Complete(Completion::Return(Value::Object(
+                        runtime.new_array_from_values(self.realm, self.values)?,
+                    ))));
+                }
+            } else if self.cursor == self.count {
+                self.phase = Phase::ResultLength;
+                return Ok(SliceStep::Set {
+                    object: self.result()?,
+                    key: runtime.intern_property_key("length")?,
+                    value: Value::number(self.count as f64),
+                    resume: self,
+                });
             }
-            if self.cursor == self.new_length {
-                return Ok(SliceStep::Complete(Completion::Return(Value::Object(
-                    runtime.new_array_from_values(self.realm, self.values)?,
-                ))));
-            }
-        } else if self.cursor == self.count {
-            self.phase = Phase::ResultLength;
-            return Ok(SliceStep::Set {
-                object: self.result()?,
-                key: runtime.intern_property_key("length")?,
-                value: Value::number(self.count as f64),
+            self.phase = Phase::Has;
+            let key = runtime.property_key_for_index(self.source_index())?;
+            #[cfg(not(feature = "stack-vm"))]
+            return Ok(SliceStep::Has {
+                object: self.object.clone(),
+                key,
                 resume: self,
             });
+            #[cfg(feature = "stack-vm")]
+            {
+                use crate::engine::object::{OrdinaryRead, PreparedHas};
+                match runtime.prepare_has_property(&self.object, &key)? {
+                    PreparedHas::Complete(has) => {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "array_slice_local_has",
+                        );
+                        if !has {
+                            self.cursor += 1;
+                            continue;
+                        }
+                    }
+                    probe => {
+                        return Ok(SliceStep::PreparedHas {
+                            probe,
+                            key,
+                            resume: self,
+                        });
+                    }
+                }
+                self.phase = Phase::Read;
+                let receiver = Value::Object(self.object.clone());
+                let value =
+                    match runtime.prepare_ordinary_read_borrowed(&self.object, &key, &receiver)? {
+                        OrdinaryRead::Complete(value) => {
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_owned_execution_event(
+                                "array_slice_local_read",
+                            );
+                            value.unwrap_or(Value::Undefined)
+                        }
+                        read => {
+                            return Ok(SliceStep::PreparedRead {
+                                read,
+                                key,
+                                resume: self,
+                            });
+                        }
+                    };
+                // End the read receiver before the following Define, as in the
+                // ordinary Read adapter. The cursor alone keeps source alive.
+                drop(receiver);
+                drop(key);
+                if matches!(self.kind, SliceKind::ToSpliced) {
+                    self.values[self.cursor as usize] = value;
+                    self.cursor += 1;
+                    continue;
+                }
+                self.phase = Phase::Define;
+                let key = runtime.property_key_for_index(self.cursor)?;
+                let descriptor = OrdinaryPropertyDescriptor {
+                    value: DescriptorField::Present(value),
+                    writable: DescriptorField::Present(true),
+                    enumerable: DescriptorField::Present(true),
+                    configurable: DescriptorField::Present(true),
+                    ..OrdinaryPropertyDescriptor::new()
+                };
+                let object = self
+                    .result
+                    .as_ref()
+                    .ok_or(RuntimeError::Invariant("Array slice result missing"))?;
+                if !local::direct_indexed_target(runtime, object, &key)? {
+                    return Ok(SliceStep::Define {
+                        object: object.clone(),
+                        key,
+                        descriptor,
+                        resume: self,
+                    });
+                }
+                let result = local::define_local(runtime, self.realm, object, &key, &descriptor)?;
+                if let Some(value) =
+                    runtime.finish_create_indexed_data_property(self.realm, self.cursor, result)?
+                {
+                    return Ok(SliceStep::Complete(Completion::Throw(value)));
+                }
+                self.cursor += 1;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "array_slice_resident_element",
+                );
+            }
         }
-        self.phase = Phase::Has;
-        Ok(SliceStep::Has {
-            object: self.object.clone(),
-            key: runtime.property_key_for_index(self.source_index())?,
-            resume: self,
-        })
     }
     fn boolean_once(
         mut self,

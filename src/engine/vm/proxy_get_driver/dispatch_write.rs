@@ -161,6 +161,33 @@ pub(super) fn set(
         crate::engine::api::profiling::record_owned_execution_event("dispatch_write.set.visit");
         let realm = query.realm;
         match step {
+            Step::PreparedSet {
+                step: selected,
+                resume,
+            } => {
+                if !execution
+                    .frames
+                    .can_push_with_continuations(query.continuation_depth())
+                {
+                    let Completion::Throw(value) = overflow(runtime, realm)? else {
+                        unreachable!()
+                    };
+                    step = resume
+                        .set(
+                            runtime,
+                            crate::engine::object::operations::PropertySetAction::Throw(value),
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                query.parents.push(resume);
+                step = (*selected).into();
+                continue;
+            }
             Step::SetContinue(resume) => {
                 step = resume
                     .advance(runtime)

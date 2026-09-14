@@ -75,51 +75,81 @@ fn add_completion(
     }
 }
 
-/// The caller has published the fault PC and checked operand domains. Primitive
-/// addition/unary plus may allocate, but cannot call JavaScript and need no wait.
+pub(super) enum PrimitiveCompletion {
+    Completed,
+    Throw(Value),
+    Declined,
+    InvalidDomain,
+}
+
+/// The fault PC is published before entry. The input borrow owns no values
+/// across parsing, allocation, error materialization or final-owner release.
 pub(super) fn complete_primitives(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
     addition: bool,
-) -> Result<Option<super::driver::CallStep>, Error> {
+    next_operation: &mut u64,
+) -> Result<PrimitiveCompletion, Error> {
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
-    let store = if addition && frame.executable.fusion.add_store(frame.fault_pc) {
-        use crate::engine::code::bytecode::Instruction;
-        match frame.executable.code.get(frame.fault_pc + 1) {
-            Some(
-                Instruction::PutLocal(index)
-                | Instruction::PutLocalCheck(index)
-                | Instruction::SetLocal(index)
-                | Instruction::SetLocalCheck(index),
-            ) if matches!(
-                execution.slots.local(&frame.window, *index)?,
-                super::bindings::FrameBinding::Direct(_)
-            ) =>
-            {
-                Some((
-                    *index,
-                    frame.executable.fusion.add_store_span(frame.fault_pc),
-                ))
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
-    let (left, right) = {
+    let (left, right, store) = {
         let mut slots = execution.slots.run_window(&mut frame.window)?;
+        // Preserve left-to-right domain validation, including checking a later
+        // malformed slot after an earlier invalid domain, before identity issue.
+        let mut invalid = false;
+        for offset in (0..=usize::from(addition)).rev() {
+            invalid |= runtime
+                .validate_value_domain(slots.peek(offset)?, "conversion operand")
+                .is_err();
+        }
+        if invalid {
+            return Ok(PrimitiveCompletion::InvalidDomain);
+        }
+        *next_operation = next_operation
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("conversion identity exhausted"))?;
+        let store = if addition && frame.executable.fusion.add_store(frame.fault_pc) {
+            use crate::engine::code::bytecode::Instruction;
+            match frame.executable.code.get(frame.fault_pc + 1) {
+                Some(
+                    Instruction::PutLocal(index)
+                    | Instruction::PutLocalCheck(index)
+                    | Instruction::SetLocal(index)
+                    | Instruction::SetLocalCheck(index),
+                ) if matches!(
+                    slots.local(*index)?,
+                    super::bindings::FrameBinding::Direct(_)
+                ) =>
+                {
+                    Some((
+                        *index,
+                        frame.executable.fusion.add_store_span(frame.fault_pc),
+                    ))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         for offset in 0..=usize::from(addition) {
             if matches!(slots.peek(offset)?, Value::Object(_)) {
-                return Ok(None);
+                return Ok(PrimitiveCompletion::Declined);
             }
         }
-        let right = slots.pop()?;
-        let left = if addition { Some(slots.pop()?) } else { None };
-        (left, right)
+        let right = slots.pop().expect("validated primitive conversion operand");
+        let left = if addition {
+            Some(
+                slots
+                    .pop()
+                    .expect("validated primitive conversion left operand"),
+            )
+        } else {
+            None
+        };
+        (left, right, store)
     };
     // End the authenticated window before String/BigInt allocation or release.
     let completion = if let Some(left) = left {
@@ -145,7 +175,7 @@ pub(super) fn complete_primitives(
     crate::engine::api::profiling::record_owned_execution_event(
         "conversion_completed_without_task",
     );
-    Ok(Some(match completion {
+    Ok(match completion {
         Completion::Return(value) => {
             if let Some((index, span)) = store {
                 // Addition is complete. Publish the canonical store PC before
@@ -163,11 +193,11 @@ pub(super) fn complete_primitives(
                         super::BytecodePc::new(frame.fault_pc),
                     )
                     .map_err(runtime_error_to_vm_error)?;
-                let old = execution.slots.replace_local(
-                    &frame.window,
-                    index,
-                    super::bindings::FrameBinding::Direct(value),
-                )?;
+                let mut pending = Some(super::bindings::FrameBinding::Direct(value));
+                let old = {
+                    let mut slots = execution.slots.run_window(&mut frame.window)?;
+                    slots.replace_local_pending(index, &mut pending)?
+                };
                 drop(old);
                 if span == 3 {
                     // The discarded assignment result would only add a second
@@ -191,7 +221,11 @@ pub(super) fn complete_primitives(
                     );
                 }
             } else {
-                execution.slots.push(&mut frame.window, value)?;
+                let mut pending = Some(value);
+                {
+                    let mut slots = execution.slots.run_window(&mut frame.window)?;
+                    slots.push_pending(&mut pending)?;
+                }
                 frame.resume_pc = frame
                     .fault_pc
                     .checked_add(1)
@@ -199,10 +233,10 @@ pub(super) fn complete_primitives(
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_instruction(depth);
             }
-            super::driver::CallStep::Entered
+            PrimitiveCompletion::Completed
         }
-        completion => super::driver::CallStep::Complete(completion),
-    }))
+        Completion::Throw(value) => PrimitiveCompletion::Throw(value),
+    })
 }
 
 impl ConversionTask {

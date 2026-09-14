@@ -218,17 +218,7 @@ fn finish_numeric(
     previous: Option<Value>,
     _depth: usize,
 ) -> Result<CallStep, Error> {
-    let parent = execution.frames.current_mut(frame)?;
-    if let Some(previous) = previous {
-        execution.slots.push(&mut parent.window, previous)?;
-    }
-    execution.slots.push(&mut parent.window, value)?;
-    parent.resume_pc = parent
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(_depth);
+    super::frame_operations::commit_numeric_output(execution, frame, value, previous, _depth)?;
     Ok(CallStep::Entered)
 }
 
@@ -361,6 +351,39 @@ pub(super) fn start_boolean(
     strict_delete: bool,
     depth: usize,
 ) -> Result<CallStep, Error> {
+    let realm = execution.frames.current_mut(frame)?.executable.realm;
+    if let ProxyBooleanKind::Delete(key) = &kind
+        && !runtime
+            .is_proxy_object(&object)
+            .map_err(runtime_error_to_vm_error)?
+    {
+        let result = runtime
+            .delete_property(&object, key)
+            .and_then(|deleted| {
+                runtime.finish_property_delete(NativeConversion::Value(deleted), strict_delete)
+            })
+            .map_err(runtime_error_to_vm_error);
+        // These input owners are released before the instruction publishes its
+        // result, exactly as in the completed BooleanResult adapter.
+        drop(kind);
+        drop(object);
+        return match result {
+            Ok(completion) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "delete_completed_without_query",
+                );
+                finish_instruction_call(
+                    execution,
+                    ReturnOwner::Frame(frame),
+                    completion,
+                    true,
+                    depth,
+                )
+            }
+            Err(error) => super::property_driver::throw_error(runtime, realm, error),
+        };
+    }
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
         .cold
@@ -545,122 +568,198 @@ pub(super) fn start_classified_native_call(
     tail: bool,
     depth: usize,
 ) -> Result<CallStep, Error> {
-    let parent = execution.frames.current_mut(frame)?;
-    let identity = parent
-        .cold
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
-    let realm = parent.executable.realm;
+    start_native_with_classification(
+        runtime,
+        execution,
+        frame,
+        callable,
+        target,
+        defining_realm,
+        min_readable_args,
+        receiver,
+        arguments,
+        tail,
+        depth,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_native_with_classification(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: Value,
+    arguments: Vec<Value>,
+    tail: bool,
+    depth: usize,
+    selected: Option<super::frames::NativeClassification>,
+    operation: Option<crate::engine::builtins::continuation::NativeOperation>,
+) -> Result<CallStep, Error> {
+    let kind = operation
+        .or_else(|| crate::engine::builtins::continuation::NativeOperation::for_target(target))
+        .ok_or_else(|| Error::internal("classified native lost owned operation"))?;
+    if let Some(synchronous) = kind.synchronous(&arguments) {
+        let realm = execution.frames.current_mut(frame)?.executable.realm;
+        let result = (|| {
+            {
+                let _operation = runtime.operation();
+            }
+            let completion = if !execution.frames.can_push_with_continuations(0)
+                || runtime.host_stack_would_overflow()
+            {
+                overflow(runtime, realm)?
+            } else {
+                native::begin_synchronous(
+                    runtime,
+                    &mut execution.slots,
+                    realm,
+                    callable,
+                    target,
+                    defining_realm,
+                    min_readable_args,
+                    receiver,
+                    arguments,
+                    synchronous,
+                    selected,
+                )?
+            };
+            let result = finish_call_instruction_call(
+                execution,
+                ReturnOwner::Frame(frame),
+                completion,
+                depth,
+                tail,
+            );
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "native_call_completed_without_query",
+            );
+            result
+        })();
+        return result.or_else(|error| super::property_driver::throw_error(runtime, realm, error));
+    }
+    start_waitable_native_call(
+        runtime,
+        execution,
+        frame,
+        callable,
+        target,
+        defining_realm,
+        min_readable_args,
+        receiver,
+        arguments,
+        tail,
+        depth,
+        selected,
+        kind,
+    )
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_waitable_native_call(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: Value,
+    arguments: Vec<Value>,
+    tail: bool,
+    depth: usize,
+    selected: Option<super::frames::NativeClassification>,
+    kind: crate::engine::builtins::continuation::NativeOperation,
+) -> Result<CallStep, Error> {
+    let realm = execution.frames.current_mut(frame)?.executable.realm;
     let owner = ReturnOwner::Frame(frame);
     let result = (|| {
-        // This synchronous corridor borrows only the parent's slots and idle
-        // buffers. Runtime/host reentry can create another RunningExecution,
-        // but cannot access this execution's uniquely owned QueryStorage.
-        let cached = execution.query_storage.cached_native_buffers();
-        // Preserve the cleanup boundary of normalize_callback's classification.
-        // The owning target and its immutable metadata came from that same
-        // classifier before operands were consumed; native preparation still
-        // authenticates the snapshot before activation publication.
         {
             let _operation = runtime.operation();
         }
-        let Some(buffers) = cached else {
-            return start_uncached_native_call(
-                runtime,
+        if !execution.frames.can_push_with_continuations(0) || runtime.host_stack_would_overflow() {
+            return finish_call_instruction_call(
                 execution,
                 owner,
-                identity,
-                realm,
-                callable,
-                target,
-                defining_realm,
-                min_readable_args,
-                receiver,
-                arguments,
-                tail,
+                overflow(runtime, realm)?,
                 depth,
+                tail,
             );
-        };
-        let mut waiting_call = None;
-        let result = (|| {
-            if !execution.frames.can_push_with_continuations(0)
-                || runtime.host_stack_would_overflow()
-            {
-                return Ok(Some(overflow(runtime, realm)?));
+        }
+        match native::begin_local(
+            runtime,
+            &mut execution.slots,
+            &mut execution.query_storage,
+            realm,
+            callable,
+            target,
+            defining_realm,
+            min_readable_args,
+            receiver,
+            arguments,
+            kind,
+            selected,
+        )? {
+            native::LocalNativeResult::Complete(completion) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "native_call_completed_without_query",
+                );
+                finish_call_instruction_call(execution, owner, completion, depth, tail)
             }
-            buffers.reserve_native()?;
-            let kind = crate::engine::builtins::continuation::NativeOperation::for_target(target)
-                .ok_or_else(|| Error::internal("classified native lost owned operation"))?;
-            let mut waiting = Step::Complete(Completion::Return(Value::Undefined));
-            let mut activation = None;
-            let immediate = native::begin_into(
-                runtime,
-                &mut execution.slots,
-                realm,
-                callable,
-                target,
-                defining_realm,
-                min_readable_args,
-                super::call::NativeInvokeMode::Ordinary,
-                super::call::NativeInvocation::Call {
-                    this_value: receiver,
-                },
-                arguments,
-                kind,
-                &mut waiting,
-                &mut activation,
-            )?;
-            if let Some(result) = immediate {
-                return native::identity_completion(result).map(Some);
-            }
-            // Carry the exact already-started activation and selected wait.
-            // A getter/coercion callback is never probed or invoked again.
-            waiting_call = Some((activation.expect("native wait has an activation"), waiting));
-            Ok(None)
-        })();
-        match result {
-            Ok(None) => {
-                let (call, waiting) = waiting_call.take().expect("native wait has an activation");
-                let mut query = execution
-                    .query_storage
-                    .take_cached()
-                    .expect("borrowed native cache entry remains reserved")
-                    .into_query(realm, Finish::Call { depth, tail });
+            native::LocalNativeResult::Waiting(mut records) => {
+                let mut waiting = records.pop().expect("native selected wait");
+                execution.query_storage.recycle_native_wait(records);
+                let call = waiting.call.take().expect("waiting activation");
+                let mut query = execution.query_storage.acquire(
+                    realm,
+                    Vec::new(),
+                    Finish::Call { depth, tail },
+                );
+                let identity = (|| {
+                    let parent = execution.frames.current_mut(frame)?;
+                    let identity = parent
+                        .cold
+                        .property_generation
+                        .checked_add(1)
+                        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+                    storage::reserve(&mut query.natives, 1, "query.native_scopes")
+                        .map_err(|_| Error::internal("native continuation allocation failed"))?;
+                    storage::reserve(&mut query.spare_parents, 1, "query.spare_parents")
+                        .map_err(|_| Error::internal("native parent storage allocation failed"))?;
+                    parent.cold.property_generation = identity;
+                    Ok(identity)
+                })();
+                let identity = match identity {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        let result =
+                            native::finish_result(runtime, &mut execution.slots, call, Err(error))
+                                .and_then(native::identity_completion);
+                        drop(waiting);
+                        query.recycle(&mut execution.query_storage);
+                        return result.and_then(|completion| {
+                            finish_call_instruction_call(execution, owner, completion, depth, tail)
+                        });
+                    }
+                };
                 native::install_waiting(&mut query, call, Resume::Identity);
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "native_call_direct_wait",
                 );
-                drive_native_call(runtime, execution, owner, identity, query, Ok(waiting))
-            }
-            result => {
-                // Finish/drop the instruction result before completing the
-                // idle reservation, matching the previous recycle boundary.
-                // No Query driver runs inside instruction finishing.
-                let result = result.and_then(|completion| {
-                    finish_call_instruction_call(
-                        execution,
-                        owner,
-                        completion.expect("native completion"),
-                        depth,
-                        tail,
-                    )
-                });
-                execution.query_storage.complete_cached_native();
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "native_call_completed_without_query",
-                );
-                result
+                drive_native_call(runtime, execution, owner, identity, query, Ok(waiting.step))
             }
         }
     })();
-    match result {
-        Ok(step) => Ok(step),
-        Err(error) => super::property_driver::throw_error(runtime, realm, error),
-    }
+    result.or_else(|error| super::property_driver::throw_error(runtime, realm, error))
 }
 
 fn finish_call_instruction(
@@ -686,50 +785,6 @@ fn finish_call_instruction_call(
         return Ok(CallStep::Complete(completion));
     }
     finish_instruction_call(execution, owner, completion, true, depth)
-}
-
-// Keep cold Query construction and broad Progress transport off the cached
-// immediate-call path. Its budget, activation and effect order stay in start_into.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn start_uncached_native_call(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    owner: ReturnOwner,
-    identity: u64,
-    realm: crate::engine::heap::ContextId,
-    callable: crate::engine::object::CallableRef,
-    target: crate::engine::builtins::native::NativeFunctionId,
-    defining_realm: crate::engine::heap::ContextId,
-    min_readable_args: u8,
-    receiver: Value,
-    arguments: Vec<Value>,
-    tail: bool,
-    depth: usize,
-) -> Result<CallStep, Error> {
-    let mut query =
-        execution
-            .query_storage
-            .acquire(realm, Vec::new(), Finish::Call { depth, tail });
-    let mut output = Step::Complete(Completion::Return(Value::Undefined));
-    let result = native::start_into(
-        runtime,
-        execution,
-        &mut query,
-        callable,
-        target,
-        defining_realm,
-        min_readable_args,
-        super::call::NativeInvokeMode::Ordinary,
-        super::call::NativeInvocation::Call {
-            this_value: receiver,
-        },
-        arguments,
-        Resume::Identity,
-        &mut output,
-    )
-    .map(|()| output);
-    drive_native_call(runtime, execution, owner, identity, query, result)
 }
 
 #[inline(never)]
@@ -1013,12 +1068,6 @@ fn start_write_adapted(
     depth: usize,
 ) -> Result<super::property_driver::PropertyProgress, Error> {
     let parent = execution.frames.current_mut(frame)?;
-    let identity = parent
-        .cold
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
         let mut waiting_result = None;
@@ -1028,16 +1077,7 @@ fn start_write_adapted(
             } else {
                 // The selector borrows the finalization key. Only a pending
                 // continuation needs a separate finalization owner.
-                advance_write_pending(
-                    runtime,
-                    execution,
-                    frame,
-                    identity,
-                    step,
-                    key.clone(),
-                    strict,
-                    depth,
-                )
+                advance_write_pending(runtime, execution, frame, step, key.clone(), strict, depth)
             });
         };
         let action = match object {
@@ -1056,9 +1096,9 @@ fn start_write_adapted(
         }
         .map_err(runtime_error_to_vm_error)?;
         match action {
-            Some(action) => finish_write_action(
-                runtime, execution, frame, identity, action, key, strict, depth,
-            ),
+            Some(action) => {
+                finish_write_action(runtime, execution, frame, action, key, strict, depth)
+            }
             None => waiting_result
                 .ok_or_else(|| Error::internal("Set start omitted its waiting step"))?,
         }
@@ -1075,7 +1115,6 @@ fn advance_write_pending(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    identity: u64,
     step: crate::engine::object::SetStep,
     key: PropertyKey,
     strict: bool,
@@ -1086,19 +1125,10 @@ fn advance_write_pending(
         .advance_without_callback(runtime)
         .map_err(runtime_error_to_vm_error)?
     {
-        crate::engine::object::SetStep::Complete(action) => finish_write_action(
-            runtime, execution, frame, identity, action, key, strict, depth,
-        ),
-        step => schedule_write(
-            runtime,
-            execution,
-            frame,
-            identity,
-            step.into(),
-            key,
-            strict,
-            depth,
-        ),
+        crate::engine::object::SetStep::Complete(action) => {
+            finish_write_action(runtime, execution, frame, action, key, strict, depth)
+        }
+        step => schedule_write(runtime, execution, frame, step.into(), key, strict, depth),
     }
 }
 
@@ -1107,7 +1137,6 @@ fn finish_write_action(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    identity: u64,
     action: crate::engine::object::operations::PropertySetAction,
     key: PropertyKey,
     strict: bool,
@@ -1117,9 +1146,7 @@ fn finish_write_action(
         action,
         crate::engine::object::operations::PropertySetAction::Call { .. }
     ) {
-        return schedule_write_action(
-            runtime, execution, frame, identity, action, key, strict, depth,
-        );
+        return schedule_write_action(runtime, execution, frame, action, key, strict, depth);
     }
     let completion = runtime
         .finish_property_set(
@@ -1149,7 +1176,6 @@ fn schedule_write_action(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    identity: u64,
     action: crate::engine::object::operations::PropertySetAction,
     key: PropertyKey,
     strict: bool,
@@ -1159,7 +1185,6 @@ fn schedule_write_action(
         runtime,
         execution,
         frame,
-        identity,
         Step::SetComplete(action),
         key,
         strict,
@@ -1172,12 +1197,22 @@ fn schedule_write(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    identity: u64,
     step: Step,
     key: PropertyKey,
     strict: bool,
     depth: usize,
 ) -> Result<super::property_driver::PropertyProgress, Error> {
+    // Only a waiting Set has a reply identity. Synchronous storage completion
+    // never reads or mutates this cold counter.
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("set_wait_handoff");
     write_call_progress(advance(
         runtime,
         execution,
@@ -1579,6 +1614,7 @@ fn advance_inner(
             | Step::SetLength { .. }
             | Step::SetSpecial { .. }
             | Step::SetComplete { .. }
+            | Step::PreparedSet { .. }
             | Step::Set { .. }
             | Step::SetProxy { .. } => dispatch_write::set,
             Step::Defined { .. } | Step::Define { .. } | Step::DefineOrdinary { .. } => {
@@ -2001,13 +2037,139 @@ mod native_scope_tests {
             .unwrap();
             assert!(matches!(result, CallStep::Complete(Completion::Throw(_))));
             let parent = execution.frames.current_mut(frame).unwrap();
-            assert_eq!(parent.cold.property_generation, 1);
+            assert_eq!(parent.cold.property_generation, 0);
             assert_eq!(parent.resume_pc, 0);
             assert_eq!(execution.slots.depth(&parent.window), 0);
             assert_eq!(runtime.0.state.borrow().active_frames.len(), 1);
             drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
             assert_eq!(context.eval("nativeBudgetCalls").unwrap(), Value::Int(0));
+        }
+    }
+
+    #[test]
+    fn native_local_completion_needs_neither_query_identity_nor_warm_cache() {
+        use crate::engine::vm::{
+            call::BytecodeCallRequest,
+            execution::ExecutionLimits,
+            frame::{ReturnTarget, ReturnValue},
+        };
+        for (name, receiver, arguments) in [
+            ("Math.min", "undefined", vec![Value::Int(3), Value::Int(2)]),
+            ("String", "undefined", vec![Value::Int(42)]),
+            ("Array.prototype.push", "[]", vec![Value::Int(42)]),
+            ("Array.prototype.pop", "[42]", Vec::new()),
+            (
+                "RegExp.prototype.exec",
+                "/a/g",
+                vec![Value::String(crate::engine::value::JsString::from_static(
+                    "a",
+                ))],
+            ),
+            (
+                "RegExp.prototype[Symbol.replace]",
+                "/a/g",
+                vec![
+                    Value::String(crate::engine::value::JsString::from_static("a")),
+                    Value::String(crate::engine::value::JsString::from_static("b")),
+                ],
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let receiver = context.eval(receiver).unwrap();
+            if name == "RegExp.prototype[Symbol.replace]" {
+                // The unchanged standard matcher predicate requires a Data
+                // native exec. Materialize that lazy property only: do not run
+                // replace or warm this execution's Query cache.
+                context.eval("RegExp.prototype.exec").unwrap();
+            }
+            let callable = runtime
+                .callable_from_value(context.eval(name).unwrap())
+                .unwrap();
+            let CallableExecution::Native {
+                target,
+                realm,
+                min_readable_args,
+            } = runtime.bytecode_for_callable(&callable).unwrap()
+            else {
+                panic!("native")
+            };
+            let parent = runtime
+                .callable_from_value(context.eval("(function(){return 1+2})").unwrap())
+                .unwrap();
+            let CallableExecution::Bytecode {
+                bytecode,
+                closure_slots,
+            } = runtime.bytecode_for_callable(&parent).unwrap()
+            else {
+                panic!("bytecode")
+            };
+            let mut execution = RunningExecution::new(
+                &runtime,
+                ExecutionLimits {
+                    frames: 4,
+                    slots: 32,
+                },
+            )
+            .unwrap();
+            let entry = BytecodeCallRequest {
+                callable: parent,
+                receiver: Value::Undefined,
+                new_target: Value::Undefined,
+                arguments: Vec::new(),
+                bytecode,
+                closure_slots,
+                caller_realm: context.realm,
+                return_to: ReturnTarget {
+                    value_use: ReturnValue::Push,
+                    owner: ReturnOwner::Root,
+                    tail: false,
+                    operation: None,
+                },
+            }
+            .prepare(&runtime, &mut execution.call_storage)
+            .unwrap();
+            let frame = super::super::driver::push_frame(&mut execution, entry).unwrap();
+            execution
+                .frames
+                .current_mut(frame)
+                .unwrap()
+                .cold
+                .property_generation = u64::MAX;
+            assert!(!execution.query_storage.has_cached_entry());
+            let result = start_classified_native_call(
+                &runtime,
+                &mut execution,
+                frame,
+                callable,
+                target,
+                realm,
+                min_readable_args,
+                receiver,
+                arguments,
+                true,
+                0,
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            assert!(
+                matches!(result, CallStep::Complete(Completion::Return(_))),
+                "{name}"
+            );
+            assert_eq!(
+                execution
+                    .frames
+                    .current_mut(frame)
+                    .unwrap()
+                    .cold
+                    .property_generation,
+                u64::MAX,
+                "{name}"
+            );
+            assert!(!execution.query_storage.has_cached_entry(), "{name}");
+            assert_eq!(runtime.0.state.borrow().active_frames.len(), 1);
+            drop(execution);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
 
@@ -2222,6 +2384,97 @@ pub(super) fn start_iterator_next(
     start_iterator_query(runtime, execution, pending, step.into(), true)
 }
 
+/// Complete a known Array-next before allocating a generic iterator operation.
+/// The original iterator record remains live until value/done is committed.
+pub(super) fn start_array_next_without_pending(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    record_base: usize,
+    callable: crate::engine::object::CallableRef,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    iterator: Value,
+) -> Result<CallStep, Error> {
+    use crate::engine::builtins::{IteratorNextResume, ObjectIteratorStep};
+    let realm = execution.frames.current_mut(frame)?.executable.realm;
+    let result = (|| -> Result<Progress, Error> {
+        let result = if !execution.frames.can_push_with_continuations(0)
+            || runtime.host_stack_would_overflow()
+        {
+            ObjectIteratorStep::Throw(match overflow(runtime, realm)? {
+                Completion::Throw(value) => value,
+                _ => return Err(Error::internal("iterator overflow did not throw")),
+            })
+        } else {
+            let mut waiting = Step::Complete(Completion::Return(Value::Undefined));
+            let mut waiting_call = None;
+            let result = native::compact_array_next_into(
+                runtime,
+                &mut execution.slots,
+                realm,
+                callable,
+                defining_realm,
+                min_readable_args,
+                iterator,
+                &mut waiting,
+                &mut waiting_call,
+            )?;
+            let resume = IteratorNextResume::for_raw(realm);
+            let Some(result) = result else {
+                let identity = iterator_query_identity(execution, frame)?;
+                let pending = super::iterator_driver::next_wait(execution, frame, record_base)?;
+                let mut query = execution.query_storage.acquire(
+                    realm,
+                    Vec::new(),
+                    Finish::IteratorNext(pending),
+                );
+                storage::reserve(&mut query.natives, 1, "query.native_scopes")
+                    .map_err(|_| Error::internal("native continuation allocation failed"))?;
+                storage::reserve(&mut query.spare_parents, 1, "query.spare_parents")
+                    .map_err(|_| Error::internal("native parent storage allocation failed"))?;
+                native::install_waiting(
+                    &mut query,
+                    waiting_call
+                        .ok_or_else(|| Error::internal("Array-next wait lost activation"))?,
+                    Resume::IteratorNext(resume),
+                );
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "iterator_native_direct_wait",
+                );
+                return drive(
+                    runtime,
+                    execution,
+                    ReturnOwner::Frame(frame),
+                    identity,
+                    query,
+                    Ok(waiting),
+                );
+            };
+            resume
+                .raw_completion(result)
+                .map_err(runtime_error_to_vm_error)?
+                .map_err(|_| Error::internal("Array-next returned an ordinary result object"))?
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "iterator_native_completed_without_query",
+        );
+        let (value, done, abrupt) = match result {
+            ObjectIteratorStep::Yield(value) => (value, false, None),
+            ObjectIteratorStep::Done => (Value::Undefined, true, None),
+            ObjectIteratorStep::Throw(value) => (Value::Undefined, false, Some(value)),
+        };
+        super::iterator_driver::finish_next(execution, frame, record_base, value, done, abrupt)
+            .map(Progress::Call)
+    })();
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("Array-next returned unrelated conversion")),
+    }
+}
+
 #[inline(never)]
 fn start_array_next_direct(
     runtime: &Runtime,
@@ -2432,25 +2685,62 @@ pub(super) fn start_object_copy(
     };
     let step = crate::engine::builtins::ObjectCopyStep::start(runtime, target, source, excluded)
         .map_err(runtime_error_to_vm_error)?;
-    let identity = parent
-        .cold
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("copy query identity exhausted"))?;
-    parent.cold.property_generation = identity;
     let depth = execution.slots.depth(&parent.window);
+    // Computing the next identity is pure. Only a selected wait publishes it.
+    let identity = parent.cold.property_generation.checked_add(1);
+    let mut rejected_source = None;
     if excluded_depth.is_none() {
-        execution.slots.pop(&mut parent.window)?;
+        let source = execution.slots.pop(&mut parent.window)?;
+        if identity.is_none() {
+            // At exhaustion retain this already-rooted owner only long enough
+            // to restore the old failure input if a real wait is selected.
+            rejected_source = Some(source);
+        }
+        // The normal source owner drops before any copy effects, as before.
     }
-    let result = advance(
-        runtime,
-        execution,
-        frame,
-        identity,
-        Vec::new(),
-        step.into(),
-        Finish::Discard(depth),
-    );
+    let result = (|| {
+        let step = step
+            .advance_without_callback(runtime)
+            .map_err(runtime_error_to_vm_error)?;
+        if let crate::engine::builtins::ObjectCopyStep::Complete(completion) = step {
+            drop(rejected_source.take());
+            return finish_instruction_call(
+                execution,
+                ReturnOwner::Frame(frame),
+                completion,
+                false,
+                depth,
+            )
+            .map(Progress::Call);
+        }
+        let Some(identity) = identity else {
+            if let Some(source) = rejected_source.take() {
+                let parent = execution.frames.current_mut(frame)?;
+                execution.slots.push(&mut parent.window, source)?;
+            }
+            // Earlier local definitions remain on the fresh target; undoing
+            // them or pre-reading all values would change copy semantics.
+            // The selected getter/Proxy request has never been executed.
+            return Err(Error::internal("copy query identity exhausted"));
+        };
+        execution
+            .frames
+            .current_mut(frame)?
+            .cold
+            .property_generation = identity;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("copy_wait_handoff");
+        advance(
+            runtime,
+            execution,
+            frame,
+            identity,
+            Vec::new(),
+            step.into(),
+            Finish::Discard(depth),
+        )
+    })();
+    drop(rejected_source);
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
         Progress::Conversion(_) => Err(Error::internal("object copy returned conversion")),
@@ -2593,12 +2883,6 @@ pub(super) fn start_numeric(
     use super::frame_operations::NumericProgress;
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
-    let identity = parent
-        .cold
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("numeric query identity exhausted"))?;
-    parent.cold.property_generation = identity;
     let step = match step {
         super::numeric::operation::NumericStep::Complete { value, previous } => {
             #[cfg(feature = "profiling")]
@@ -2619,6 +2903,12 @@ pub(super) fn start_numeric(
         }
         step => step,
     };
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("numeric query identity exhausted"))?;
+    parent.cold.property_generation = identity;
     let result = advance(
         runtime,
         execution,
@@ -2725,12 +3015,6 @@ pub(super) fn start_for_in_query(
     use super::for_in::operation::ForInStep;
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
-    let identity = parent
-        .cold
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("instruction query identity exhausted"))?;
-    parent.cold.property_generation = identity;
     // Empty Query acquisition has no budget check. Local non-Proxy steps do
     // not push parents; the first waiting Proxy keeps its original admission
     // check and effect order in advance/dispatch, with continuation depth zero.
@@ -2746,7 +3030,16 @@ pub(super) fn start_for_in_query(
             finish_for_in(execution, frame, value, done, depth)
         }
         ForInStep::Throw(value) => Ok(CallStep::Complete(Completion::Throw(value))),
-        step => start_for_in_pending(runtime, execution, frame, identity, step, depth),
+        step => {
+            let parent = execution.frames.current_mut(frame)?;
+            let identity = parent
+                .cold
+                .property_generation
+                .checked_add(1)
+                .ok_or_else(|| Error::internal("instruction query identity exhausted"))?;
+            parent.cold.property_generation = identity;
+            start_for_in_pending(runtime, execution, frame, identity, step, depth)
+        }
     })();
     match result {
         Ok(step) => Ok(step),

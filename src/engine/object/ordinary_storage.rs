@@ -85,6 +85,8 @@ impl Runtime {
         value: &Value,
         receiver_is_target: bool,
     ) -> Result<SetProbe, RuntimeError> {
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        crate::engine::api::profiling::record_owned_execution_event("property_storage_set_probe");
         enum Selected {
             Setter(Option<ObjectId>),
             Missing(Option<ObjectId>),
@@ -233,6 +235,17 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<ReadProbe, RuntimeError> {
+        self.ordinary_read_probe_atom(object, key.atom(), false)
+    }
+
+    fn ordinary_read_probe_atom(
+        &self,
+        object: &ObjectRef,
+        atom: Atom,
+        own_only: bool,
+    ) -> Result<ReadProbe, RuntimeError> {
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        crate::engine::api::profiling::record_owned_execution_event("property_storage_read_probe");
         enum Selected {
             Value(crate::engine::heap::RawValue),
             Getter(Option<ObjectId>),
@@ -249,20 +262,24 @@ impl Runtime {
             // Dense elements are own data properties. Read the value under
             // this same classification borrow. Other own Array slots share
             // value/getter selection; exotic misses retain their fallback.
-            if let Some(index) = key.atom().immediate_integer()
+            if let Some(index) = atom.immediate_integer()
                 && let Some(value) = data.dense_array_value(index)
             {
                 Selected::Value(value.clone())
             } else if !is_ordinary(data) && !is_array {
                 return Ok(ReadProbe::Special(special_kind(data)));
             } else {
-                match locate(&state, id, key.atom())? {
+                match locate(&state, id, atom)? {
                     // Numeric misses may still select non-immediate dense indices.
                     // Named/symbol misses have ordinary prototype lookup and need no exotic call.
-                    None if is_array && state.atoms.array_index(key.atom())?.is_some() => {
+                    None if is_array && state.atoms.array_index(atom)?.is_some() => {
                         return Ok(ReadProbe::Special(SpecialKind::Other));
                     }
-                    None => Selected::Missing(state.heap.shape(data.shape)?.prototype()),
+                    None => Selected::Missing(if own_only {
+                        None
+                    } else {
+                        state.heap.shape(data.shape)?.prototype()
+                    }),
                     Some(slot) => match &data.slots[slot.index] {
                         PropertySlot::Data(value) => Selected::Value(value.clone()),
                         PropertySlot::Accessor { get, .. } => Selected::Getter(*get),
@@ -274,7 +291,18 @@ impl Runtime {
             }
         };
         Ok(match selected {
-            Selected::Value(value) => ReadProbe::Value(self.root_raw_value(&value)?),
+            Selected::Value(value) => {
+                let value = self.root_raw_value(&value)?;
+                #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                crate::engine::api::profiling::record_owned_execution_event(match &value {
+                    Value::Object(_) => "property_read_root_materialized.Object",
+                    Value::Symbol(_) => "property_read_root_materialized.Symbol",
+                    Value::String(_) => "property_read_root_materialized.String",
+                    Value::BigInt(_) => "property_read_root_materialized.BigInt",
+                    _ => "property_read_root_materialized.Immediate",
+                });
+                ReadProbe::Value(value)
+            }
             Selected::Getter(get) => ReadProbe::Getter(
                 get.map(|id| {
                     ObjectRef::from_borrowed_handle(self.clone(), id)
@@ -571,9 +599,6 @@ impl Runtime {
     ) -> Option<Value> {
         use crate::engine::heap::SlotReleaseReadiness;
         let atom = linked_field_atom(self, executable, index)?;
-        let Value::Object(object) = base else {
-            return None;
-        };
         if !matches!(
             self.slot_value_release_readiness(base),
             Ok(SlotReleaseReadiness::Ready)
@@ -581,8 +606,33 @@ impl Runtime {
             return None;
         }
         let state = self.0.state.try_borrow().ok()?;
+        if let Value::String(string) = base {
+            let info = state.atoms.resolve(atom).ok()?;
+            let crate::engine::atom::AtomSpelling::Text(name) = info.spelling else {
+                return None;
+            };
+            return (info.kind == crate::engine::atom::AtomKind::String
+                && name.len() == 6
+                && name.utf16_units().eq("length".encode_utf16()))
+            .then(|| Value::number(string.len() as f64));
+        }
+        let Value::Object(object) = base else {
+            return None;
+        };
         let id = object.object_id();
         let data = state.heap.object(id).ok()?;
+        if matches!(
+            (data.kind, &data.payload),
+            (ObjectKind::Array, ObjectPayload::Array { .. })
+        ) {
+            let first = state.heap.shape(data.shape).ok()?.entries().first()?;
+            if first.atom == atom {
+                let (length, _) =
+                    Self::array_length_state_in_heap(&state.heap, id, atom).ok()??;
+                return Some(Self::array_length_value(length));
+            }
+            return None;
+        }
         if !is_ordinary(data) {
             return None;
         }
@@ -591,6 +641,41 @@ impl Runtime {
             return None;
         };
         immediate_value(value)
+    }
+    /// A published function already owns its static key. Only the selected
+    /// result/getter is promoted here; fallback will acquire an owning key.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn prepare_linked_own_read(
+        &self,
+        base: &Value,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        index: u32,
+    ) -> Result<Option<crate::engine::object::OrdinaryRead>, RuntimeError> {
+        let Some(atom) = linked_field_atom(self, executable, index) else {
+            return Ok(None);
+        };
+        let Value::Object(object) = base else {
+            return Ok(None);
+        };
+        let _operation = self.operation();
+        self.validate_value_domain(base, "property receiver")?;
+        Ok(match self.ordinary_read_probe_atom(object, atom, true)? {
+            ReadProbe::Value(value) => {
+                Some(crate::engine::object::OrdinaryRead::Complete(Some(value)))
+            }
+            ReadProbe::Getter(None) => Some(crate::engine::object::OrdinaryRead::Complete(Some(
+                Value::Undefined,
+            ))),
+            ReadProbe::Getter(Some(getter)) => {
+                let receiver = base.clone();
+                #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "linked_read_owner_clone.ReceiverObject",
+                );
+                Some(crate::engine::object::OrdinaryRead::Call { getter, receiver })
+            }
+            ReadProbe::Missing(_) | ReadProbe::Special(_) => None,
+        })
     }
     /// Only an existing writable own scalar slot reaches the ordinary Set
     /// replacement transaction. There are no callback or owner-bearing edges.
@@ -697,9 +782,20 @@ impl Runtime {
         if !include_typed {
             return None;
         }
+        if matches!(data.payload, ObjectPayload::Arguments { .. }) {
+            let atom = Atom::from_immediate_integer(index)?;
+            let slot = locate(&state, object.object_id(), atom).ok()??;
+            return match &data.slots[slot.index] {
+                PropertySlot::Data(value) => immediate_value(value),
+                PropertySlot::VarRef(cell) => {
+                    immediate_value(&state.heap.var_ref(*cell).ok()?.value)
+                }
+                PropertySlot::Accessor { .. } | PropertySlot::AutoInit(_) => None,
+            };
+        }
         let value =
             Self::typed_array_number_read_in_heap(&mut state.heap, object.object_id(), index)?;
-        #[cfg(feature = "profiling")]
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event("typed_array_number_read_leaf");
         Some(value)
     }
@@ -1081,5 +1177,107 @@ mod ordinary_field_leaf_tests {
             context.eval("typeof Math.min").unwrap(),
             Value::String(_)
         ));
+    }
+    #[test]
+    fn recovery_length_leaf_preserves_utf16_brand_and_final_owner_boundaries() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, index) = executable(&runtime, "length");
+        for (source, expected) in [("[1,,3]", 3), ("'a\\ud83d\\ude00'", 3)] {
+            let base = context.eval(source).unwrap();
+            let retained = base.clone();
+            assert_eq!(
+                runtime.try_ordinary_field_immediate_read(&base, &code, index),
+                Some(Value::Int(expected))
+            );
+            drop(retained);
+        }
+        let proxy = context.eval("new Proxy([], {get(){throw 91}})").unwrap();
+        let _retained = proxy.clone();
+        assert!(
+            runtime
+                .try_ordinary_field_immediate_read(&proxy, &code, index)
+                .is_none()
+        );
+        let unique = Value::String(crate::engine::value::JsString::from_owned_utf16(vec![
+            97, 0xd800,
+        ]));
+        assert!(
+            runtime
+                .try_ordinary_field_immediate_read(&unique, &code, index)
+                .is_none()
+        );
+        let retained = unique.clone();
+        assert_eq!(
+            runtime.try_ordinary_field_immediate_read(&unique, &code, index),
+            Some(Value::Int(2))
+        );
+        drop(retained);
+    }
+
+    #[test]
+    fn recovery_arguments_leaf_reads_current_cell_and_declines_redefinitions() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let base = context
+            .eval(
+                "globalThis.args=(function(a){globalThis.change=x=>a=x;return arguments})(1);args",
+            )
+            .unwrap();
+        let _retained = base.clone();
+        assert_eq!(
+            runtime.try_array_immediate_read(&base, 0),
+            Some(Value::Int(1))
+        );
+        context.eval("change(7)").unwrap();
+        assert_eq!(
+            runtime.try_array_immediate_read(&base, 0),
+            Some(Value::Int(7))
+        );
+        context
+            .eval("Object.defineProperty(args,'0',{value:8,writable:false});change(9)")
+            .unwrap();
+        assert_eq!(
+            runtime.try_array_immediate_read(&base, 0),
+            Some(Value::Int(8))
+        );
+        context
+            .eval("Object.defineProperty(args,'0',{get(){return 11},configurable:true})")
+            .unwrap();
+        assert!(runtime.try_array_immediate_read(&base, 0).is_none());
+        assert_eq!(context.eval("args[0]").unwrap(), Value::Int(11));
+        context.eval("delete args[0]").unwrap();
+        assert!(runtime.try_array_immediate_read(&base, 0).is_none());
+    }
+
+    #[test]
+    fn recovery_linked_read_keeps_the_selected_getter_and_return_owner() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, index) = executable(&runtime, "x");
+        let base = context
+            .eval("globalThis.readLog=0;globalThis.o={get x(){readLog++;return 7}};o")
+            .unwrap();
+        let read = runtime
+            .prepare_linked_own_read(&base, &code, index)
+            .unwrap()
+            .unwrap();
+        assert_eq!(context.eval("readLog").unwrap(), Value::Int(0));
+        context
+            .eval("Object.defineProperty(o,'x',{get(){throw 99}})")
+            .unwrap();
+        let key = PropertyKey::from_borrowed_atom(
+            runtime.clone(),
+            code.property_key_atoms.as_ref().unwrap()[index as usize],
+        )
+        .unwrap();
+        let result = runtime
+            .finish_prepared_read(context.realm, &key, read)
+            .unwrap();
+        assert!(matches!(
+            result,
+            crate::engine::value::conversion::NativeConversion::Value(Some(Value::Int(7)))
+        ));
+        assert_eq!(context.eval("readLog").unwrap(), Value::Int(1));
     }
 }
