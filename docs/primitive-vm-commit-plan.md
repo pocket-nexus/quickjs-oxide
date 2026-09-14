@@ -2,6 +2,8 @@
 
 状态：2026-09-14，S01–S07 阶段验收通过，S08–S10 尚未开始；整体计划尚未完成。一个 PR 按 **S01–S10 共 10 个提交**交付架构、代码结构、完整语义迁移和 #16 的五项验收；以下编号表示计划中的提交，不表示已有实现。
 
+S07 commit 后的完整 benchmark/profile 已完成：固定 58 项耗时均回退，为 PR19 的 1.17–5.28 倍；67 个新核心成本样本零旧分派、零桥接。[结果与源码归因](reports/primitive-vm-s07-performance.md)已用于重写第 4 节：S08 先压低执行与状态推进成本并完成融合/PC 优化，S09 收口调用存储、编译和布局，修复剩余回退。此次仅更新计划，不表示 S08/S09 已实施。
+
 目标见[架构计划](primitive-vm-plan.md)，目录与算法见[实施设计](primitive-vm-implementation-plan.md)，能力和结构验收见[迁移清单](primitive-vm-migration.md)。
 
 用户于本轮要求：从当前 S05 剩余实现继续，按 S05 → S06 → S07 顺序，
@@ -298,8 +300,8 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 属性契约 4 项、非 profiling 构建、662 文件布局、格式和 diff 通过。14 项门禁、
 全部失败与修复、原始报告和最终 1163 个源码/构建/fixture 输入哈希保存在
 `target/primitive-vm-s07-acceptance/`，最终判定为 `stage-verdict.json`。
-本阶段只创建一次 commit；随后在该干净 commit 上执行完整 benchmark/profile，
-结果及原始样本说明写入 PR #21 comment。S08/S09 优化、S10 默认切换和旧路径删除未实施。
+本阶段只创建一次 commit；此后已在该干净 commit 上执行完整 benchmark/profile，
+结果及原始样本说明写入 PR #21 comment，见[回退分析](reports/primitive-vm-s07-performance.md)。S08/S09 优化、S10 默认切换和旧路径删除未实施。
 
 完成全部既有生产入口的可测新核心路径：
 
@@ -312,27 +314,105 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 
 ## 4. 优化与最终交付
 
-### S08 — `perf(vm): fuse stack operations and publish precise observation state`
+### 两阶段共同基线与验收口径
 
-在完整绑定、异常和恢复流程之上合并执行开销优化：
+本节供实现者按依赖顺序执行；S08/S09 仍各为一个完整提交单元，下面的工作编号表示内部步骤与隔离实验，不增加正式 commit。原定 #5/#7/#9/#10 优化与迁移回退一起验收，不能只交付融合微基准，也不能把回退留到 S10 切换默认入口后再处理。
 
-- 有限 UpdateLocal、CompareBranch 和保持读取顺序的局部融合；discard/prefix/postfix 共用算法，复用 S01/S02 的效果、栈、重定位和源码契约。
-- 热循环维护局部 pc/sp，在准确观察点直接向已知 FrameId 发布 fault/resume 和语义阶段 site；覆盖 debug/hook、GC/release、interrupt/fuel、host 与挂起。
-- 融合和 PC 发布分别诊断、分别 A/B，再进入同一提交。原逻辑操作的 fuel 权重与调试契约保持，不能盲目每 N 条才更新 PC。
+保留三个比较层次：PR19 是整个 PR 的性能参照；冻结的 S07 `23f5dcfe` 是本次修复基线；S08 最终源码是 S09 的增量基线。原始 S07 样本和失败记录保持不变。每个候选从固定父版本隔离一个变量，再测合并后的交互；记录源码/补丁、编译器、features/flags、二进制及 workload 哈希。同源 default/stack-vm 可作为归因对照，不能取代 PR19 的端到端比较。
 
-**验收：**`x += g()` 不推迟旧 x 读取；postfix 返回转换后的 Numeric；const 更新在转换后 PutValue 报错；NaN 下不混淆否定 `<` 与 `>=`。最终码、动态分派、fault/resume/backtrace 和恢复状态正确，取得 #9/#10 独立证据；PC 成本不显著时如实记录。
+| 证据 | 共同要求 |
+| --- | --- |
+| 正式吞吐 | 普通 release、profiling 关闭；固定 50+8 全部用例交错 10 轮，原始 V8 八项和 combined 至少 5 轮。阶段内定向 A/B 不能替代完整矩阵 |
+| 比值 | 固定和 compile 统一报新/基线耗时；原始分数报新/基线 score。某项任一轮失败即不提供该项有效比值，不从子集拼 combined |
+| 独立编译 | 相同公开 compile API 和 67 个冻结源码，10 轮；源码读取/Context 创建在计时外，不执行 JS。不得用完整进程减去另一批编译时间估算执行时间 |
+| 诊断 | 每个冻结 workload 验证 owned 指令为正、三种旧分派/桥计数为零。动态分派、逻辑搬运、分配、RC、PC 发布分开定义；尚未覆盖的值报 unavailable |
+| CPU 与内存 | 单独构建/串行采集。对短热点另加标明用途的等工作量放大探针，获得足够采样后再归因，不改冻结输入。普通构建 RSS 与诊断 RSS 分开；self 占比不充当绝对耗时或收益 |
+| 误差与身份 | 保留所有轮次、失败、min/max 和交错顺序；噪声敏感项预先固定配对区间估计方法并复测。若改绑核/频率政策，两边一起重测，不能混入既有样本 |
 
-### S09 — `perf(vm): reduce call storage costs and tune stack layout`
+阶段报告逐项列出“目标热点 → 机制改动 → 计数/机器码变化 → 正式 A/B → 剩余回退与归属”。中位差超过 5% 是必须复核的工作阈值，**不是允许永久回退的额度**；小于该值但持续、可复现的下降仍要解释。S09 的退出目标是双方有效固定用例恢复到 PR19 水平或更好，并保留 #5/#7/#9/#10 的独立优化证据；这是验收目标，不是速度承诺。确认存在的剩余回退不得用平均数、栈深收益或“已完成架构迁移”抵销。
 
-优化完整语义下的调用和存储成本：
+### S08 — `perf(vm): streamline owned execution and fuse stack operations`
 
-- 改进 frame 热冷布局、容量复用、metadata owner 与独占 outgoing 参数区；区分必要复制、冗余保活和初始化，保持 arguments/eval/capture 的正确关系。
-- 在同一栈 VM 内逐项评估规范内存栈与栈顶缓存、typed enum 与紧凑码，以及必要的热冷拆分。一次隔离一个变量，记录去留依据。
-- 缓存值 owns/moves、分支入口以及异常/观察/挂起物化均有明确契约；无可信收益或维护成本过高的实验删除，不留下闲置选项。
+**阶段目标：**先修复所有普通操作都在支付的执行/状态推进开销，再在相同所有权和观察契约上完成原定局部融合与 PC 优化。S07 的空循环约 2.03 倍回退与 TypedArray 写入约 5.28 倍回退属于两种不同路径，必须分别取得机制证据。
 
-**验收：**#7 的分配、retain/release、初始化、峰值/活跃槽与吞吐；暂停区段不可复用，不靠保留死值制造低成本。比较 code bytes、.text、实际 native frame、编译时间和 native/WASM 成本；实验不重新打开 ISA/SSA/GC 选型。
+#### S08.1 — 建立可归因的执行诊断
+
+- 在现有诊断内补充 run 出口原因、无 JS 回调即完成/实际发起回调的次数、各领域状态转移和 parent continuation 压入/弹出、Frame PC 写入与 Runtime 观察发布次数；普通计时构建不携带诊断开销。
+- 记录 `Step/Resume/Next`、转换任务及其最大变体的实际布局，检查按值参数/返回的 memcpy 调用点、函数 `.text` 与 prologue/实际 native 栈消耗。已有 472/560 B 复制和数 KiB 栈预留是调查起点，不能当作完整类型大小或动态复制总量。
+- 区分 immediate copy、String/BigInt Rc、Object/Symbol fallible retain、槽认证、逻辑 slot move 和机器码 payload 搬运。旧版没有的新计数不得补零；模型估算字节必须标明估算依据。
+- 冻结热点组：循环/Number；属性和 TypedArray 写；iterator/for-of；String/BigInt/Math 的无回调转换；普通/closure/global 调用。同时保留 getter/Proxy、异常、GC 与挂起用例作为语义对照。
+
+#### S08.2 — 压缩状态传递，让无回调步骤直接完成
+
+- 查询驱动只传递小型动作/结果；跨回调 payload 由明确 owner 保存，避免完整聚合枚举在领域函数、`Next::Continue` 与中央循环间反复移动。领域内部步骤优先在同一领域推进，跨领域请求保留类型约束；不是把所有算法重新塞入巨型 match。
+- 对 Primitive/Number/Element 已确定可完成的输入、已完成 NumericStep、两侧均为 primitive 的加法，直接消费共享领域结果。String/BigInt 可能分配/报错，仍在发布观察状态后的冷步骤执行；只省调度往返，不另写一份转换或数值规则。
+- 普通 data property、稠密 Array、TypedArray 的安全读取/写入及 iterator 已完成结果，先尝试共用存储/领域内核；只在确实需要下一语义阶段、getter/trap/species/用户转换时安装等待状态。普通属性的 flags/prototype/receiver 检查与 PR19 Array/TypedArray 回退保留。
+- 审核 TypedArray key/value 转换、resize/detach 和重新取得 view 的顺序；转换可以执行 JS 时必须保存阶段，回调后重取凭证。不能按“数值索引”跳过 canonical key、原型或失败规则。
+- 不以每步 `Box::new` 替代 memcpy，不给普通快路增加每操作堆分配；只有需持久等待的冷状态才取得长期 owner。落地一个共同协议后，由 S09 继续处理其容量复用，不再更换推进模型。
+- 立即完成仍保留 Return/Throw/引擎错误的区别、已选 continuation 的错误接收点，以及 native activation、错误 realm 和资源记账。用 S07 的 Promise nullish iterable 回归检验准备错误不会越过父状态；等待/放弃时 roots 与 native guard 仍按原顺序释放。
+
+**定向证据：**typed_array_write、prop_write、array_write/update、array_for_of、math_min、bigint64_arith、string_build 系列；记录每操作的通用分派/parent 状态次数、实际复制调用点和时间。零回调路径应少建状态；真实回调仍由显式 driver 推进、单次回复，不递归等待 JS、不走旧桥。
+
+#### S08.3 — 认证运行窗口，减少普通槽操作的重复工作
+
+- 在进入 run 时认证 FrameId、窗口、已验证布局和容量，建立只在本次连续执行内有效的窗口视图。简单局部和操作数使用已认证索引；在切帧、扩容、释放 drain、分配/GC、回调或挂起前结束借用，恢复后重新取得视图。继续禁止 unsafe。
+- immediate 的 copy 和 Number 运算保持短小，Object/Symbol 可失败 retain 使用独立 helper；已证明无分配/回收/回调的引用事务可继续留在热路，复杂释放才退出到冷边界。String/BigInt 共享存储和最后引用释放规则不变，不将 value copy 一概视为可删除的 RC。
+- 两个已认证的 Number 操作数就地消费/替换，省掉重复 peek/pop/push 认证与包装；按实际活跃区更新 sp，死槽立即失去 owner。先证明操作不会分配/回收/回调，才允许在连续运行区内完成。
+- 本步先使用规范内存栈，保留绑定的 Direct/Captured/Uninitialized 区分；不同时引入 S09 的栈顶缓存或紧凑编码。原始实参、checked/readonly 绑定仍走各自规则。
+
+**定向证据：**empty_loop/down_loop、int/float_arith、局部读取、Crypto/Navier-Stokes；展示槽认证和 helper 调用减少、逻辑 copy/move 的变化，以及正式吞吐。跨窗口/过期身份、容量失败、最后引用与中途 retain 失败必须仍可检出且只提交一次。
+
+#### S08.4 — 精确观察状态与有限融合分别 A/B
+
+- 在 S08.3 的借用边界上用局部 pc/sp；正常、错误和冷出口统一物化到已知 FrameId。分别计量 Frame fault/resume 写入与 Runtime 活跃帧发布，避免把 S07 已经按 run 出口发布的行为误算成逐指令 Runtime 更新。
+- 列全 throw/backtrace、debug/hook、GC/分配/release drain、interrupt/fuel、JS/host 调用、yield/await 与恢复的观察点；pending 保存准确 read/convert/write site。异步 CPU 采样不宣称任意时刻精确 JS PC。不得每 N 条盲目发布。
+- 在 S01/S02 的效果、栈、块入口、重定位和源码契约上加入有限 UpdateLocal（discard/prefix/postfix）与 CompareBranch；只有读取时刻已证明相同才加入少量 AddLocal 模式。不可进入融合中段，不跨 callback/handler/resume 边界偷移求值。
+- 先测窗口优化后不融合的内核，再独立测 PC、UpdateLocal、CompareBranch，最后合并验证交互；只用于实验的开关和失败候选不留在正式代码。记录最终发布码、动态频率、逻辑操作 fuel 权重及编译新增成本。
+
+**语义验收：**`x += g()`、`x+(x=2)` 保留旧值读取；postfix 返回转换后的旧 Numeric；const 更新先转换再 PutValue 报错；对象转换修改绑定后正常/抛错均正确；NaN 下否定 `<` 不替换为 `>=`。同时覆盖 ±0/BigInt/TDZ/captured、finally、恢复 PC 和单步源码位置。调试契约无法保持的模式在该模式下禁用融合。PC 收益不显著时保留真实结论。
+
+**S08 退出条件：**上述两类执行热点均有独立 A/B 与机制收敛证据；相关语义、完整 owned/default 回归/oracle/Test262、boundary、native/Web/WASM 与默认预算 Earley-Boyer 通过，完整性能矩阵和零桥计数齐全。非目标路径出现新回退先修复。本阶段不宣称全部恢复到 PR19；剩余项逐项列明 S07/PR19 差距和 S09 的存储/编译/布局责任。尚未解决的 S08 状态或槽热路问题留在本阶段，不能笼统转交“布局调优”。
+
+### S09 — `perf(vm): reuse call storage and close performance regressions`
+
+**阶段目标：**在 S08 的推进协议和规范栈内核上消除逐调用成本，修复编译与其余可复现回退；布局实验由剩余热点决定。调用存储的主要证据是 func_call 在最大深度 3 时仍产生约 160 万次参数缓冲和 FrameCold 分配，而非“arena 没有复用”。
+
+#### S09.1 — 调用参数直接进入窗口，保留必要快照
+
+- 先补齐每个调用种类的成本账：callee/realm/executable 获取、argv/request、parameters/locals、capture flags、FrameCold、native invocation、bound/apply 临时容器、返回/清理。分别报告容量增长次数、分配字节、初始化、owner move/copy/retain/release；区分累计与活跃/峰值。
+- 预留与构帧验证完成后直接初始化 SlotStore 的参数/局部区，消除 parameters/locals Vec 的中转。对 caller 已求值且独占的 outgoing 尾区采用拥有式区段转移，记录 caller 恢复形状；无法转移时使用同一布局算法的必要复制形式。
+- 单独保存实际 arity。只有 code/binding 信息证明没有 arguments/direct eval/其他原始实参观察者时才省掉原始 argv；其余保留独立来源或有证据的写时分离。strict/non-simple arguments 不随形参赋值改变，mapped arguments 按重复/缺失参数与 cell 规则维持别名。
+- bound/method/constructor、rest/spread、默认参数和 65K 实参沿同一所有权事务。所有可失败预留在源 owner 移出之前完成；调用建立失败、参数初始化抛错和派生 return 都由同一清理规则处理。
+
+**定向证据：**func_call、func_closure_call、global_func_call、arguments 两类、固定 Richards/DeltaBlue/Earley-Boyer。另用固定调用数/深度/arity 探针区分深度增长与平稳重复调用；预热达到容量后，普通无 capture 调用不应逐次再分配参数/局部中转缓冲。
+
+#### S09.2 — 帧、continuation 与 metadata 容量复用
+
+- 普通帧保持短头部；FrameCold、捕获 flags、Query parents/native scopes 和真实等待 payload 使用 execution 所有的可复用容量。复用空存储，不复用仍活跃、暂停或被 capture 引用的区段；不为压低分配保留已死的 Value/ObjectRef。
+- 一个持根 executable 提供不可变 code/layout/metadata，减少每次 snapshot 的多个 Rc 投影与重复 callee root；长期原始边、运行 root 与 realm 验证仍有清楚边界，不能让借用跨 Runtime 可变操作。
+- 返回值/抛出值先取得结果 owner，关闭 capture、处理 finally/IteratorClose、结束 guard 后才清帧。尾调用只在返回/构造/观察契约许可时复用；普通 call 的收益不依赖先实现通用尾调用复用。
+- freeze/thaw 与 generator/async/模块挂起使用同一最终布局；source owner 保活至目标全部发布。半转换失败、放弃执行、wrong-runtime、重复恢复、回调重入各有唯一释放责任，不能引入 Runtime owning cycle。
+
+**定向证据：**稳定深度下 frame/冷状态容量达到平台，平稳调用的临时分配明显减少；必要参数复制单列。补充带对象参数/返回、深递归、交错挂起和放弃的固定探针，报告普通 RSS、活跃/预留槽、冷状态容量、GC/release 与 freeze/thaw 时间及暂停分布。原始 combined 自适应累计值只用于形态分析，不用旧版失败 RSS 做比值。
+
+#### S09.3 — 编译回退与代码布局收口
+
+- 对同一公开 compile API 补齐 parse/resolution/lowering、块/融合/relocation、verify、publish 的分阶段归因；inclusive 与 exclusive 分清，不把嵌套时间相加。先用长源码或重复编译探针定位，正式结论仍用原 67 项。
+- 检查共享指令契约的取用、重复控制流/栈事实遍历、临时容量和发布投影；只合并已证实重复的工作。保持验证顺序、完整输入反例、合法范围及 source projection；S08 新融合带来的时间/内存成本一起计入。
+- 将 `.text` 分为 run/driver、领域协议、compiler/code 与过渡路径，结合 cycles/instructions、branch/cache 事件及机器码判断取舍。不要从 +46.25% 体积直接推出缓存瓶颈，也不要提前删除 S10 的旧路径来掩盖成本。
+- 冷 payload 外置与拆分以机器码和 native 栈结果为准，不靠全局 `inline(always)` 扩张热代码。普通 release、FP 诊断、debug 小栈、native/WASM 分开记录；诊断构建的栈溢出不能覆盖普通构建的成功记录。
+
+#### S09.4 — 有条件地评估栈顶缓存与紧凑编码
+
+先重新 profile S09.1–S09.3。只有规范栈流量仍主导才比较 0/1/2 个栈顶缓存；只有 code/decode/指令缓存证据支持才比较 typed enum 与紧凑码。两项是原定评估任务，是否保留实现由结果决定；有充分否定证据时不必制作完整第二套执行器。
+
+一次只隔离一个变量：规定缓存 owns/moves、分支汇合和正常/异常/GC/host/挂起的物化；编码继续消费同一指令契约与外来 binary 验证。比较正式吞吐、code bytes、`.text`、编译时间/内存、实际 native 栈和 WASM 体积/耗时。无可信收益或维护成本过高就删除候选，不留下闲置 feature/双协议；不重新打开 ISA、SSA、GC 或 JIT 选型。
+
+**S09 退出条件：**按共同口径同时给出 S09/S08、S09/S07、S09/PR19；完整固定 50+8、原始八项/combined、67 项 compile、调用/内存/暂停证据齐全。原始旧 Earley-Boyer/combined 无有效基线，要求新核心默认预算持续成功，并与 S07 的有效分数比较。确认存在的吞吐/编译回退逐项修复或保持阶段未完成，不能靠可选缓存/编码实验的预期收益结案。#7 的分配/初始化/引用成本、#9 的最终码/分派和 #10 的独立 PC 结论同时交付；完整语义、零桥覆盖、有限/无限递归、小栈/宿主重入、native/Web/WASM 门禁通过后才进入 S10。
 
 ### S10 — `refactor(vm): finish validation and retire the previous execution path`
+
+前置条件：S08/S09 的联合优化与回退修复达到上述退出条件。S10 不接收未归因回退作为默认切换后的待办。
 
 按顺序完成同一提交的最终交付：
 

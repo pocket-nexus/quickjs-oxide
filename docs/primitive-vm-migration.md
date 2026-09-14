@@ -2,6 +2,8 @@
 
 状态：2026-09-14。用户已确定使用栈 VM，**S01–S07 阶段验收通过，S08–S10 尚未开始，整体计划尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
 
+S07 完整测量已完成，固定 58 项耗时均回退，67 个成本样本零旧分派/桥接。依据[回退分析](reports/primitive-vm-s07-performance.md)，S08/S09 已合并原定优化与回退修复并细化计划；以下新增条目仍为待做，不改变 S01–S07 的阶段验收结论。
+
 ## 1. 起点与范围
 
 - PR19 基线：`c52d4dc7747641756dff8cb7159b9885e9cc8b17`，生产 Rust 源码与历史调查的 `1cc51bb5fcc5c36912d3197d877219ae513dc4b5` 一致。
@@ -77,7 +79,9 @@
 | modules | modules + driver，S07 | cycles/live import、TLA、dynamic import、loader 重入 | S07 验收通过；新旧完整 oracle/Test262 均通过 |
 | API/host/binary/platform | 入口适配与统一验证，S07 | 所有入口、delimiter、round trip、畸形输入和平台 | S07 验收通过；native/API/binary 及两配置 Node/WASM 通过 |
 | PC/observer/interrupt | observe + run，S08 | fault/resume、GC/release、host/debug、融合 fuel 权重 | 待做 |
-| 调用与布局优化 | call/frame/stack，S09 | 原生帧、峰值槽、复制/retain、缓存物化、编码成本 | 待做 |
+| 执行回退修复 | run/stack 与领域请求/结果，S08 | 认证窗口、immediate copy、小型 payload、无回调直接完成；独立 A/B、机器码和零桥计数 | 待做；已取得 S07 热点证据 |
+| 调用与等待状态复用 | call/frame/stack 与 continuation owner，S09 | argv/形参语义、直接窗口初始化、冷容量/metadata、分配/RC/活跃与峰值、挂起回收 | 待做；已取得 S07 每调用分配证据 |
+| 编译与布局回退修复 | compiler/code 与 run/driver，S09 | compile-only 分阶段归因、`.text`/native 栈、WASM、缓存/编码的去留 | 待做；不得靠弱化验证或提前删除旧路径结案 |
 
 S05 收口同步内置调用点并列明异步/模块/入口的后续责任，S07/S10 审核全部内部 JS 调用。真实 host 同步边界必须能指出实际 embedder callback，不能用来藏未迁移内部递归。
 
@@ -90,6 +94,7 @@ S05 收口同步内置调用点并列明异步/模块/入口的后续责任，S0
 | #7 | 分配、初始化、retain/release、峰值/活跃槽及调用吞吐；参数/捕获语义正确 | 待做 |
 | #9 | 最终码、动态分派；更新/条件融合的快照、错误和 source site | 待做 |
 | #10 | 独立成本归因与完整观察点；成本不显著也如实记录 | 待做 |
+| S07 回退修复 | S08/S09 相对父阶段、S07、PR19 的逐项比较；固定 58、原始 8+combined、compile 67 与内存/暂停证据，确认的剩余回退闭环 | 待做；S09 退出目标为恢复到 PR19 水平或更好，口径见逐 commit 计划第 4 节 |
 | 架构 | 小型协议、一个 driver、一个热分派、领域状态就地归属、清楚拥有/恢复 | 待做 |
 | 可维护性 | 新 Number、转换顺序、异常/恢复、binding/eval 四种修改演练 | 待做 |
 | 完整验证 | 50+8 固定、原始 V8、相关 oracle、全回归/Test262、native/Web/WASM | 待做 |

@@ -2,6 +2,8 @@
 
 状态：2026-09-14，S01–S07 阶段验收通过，S08–S10 的优化及默认切换尚未实施。执行表示已确定为栈 VM；本轮使用线性栈 IR、轻量控制流分析与有限融合。目标见[架构计划](primitive-vm-plan.md)，实施顺序合并为[10 个 commit](primitive-vm-commit-plan.md)，完整能力见[迁移清单](primitive-vm-migration.md)。
 
+S07 的完整性能测量已完成，回退及源码/机器码证据见[分析报告](reports/primitive-vm-s07-performance.md)。S08/S09 的详细工作与退出条件以[更新后的第 4 节](primitive-vm-commit-plan.md#4-优化与最终交付)为准：执行/状态推进与融合先收口，调用存储、编译和布局后收口；本文的所有权与语义契约继续适用。
+
 本文让实现者能够从一个指令或语义问题定位到唯一状态所有者，写出完整的调用/错误/恢复流程，并给审查者提供检查不变量。下面的类型与目录是目标设计，不是现有生产 API。
 
 ## 1. 模块划分与允许的依赖
@@ -345,9 +347,11 @@ generator、async、async generator 共用 frame/stack/control 布局和 freeze/
 
 演练以完整语义路径为单位，不按文件越少越好评分。复杂算法可拆成 helper，重复状态、无消费者的抽象和过宽公共接口必须删除。
 
-测量按同一栈架构分步进行：基线 → 帧/存储 → 直接 Number → 局部融合 → PC 发布 → 可选栈顶/编码。分别记录编译阶段时间与临时内存、成品码、动态分派、槽 move/copy/clear、调用分配、retain/release、初始化、高水位与 native frame 消耗。
+S07 后的测量顺序调整为：冻结 PR19/S07 → S08 小型状态传递与无回调完成路径 → 认证运行窗口/immediate 槽操作 → PC、UpdateLocal、CompareBranch 各自 A/B 及组合 → S09 参数/帧/continuation/metadata 复用 → 编译回退与冷热布局 → 有证据时再做栈顶/编码实验。阶段内每次隔离一个变量，并验证集成后的交互。
 
-原始 Earley-Boyer 默认预算和小栈/重入是 #1 的硬门槛。固定 50+8 交错至少 5 轮、敏感项 10 轮；正式计时与诊断开关分开，构建/测试/采样分阶段串行。没有独立 PC 归因就不宣称其加速；编译时间、内存和暂停不因热循环获益而省略。
+分别记录编译阶段时间与临时内存、成品码、动态分派、run 出口、领域状态/parent 转移、槽 move/copy/clear、调用分配、retain/release、初始化、高水位与 native frame 消耗。Frame PC 写入、Runtime 观察发布、逻辑 owner 转移、编译器生成的 payload memcpy 分开计量。`size_of`、prologue 栈预留、整个调用链实测高水位也不能互相替代。
+
+原始 Earley-Boyer 默认预算和小栈/重入是 #1 的硬门槛。S08/S09 阶段验收采用固定 50+8 全项交错 10 轮、原始 V8 八项与 combined 至少 5 轮、独立 compile API 的 67 项各 10 轮；正式计时与诊断开关分开，构建/测试/采样分阶段串行。没有独立 PC 归因就不宣称其加速；编译时间、内存和暂停不因热循环获益而省略。旧版失败的原始 Earley-Boyer/combined 不提供新旧速度或 RSS 比值；新核心持续验证默认预算成功，并与 S07 有效结果比较。
 
 最后运行相关 QuickJS oracle、完整回归/Test262、native/Web/WASM，检查每个调用点的最终归属。验证入口见 [Test262 文档](test262.md)。不增加 skip、不改冻结预期掩盖回归、不恢复 Tachyon benchmark 工具或历史成绩文件。
 
