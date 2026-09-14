@@ -63,7 +63,7 @@ pub(in crate::engine::vm) fn initialize_name(
             "private-name initializer reached a private-method frame cell",
         )),
         FrameBinding::Captured(root) => runtime
-            .initialize_private_var_ref(root, &name)
+            .initialize_private_var_ref(&root, &name)
             .map_err(runtime_error_to_vm_error),
         FrameBinding::Direct(_) => Err(Error::internal(
             "private-name initializer reached an ordinary frame value",
@@ -116,7 +116,7 @@ pub(in crate::engine::vm) fn initialize_callable(
             Ok(())
         }
         FrameBinding::Captured(root) => runtime
-            .initialize_private_callable_var_ref(root, &callable, kind)
+            .initialize_private_callable_var_ref(&root, &callable, kind)
             .map_err(runtime_error_to_vm_error),
         FrameBinding::PrivateCallable(_) => Err(Error::internal(
             "private-callable local was initialized more than once",
@@ -213,7 +213,7 @@ pub(super) fn step(
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariable, ClosureVariableName,
 };
-use crate::engine::heap::{RawValue, roots::VarRefRoot};
+use crate::engine::heap::RawValue;
 use crate::engine::object::PrivateNameRef;
 
 pub(in crate::engine::vm) fn validate_descriptor(
@@ -243,14 +243,17 @@ pub(in crate::engine::vm) fn validate_descriptor(
     Ok(descriptor.kind)
 }
 
-fn captured_name(runtime: &Runtime, root: &VarRefRoot) -> Result<Option<PrivateNameRef>, Error> {
+fn captured_name(
+    runtime: &Runtime,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
+) -> Result<Option<PrivateNameRef>, Error> {
     match runtime
-        .raw_var_ref_value(root)
+        .raw_var_ref_value(&root)
         .map_err(runtime_error_to_vm_error)?
     {
         RawValue::Uninitialized => Ok(None),
         RawValue::Private(_) => runtime
-            .private_name_from_raw_var_ref(root)
+            .private_name_from_raw_var_ref(&root)
             .map(Some)
             .map_err(runtime_error_to_vm_error),
         _ => Err(Error::internal(
@@ -261,7 +264,7 @@ fn captured_name(runtime: &Runtime, root: &VarRefRoot) -> Result<Option<PrivateN
 
 pub(in crate::engine::vm) enum PrivateSource<'a> {
     Local(VariableDefinition, &'a FrameBinding),
-    Closure(ClosureVariable, &'a VarRefRoot),
+    Closure(ClosureVariable, crate::engine::heap::roots::VarRefView<'a>),
 }
 
 pub(in crate::engine::vm) fn optional_field_name(
@@ -277,7 +280,7 @@ pub(in crate::engine::vm) fn optional_field_name(
             }
             match binding {
                 FrameBinding::Private(name) => Ok(Some(name.clone())),
-                FrameBinding::Captured(root) => captured_name(runtime, root),
+                FrameBinding::Captured(root) => captured_name(runtime, &root),
                 FrameBinding::Uninitialized => Ok(None),
                 FrameBinding::PrivateCallable(_) => Err(Error::internal(
                     "private-field local contains a private method",
@@ -294,9 +297,9 @@ pub(in crate::engine::vm) fn optional_field_name(
                 ));
             }
             runtime
-                .validate_var_ref_metadata(root, descriptor)
+                .validate_var_ref_metadata(&root, descriptor)
                 .map_err(runtime_error_to_vm_error)?;
-            captured_name(runtime, root)
+            captured_name(runtime, &root)
         }
     }
 }
@@ -304,16 +307,16 @@ pub(in crate::engine::vm) fn optional_field_name(
 use crate::engine::object::{CallableRef, ObjectRef};
 fn captured_callable(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
     kind: ClosureVariableKind,
 ) -> Result<Option<CallableRef>, Error> {
     match runtime
-        .raw_var_ref_value(root)
+        .raw_var_ref_value(&root)
         .map_err(runtime_error_to_vm_error)?
     {
         RawValue::Uninitialized => Ok(None),
         RawValue::Object(_) => runtime
-            .private_callable_from_raw_var_ref(root, kind)
+            .private_callable_from_raw_var_ref(&root, kind)
             .map(Some)
             .map_err(runtime_error_to_vm_error),
         _ => Err(Error::internal(
@@ -337,7 +340,7 @@ pub(in crate::engine::vm) fn optional_callable(
             }
             match binding {
                 FrameBinding::PrivateCallable(callable) => Ok(Some(callable.clone())),
-                FrameBinding::Captured(root) => captured_callable(runtime, root, expected_kind),
+                FrameBinding::Captured(root) => captured_callable(runtime, &root, expected_kind),
                 FrameBinding::Uninitialized => Ok(None),
                 FrameBinding::Private(_) => Err(Error::internal(
                     "private-callable local contains a private field identity",
@@ -355,9 +358,9 @@ pub(in crate::engine::vm) fn optional_callable(
                 ));
             }
             runtime
-                .validate_var_ref_metadata(root, descriptor)
+                .validate_var_ref_metadata(&root, descriptor)
                 .map_err(runtime_error_to_vm_error)?;
-            captured_callable(runtime, root, expected_kind)
+            captured_callable(runtime, &root, expected_kind)
         }
     }
 }

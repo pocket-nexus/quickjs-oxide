@@ -33,7 +33,7 @@ pub(super) fn eval_variable_object<'a>(
     executable: &PublishedFunctionSnapshot,
     source: EvalVariableSource,
     local: impl Fn(u16) -> Option<&'a FrameBinding>,
-    closure_slots: &[VarRefRoot],
+    closure_slots: &super::closure::ClosureSlots,
 ) -> Result<ObjectRef, Error> {
     let value = match source {
         EvalVariableSource::Local(index) => {
@@ -57,7 +57,7 @@ pub(super) fn eval_variable_object<'a>(
             if let FrameBinding::Captured(root) = binding {
                 runtime
                     .validate_var_ref_metadata(
-                        root,
+                        &root,
                         ClosureVariable {
                             source: ClosureSource::ParentLocal(index),
                             name: definition
@@ -89,10 +89,10 @@ pub(super) fn eval_variable_object<'a>(
                 Error::internal("eval variable-object closure slot is out of bounds")
             })?;
             runtime
-                .validate_var_ref_metadata(root, descriptor)
+                .validate_var_ref_metadata(&root, descriptor)
                 .map_err(runtime_error_to_vm_error)?;
             runtime
-                .read_var_ref(root)
+                .read_var_ref(&root)
                 .map_err(runtime_error_to_vm_error)?
         }
     };
@@ -130,7 +130,7 @@ pub(super) fn with_object<'a>(
     executable: &PublishedFunctionSnapshot,
     source: WithObjectSource,
     local: impl Fn(u16) -> Option<&'a FrameBinding>,
-    closure_slots: &[VarRefRoot],
+    closure_slots: &super::closure::ClosureSlots,
 ) -> Result<ObjectRef, Error> {
     let value = match source {
         WithObjectSource::Local(index) => {
@@ -151,7 +151,7 @@ pub(super) fn with_object<'a>(
             if let FrameBinding::Captured(root) = binding {
                 runtime
                     .validate_var_ref_metadata(
-                        root,
+                        &root,
                         ClosureVariable {
                             source: ClosureSource::ParentLocal(index),
                             name: definition
@@ -184,10 +184,10 @@ pub(super) fn with_object<'a>(
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("with-object closure slot is out of bounds"))?;
             runtime
-                .validate_var_ref_metadata(root, descriptor)
+                .validate_var_ref_metadata(&root, descriptor)
                 .map_err(runtime_error_to_vm_error)?;
             runtime
-                .read_var_ref(root)
+                .read_var_ref(&root)
                 .map_err(runtime_error_to_vm_error)?
         }
     };
@@ -208,7 +208,7 @@ pub(super) fn dynamic_object<'a>(
     executable: &PublishedFunctionSnapshot,
     source: DynamicEnvironmentSource,
     local: impl Fn(u16) -> Option<&'a FrameBinding>,
-    closure_slots: &[VarRefRoot],
+    closure_slots: &super::closure::ClosureSlots,
 ) -> Result<ObjectRef, Error> {
     match source {
         DynamicEnvironmentSource::Eval(source) => {
@@ -233,7 +233,7 @@ pub(super) fn global_reference(
     runtime: &Runtime,
     realm: crate::engine::heap::ContextId,
     executable: &PublishedFunctionSnapshot,
-    closure_slots: &[VarRefRoot],
+    closure_slots: &super::closure::ClosureSlots,
     index: u16,
 ) -> Result<GlobalReference, Error> {
     use crate::engine::{heap::RawValue, object::PropertyKey};
@@ -329,10 +329,16 @@ pub(super) enum GlobalWrite {
 fn global_write_binding<'a>(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
-    slots: &'a [VarRefRoot],
+    slots: &'a super::closure::ClosureSlots,
     index: u16,
     operation: &str,
-) -> Result<(crate::engine::atom::Atom, &'a VarRefRoot), Error> {
+) -> Result<
+    (
+        crate::engine::atom::Atom,
+        crate::engine::heap::roots::VarRefView<'a>,
+    ),
+    Error,
+> {
     let descriptor = executable
         .closure_variables
         .get(usize::from(index))
@@ -361,7 +367,7 @@ fn global_write_binding<'a>(
 pub(super) fn prepare_global_write(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
-    slots: &[VarRefRoot],
+    slots: &super::closure::ClosureSlots,
     index: u16,
     initialize: bool,
 ) -> Result<GlobalWrite, Error> {
@@ -411,7 +417,7 @@ pub(super) fn prepare_global_write(
 pub(super) fn prepare_global_delete(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
-    slots: &[VarRefRoot],
+    slots: &super::closure::ClosureSlots,
     index: u16,
 ) -> Result<Option<crate::engine::object::PropertyKey>, Error> {
     let (atom, root) = global_write_binding(runtime, executable, slots, index, "delete")?;

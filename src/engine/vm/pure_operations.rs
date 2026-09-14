@@ -285,7 +285,7 @@ fn perform(
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
             runtime
-                .write_var_ref(root, value)
+                .write_var_ref(&root, value)
                 .map_err(runtime_error_to_vm_error)?;
             return Ok(None);
         }

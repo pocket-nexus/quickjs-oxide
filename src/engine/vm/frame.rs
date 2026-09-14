@@ -6,7 +6,6 @@ pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame};
 use crate::engine::api::error::Error;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::ContextId;
-use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::object::ObjectRef;
 use crate::engine::value::Value;
 use crate::engine::vm::CallInput;
@@ -62,25 +61,30 @@ pub(super) enum ConstructorReturn {
     Derived,
 }
 
-pub(super) struct FrameCold {
-    pub property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
-    pub property_generation: u64,
-    pub iterator_generation: u64,
+#[derive(Default)]
+pub(super) struct FrameRare {
+    property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub iterator_wait: Option<Box<crate::engine::vm::iterator_driver::PendingIterator>>,
     pub resume_throw: Option<Value>,
     pub regions: Vec<crate::engine::vm::VmUnwindRegion>,
     pub eval_arguments: Option<Vec<crate::engine::value::Value>>,
     pub constructor_return: Option<ConstructorReturn>,
     pub conversion: Option<crate::engine::vm::conversion_driver::ConversionWait>,
+}
+
+pub(super) struct FrameCold {
+    pub property_generation: u64,
+    pub iterator_generation: u64,
+    pub rare: std::cell::OnceCell<Box<FrameRare>>,
     pub normalized_this: Option<crate::engine::value::Value>,
     pub return_to: Option<ReturnTarget>,
     pub entry_guard: Option<ActiveFrameGuard>,
     pub caller_realm: ContextId,
     pub active_frame: ActiveFrameToken,
-    pub function: ObjectRef,
-    pub closure_slots: Vec<VarRefRoot>,
+    pub function: storage::Resident<ObjectRef>,
+    pub closure_slots: crate::engine::vm::closure::ClosureSlots,
     pub reusable_captured_locals: Vec<bool>,
-    pub input: CallInput,
+    pub input: storage::Resident<CallInput>,
 }
 
 /// Owners crossing the driver boundary before installation or after detachment.
@@ -110,6 +114,9 @@ pub(super) struct FrameStore {
     execution: u64,
     next_generation: u64,
     limit: usize,
+    // Exact sum: at most usize::MAX frames, each charged at most usize::MAX.
+    // Wider accounting preserves overflow recovery without rescanning ancestors.
+    installed_wait_depth: u128,
 }
 
 impl FrameStore {
@@ -119,6 +126,7 @@ impl FrameStore {
             execution,
             next_generation: 1,
             limit,
+            installed_wait_depth: 0,
         }
     }
 
@@ -137,17 +145,44 @@ impl FrameStore {
             .len()
             .checked_add(pending)
             .and_then(|depth| {
-                self.frames.iter().try_fold(depth, |depth, (_, frame)| {
-                    depth.checked_add(
-                        frame
-                            .cold
-                            .property_wait
-                            .as_ref()
-                            .map_or(0, |wait| wait.continuation_depth()),
-                    )
-                })
+                usize::try_from(self.installed_wait_depth)
+                    .ok()
+                    .and_then(|wait| depth.checked_add(wait))
             })
             .is_some_and(|depth| depth < self.limit)
+    }
+
+    fn remove_installed_wait_depth(&mut self, removed: usize) {
+        self.installed_wait_depth -= removed as u128;
+    }
+
+    pub(super) fn take_pending(
+        &mut self,
+        id: FrameId,
+    ) -> Result<Box<super::proxy_get_driver::PendingProxyGet>, Error> {
+        let pending = self
+            .current_mut(id)?
+            .cold
+            .property_wait
+            .take()
+            .ok_or_else(|| Error::internal("request reply has no pending operation"))?;
+        self.remove_installed_wait_depth(pending.continuation_depth());
+        Ok(pending)
+    }
+
+    pub(super) fn put_pending(
+        &mut self,
+        id: FrameId,
+        pending: Box<super::proxy_get_driver::PendingProxyGet>,
+    ) -> Result<(), Error> {
+        let frame = self.current_mut(id)?;
+        if frame.cold.property_wait.is_some() {
+            return Err(Error::internal("request overwrote a pending reply"));
+        }
+        let depth = pending.continuation_depth();
+        frame.cold.property_wait = Some(pending);
+        self.installed_wait_depth += depth as u128;
+        Ok(())
     }
 
     pub(super) fn current_id(&self) -> Option<FrameId> {
@@ -185,7 +220,9 @@ impl FrameStore {
     }
 
     pub(super) fn pop_current(&mut self) -> Option<Frame> {
-        self.frames.pop().map(|(_, frame)| frame)
+        let (_, frame) = self.frames.pop()?;
+        self.remove_installed_wait_depth(frame.cold.pending_depth());
+        Some(frame)
     }
 
     pub(super) fn current_mut(&mut self, id: FrameId) -> Result<&mut Frame, Error> {
@@ -199,7 +236,7 @@ impl FrameStore {
 
     pub(super) fn pop(&mut self, id: FrameId) -> Result<Frame, Error> {
         self.current_mut(id)?;
-        Ok(self.frames.pop().unwrap().1)
+        Ok(self.pop_current().unwrap())
     }
 }
 
@@ -218,7 +255,9 @@ impl FramePush<'_> {
             generation: self.store.next_generation,
         };
         self.store.next_generation = self.next;
+        let depth = frame.cold.pending_depth();
         self.store.frames.push((id, frame));
+        self.store.installed_wait_depth += depth as u128;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_storage(
             crate::engine::api::profiling::OwnedStorageEvent::FramePush(self.store.frames.len()),
@@ -241,6 +280,121 @@ mod tests {
     use crate::engine::api::Runtime;
     use crate::engine::value::Value;
     use crate::engine::vm::stack::{FrameStorage, SlotStore};
+
+    fn assert_wait_depth_matches_scan(frames: &FrameStore) {
+        let sum = frames.frames.iter().try_fold(0usize, |sum, (_, frame)| {
+            sum.checked_add(frame.cold.pending_depth())
+        });
+        assert_eq!(usize::try_from(frames.installed_wait_depth).ok(), sum);
+        for pending in [0, 1, 2, 3, 7, usize::MAX - 1, usize::MAX] {
+            let original = frames.frames.len().checked_add(pending).and_then(|depth| {
+                frames.frames.iter().try_fold(depth, |depth, (_, frame)| {
+                    depth.checked_add(frame.cold.pending_depth())
+                })
+            });
+            assert_eq!(
+                frames.can_push_with_continuations(pending),
+                original.is_some_and(|depth| depth < frames.limit),
+            );
+        }
+    }
+
+    #[test]
+    fn installed_wait_cache_matches_scan_across_install_take_and_both_pops() {
+        use super::super::proxy_get_driver::PendingProxyGet;
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut frames = FrameStore::new(1, 9);
+        assert_wait_depth_matches_scan(&frames);
+        let (first, _first_slots) = frame(&runtime, context.realm);
+        let first_id = frames.push(first).unwrap();
+        frames
+            .put_pending(
+                first_id,
+                PendingProxyGet::with_parent_depth_for_test(context.realm, 3),
+            )
+            .unwrap();
+        assert_wait_depth_matches_scan(&frames);
+        assert!(frames.can_push_with_continuations(4));
+        assert!(!frames.can_push_with_continuations(5));
+        let (mut second, _second_slots) = frame(&runtime, context.realm);
+        second.cold.property_wait = Some(PendingProxyGet::with_parent_depth_for_test(
+            context.realm,
+            4,
+        ));
+        let second_id = frames.prepare_push().unwrap().install(second);
+        assert_wait_depth_matches_scan(&frames);
+        assert!(!frames.can_push_with_continuations(0));
+        let pending = frames.take_pending(second_id).unwrap();
+        assert_eq!(pending.continuation_depth(), 4);
+        assert_wait_depth_matches_scan(&frames);
+        frames.put_pending(second_id, pending).unwrap();
+        assert_wait_depth_matches_scan(&frames);
+        drop(frames.pop(second_id).unwrap());
+        assert_wait_depth_matches_scan(&frames);
+        drop(frames.pop_current().unwrap());
+        assert_wait_depth_matches_scan(&frames);
+        assert!(frames.pop_current().is_none());
+        assert_wait_depth_matches_scan(&frames);
+    }
+
+    #[test]
+    fn pending_errors_preserve_cache_and_put_does_not_add_a_budget_rejection() {
+        use super::super::proxy_get_driver::PendingProxyGet;
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut frames = FrameStore::new(1, 1);
+        let (first, _slots) = frame(&runtime, context.realm);
+        let id = frames.push(first).unwrap();
+        let invalid = FrameId {
+            execution: 2,
+            generation: id.generation,
+        };
+        assert!(frames.take_pending(id).is_err());
+        assert!(frames.take_pending(invalid).is_err());
+        assert!(
+            frames
+                .put_pending(
+                    invalid,
+                    PendingProxyGet::with_parent_depth_for_test(context.realm, 2)
+                )
+                .is_err()
+        );
+        assert!(frames.pop(invalid).is_err());
+        assert_wait_depth_matches_scan(&frames);
+        frames
+            .put_pending(
+                id,
+                PendingProxyGet::with_parent_depth_for_test(context.realm, 3),
+            )
+            .unwrap();
+        assert!(!frames.can_push_with_continuations(0));
+        assert!(
+            frames
+                .put_pending(
+                    id,
+                    PendingProxyGet::with_parent_depth_for_test(context.realm, 5)
+                )
+                .is_err()
+        );
+        assert_wait_depth_matches_scan(&frames);
+        assert_eq!(frames.take_pending(id).unwrap().continuation_depth(), 3);
+        assert_wait_depth_matches_scan(&frames);
+        drop(frames.pop_current().unwrap());
+        assert!(frames.take_pending(id).is_err());
+        assert_wait_depth_matches_scan(&frames);
+    }
+
+    #[test]
+    fn numeric_installed_wait_overflow_recovers_without_scanning() {
+        let mut frames = FrameStore::new(1, usize::MAX);
+        frames.installed_wait_depth = usize::MAX as u128 + 1;
+        assert!(!frames.can_push_with_continuations(0));
+        frames.remove_installed_wait_depth(1);
+        assert_eq!(frames.installed_wait_depth, usize::MAX as u128);
+        frames.remove_installed_wait_depth(usize::MAX);
+        assert!(frames.can_push_with_continuations(0));
+    }
 
     #[test]
     fn cached_cold_storage_reuses_empty_capacity_without_retaining_runtime() {
@@ -291,27 +445,22 @@ mod tests {
             .unwrap();
         let function = runtime.new_object(None).unwrap();
         let cold = super::ColdFrame::new(FrameCold {
-            resume_throw: None,
-            regions: Vec::new(),
-            iterator_wait: None,
-            property_wait: None,
             property_generation: 0,
             iterator_generation: 0,
-            eval_arguments: None,
-            constructor_return: None,
-            conversion: None,
+            rare: std::cell::OnceCell::new(),
             normalized_this: None,
             return_to: None,
             entry_guard: None,
             caller_realm: realm,
             active_frame: ActiveFrameToken(0),
-            input: CallInput {
+            input: (CallInput {
                 this_value: Value::Undefined,
                 new_target: Value::Undefined,
                 callee_global: function.clone(),
-            },
-            function,
-            closure_slots: Vec::new(),
+            })
+            .into(),
+            function: (function).into(),
+            closure_slots: Default::default(),
             reusable_captured_locals: Vec::new(),
         });
         (
@@ -524,5 +673,53 @@ mod tests {
         assert!(events.borrow().is_empty());
         drop(execution);
         assert_eq!(*events.borrow(), ["child-slot", "child", "parent"]);
+    }
+}
+
+impl FrameCold {
+    pub(super) fn has_pending_query(&self) -> bool {
+        self.rare
+            .get()
+            .is_some_and(|rare| rare.property_wait.is_some())
+    }
+    fn pending_depth(&self) -> usize {
+        self.rare
+            .get()
+            .and_then(|rare| rare.property_wait.as_ref())
+            .map_or(0, |wait| wait.continuation_depth())
+    }
+    pub(super) fn ordinary_return(&self) -> Option<ReturnTarget> {
+        let target = self.return_to?;
+        if target.tail
+            || target.operation.is_some()
+            || !matches!(target.owner, ReturnOwner::Frame(_))
+        {
+            return None;
+        }
+        if self.rare.get().is_some_and(|rare| {
+            rare.constructor_return.is_some()
+                || rare.property_wait.is_some()
+                || rare.iterator_wait.is_some()
+                || rare.conversion.is_some()
+                || !rare.regions.is_empty()
+                || rare.resume_throw.is_some()
+        }) {
+            return None;
+        }
+        Some(target)
+    }
+}
+impl std::ops::Deref for FrameCold {
+    type Target = FrameRare;
+    fn deref(&self) -> &FrameRare {
+        self.rare.get_or_init(Default::default)
+    }
+}
+impl std::ops::DerefMut for FrameCold {
+    fn deref_mut(&mut self) -> &mut FrameRare {
+        if self.rare.get().is_none() {
+            self.rare.set(Default::default()).ok();
+        }
+        self.rare.get_mut().unwrap()
     }
 }

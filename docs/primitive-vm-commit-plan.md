@@ -14,7 +14,7 @@ benchmark/profile，并在 PR #21 comment 汇报。此要求优先于下文开�
 S08 本轮开发中的候选、定向验证及剩余工作见[开发记录](reports/primitive-vm-s08-development.md)。
 该记录保留历史过程。最新状态见 [S08 收口记录](reports/primitive-vm-s08-closeout.md)：已结束 S08 迭代，逐项保留回退、未合入候选与验证缺口；不再以完全修复函数调用回退阻塞 S08。
 
-收口时实现账本（source-23；下表未完成证据随 S09 联合交付继续跟踪，不再扩大 S08 迭代）：
+实现账本（S08 以 source-23 收口；S09 已按当前调用成本复查重写，未完成证据随联合交付继续跟踪）：
 
 | 计划项 | 已落实 | 尚待完成 |
 | --- | --- | --- |
@@ -22,10 +22,10 @@ S08 本轮开发中的候选、定向验证及剩余工作见[开发记录](repo
 | S08.2 无回调直接完成 | 标量属性、Array/TypedArray、部分 iterator 和 native 完成路径 | 剩余状态热点与最终完整门禁 |
 | S08.3 运行窗口 | 窗口认证和 Number/标量槽快路，已有独立 A/B | 最终矩阵与跨出口验证汇总 |
 | S08.4 PC/融合 | 局部 resume PC、UpdateLocal/CompareBranch/AddStore，已有隔离测量 | 最终发布码、PC/融合成本收口 |
-| S09.1 调用参数 | 参数/局部直接初始化、outgoing 尾区转移，必要 argv 保留 | 普通/全局/闭包调用的吞吐回退 |
-| S09.2 存储复用 | 冷帧/捕获/continuation 容量复用与 executable 共享 | 最终调用成本、RSS/GC/暂停证据及增量 A/B |
-| S09.3 编译/布局 | CompactVisits、坐标游标与多组布局实验 | 67 项编译正式复核，剩余执行回退 |
-| S09.4 条件实验 | TOS 0/1/2 已测，当前候选无可靠收益而未合入 | 最终 profile 后的编码评估结论 |
+| S09.1 调用事实/环境 | 已有 executable 共享；确认全闭包环境仍逐调用复制 | 一次认证的私有调用视图、O(1) 环境取得与 owner 契约 |
+| S09.2 普通调用协议 | 参数直接初始化与容量平台已实现；十轮确认普通调用仍慢 49.5% | 紧凑就地帧、短 Call/Return 路径和必要 argv 设计 |
+| S09.3 增量预算 | 深度缩放及既有缓存候选确认祖先扫描问题 | FrameStore/Query 热检查 O(1)，失败/恢复/host 预算一致 |
+| S09.4 最终性能/编译 | CompactVisits、坐标游标已实施，TOS/ASCII 有负面证据 | 最终矩阵、剩余回退及 S08 留存验证缺口 |
 
 已有 source-23 完整 owned/default workspace 日志分别为 3473/3156 项通过；
 独立 S08 为 3413/3137 项通过，各配置另有 ignored 压力用例单独通过。
@@ -398,42 +398,65 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 
 **原 S08 退出条件（保留用于核对证据缺口）：**上述两类执行热点均有独立 A/B 与机制收敛证据；相关语义、完整 owned/default 回归/oracle/Test262、boundary、native/Web/WASM 与默认预算 Earley-Boyer 通过，完整性能矩阵和零桥计数齐全。非目标路径出现新回退先修复。本阶段不宣称全部恢复到 PR19；剩余项逐项列明 S07/PR19 差距和 S09 的存储/编译/布局责任。尚未解决的 S08 状态或槽热路问题留在本阶段，不能笼统转交“布局调优”。
 
-### S09 — `perf(vm): reuse call storage and close performance regressions`
+### S09 — `perf(vm): make ordinary calls compact and remove depth-dependent bookkeeping`
 
-**阶段目标：**在 S08 的推进协议和规范栈内核上消除逐调用成本，修复编译与其余可复现回退；布局实验由剩余热点决定。调用存储的主要证据是 func_call 在最大深度 3 时仍产生约 160 万次参数缓冲和 FrameCold 分配，而非“arena 没有复用”。
+**本轮执行边界（用户最新要求优先）：**只实现以下三个已确认问题的方案，并完成本节要求的验证、性能/profile 记录。完成这些实现后，即使仍有吞吐回退、方案局限或其他问题，也停止本轮实现，不追加其他优化。原“恢复所有 PR19 性能”的退出目标保留为验收账本，不作为扩大本轮范围的授权；S10 不在本轮范围内。
 
-#### S09.1 — 调用参数直接进入窗口，保留必要快照
+**当前执行状态：**S09.1–S09.3 的共享环境、驻留普通帧/短 Call/Return 和增量预算已实现；同源工作区、oracle 压力、native、边界、完整 Test262 结果向量和 Web/WASM 验证已通过。用户随后明确“一轮就够了”：保留已完成的固定/compile 四轮及定向多轮样本，后续仅补齐尚未覆盖组合的一轮，并完成 profile 和剩余回退记录；不再追加原十轮/五轮。尚不宣称 S09 原完整性能退出条件通过。
 
-- 先补齐每个调用种类的成本账：callee/realm/executable 获取、argv/request、parameters/locals、capture flags、FrameCold、native invocation、bound/apply 临时容器、返回/清理。分别报告容量增长次数、分配字节、初始化、owner move/copy/retain/release；区分累计与活跃/峰值。
-- 预留与构帧验证完成后直接初始化 SlotStore 的参数/局部区，消除 parameters/locals Vec 的中转。对 caller 已求值且独占的 outgoing 尾区采用拥有式区段转移，记录 caller 恢复形状；无法转移时使用同一布局算法的必要复制形式。
-- 单独保存实际 arity。只有 code/binding 信息证明没有 arguments/direct eval/其他原始实参观察者时才省掉原始 argv；其余保留独立来源或有证据的写时分离。strict/non-simple arguments 不随形参赋值改变，mapped arguments 按重复/缺失参数与 cell 规则维持别名。
-- bound/method/constructor、rest/spread、默认参数和 65K 实参沿同一所有权事务。所有可失败预留在源 owner 移出之前完成；调用建立失败、参数初始化抛错和派生 return 都由同一清理规则处理。
+**2026-09-14 修订依据：**当前 `b36ad884` 的重新诊断见 [调用成本复查与修复设计](reports/primitive-vm-s09-call-audit.md) 和 [数据记录](reports/primitive-vm-s09-call-audit.json)。三个冻结调用用例十轮均有效，普通/全局/闭包调用相对 PR19 分别为 **1.4952 / 1.4648 / 1.2931**。普通调用的参数/冷帧分配已经达到平台，继续以 S07 的约 160 万次分配解释当前回退是过时判断。
 
-**定向证据：**func_call、func_closure_call、global_func_call、arguments 两类、固定 Richards/DeltaBlue/Earley-Boyer。另用固定调用数/深度/arity 探针区分深度增长与平稳重复调用；预热达到容量后，普通无 capture 调用不应逐次再分配参数/局部中转缓冲。
+**阶段目标：**重做普通调用的内部执行协议和所有权投影，消除闭包环境的逐调用复制与预算的祖先扫描，同时修复其余已确认回退。保留显式 JS 调用栈，不能返回 Rust 递归。既有参数窗口/容量复用是保留基础，不再作为足以结案的主要方案。
 
-#### S09.2 — 帧、continuation 与 metadata 容量复用
+当前确定的三个问题：
 
-- 普通帧保持短头部；FrameCold、捕获 flags、Query parents/native scopes 和真实等待 payload 使用 execution 所有的可复用容量。复用空存储，不复用仍活跃、暂停或被 capture 引用的区段；不为压低分配保留已死的 Value/ObjectRef。
-- 一个持根 executable 提供不可变 code/layout/metadata，减少每次 snapshot 的多个 Rc 投影与重复 callee root；长期原始边、运行 root 与 realm 验证仍有清楚边界，不能让借用跨 Runtime 可变操作。
-- 返回值/抛出值先取得结果 owner，关闭 capture、处理 finally/IteratorClose、结束 guard 后才清帧。尾调用只在返回/构造/观察契约许可时复用；普通 call 的收益不依赖先实现通用尾调用复用。
-- freeze/thaw 与 generator/async/模块挂起使用同一最终布局；source owner 保活至目标全部发布。半转换失败、放弃执行、wrong-runtime、重复恢复、回调重入各有唯一释放责任，不能引入 Runtime owning cycle。
+| 问题 | 证据 | 修复要求 |
+| --- | --- | --- |
+| 普通 Call/Return 经多层通用协议，完整冷帧逐次构造/搬运/清理 | 无逐调用分配仍慢 49.5%；当前 perf 的准备、driver、安装和清理成本分散；机器码保留聚合副本 | 紧凑就地运行记录和专用普通调用/返回循环；不得只换 allocator 或全局强制内联 |
+| 调用入口复制全闭包环境，再逐 cell 建 root、返回时逐 cell release | 单捕获仍约两次 malloc/调用；50000 次调用，捕获 1→256 耗时约 41→263 ms，实际不执行捕获读取 | 发布时构造共享环境，运行 callee owner 保活，入口对捕获数 C 为 O(1) |
+| continuation 预算每次扫描所有祖先 | 固定 100000 次 native 叶子，深度 0→2048 耗时 60→343 ms；已有仅缓存等待深度的候选恢复约 62 ms | 增量维护总费用，热检查 O(1)，保留预算和溢出语义 |
 
-**定向证据：**稳定深度下 frame/冷状态容量达到平台，平稳调用的临时分配明显减少；必要参数复制单列。补充带对象参数/返回、深递归、交错挂起和放弃的固定探针，报告普通 RSS、活跃/预留槽、冷状态容量、GC/release 与 freeze/thaw 时间及暂停分布。原始 combined 自适应累计值只用于形态分析，不用旧版失败 RSS 做比值。
+普通浅层 `func_call` 不走等待深度扫描；闭包环境算法和部分准备/RC 在 PR19 已存在。不得把这些问题中的任何一个宣传为全部回退的唯一原因。紧凑调用方案的实际收益仍须独立实现和 A/B 确认。
 
-#### S09.3 — 编译回退与代码布局收口
+#### S09.1 — 已发布调用事实和共享闭包环境
 
-- 对同一公开 compile API 补齐 parse/resolution/lowering、块/融合/relocation、verify、publish 的分阶段归因；inclusive 与 exclusive 分清，不把嵌套时间相加。先用长源码或重复编译探针定位，正式结论仍用原 67 项。
-- 检查共享指令契约的取用、重复控制流/栈事实遍历、临时容量和发布投影；只合并已证实重复的工作。保持验证顺序、完整输入反例、合法范围及 source projection；S08 新融合带来的时间/内存成本一起计入。
-- 将 `.text` 分为 run/driver、领域协议、compiler/code 与过渡路径，结合 cycles/instructions、branch/cache 事件及机器码判断取舍。不要从 +46.25% 体积直接推出缓存瓶颈，也不要提前删除 S10 的旧路径来掩盖成本。
-- 冷 payload 外置与拆分以机器码和 native 栈结果为准，不靠全局 `inline(always)` 扩张热代码。普通 release、FP 诊断、debug 小栈、native/WASM 分开记录；诊断构建的栈溢出不能覆盖普通构建的成功记录。
+- 在 code/heap 的发布与闭包构造边界确认 bytecode、realm、function kind、binding layout、closure count/IDs 的不变量；普通入口一次认证形成私有调用视图。合并 `direct_call_target_from_value`、`bytecode_for_callable`、kind 获取、snapshot 与 active-frame 发布中已证明重复的查询；保留外部输入、跨 Runtime、损坏输入和恢复入口的验证及错误顺序。
+- 以一个真实 callee owner 保活其 bytecode/closure 强边；提供只在该 owner 下使用的 immutable environment view，或发布时创建的共享索引数组。普通调用不再 clone `Vec<VarRefId>` 并 collect 全环境 `Vec<VarRefRoot>`。不能只做单捕获特例，也不能把同样的逐 cell 工作藏到另一层缓存。
+- 捕获值继续通过原 cell 读写内核动态访问，TDZ/const/private、重复 ID 强边计数和 eval 可见性不变。共享 ID 数组不是 GC root；不得在 heap 的缓存中存 Runtime-owning roots 造成环。独立挂起/外部生命周期通过显式 owner 转交保持存活。
+- 列出 function、bytecode、realm/global、closure、参数、结果的 owner 表和观察边界。运行帧持根时，登记只持 token/身份；移除与运行帧重复的 guard roots 必须先完成契约改造。单次借用不跨 GC、释放 drain、JS/host 回调或 arena 扩容；不使用 unsafe/self-referential 裸指针。
+- 把不变的调用布局/原始实参观察需求放在已发布事实中，避免逐调用重新扫描代码。函数对象的可变属性和捕获值不作不失效的调用缓存。
 
-#### S09.4 — 有条件地评估栈顶缓存与紧凑编码
+**验证：**固定调用数，环境宽度 0/1/8/64/256，包含本次完全不读取捕获的分支；分别测创建、稳态调用和最终回收。入口和退出的环境复制/逐 cell root 工作必须消失，调用成本不随 C 线性增长。覆盖外域/损坏 metadata、callee 最后引用、返回逃逸闭包、重复捕获、重入、挂起和释放。
 
-先重新 profile S09.1–S09.3。只有规范栈流量仍主导才比较 0/1/2 个栈顶缓存；只有 code/decode/指令缓存证据支持才比较 typed enum 与紧凑码。两项是原定评估任务，是否保留实现由结果决定；有充分否定证据时不必制作完整第二套执行器。
+#### S09.2 — 普通调用/返回驻留于短循环，帧直接就地初始化
 
-一次只隔离一个变量：规定缓存 owns/moves、分支汇合和正常/异常/GC/host/挂起的物化；编码继续消费同一指令契约与外来 binary 验证。比较正式吞吐、code bytes、`.text`、编译时间/内存、实际 native 栈和 WASM 体积/耗时。无可信收益或维护成本过高就删除候选，不留下闲置 feature/双协议；不重新打开 ISA、SSA、GC 或 JIT 选型。
+- 依赖 S09.1 的调用事实，建立普通 bytecode Call/Return 的短路径：结束当前运行窗口借用、发布必要 PC、预留并直接安装子帧、取得子窗口继续执行；普通 Return 先移交结果 owner，原位解除登记和清理，再取得父窗口继续。不通过通用 `RunningExit`/`FrameExit`/完整 FrameEntry 再包装同一普通完成，不把所有冷分派内联进 run。
+- 保留小型热帧：executable/环境视图、pc/sp、窗口边界、返回目标与登记 token。Query、异常区域、constructor、generator/async 等真正需要的冷 payload 首次触达时再物化，容量仍归 execution 复用。普通调用不能先构造完整 FrameCold 再 memcpy 到已复用 Box；销毁也不先把整块冷帧 take 到 Rust 栈再丢弃。
+- 用同一槽事务实现 normal entry，恢复/外部 materialized entry 为显式慢路。消除通用 `push_frame_storage` 为 fresh/restore/source 等所有组合携带的中间 FrameStorage；正常路径所有可失败预留先于 owner 转移。保留实际 arity，参数/局部直接初始化，只清理实际拥有值的区域。
+- 原始 argv 与可写参数按已发布观察需求分开：无 arguments/eval 等观察者时避免无条件双份快照；有观察者时保留独立来源或有证明的写时分离。优化必须保持已求值实参的持根和释放顺序，不能因函数未读取参数而提前释放 Object/Symbol owner。
+- 普通完成与 throw/unwind、finally/IteratorClose、tail、constructor、真实 callback、host 重入、yield/await 分开路由，但都消费同一语义内核。保存精确 fault/resume PC、错误 realm、fuel、结果先持根及登记清理顺序；Rust unwind 和中途失败仍有唯一清理责任。无需先实现通用尾调用复用才能得到普通调用收益。
 
-**S09 退出条件：**按共同口径同时给出 S09/S08、S09/S07、S09/PR19；完整固定 50+8、原始八项/combined、67 项 compile、调用/内存/暂停证据齐全。原始旧 Earley-Boyer/combined 无有效基线，要求新核心默认预算持续成功，并与 S07 的有效分数比较。确认存在的吞吐/编译回退逐项修复或保持阶段未完成，不能靠可选缓存/编码实验的预期收益结案。#7 的分配/初始化/引用成本、#9 的最终码/分派和 #10 的独立 PC 结论同时交付；完整语义、零桥覆盖、有限/无限递归、小栈/宿主重入、native/Web/WASM 门禁通过后才进入 S10。
+**验证：**普通/全局/闭包、zero/多参数、method、对象参数/结果、缺失/重复参数、strict/non-simple/mapped arguments、rest/spread、65K 实参、正常/抛错/挂起分开。对固定调用数按 N/2N 和 arity/locals 缩放，记录完整机器指令、分类/认证/登记次数、聚合副本和 native 栈；既有分配平台不能代替吞吐。单独 A/B 共享环境、帧布局、调用/返回分派，再测组合交互。
+
+#### S09.3 — 预算改为增量记账，消除祖先扫描
+
+- FrameStore 维护已安装等待的总深度；Query 维护 parents/native scopes 的累计费用。push/pop、等待安装/取出、回复和放弃时更新，正常 `can_push_with_continuations` 和 `continuation_depth` 都为 O(1)。已存在的 wait-depth-v2 是外层扫描的实证候选，未合入且尚未完成内部 Query 扫描修复。
+- checked overflow、拒绝前后状态、None/溢出恢复、重复/过期身份和错误优先级保持。缓存值由拥有状态变更的 API 维护，不允许调用方绕过更新；失败预留不增加费用，取出后推进的 Query 不重复计入已安装总和。
+- 逐项审计 Runtime native/host 预算：`native_call_would_overflow` 仍有 active_frames 权重和 family 扫描；先确认实际触达路径，再用累计权重和 family 计数替换。native_continuation/Function.prototype.call 的既有费用规则、真实宿主栈检查与所有限额不变，不把该扫描误称为已测 Math.abs owned 路径的根因。
+- 正常 LIFO 删除 O(1)；异常清理按实际删除项 O(k) 更新，不扫描未删除祖先。主动 finish、Drop、deferred pop/truncate、host 重入与挂起恢复必须共用更新责任。避免只缓存外层和在每次检查中重扫内层。
+
+**验证：**固定 K 次叶子调用，独立改变 D=0/32/128/512/2048，JS/native/getter/Proxy/混合 callback 分组；另对每层一次 native 的递归做 D/2D。记录访问的祖先/Query 项数，记账不应为 Θ(KD) 或 Θ(D²)。预算边界、溢出恢复、有限/无限递归、两 MiB 小栈、host 重入和默认预算 Earley-Boyer 必须保持。此项可与 S09.1 的只读设计/独立实现推进，性能测量与构建测试仍分开排程。
+
+#### S09.4 — 最终回退、编译和条件布局评估
+
+- S09.1–S09.3 定向机制成立后固定组合版本，重新 profile 其余 Array/Math/Map/属性/String 热点；明确每项的状态、调用、存储或算法原因。不能未经归因笼统归给“布局”，也不能以调用微基准抵销其余回退。
+- 对同一公开 compile API 和 67 个冻结源码归因 parse/resolution/lowering、融合/relocation、verify/publish 的时间和容量；inclusive/exclusive 分清，不以不同批次完整进程减编译估算执行时间。已实施 CompactVisits/坐标游标仍以最终矩阵确认，保留被否定的 ASCII 候选结论。
+- `.text`、静态 memcpy 和栈预留分别对照实际 instructions/cycles、可用的 branch/cache 事件、普通吞吐和 native/WASM 结果。当前 perf IPC 下降不能自动证明 I-cache 问题；不通过提前删除 S10 旧路径或全局强制内联隐藏成本。
+- TOS 0/1/2 和紧凑编码仅在剩余 profile 支持时继续，历史负面证据可支持不采用。它们不是修复已知调用算法的前置条件，不再增加无依据的布局候选组合。若实施，仍验证所有正常/异常/GC/host/挂起物化和同一外部字节码契约。
+
+**执行与验收顺序：**先固定机制和可证伪指标，定向验证后合并候选，再对同一最终源码统一运行完整门禁；发现新失败才重新打开相关实现。阶段目标不是“所有计数归零”：必要的参数校验/初始化、实际创建捕获和最终释放仍按真实工作量计费；普通调用的额外记账必须与祖先数 D、整个环境宽度 C 无关。
+
+**S09 退出条件：**补充 S09/本轮起点 `b36ad884`，并按共同口径同时给出 S09/独立 S08、S09/S07、S09/PR19。完整固定 50+8、原始八项/combined、67 项 compile、调用/内存/暂停证据齐全。原始旧 Earley-Boyer/combined 无有效基线，要求新核心默认预算持续成功，并与 S07 的有效分数比较。确认存在的吞吐/编译回退逐项修复或保持阶段未完成，不能靠 O(1) 理论、分配平台、局部 profile 百分比或可选实验的预期收益结案。#7 的分配/初始化/引用成本、#9 的最终码/分派和 #10 的独立 PC 结论同时交付；补齐 S08 收口记录保留的最终同源验证缺口，完整语义、零桥覆盖、有限/无限递归、小栈/宿主重入、native/Web/WASM 门禁通过后才进入 S10。
 
 ### S10 — `refactor(vm): finish validation and retire the previous execution path`
 

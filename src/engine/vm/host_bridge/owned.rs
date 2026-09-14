@@ -24,7 +24,7 @@ pub(in crate::engine::vm) fn execute_call(
     new_target: Value,
     arguments: &[Value],
     bytecode: crate::engine::code::rooted::FunctionBytecodeRef,
-    closure_slots: Vec<crate::engine::heap::roots::VarRefRoot>,
+    closure_slots: crate::engine::vm::closure::ClosureSlots,
 ) -> Result<Completion, crate::engine::api::runtime_error::RuntimeError> {
     use crate::engine::api::runtime_error::RuntimeError;
     let prepared =
@@ -47,24 +47,18 @@ pub(in crate::engine::vm) fn execute_call(
     }
     let local_count = prepared.executable.local_definitions.len();
     let cold = crate::engine::vm::frame::ColdFrame::new(FrameCold {
-        resume_throw: None,
-        regions: Vec::new(),
-        iterator_wait: None,
-        property_wait: None,
         property_generation: 0,
         iterator_generation: 0,
-        eval_arguments: None,
-        constructor_return: None,
-        conversion: None,
+        rare: std::cell::OnceCell::new(),
         normalized_this: None,
         return_to: None,
         entry_guard: None,
         caller_realm,
         active_frame: prepared.active_frame.token(),
-        function: callable.as_object().clone(),
+        function: (callable.as_object().clone()).into(),
         closure_slots,
         reusable_captured_locals: vec![false; local_count],
-        input: prepared.input,
+        input: (prepared.input).into(),
     });
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_call_storage(
@@ -157,24 +151,18 @@ pub(in crate::engine::vm) fn prepare(
         initialize_bindings: false,
         executable,
         cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
-            resume_throw: None,
-            regions: Vec::new(),
-            iterator_wait: None,
-            property_wait: None,
             property_generation: 0,
             iterator_generation: 0,
-            eval_arguments: None,
-            constructor_return: None,
-            conversion: None,
+            rare: std::cell::OnceCell::new(),
             normalized_this: None,
             return_to: None,
             entry_guard: None,
             caller_realm,
             active_frame: active_frame_token,
-            function,
+            function: (function).into(),
             closure_slots,
             reusable_captured_locals,
-            input,
+            input: (input).into(),
         }),
         storage: FrameStorage {
             original_arguments,
@@ -235,28 +223,28 @@ pub(in crate::engine::vm) fn detach_frame(
         cold,
         storage,
     } = entry;
+    let has_pending_query = cold.has_pending_query();
     let FrameCold {
-        regions,
-        resume_throw,
-        iterator_wait,
-        iterator_generation: _,
-        property_wait,
-        property_generation: _,
-        eval_arguments,
-        constructor_return: _,
-        conversion,
+        rare,
         normalized_this,
-        return_to: _,
-        entry_guard: _,
         caller_realm,
         active_frame,
         function,
         closure_slots,
         reusable_captured_locals,
         input,
+        ..
     } = cold.into_inner();
+    let crate::engine::vm::frame::FrameRare {
+        regions,
+        resume_throw,
+        iterator_wait,
+        eval_arguments,
+        conversion,
+        ..
+    } = *rare.into_inner().unwrap_or_default();
     if resume_throw.is_some()
-        || property_wait.is_some()
+        || has_pending_query
         || conversion.is_some()
         || iterator_wait.is_some()
         || eval_arguments.is_some()
@@ -265,6 +253,8 @@ pub(in crate::engine::vm) fn detach_frame(
             "pending conversion cannot hand off its frame",
         ));
     }
+    let function = function.into_inner();
+    let input = input.into_inner();
     let mut activation = VmActivation::new_in_realm(
         executable.frame_layout(),
         caller_realm,

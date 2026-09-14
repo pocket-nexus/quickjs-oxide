@@ -70,7 +70,7 @@ impl Runtime {
                 shape_cache: HashMap::new(),
                 shape_fingerprints: HashMap::new(),
                 well_known_symbols,
-                active_frames: Vec::new(),
+                active_frames: Default::default(),
                 active_collection_records: Vec::new(),
                 next_active_frame_token: 1,
                 next_module_async_evaluation_order: 0,

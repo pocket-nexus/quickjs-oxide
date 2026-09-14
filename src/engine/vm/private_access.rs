@@ -98,7 +98,11 @@ pub(super) fn step(
             ),
             PrivateNameSource::Closure(index) => PrivateSource::Closure(
                 frame.executable.closure_variables[usize::from(index)],
-                &frame.cold.closure_slots[usize::from(index)],
+                frame
+                    .cold
+                    .closure_slots
+                    .get(usize::from(index))
+                    .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
             ),
         };
         if kind != ClosureVariableKind::PrivateField {
@@ -258,7 +262,11 @@ fn enter_accessor(
         ),
         PrivateNameSource::Closure(index) => PrivateSource::Closure(
             frame.executable.closure_variables[usize::from(index)],
-            &frame.cold.closure_slots[usize::from(index)],
+            frame
+                .cold
+                .closure_slots
+                .get(usize::from(index))
+                .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
         ),
     };
     let callable = private_bindings::optional_callable(runtime, binding, kind)?

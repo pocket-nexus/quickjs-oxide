@@ -388,7 +388,7 @@ pub enum ObjectPayload {
         class_static_initializer_started: bool,
         /// One owned reference per bytecode closure slot, matching QuickJS's
         /// `JSObject.u.func.var_refs[]` ownership.
-        closure_slots: Vec<VarRefId>,
+        closure_slots: std::rc::Rc<[VarRefId]>,
     },
     /// `JS_CLASS_GENERATOR`: the branded result object owns the complete
     /// dormant frame while suspended. `Executing` temporarily moves that
@@ -1344,7 +1344,7 @@ impl ObjectData {
     /// Construct an ordinary bytecode-function object.
     #[must_use]
     #[cfg(test)]
-    pub const fn bytecode_function(
+    pub fn bytecode_function(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         bytecode: FunctionBytecodeId,
@@ -1365,7 +1365,7 @@ impl ObjectData {
                 home_object,
                 class_instance_initializer: None,
                 class_static_initializer_started: false,
-                closure_slots: Vec::new(),
+                closure_slots: std::rc::Rc::from([]),
             },
         }
     }
@@ -1374,7 +1374,7 @@ impl ObjectData {
     /// captured-variable cells. Repeated identities are intentional: each
     /// slot contributes one strong reference, as in QuickJS.
     #[must_use]
-    pub const fn bytecode_function_with_closures(
+    pub fn bytecode_function_with_closures(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         bytecode: FunctionBytecodeId,
@@ -1396,7 +1396,7 @@ impl ObjectData {
                 home_object,
                 class_instance_initializer: None,
                 class_static_initializer_started: false,
-                closure_slots,
+                closure_slots: closure_slots.into(),
             },
         }
     }

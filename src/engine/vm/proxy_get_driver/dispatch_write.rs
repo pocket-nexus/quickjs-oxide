@@ -474,6 +474,7 @@ mod local_set_tests {
             realm: context.realm,
             parents: Parents::default(),
             natives: Vec::new(),
+            saved_native_depth: 0,
             spare_parents: Vec::new(),
             finish: None,
         };

@@ -44,6 +44,27 @@ pub(super) struct PendingProxyGet {
 }
 
 impl PendingProxyGet {
+    #[cfg(test)]
+    pub(super) fn with_parent_depth_for_test(
+        realm: crate::engine::heap::ContextId,
+        depth: usize,
+    ) -> Box<Self> {
+        Box::new(Self {
+            identity: 0,
+            resume: Resume::Identity,
+            query: Query {
+                #[cfg(feature = "profiling")]
+                had_callback: false,
+                realm,
+                parents: Parents((0..depth).map(|_| Resume::Identity).collect()),
+                natives: Vec::new(),
+                saved_native_depth: 0,
+                spare_parents: Vec::new(),
+                finish: None,
+            },
+        })
+    }
+
     pub(super) fn continuation_depth(&self) -> usize {
         self.query.continuation_depth()
     }
@@ -92,6 +113,7 @@ struct Query {
     realm: crate::engine::heap::ContextId,
     parents: Parents,
     natives: Vec<NativeScope>,
+    saved_native_depth: u128,
     spare_parents: Vec<Parents>,
     finish: Option<Finish>,
 }
@@ -103,12 +125,9 @@ struct NativeScope {
 }
 impl Query {
     fn continuation_depth(&self) -> usize {
-        self.natives
-            .iter()
-            .fold(self.parents.len(), |depth, scope| {
-                depth.saturating_add(1 + scope.parents.len())
-            })
+        usize::try_from(self.saved_native_depth + self.parents.len() as u128).unwrap_or(usize::MAX)
     }
+
     fn finish_native(
         &mut self,
         runtime: &Runtime,
@@ -131,6 +150,7 @@ impl Query {
             .natives
             .pop()
             .ok_or_else(|| Error::internal("native result has no scope"))?;
+        self.saved_native_depth -= 1 + scope.parents.len() as u128;
         while self.parents.pop().is_some() {}
         let empty = std::mem::replace(&mut self.parents, scope.parents);
         // Reservation happens before installing the native scope.
@@ -1217,31 +1237,29 @@ fn take_pending(
     execution: &mut RunningExecution,
     owner: ReturnOwner,
 ) -> Result<Box<PendingProxyGet>, Error> {
-    let pending = match owner {
-        ReturnOwner::Frame(frame) => execution
-            .frames
-            .current_mut(frame)?
-            .cold
-            .property_wait
-            .take(),
-        ReturnOwner::Root => execution.root_query.take(),
-    };
-    pending.ok_or_else(|| Error::internal("request reply has no pending operation"))
+    match owner {
+        ReturnOwner::Frame(frame) => execution.frames.take_pending(frame),
+        ReturnOwner::Root => execution
+            .root_query
+            .take()
+            .ok_or_else(|| Error::internal("request reply has no pending operation")),
+    }
 }
 fn put_pending(
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     pending: Box<PendingProxyGet>,
 ) -> Result<(), Error> {
-    let slot = match owner {
-        ReturnOwner::Frame(frame) => &mut execution.frames.current_mut(frame)?.cold.property_wait,
-        ReturnOwner::Root => &mut execution.root_query,
-    };
-    if slot.is_some() {
-        return Err(Error::internal("request overwrote a pending reply"));
+    match owner {
+        ReturnOwner::Frame(frame) => execution.frames.put_pending(frame, pending),
+        ReturnOwner::Root => {
+            if execution.root_query.is_some() {
+                return Err(Error::internal("request overwrote a pending reply"));
+            }
+            execution.root_query = Some(pending);
+            Ok(())
+        }
     }
-    *slot = Some(pending);
-    Ok(())
 }
 
 fn reply_outcome(
@@ -2038,17 +2056,18 @@ mod native_scope_tests {
             #[cfg(feature = "profiling")]
             had_callback: false,
             realm: inner.realm,
-            parents: Parents::default(),
+            parents: Parents(vec![Resume::Identity]),
+            saved_native_depth: 4,
             natives: vec![
                 NativeScope {
                     call: first,
-                    parents: Parents::default(),
+                    parents: Parents(vec![Resume::Identity]),
                     resume: Resume::Identity,
                     parent_realm: caller.realm,
                 },
                 NativeScope {
                     call: second,
-                    parents: Parents::default(),
+                    parents: Parents(vec![Resume::Identity]),
                     resume: Resume::Identity,
                     parent_realm: outer.realm,
                 },
@@ -2056,7 +2075,7 @@ mod native_scope_tests {
             spare_parents: Vec::with_capacity(2),
             finish: Some(Finish::PropertyRead(0)),
         };
-        assert_eq!(query.continuation_depth(), 2);
+        assert_eq!(query.continuation_depth(), 5);
         let step = query
             .finish_native(
                 &runtime,
@@ -2065,6 +2084,7 @@ mod native_scope_tests {
             )
             .unwrap();
         assert_eq!(query.realm, outer.realm);
+        assert_eq!(query.continuation_depth(), 3);
         assert_eq!(runtime.0.state.borrow().active_frames.len(), 1);
         let Step::Complete(Completion::Throw(Value::Object(error))) = step else {
             panic!("expected captured error")
@@ -2093,6 +2113,7 @@ mod native_scope_tests {
             matches!(step, Step::Complete(Completion::Throw(Value::Object(value))) if value == error)
         );
         assert_eq!(query.realm, caller.realm);
+        assert_eq!(query.continuation_depth(), 1);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

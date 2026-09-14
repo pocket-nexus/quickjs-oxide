@@ -48,7 +48,7 @@ fn two_closures_share_one_mutable_var_ref_cell() {
         else {
             panic!("expected a bytecode function payload");
         };
-        assert_eq!(closure_slots, &[cell]);
+        assert_eq!(closure_slots.as_ref(), &[cell]);
     }
 
     assert_eq!(

@@ -130,7 +130,13 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         "\"call_preparation\":{\"coverage\":\"bytecode-preparation-and-owned-frame-storage\""
     ));
     assert!(!costs.contains("\"frames_prepared\":0"));
-    assert!(!costs.contains("\"parameter_value_copies\":0"));
+    if cfg!(feature = "stack-vm") {
+        assert!(costs.contains("\"parameter_value_copies\":0"));
+        assert!(costs.contains("\"ordinary_scalar_argv_elided\":1"));
+        assert!(costs.contains("\"ordinary_return_direct\":1"));
+    } else {
+        assert!(!costs.contains("\"parameter_value_copies\":0"));
+    }
     assert!(costs.contains("\"lowered_functions\":2"));
     assert!(costs.contains("\"phase_totals_additive\":false"));
     let failed = run(&["-d", "--profile-json", "-e", "let = ;"]);

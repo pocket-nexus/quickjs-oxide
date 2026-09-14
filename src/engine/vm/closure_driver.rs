@@ -56,7 +56,7 @@ pub(super) fn instantiate(
             )?,
             ClosureSource::ParentClosure(index) => reuse_frame_capture(
                 &runtime,
-                frame
+                &frame
                     .cold
                     .closure_slots
                     .get(usize::from(index))

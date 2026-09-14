@@ -127,6 +127,7 @@ impl QueryStorage {
             realm,
             parents: buffers.parents,
             natives: buffers.natives,
+            saved_native_depth: 0,
             spare_parents: buffers.spare_parents,
             finish: Some(finish),
         }
@@ -151,6 +152,7 @@ impl Buffers {
             realm,
             parents: self.parents,
             natives: self.natives,
+            saved_native_depth: 0,
             spare_parents: self.spare_parents,
             finish: Some(finish),
         }

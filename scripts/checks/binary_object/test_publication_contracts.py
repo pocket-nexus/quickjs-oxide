@@ -28,15 +28,16 @@ class PublicationContracts(unittest.TestCase):
 
     def test_ownership_and_canonical_fact_mutations_are_rejected(self):
         cached = "data: Rc<PublishedFunctionData>" in (ROOT / EXECUTABLE).read_text()
+        owned = "fn snapshot_function_bytecode_owned" in (ROOT / EXECUTABLE).read_text()
         split = "fn stack_contract" in (ROOT / INSTRUCTION).read_text()
         data_type = "Rc<PublishedFunctionData>" if cached else "PublishedFunctionData"
         stack_before = "pub const fn stack_effect(&self) -> (usize, usize) {\n        " + (
             "self.nominal_stack_effect()" if split else "let effect = self.info().stack;\n        (effect.popped, effect.pushed)"
         )
         mutations = [
-            (EXECUTABLE, "published-executable-owner", "if !function.belongs_to(self)", "if false"),
+            (EXECUTABLE, "published-executable-owner", "if !function.belongs_to(self)" + (" {\n            return Err(RuntimeError::WrongRuntime(\"function bytecode\"));\n        }\n        let state" if owned else ""), "if false"),
             (EXECUTABLE, "published-executable-owner", f"data: {data_type},", f"pub(crate) data: {data_type},"),
-            (EXECUTABLE, "published-executable-owner", "root: Some(root),", "root: None,"),
+            (EXECUTABLE, "published-executable-owner", "root: Some(function)," if owned else "root: Some(root),", "root: None,"),
             (EXECUTABLE, "published-executable-owner", "state.heap.context(bytecode.realm)?;", ""),
             (EXECUTABLE, "published-executable-owner", "function.bytecode_id())?;", "other.bytecode_id())?;"),
             (EXECUTABLE, "published-executable-owner", "code: bytecode.code.clone(),", "code: Rc::from([]),"),
@@ -56,6 +57,11 @@ class PublicationContracts(unittest.TestCase):
             (INSTRUCTION, "published-instruction-contract", "const fn static_name(self) -> Option<u32> {", "const fn static_name(self) -> Option<u32> { return None;"),
             (BYTECODE, "published-instruction-stack-adapter", stack_before, "pub const fn stack_effect(&self) -> (usize, usize) {\n        (0, 0)"),
         ]
+        if owned:
+            mutations.extend([
+                (EXECUTABLE, "published-executable-owner", "self.snapshot_function_bytecode_owned(function.clone())", "self.unchecked_snapshot(function.clone())"),
+                (EXECUTABLE, "published-executable-owner", "observes_arguments: bytecode.code.iter().any", "observes_arguments: false && bytecode.code.iter().any"),
+            ])
         for path, rule, before, after in mutations:
             with self.subTest(rule=rule, mutation=before):
                 source = (ROOT / path).read_text()
@@ -66,13 +72,17 @@ class PublicationContracts(unittest.TestCase):
 
     def test_direct_s08_representation_and_mutations(self):
         from .rules.publication_contracts import (
-            SNAPSHOT_FUNCTION, DIRECT_SNAPSHOT_FUNCTION, function,
+            SNAPSHOT_FUNCTION, DIRECT_SNAPSHOT_FUNCTION, BORROWED_SNAPSHOT_FUNCTION, OWNED_SNAPSHOT_FUNCTION, function,
         )
         # Derive the old representation from the same production facts. This
         # fixture needs no ignored source export or git history to remain runnable.
         sources = {name: (ROOT / name).read_text() for name in (EXECUTABLE, VERIFIED, INSTRUCTION, BYTECODE)}
         source = sources[EXECUTABLE].split("#[cfg(test)]\nmod tests", 1)[0]
+        source = source.replace(OWNED_SNAPSHOT_FUNCTION, "")
+        source = source.replace(BORROWED_SNAPSHOT_FUNCTION, DIRECT_SNAPSHOT_FUNCTION)
         source = source.replace(SNAPSHOT_FUNCTION, DIRECT_SNAPSHOT_FUNCTION)
+        source = source.replace("    pub(crate) observes_arguments: bool,\n", "")
+        source = source.replace("                observes_arguments: true,\n", "")
         source = source.replace("data: Rc<PublishedFunctionData>,", "data: PublishedFunctionData,")
         source = source.replace("data: Rc::new(PublishedFunctionData {", "data: PublishedFunctionData {")
         source = source.replace("            }),\n        }\n    }", "            },\n        }\n    }")

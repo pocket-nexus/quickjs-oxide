@@ -28,6 +28,7 @@ use crate::engine::code::rooted::FunctionBytecodeRef;
 #[cfg(test)]
 use crate::engine::code::runtime::PublishedFunctionData;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
+#[cfg(test)]
 use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::heap::{BytecodeConstant, ContextId, ObjectPayload, RawValue};
@@ -89,7 +90,7 @@ pub(crate) struct RuntimeVmHost {
     /// Authored call arity before the argument frame was padded to formal
     /// width. `arguments.length` and its dense prefix use this exact count.
     pub(super) actual_argument_count: usize,
-    pub(super) closure_slots: Vec<VarRefRoot>,
+    pub(super) closure_slots: crate::engine::vm::closure::ClosureSlots,
     pub(super) arguments: Vec<FrameBinding>,
     pub(super) locals: Vec<FrameBinding>,
     /// QuickJS can resume the same frame after a caught throw or a return
@@ -150,7 +151,7 @@ impl RuntimeVmHost {
             executable: PublishedFunctionSnapshot::empty_for_test(current_realm),
             current_function: None,
             actual_argument_count: 0,
-            closure_slots: Vec::new(),
+            closure_slots: Default::default(),
             arguments: Vec::new(),
             locals: Vec::new(),
             reusable_captured_locals: Vec::new(),
@@ -196,7 +197,7 @@ impl RuntimeVmHost {
             executable,
             current_function: None,
             actual_argument_count: arguments.len(),
-            closure_slots,
+            closure_slots: closure_slots.into(),
             arguments: arguments.into_iter().map(FrameBinding::Direct).collect(),
             locals: locals.into_iter().map(FrameBinding::Direct).collect(),
             reusable_captured_locals: vec![false; frame_local_count],
@@ -737,7 +738,7 @@ impl Runtime {
         new_target: Value,
         arguments: &[Value],
         bytecode: FunctionBytecodeRef,
-        closure_slots: Vec<VarRefRoot>,
+        closure_slots: crate::engine::vm::closure::ClosureSlots,
     ) -> Result<(RuntimeVmHost, CallInput, ActiveFrameGuard), RuntimeError> {
         let crate::engine::vm::call::PreparedBytecodeFrame {
             executable,
@@ -773,7 +774,7 @@ impl Runtime {
         new_target: Value,
         arguments: &[Value],
         bytecode: FunctionBytecodeRef,
-        closure_slots: Vec<VarRefRoot>,
+        closure_slots: crate::engine::vm::closure::ClosureSlots,
     ) -> Result<Completion, RuntimeError> {
         if self.bytecode_call_would_overflow() {
             return self.bytecode_stack_overflow_completion(caller_realm, &bytecode);
@@ -1397,7 +1398,7 @@ impl VmHost for RuntimeVmHost {
                         Error::internal("captured parent closure index is out of bounds")
                     })?;
                     self.runtime
-                        .validate_var_ref_metadata(root, descriptor)
+                        .validate_var_ref_metadata(&root, descriptor)
                         .map_err(|error| Error::internal(error.to_string()))?;
                     root.clone()
                 }
@@ -2584,7 +2585,7 @@ impl VmHost for RuntimeVmHost {
         if let FrameBinding::Captured(root) = binding {
             return crate::engine::vm::bindings::reset_captured_binding(
                 &self.runtime,
-                root,
+                &root,
                 reusable,
             );
         }
@@ -2625,7 +2626,7 @@ impl VmHost for RuntimeVmHost {
             FrameBinding::Captured(root) => {
                 let raw = self
                     .runtime
-                    .raw_var_ref_value(root)
+                    .raw_var_ref_value(&root)
                     .map_err(runtime_error_to_vm_error)?;
                 if matches!(raw, RawValue::Uninitialized) {
                     Err(self.local_lexical_uninitialized_error(self.local_definition(index)?.name)?)
@@ -2734,7 +2735,7 @@ impl VmHost for RuntimeVmHost {
                     return Err(self.lexical_read_only_error(self.local_definition(index)?.name)?);
                 }
                 self.runtime
-                    .write_var_ref(root, value)
+                    .write_var_ref(&root, value)
                     .map_err(runtime_error_to_vm_error)
             }
         }
@@ -2805,7 +2806,7 @@ impl VmHost for RuntimeVmHost {
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
         self.runtime
-            .read_var_ref(root)
+            .read_var_ref(&root)
             .map_err(|error| Error::internal(error.to_string()))
     }
 
@@ -2835,7 +2836,7 @@ impl VmHost for RuntimeVmHost {
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
         self.runtime
-            .write_var_ref(root, value)
+            .write_var_ref(&root, value)
             .map_err(|error| Error::internal(error.to_string()))
     }
 
@@ -2866,7 +2867,7 @@ impl VmHost for RuntimeVmHost {
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
         crate::engine::vm::bindings::read_checked_closure(
             &self.runtime,
-            root,
+            &root,
             self.executable.closure_variables[usize::from(index)],
             self.executable.metadata.strip_variable_debug,
         )
@@ -2898,7 +2899,7 @@ impl VmHost for RuntimeVmHost {
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
         crate::engine::vm::bindings::write_checked_closure(
             &self.runtime,
-            root,
+            &root,
             self.executable.closure_variables[usize::from(index)],
             self.executable.metadata.strip_variable_debug,
             value,
@@ -2951,7 +2952,7 @@ impl VmHost for RuntimeVmHost {
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
         self.runtime
-            .write_var_ref(root, value)
+            .write_var_ref(&root, value)
             .map_err(runtime_error_to_vm_error)
     }
 
@@ -2966,7 +2967,7 @@ impl VmHost for RuntimeVmHost {
             .closure_slots
             .get(usize::from(index))
             .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
-        super::bindings::initialize_derived_closure(&self.runtime, root, descriptor, value)
+        super::bindings::initialize_derived_closure(&self.runtime, &root, descriptor, value)
     }
 
     fn return_derived(&mut self, index: u16, value: Value) -> Result<Completion, Error> {
@@ -3050,7 +3051,7 @@ mod tests {
             Value::Undefined,
             &[],
             bytecode,
-            Vec::new(),
+            Default::default(),
         );
         assert!(matches!(
             result,
@@ -3059,7 +3060,10 @@ mod tests {
         ));
         assert!(runtime.0.state.borrow().active_frames.is_empty());
         // The rejected entry must not disturb later ordinary root calls.
-        assert_eq!(context.eval("(function(){return 42})()").unwrap(), Value::Int(42));
+        assert_eq!(
+            context.eval("(function(){return 42})()").unwrap(),
+            Value::Int(42)
+        );
     }
 
     #[test]
@@ -3237,7 +3241,7 @@ mod tests {
             is_const: false,
             kind: ClosureVariableKind::Normal,
         }]);
-        closure_host.closure_slots = vec![root.clone()];
+        closure_host.closure_slots = vec![root.clone()].into();
         closure_host
             .initialize_derived_var_ref(0, Value::Object(second.clone()))
             .unwrap();
@@ -3459,7 +3463,7 @@ mod tests {
             is_const: false,
             kind: ClosureVariableKind::Normal,
         }]);
-        closure.closure_slots = vec![root];
+        closure.closure_slots = vec![root].into();
         assert_eq!(
             closure
                 .has_eval_variable(EvalVariableSource::Closure(0), 0)
@@ -3485,7 +3489,7 @@ mod tests {
             is_const: false,
             kind: ClosureVariableKind::EvalVariableObject,
         }]);
-        closure.closure_slots = vec![root];
+        closure.closure_slots = vec![root].into();
         assert_eq!(
             closure
                 .define_eval_variable(EvalVariableSource::Closure(0), 0, Value::Int(42))

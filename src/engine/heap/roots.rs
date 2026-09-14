@@ -79,7 +79,7 @@ impl Runtime {
 
     pub(crate) fn set_var_ref_metadata(
         &self,
-        root: &VarRefRoot,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
         is_lexical: bool,
         is_const: bool,
         kind: ClosureVariableKind,
@@ -98,7 +98,7 @@ impl Runtime {
 
     pub(crate) fn reset_var_ref_uninitialized(
         &self,
-        root: &VarRefRoot,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<(), RuntimeError> {
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
@@ -110,7 +110,10 @@ impl Runtime {
         state.apply_cleanup(cleanup)
     }
 
-    pub(crate) fn read_var_ref(&self, root: &VarRefRoot) -> Result<Value, RuntimeError> {
+    pub(crate) fn read_var_ref(
+        &self,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
+    ) -> Result<Value, RuntimeError> {
         let _operation = self.operation();
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
@@ -134,7 +137,7 @@ impl Runtime {
     #[cfg(feature = "stack-vm")]
     pub(crate) fn try_read_owned_var_ref(
         &self,
-        root: &VarRefRoot,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<Option<Value>, RuntimeError> {
         if !root.belongs_to(self) || self.0.deferred_references.has_pending() {
             return Ok(None);
@@ -170,7 +173,10 @@ impl Runtime {
         self.take_owned_raw_value(raw).map(Some)
     }
 
-    pub(crate) fn raw_var_ref_value(&self, root: &VarRefRoot) -> Result<RawValue, RuntimeError> {
+    pub(crate) fn raw_var_ref_value(
+        &self,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
+    ) -> Result<RawValue, RuntimeError> {
         let _operation = self.operation();
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
@@ -180,7 +186,7 @@ impl Runtime {
 
     pub(crate) fn validate_var_ref_metadata(
         &self,
-        root: &VarRefRoot,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
         descriptor: ClosureVariable,
     ) -> Result<(), RuntimeError> {
         let _operation = self.operation();
@@ -202,7 +208,7 @@ impl Runtime {
 
     pub(crate) fn write_var_ref(
         &self,
-        root: &VarRefRoot,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
         value: Value,
     ) -> Result<(), RuntimeError> {
         let _operation = self.operation();
@@ -504,5 +510,83 @@ mod owned_cell_tests {
             runtime.raw_var_ref_value(&root).unwrap(),
             RawValue::Object(id)
         );
+    }
+}
+
+mod sealed {
+    pub trait CellOwner {}
+}
+/// A cell reference cannot outlive either its independent root or its callee.
+pub(crate) trait VarRefHandle: sealed::CellOwner {
+    fn id(&self) -> VarRefId;
+    fn runtime(&self) -> &Runtime;
+    fn belongs_to(&self, runtime: &Runtime) -> bool {
+        self.runtime().is_same_runtime(runtime)
+    }
+    fn to_root(&self) -> VarRefRoot {
+        VarRefRoot::from_borrowed_handle(self.runtime().clone(), self.id())
+            .expect("a live cell owner must retain its cell")
+    }
+}
+impl sealed::CellOwner for VarRefRoot {}
+impl VarRefHandle for VarRefRoot {
+    fn id(&self) -> VarRefId {
+        self.id
+    }
+    fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+}
+
+pub(crate) struct VarRefView<'a> {
+    runtime: &'a Runtime,
+    id: VarRefId,
+}
+impl<'a> VarRefView<'a> {
+    // No constructor accepts an arbitrary raw ID. The immutable environment
+    // carries either the authentic callee or an independently rooted cell.
+    pub(crate) fn from_closure(
+        slots: &'a crate::engine::vm::closure::ClosureSlots,
+        index: usize,
+    ) -> Option<Self> {
+        slots
+            .borrowed_cell(index)
+            .map(|(runtime, id)| Self { runtime, id })
+    }
+    pub(crate) fn id(&self) -> VarRefId {
+        self.id
+    }
+    pub(crate) fn belongs_to(&self, runtime: &Runtime) -> bool {
+        VarRefHandle::belongs_to(self, runtime)
+    }
+    pub(crate) fn clone(&self) -> VarRefRoot {
+        self.to_root()
+    }
+}
+impl sealed::CellOwner for VarRefView<'_> {}
+impl VarRefHandle for VarRefView<'_> {
+    fn id(&self) -> VarRefId {
+        self.id
+    }
+    fn runtime(&self) -> &Runtime {
+        self.runtime
+    }
+}
+impl<T: VarRefHandle + ?Sized> sealed::CellOwner for &T {}
+impl<T: VarRefHandle + ?Sized> VarRefHandle for &T {
+    fn id(&self) -> VarRefId {
+        (**self).id()
+    }
+    fn runtime(&self) -> &Runtime {
+        (**self).runtime()
+    }
+}
+impl<T: VarRefHandle + ?Sized> sealed::CellOwner for &mut T {}
+impl<T: VarRefHandle + ?Sized> VarRefHandle for &mut T {
+    fn id(&self) -> VarRefId {
+        (**self).id()
+    }
+    fn runtime(&self) -> &Runtime {
+        (**self).runtime()
     }
 }

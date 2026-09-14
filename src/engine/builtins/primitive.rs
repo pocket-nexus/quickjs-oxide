@@ -759,7 +759,7 @@ impl Runtime {
                 "active frame probe received an unsupported command",
             )),
             None => {
-                let snapshot = self.0.state.borrow().active_frames.clone();
+                let snapshot = self.0.state.borrow().active_frames.to_vec();
                 self.0
                     .state
                     .borrow_mut()

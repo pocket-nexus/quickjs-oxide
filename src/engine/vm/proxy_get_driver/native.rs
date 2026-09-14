@@ -312,6 +312,7 @@ pub(super) fn begin_into(
 pub(super) fn install_waiting(query: &mut Query, call: PreparedNativeCall, resume: Resume) {
     let realm = query.realm;
     let native_realm = call.activation.realm;
+    query.saved_native_depth += 1 + query.parents.len() as u128;
     query.natives.push(NativeScope {
         call,
         parents: std::mem::replace(

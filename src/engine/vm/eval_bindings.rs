@@ -35,7 +35,7 @@ pub(super) fn validate(
     caller_strict: bool,
     local_count: usize,
     argument_count: usize,
-    closure_slots: &[VarRefRoot],
+    closure_slots: &super::closure::ClosureSlots,
 ) -> Result<(), Error> {
     if environment.caller_strict != caller_strict {
         return Err(Error::internal(
@@ -70,7 +70,7 @@ pub(super) fn validate(
                         Error::internal("eval closure slot index is out of bounds")
                     })?;
                     runtime
-                        .validate_var_ref_metadata(root, descriptor)
+                        .validate_var_ref_metadata(&root, descriptor)
                         .map_err(|error| Error::internal(error.to_string()))?;
                 }
             }
@@ -81,7 +81,7 @@ pub(super) fn validate(
 
 pub(super) fn materialize(
     prepared: PreparedEvalEnvironment,
-    closure_slots: &[VarRefRoot],
+    closure_slots: &super::closure::ClosureSlots,
     mut capture: impl FnMut(EvalBindingSource, ClosureVariable) -> Result<VarRefRoot, Error>,
 ) -> Result<MaterializedEvalEnvironment, Error> {
     let PreparedEvalEnvironment { index, descriptor } = prepared;

@@ -1,5 +1,6 @@
 //! Own frames and advance ordinary bytecode calls without native recursion.
 
+mod ordinary;
 mod ready;
 
 use crate::engine::api::error::Error;
@@ -633,7 +634,7 @@ fn run_frames_with_state(
                 next_operation,
             })));
         }
-        let id = execution
+        let mut id = execution
             .frames
             .current_id()
             .ok_or_else(|| Error::internal("driver lost its current frame"))?;
@@ -752,7 +753,12 @@ fn run_frames_with_state(
         } else if forwarded.is_some() {
             RunExit::Complete
         } else {
-            match ready::run(runtime, &mut execution, id, &mut next_operation)? {
+            let boundary = ready::run(runtime, &mut execution, id, &mut next_operation)?;
+            id = execution
+                .frames
+                .current_id()
+                .ok_or_else(|| Error::internal("ordinary loop lost current frame"))?;
+            match boundary {
                 ready::Boundary::Exit(exit) => exit,
                 ready::Boundary::Entered => continue,
                 ready::Boundary::Conversion(exit) => {
@@ -1456,24 +1462,18 @@ mod tests {
             initialize_bindings: false,
             executable: prepared.executable,
             cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
-                resume_throw: None,
-                regions: Vec::new(),
-                iterator_wait: None,
-                property_wait: None,
                 property_generation: 0,
                 iterator_generation: 0,
-                eval_arguments: None,
-                constructor_return: None,
-                conversion: None,
+                rare: std::cell::OnceCell::new(),
                 normalized_this: None,
                 return_to: None,
                 active_frame: prepared.active_frame.token(),
                 entry_guard: Some(prepared.active_frame),
                 caller_realm: context.realm,
-                function,
+                function: (function).into(),
                 closure_slots,
                 reusable_captured_locals: vec![false; locals],
-                input: prepared.input,
+                input: (prepared.input).into(),
             }),
             storage: FrameStorage {
                 original_arguments: arguments,

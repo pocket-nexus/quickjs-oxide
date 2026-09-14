@@ -1,5 +1,7 @@
+mod active;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+pub(crate) use active::ActiveFrames;
 
 use crate::engine::builtins::native::{NativeCProto, NativeFunctionId};
 use crate::engine::code::function::metadata::EvalKind;
@@ -145,7 +147,7 @@ impl Runtime {
             token,
             depth,
             active: true,
-            _function_root: function_root,
+            _function_root: Some(function_root),
             _bytecode_root: bytecode_root,
         })
     }
@@ -422,15 +424,7 @@ impl Runtime {
             return Ok(());
         }
 
-        if let Some(position) = state
-            .active_frames
-            .iter()
-            .rposition(|frame| frame.token == token)
-        {
-            state.active_frames.truncate(position);
-        } else if state.active_frames.len() > depth {
-            state.active_frames.truncate(depth);
-        }
+        state.active_frames.retire(token, depth);
         Err(RuntimeError::Invariant(
             "active frame stack was not restored in LIFO order",
         ))
@@ -438,15 +432,7 @@ impl Runtime {
 
     pub(crate) fn pop_active_frame_fallback(&self, token: ActiveFrameToken, depth: usize) {
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
-            if let Some(position) = state
-                .active_frames
-                .iter()
-                .rposition(|frame| frame.token == token)
-            {
-                state.active_frames.truncate(position);
-            } else if state.active_frames.len() > depth {
-                state.active_frames.truncate(depth);
-            }
+            state.active_frames.retire(token, depth);
         } else {
             self.0
                 .deferred_references
@@ -517,7 +503,7 @@ pub(crate) struct ActiveFrameGuard {
     pub(crate) token: ActiveFrameToken,
     pub(crate) depth: usize,
     pub(crate) active: bool,
-    pub(crate) _function_root: ObjectRef,
+    pub(crate) _function_root: Option<ObjectRef>,
     pub(crate) _bytecode_root: Option<FunctionBytecodeRef>,
 }
 
@@ -561,7 +547,10 @@ impl ActiveFrameGuard {
                 "native continuation was registered twice",
             ));
         }
-        frame.native_continuation = true;
+        let token = frame.token;
+        state
+            .active_frames
+            .mark_native_continuation(self.depth, token);
         Ok(())
     }
 
@@ -626,5 +615,52 @@ impl Drop for BacktraceBarrierGuard {
             }
             self.active = false;
         }
+    }
+}
+
+impl Runtime {
+    /// The sealed witness authenticated these identities together. Its owners
+    /// move into the frame before execution; registration owns only a token.
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn push_ordinary_active_frame(
+        &self,
+        call: &super::call::ordinary::OrdinaryCall,
+    ) -> Result<ActiveFrameGuard, RuntimeError> {
+        if !call.function().belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("active-frame function"));
+        }
+        let executable = call.executable();
+        let mut state = self.0.state.borrow_mut();
+        let token = ActiveFrameToken(state.next_active_frame_token);
+        state.next_active_frame_token =
+            state
+                .next_active_frame_token
+                .checked_add(1)
+                .ok_or(RuntimeError::Invariant(
+                    "active-frame token space was exhausted",
+                ))?;
+        let depth = state.active_frames.len();
+        state.active_frames.push(ActiveFrameRecord {
+            token,
+            native_continuation: false,
+            function: call.function().object_id(),
+            realm: executable.realm,
+            flags: ActiveFrameFlags {
+                strict: executable.metadata.strict,
+                ..Default::default()
+            },
+            kind: ActiveFrameKind::Bytecode {
+                bytecode: executable.root().unwrap().bytecode_id(),
+                pc: None,
+            },
+        });
+        Ok(ActiveFrameGuard {
+            runtime: self.clone(),
+            token,
+            depth,
+            active: true,
+            _function_root: None,
+            _bytecode_root: None,
+        })
     }
 }

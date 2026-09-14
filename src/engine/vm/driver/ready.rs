@@ -24,7 +24,7 @@ pub(super) enum Boundary {
 pub(super) fn run(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    id: FrameId,
+    mut id: FrameId,
     next_operation: &mut u64,
 ) -> Result<Boundary, Error> {
     loop {
@@ -42,6 +42,22 @@ pub(super) fn run(
             .map_err(runtime_error_to_vm_error)?;
         let exit = result?;
         match exit {
+            RunExit::Call {
+                arguments,
+                method,
+                tail,
+            } => {
+                if !super::ordinary::enter(runtime, execution, id, arguments, method, tail)? {
+                    return Ok(Boundary::Exit(exit));
+                }
+                id = execution.frames.current_id().unwrap();
+            }
+            RunExit::Complete => {
+                if !super::ordinary::finish(execution, id)? {
+                    return Ok(Boundary::Exit(exit));
+                }
+                id = execution.frames.current_id().unwrap();
+            }
             RunExit::ReplaceBinding { .. } | RunExit::ReleaseOperand { .. } => {
                 match crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)?
                 {

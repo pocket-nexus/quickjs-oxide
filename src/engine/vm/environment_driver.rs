@@ -594,7 +594,7 @@ pub(super) fn prepare_environment_read(
 fn read_global_binding(
     runtime: &Runtime,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-    roots: &[crate::engine::heap::roots::VarRefRoot],
+    roots: &super::closure::ClosureSlots,
     index: u16,
     strict: bool,
 ) -> Result<BindingRead, Error> {
@@ -624,7 +624,7 @@ fn read_global_binding(
         return Err(Error::internal("global closure belongs to another runtime"));
     }
     let value = runtime
-        .raw_var_ref_value(root)
+        .raw_var_ref_value(&root)
         .map_err(runtime_error_to_vm_error)?;
     if !matches!(value, RawValue::Uninitialized) {
         return runtime

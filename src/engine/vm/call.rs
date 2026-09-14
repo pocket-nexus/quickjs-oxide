@@ -1,4 +1,6 @@
 #[cfg(feature = "stack-vm")]
+pub(super) mod ordinary;
+#[cfg(feature = "stack-vm")]
 mod request;
 #[cfg(feature = "stack-vm")]
 pub(in crate::engine::vm) use request::{
@@ -20,7 +22,6 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::{NativeCProto, NativeFunctionId};
 use crate::engine::code::function::metadata::ConstructorKind;
 use crate::engine::code::rooted::FunctionBytecodeRef;
-use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::heap::{ContextId, ObjectPayload};
 use crate::engine::object::{CallableRef, ObjectRef};
@@ -151,10 +152,8 @@ impl Runtime {
             }
         };
         let bytecode = FunctionBytecodeRef::from_borrowed_handle(self.clone(), bytecode)?;
-        let closure_slots = closure_slots
-            .into_iter()
-            .map(|id| VarRefRoot::from_borrowed_handle(self.clone(), id))
-            .collect::<Result<Vec<_>, _>>()?;
+        let closure_slots =
+            super::closure::ClosureSlots::shared(callable.as_object().clone(), closure_slots);
         Ok(CallableExecution::Bytecode {
             bytecode,
             closure_slots,
@@ -852,7 +851,7 @@ pub(crate) enum ConstructorPrototypeSource {
 pub(crate) enum CallableExecution {
     Bytecode {
         bytecode: FunctionBytecodeRef,
-        closure_slots: Vec<VarRefRoot>,
+        closure_slots: crate::engine::vm::closure::ClosureSlots,
     },
     Native {
         target: NativeFunctionId,

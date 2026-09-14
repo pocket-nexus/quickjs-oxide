@@ -89,6 +89,7 @@ impl PublishedFunctionSnapshot {
         Self {
             root: None,
             data: Rc::new(PublishedFunctionData {
+                observes_arguments: true,
                 #[cfg(feature = "stack-vm")]
                 fusion: Default::default(),
                 code: Rc::from([]),
@@ -121,6 +122,7 @@ impl std::ops::DerefMut for PublishedFunctionSnapshot {
 
 #[derive(Debug)]
 pub(crate) struct PublishedFunctionData {
+    pub(crate) observes_arguments: bool,
     #[cfg(feature = "stack-vm")]
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
     pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
@@ -142,11 +144,20 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<PublishedFunctionSnapshot, RuntimeError> {
+        if !function.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("function bytecode"));
+        }
+        self.snapshot_function_bytecode_owned(function.clone())
+    }
+
+    pub(crate) fn snapshot_function_bytecode_owned(
+        &self,
+        function: FunctionBytecodeRef,
+    ) -> Result<PublishedFunctionSnapshot, RuntimeError> {
         let _operation = self.operation();
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
-        let root = function.clone();
         let state = self.0.state.borrow();
         let bytecode = state.heap.function_bytecode(function.bytecode_id())?;
         // The realm is a strong edge of the bytecode node. Validating it here
@@ -154,6 +165,15 @@ impl Runtime {
         state.heap.context(bytecode.realm)?;
         let data = bytecode.executable.get_or_init(|| {
             let data = Rc::new(PublishedFunctionData {
+                observes_arguments: bytecode.code.iter().any(|op| {
+                    matches!(
+                        op,
+                        crate::engine::code::bytecode::Instruction::Arguments(_)
+                            | crate::engine::code::bytecode::Instruction::Rest(_)
+                            | crate::engine::code::bytecode::Instruction::Eval { .. }
+                            | crate::engine::code::bytecode::Instruction::ApplyEval { .. }
+                    )
+                }),
                 #[cfg(feature = "stack-vm")]
                 fusion: bytecode.fusion.clone(),
                 code: bytecode.code.clone(),
@@ -188,7 +208,7 @@ impl Runtime {
         );
 
         Ok(PublishedFunctionSnapshot {
-            root: Some(root),
+            root: Some(function),
             data,
         })
     }

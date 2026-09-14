@@ -14,6 +14,7 @@ use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use std::ops::Range;
 use std::rc::Rc;
+mod call;
 
 pub(in crate::engine::vm) struct SlotStore {
     // Initialized high-water backing. Inactive slots are always None; only
@@ -32,6 +33,7 @@ pub(in crate::engine::vm) struct SlotStore {
 
 /// Not Clone: releasing a frame consumes its authority over the window.
 pub(in crate::engine::vm) struct FrameWindow {
+    actual_count: usize,
     owner: Rc<()>,
     id: u64,
     // Consecutive regions share their boundaries. Keep usize widths and
@@ -427,6 +429,7 @@ impl SlotStore {
             self.record_occupancy();
         }
         Ok(FrameWindow {
+            actual_count,
             owner: self.owner.clone(),
             id,
             base,
@@ -1050,7 +1053,7 @@ impl SlotStore {
         window: &FrameWindow,
     ) -> Result<usize, Error> {
         self.check_current(window)?;
-        Ok(window.original_arguments().len())
+        Ok(window.actual_count)
     }
 
     pub(in crate::engine::vm) fn snapshot_argument_tail(
@@ -1060,7 +1063,7 @@ impl SlotStore {
         start: usize,
     ) -> Result<Vec<Value>, Error> {
         self.check_current(window)?;
-        let count = window.original_arguments().len();
+        let count = window.actual_count;
         if count > window.parameters().len() || start > window.parameters().len() {
             return Err(Error::internal(
                 "actual argument count exceeds parameter window",
@@ -1139,7 +1142,7 @@ impl SlotStore {
         let mut locals = Vec::new();
         let mut operands = Vec::new();
         original_arguments
-            .try_reserve_exact(window.original_arguments().len())
+            .try_reserve_exact(window.actual_count)
             .map_err(|_| Error::internal("original argument handoff allocation failed"))?;
         parameters
             .try_reserve_exact(window.parameters().len())
@@ -1156,6 +1159,11 @@ impl SlotStore {
             };
             original_arguments.push(value);
         }
+        // Only unobservable scalar originals may be absent. Preserve arity
+        // for explicit legacy handoff without inventing reference owners.
+        #[cfg(feature = "profiling")]
+        let omitted = window.actual_count - original_arguments.len();
+        original_arguments.resize(window.actual_count, Value::Undefined);
         for index in window.parameters() {
             parameters.push(self.slots[index].take().unwrap());
         }
@@ -1171,7 +1179,7 @@ impl SlotStore {
         #[cfg(feature = "profiling")]
         {
             let moved = original_arguments.len() + parameters.len() + locals.len() + operands.len();
-            self.live_slots -= moved;
+            self.live_slots -= moved - omitted;
             record_owned_storage(Cost::Move(moved));
         }
         debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
@@ -1904,7 +1912,8 @@ mod tests {
         assert_eq!(slots.active_end, 0);
         assert!(slots.slots.iter().all(Option::is_none));
         #[cfg(target_pointer_width = "64")]
-        assert_eq!(std::mem::size_of::<super::FrameWindow>(), 64);
+        // Actual arity remains independent when unobservable originals are omitted.
+        assert_eq!(std::mem::size_of::<super::FrameWindow>(), 72);
     }
 
     #[test]

@@ -23,7 +23,7 @@ impl OwnedSuspension {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.detach");
         let frame = execution.frames.current_mut(id)?;
-        if frame.cold.property_wait.is_some()
+        if frame.cold.has_pending_query()
             || frame.cold.iterator_wait.is_some()
             || frame.cold.conversion.is_some()
             || frame.cold.eval_arguments.is_some()

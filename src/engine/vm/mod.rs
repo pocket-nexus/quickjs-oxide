@@ -76,6 +76,7 @@ pub(crate) mod exception;
 pub(crate) mod frames;
 
 pub(crate) mod call;
+pub(crate) mod closure;
 
 mod protocol;
 pub use protocol::*;

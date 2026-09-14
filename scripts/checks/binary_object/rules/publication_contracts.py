@@ -100,6 +100,7 @@ def check_executable(ctx):
     # the two cfg(test) mutation/fixture escape hatches and authenticate their guards.
     production = source.split("#[cfg(test)]\nmod tests", 1)[0]
     code = ctx.rust_code_only(production)
+    owned = "fn snapshot_function_bytecode_owned" in production
     cached = "data:Rc<PublishedFunctionData>," in re.sub(r"\s+", "", code)
     for name, expected in {
         "PublishedFunctionSnapshot": "root: Option<FunctionBytecodeRef>, data: " + ("Rc<PublishedFunctionData>" if cached else "PublishedFunctionData") + ",",
@@ -116,11 +117,11 @@ def check_executable(ctx):
         require(ctx, rule, "Deref must borrow its owner's immutable selected storage", item,
             "impl std::ops::Deref for " + owner + " { type Target = " + target + "; fn deref(&self) -> &Self::Target { " + expression + " } }")
     data = ctx.unique_braced_item(code, re.compile(r"pub\(crate\)\s+struct\s+PublishedFunctionData\s*\{"), rule, "cached data fields")[0]
-    require(ctx, rule, "cached metadata must own immutable Rc arrays, not a rooting cycle or mutable shared cell", data, PUBLISHED_DATA)
+    require(ctx, rule, "cached metadata must own immutable Rc arrays, not a rooting cycle or mutable shared cell", data, PUBLISHED_DATA.replace("pub(crate) struct PublishedFunctionData {", "pub(crate) struct PublishedFunctionData { pub(crate) observes_arguments: bool,") if owned else PUBLISHED_DATA)
     if re.findall(r"\bfn\s+(\w+)\s*(?:<[^{}]*>)?\s*\(", code) != [
         "same_environment", "owner", "deref", "deref", "frame_layout", "constant",
         "eval_environment", "root", "empty_for_test", "deref_mut", "snapshot_function_bytecode",
-    ]:
+    ] + (["snapshot_function_bytecode_owned"] if owned else []):
         ctx.fail(rule, "publication projection must not introduce an alternate constructor or mutator")
     for name, expected in EXECUTABLE_FUNCTIONS.items():
         require(ctx, rule, f"{name} must retain checked same-owner immutable projection",
@@ -140,7 +141,10 @@ def check_executable(ctx):
     # The exact cache constructor ties every projected field to the same
     # validated bytecode node; cached data owns no FunctionBytecodeRef cycle.
     require(ctx, rule, "snapshot must validate Runtime/realm before selecting the bytecode-owned Rc cache and root the same node",
-        function(ctx, production, "snapshot_function_bytecode", rule), SNAPSHOT_FUNCTION if cached else DIRECT_SNAPSHOT_FUNCTION)
+        function(ctx, production, "snapshot_function_bytecode", rule), BORROWED_SNAPSHOT_FUNCTION if owned else (SNAPSHOT_FUNCTION if cached else DIRECT_SNAPSHOT_FUNCTION))
+    if owned:
+        require(ctx, rule, "consuming snapshot must validate Runtime/realm and retain the same node with immutable observation facts",
+            function(ctx, production, "snapshot_function_bytecode_owned", rule), OWNED_SNAPSHOT_FUNCTION)
 
 
 EXECUTABLE_FUNCTIONS = {
@@ -270,5 +274,78 @@ DIRECT_SNAPSHOT_FUNCTION = """    pub(crate) fn snapshot_function_bytecode(
                 metadata: bytecode.metadata,
                 realm: bytecode.realm,
             },
+        })
+    }"""
+
+BORROWED_SNAPSHOT_FUNCTION = """    pub(crate) fn snapshot_function_bytecode(
+        &self,
+        function: &FunctionBytecodeRef,
+    ) -> Result<PublishedFunctionSnapshot, RuntimeError> {
+        if !function.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("function bytecode"));
+        }
+        self.snapshot_function_bytecode_owned(function.clone())
+    }"""
+
+OWNED_SNAPSHOT_FUNCTION = """    pub(crate) fn snapshot_function_bytecode_owned(
+        &self,
+        function: FunctionBytecodeRef,
+    ) -> Result<PublishedFunctionSnapshot, RuntimeError> {
+        let _operation = self.operation();
+        if !function.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("function bytecode"));
+        }
+        let state = self.0.state.borrow();
+        let bytecode = state.heap.function_bytecode(function.bytecode_id())?;
+        // The realm is a strong edge of the bytecode node. Validating it here
+        // makes a corrupt realm edge fail before entering a VM frame.
+        state.heap.context(bytecode.realm)?;
+        let data = bytecode.executable.get_or_init(|| {
+            let data = Rc::new(PublishedFunctionData {
+                observes_arguments: bytecode.code.iter().any(|op| {
+                    matches!(
+                        op,
+                        crate::engine::code::bytecode::Instruction::Arguments(_)
+                            | crate::engine::code::bytecode::Instruction::Rest(_)
+                            | crate::engine::code::bytecode::Instruction::Eval { .. }
+                            | crate::engine::code::bytecode::Instruction::ApplyEval { .. }
+                    )
+                }),
+                #[cfg(feature = "stack-vm")]
+                fusion: bytecode.fusion.clone(),
+                code: bytecode.code.clone(),
+                constants: bytecode.constants.clone(),
+                property_key_atoms: bytecode.property_key_atoms.clone(),
+                argument_definitions: bytecode.argument_definitions.clone(),
+                local_definitions: bytecode.local_definitions.clone(),
+                closure_variables: bytecode.closure_variables.clone(),
+                eval_environments: bytecode.eval_environments.clone(),
+                arg_eval_variable_object_local: bytecode
+                    .parameter_environment
+                    .as_ref()
+                    .and_then(|layout| layout.arg_eval_variable_object_local),
+                metadata: bytecode.metadata,
+                realm: bytecode.realm,
+            });
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_call_buffer_capacity(
+                "executable.published_data_rc",
+                0,
+                1,
+                size_of::<PublishedFunctionData>(),
+            );
+            data
+        });
+        let data = data.clone();
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_call_buffer_share(
+            "executable.published_data_rc",
+            1,
+            size_of::<PublishedFunctionData>(),
+        );
+
+        Ok(PublishedFunctionSnapshot {
+            root: Some(function),
+            data,
         })
     }"""

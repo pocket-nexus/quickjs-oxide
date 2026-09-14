@@ -267,7 +267,7 @@ mod tests {
             is_const: false,
             kind: ClosureVariableKind::Normal,
         }]);
-        host.closure_slots = vec![root];
+        host.closure_slots = vec![root].into();
         host
     }
 

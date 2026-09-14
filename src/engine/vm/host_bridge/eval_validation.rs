@@ -68,7 +68,7 @@ mod tests {
             host.validate_eval_frame_bindings(&environment, true)
                 .is_err()
         );
-        host.closure_slots.push(
+        host.closure_slots.test_roots_mut().push(
             runtime
                 .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
                 .unwrap(),
@@ -77,7 +77,7 @@ mod tests {
             host.validate_eval_frame_bindings(&environment, true)
                 .is_err()
         );
-        host.closure_slots[0] = runtime
+        host.closure_slots.test_roots_mut()[0] = runtime
             .new_var_ref(Value::Int(1), true, false, ClosureVariableKind::Normal)
             .unwrap();
         host.validate_eval_frame_bindings(&environment, true)

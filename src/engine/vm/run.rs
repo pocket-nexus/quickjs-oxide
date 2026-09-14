@@ -427,7 +427,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     if let Some(root) = root {
                         super::bindings::try_write_immediate_cell(
                             runtime,
-                            root,
+                            &root,
                             slots.peek(0)?,
                             None,
                         )
@@ -478,7 +478,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             )
                     })
                     .and_then(|_| cold.closure_slots.get(usize::from(*index)))
-                    .map(|root| super::bindings::read_run_cell(runtime, root))
+                    .map(|root| super::bindings::read_run_cell(runtime, &root))
                     .transpose()?
                     .flatten();
                 if let Some((value, _owned)) = immediate {
@@ -882,7 +882,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if let Some((value, _owned)) = cold
                     .closure_slots
                     .get(usize::from(*index))
-                    .map(|root| super::bindings::read_run_cell(runtime, root))
+                    .map(|root| super::bindings::read_run_cell(runtime, &root))
                     .transpose()?
                     .flatten()
                 {
@@ -913,7 +913,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ) {
                     super::bindings::try_write_immediate_cell(
                         runtime,
-                        root,
+                        &root,
                         slots.peek(0)?,
                         Some((descriptor.is_lexical, descriptor.is_const, descriptor.kind)),
                     )
@@ -951,7 +951,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ) {
                     super::bindings::try_write_immediate_cell(
                         runtime,
-                        root,
+                        &root,
                         slots.peek(0)?,
                         Some((definition.is_lexical, definition.is_const, definition.kind)),
                     )
@@ -994,7 +994,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let immediate = if matches!(instruction, Instruction::GetArg(_)) {
                     match slots.parameter(*index)? {
                         FrameBinding::Captured(root) => {
-                            super::bindings::read_run_cell(runtime, root)?
+                            super::bindings::read_run_cell(runtime, &root)?
                         }
                         _ => None,
                     }
@@ -1021,7 +1021,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         (FrameBinding::Captured(root), Some(definition)) => {
                             super::bindings::try_write_immediate_cell(
                                 runtime,
-                                root,
+                                &root,
                                 slots.peek(0)?,
                                 Some((definition.is_lexical, definition.is_const, definition.kind)),
                             )
@@ -1081,7 +1081,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                     FrameBinding::Captured(root) => {
                         if let Some((value, _owned)) =
-                            super::bindings::read_run_cell(runtime, root)?
+                            super::bindings::read_run_cell(runtime, &root)?
                         {
                             slots.push(value)?;
                             #[cfg(feature = "profiling")]

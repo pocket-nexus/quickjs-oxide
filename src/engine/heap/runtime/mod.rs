@@ -106,8 +106,9 @@ pub(crate) struct RuntimeState {
     pub(crate) well_known_symbols: HashMap<WellKnownSymbol, Atom>,
     /// Unified QuickJS-style execution-frame chain. Records contain only raw
     /// stable identities and diagnostic state; the corresponding stack-local
-    /// [`ActiveFrameGuard`] owns the object and bytecode roots.
-    pub(crate) active_frames: Vec<ActiveFrameRecord>,
+    /// [`ActiveFrameGuard`] or its authenticated running frame owns the object
+    /// and bytecode roots; the registry never owns Runtime roots.
+    pub(crate) active_frames: crate::engine::vm::frames::ActiveFrames,
     /// Collection records retained across an active user callback. QuickJS
     /// keeps the current Map/Set record alive during `forEach` and direct Set
     /// method traversal, which makes a deletion transiently visible to

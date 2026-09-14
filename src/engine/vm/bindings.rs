@@ -39,7 +39,7 @@ pub(in crate::engine::vm) const fn is_private_callable_kind(kind: ClosureVariabl
 #[inline]
 pub(in crate::engine::vm) fn read_immediate_cell(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
 ) -> Option<Value> {
     if !root.belongs_to(runtime) || runtime.0.deferred_references.has_pending() {
         return None;
@@ -65,7 +65,7 @@ pub(in crate::engine::vm) fn read_immediate_cell(
 #[inline]
 pub(in crate::engine::vm) fn read_run_cell(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
 ) -> Result<Option<(Value, bool)>, Error> {
     if let Some(value) = read_immediate_cell(runtime, root) {
         return Ok(Some((value, false)));
@@ -83,7 +83,7 @@ pub(in crate::engine::vm) fn read_run_cell(
 #[inline]
 pub(in crate::engine::vm) fn try_write_immediate_cell(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
     value: &Value,
     expected: Option<(bool, bool, ClosureVariableKind)>,
 ) -> bool {
@@ -244,13 +244,13 @@ pub(in crate::engine::vm) fn capture_frame_binding(
 /// This checks actual cell metadata without redispatching its frame storage.
 pub(in crate::engine::vm) fn reuse_frame_capture(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
     descriptor: ClosureVariable,
 ) -> Result<VarRefRoot, Error> {
     runtime
         .validate_var_ref_metadata(root, descriptor)
         .map_err(|error| Error::internal(error.to_string()))?;
-    Ok(root.clone())
+    Ok(root.to_root())
 }
 
 pub(in crate::engine::vm) fn close_frame_binding(
@@ -507,7 +507,7 @@ pub(in crate::engine::vm) fn closure_name(
 
 pub(in crate::engine::vm) fn read_checked_closure(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
     descriptor: ClosureVariable,
     strip_variable_debug: bool,
 ) -> Result<Value, Error> {
@@ -529,7 +529,7 @@ pub(in crate::engine::vm) fn read_checked_closure(
 
 pub(in crate::engine::vm) fn write_checked_closure(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
     descriptor: ClosureVariable,
     strip_variable_debug: bool,
     value: Value,
@@ -586,7 +586,7 @@ pub(in crate::engine::vm) fn capture_local_binding(
 /// exit marked it reusable; normal iteration must detach it with CloseLocal.
 pub(in crate::engine::vm) fn reset_captured_binding(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
     reusable: bool,
 ) -> Result<(), Error> {
     let raw = runtime
@@ -655,7 +655,7 @@ pub(in crate::engine::vm) fn initialize_local_binding(
 
 pub(in crate::engine::vm) fn initialize_derived_closure(
     runtime: &Runtime,
-    root: &VarRefRoot,
+    root: &impl crate::engine::heap::roots::VarRefHandle,
     descriptor: ClosureVariable,
     value: Value,
 ) -> Result<(), Error> {

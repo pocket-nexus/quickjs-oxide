@@ -5,7 +5,6 @@ use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::heap::ContextId;
-use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::object::CallableRef;
 use crate::engine::value::Value;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
@@ -20,7 +19,7 @@ pub(in crate::engine::vm) struct BytecodeCallRequest {
     pub new_target: Value,
     pub arguments: Vec<Value>,
     pub bytecode: FunctionBytecodeRef,
-    pub closure_slots: Vec<VarRefRoot>,
+    pub closure_slots: crate::engine::vm::closure::ClosureSlots,
     pub caller_realm: ContextId,
     pub return_to: ReturnTarget,
 }
@@ -53,24 +52,18 @@ impl BytecodeCallRequest {
         let local_count = prepared.executable.local_definitions.len();
         let (flags, flag_bytes) = storage.capture_flags(local_count)?;
         let (cold, frame_bytes) = storage.install(FrameCold {
-            resume_throw: None,
-            regions: Vec::new(),
-            iterator_wait: None,
-            property_wait: None,
             property_generation: 0,
             iterator_generation: 0,
-            eval_arguments: None,
-            constructor_return: None,
-            conversion: None,
+            rare: std::cell::OnceCell::new(),
             normalized_this: None,
             return_to: Some(return_to),
             active_frame: prepared.active_frame.token(),
             entry_guard: Some(prepared.active_frame),
             caller_realm,
-            function: callable.into_object(),
+            function: (callable.into_object()).into(),
             closure_slots,
             reusable_captured_locals: flags,
-            input: prepared.input,
+            input: (prepared.input).into(),
         });
         let entry = FrameEntry {
             initialize_bindings: true,

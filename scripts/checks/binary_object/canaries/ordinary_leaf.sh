@@ -117,10 +117,17 @@ expect_full_rewrite_rejected published-function-public-draft published-function-
     'pub(crate) struct VerifiedFunction(UnlinkedFunction);' \
     'pub(crate) struct VerifiedFunction(pub(crate) UnlinkedFunction);'
 
-expect_full_rewrite_rejected published-executable-wrong-runtime published-executable-owner \
-    src/engine/code/executable.rs \
-    '        if !function.belongs_to(self) {' \
-    '        if false {'
+if grep -q 'fn snapshot_function_bytecode_owned' "$repository_root/src/engine/code/executable.rs"; then
+    expect_full_rewrite_rejected published-executable-wrong-runtime published-executable-owner \
+        src/engine/code/executable.rs \
+        '        self.snapshot_function_bytecode_owned(function.clone())' \
+        '        self.unchecked_snapshot(function.clone())'
+else
+    expect_full_rewrite_rejected published-executable-wrong-runtime published-executable-owner \
+        src/engine/code/executable.rs \
+        '        if !function.belongs_to(self) {' \
+        '        if false {'
+fi
 if grep -q 'data: Rc<PublishedFunctionData>' "$repository_root/src/engine/code/executable.rs"; then
     publication_data_type='Rc<PublishedFunctionData>'
 else
@@ -166,7 +173,7 @@ expect_rewrite_rejected frame-layout-actual-arguments-truncation published-frame
 
 expect_full_rewrite_rejected published-cache-drop-root published-executable-owner \
     src/engine/code/executable.rs \
-    '            root: Some(root),' \
+    "            root: Some($(if grep -q 'fn snapshot_function_bytecode_owned' "$repository_root/src/engine/code/executable.rs"; then printf function; else printf root; fi))," \
     '            root: None,'
 expect_full_rewrite_rejected published-cache-wrong-node published-executable-owner \
     src/engine/code/executable.rs \
