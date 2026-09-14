@@ -311,11 +311,20 @@ pub(super) fn finish(
             if pending.abrupt.is_none() {
                 let record_base = execution.slots.depth(&frame.window);
                 if !delegating {
+                    #[cfg(feature = "profiling")]
+                    let before = frame.cold.regions.capacity();
                     frame
                         .cold
                         .regions
                         .try_reserve(1)
                         .map_err(|_| Error::internal("iterator region allocation failed"))?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_call_buffer_capacity(
+                        "cold.regions",
+                        before,
+                        frame.cold.regions.capacity(),
+                        size_of::<super::VmUnwindRegion>(),
+                    );
                 }
                 execution.slots.push(&mut frame.window, pending.iterator)?;
                 execution.slots.push(&mut frame.window, pending.next)?;
@@ -488,6 +497,10 @@ impl PendingIterator {
             }
         }
     }
+    pub(super) fn is_next_iteration(&self) -> bool {
+        matches!(self.mode, Mode::Next { .. })
+    }
+
     pub(super) fn next_query(
         &mut self,
         runtime: &Runtime,
@@ -522,7 +535,7 @@ impl PendingIterator {
             .iterator_generation
             .checked_add(1)
             .ok_or_else(|| Error::internal("iterator operation identity exhausted"))?;
-        Ok(Box::new(Self {
+        let pending = Box::new(Self {
             mode,
             yielded: Value::Undefined,
             done: false,
@@ -542,7 +555,15 @@ impl PendingIterator {
             abrupt: None,
             argument: Value::Undefined,
             sync_fallback: false,
-        }))
+        });
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_call_buffer_capacity(
+            "iterator.pending_box",
+            0,
+            1,
+            size_of::<Self>(),
+        );
+        Ok(pending)
     }
 
     fn key(&self, runtime: &Runtime, name: &str) -> Result<PropertyKey, Error> {

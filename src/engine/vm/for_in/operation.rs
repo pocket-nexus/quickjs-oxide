@@ -80,6 +80,50 @@ enum Phase {
     },
 }
 impl ForInStep {
+    /// Consume only the same non-Proxy branches used by query dispatch. These
+    /// branches neither enter callbacks nor acquire continuation budget. Keep
+    /// the exact selected Proxy step for its original budgeted dispatcher.
+    pub(in crate::engine::vm) fn advance_without_callback(
+        mut self,
+        runtime: &Runtime,
+    ) -> Result<Self, RuntimeError> {
+        loop {
+            self = match self {
+                Self::Keys { object, resume } if !runtime.is_proxy_object(&object)? => {
+                    let keys = runtime.own_property_keys(&object)?;
+                    resume.keys(runtime, NativeConversion::Value(keys))?
+                }
+                Self::Enumerable {
+                    object,
+                    key,
+                    resume,
+                } if !runtime.is_proxy_object(&object)? => {
+                    let reply = runtime.internal_snapshot_own_property_is_enumerable(
+                        resume.realm,
+                        &object,
+                        &key,
+                    )?;
+                    resume.boolean(runtime, reply)?
+                }
+                Self::Own {
+                    object,
+                    key,
+                    resume,
+                } if !runtime.is_proxy_object(&object)? => {
+                    let reply = runtime.internal_has_own_property(resume.realm, &object, &key)?;
+                    resume.boolean(runtime, reply)?
+                }
+                Self::Prototype { object, resume } if !runtime.is_proxy_object(&object)? => {
+                    let prototype = runtime.get_prototype_of(&object)?;
+                    resume.prototype(runtime, NativeConversion::Value(prototype))?
+                }
+                step => return Ok(step),
+            };
+            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            crate::engine::api::profiling::record_owned_execution_event("for_in_local_step");
+        }
+    }
+
     pub(in crate::engine::vm) fn start(
         runtime: &Runtime,
         realm: ContextId,
@@ -490,11 +534,83 @@ mod tests {
     };
 
     #[test]
+    fn for_in_local_steps_keep_order_shadowing_deletion_and_accessor_silence() {
+        for source in [
+            "(function(){var calls=0,p={z:1,a:2},o=Object.create(p);o[2]=2;o[1]=1;Object.defineProperty(o,'a',{value:3,enumerable:false});Object.defineProperty(o,'b',{get(){calls++;throw 0},enumerable:true});o[Symbol('s')]=4;return function(){var names='';for(var k in o)names+=k+',';return names==='1,2,b,z,'&&calls===0?42:0}})()",
+            "(function(){var o=[1,2,3];Object.setPrototypeOf(o,{p:4});return function(){var names='';for(var k in o){names+=k;if(k==='0')delete o[1]}return names==='02p'?42:0}})()",
+            "(function(){var o=Object.create(null);o.a=1;o.b=2;return function(){var names='';for(var k in o){names+=k;if(k==='a'){delete o.b;o.c=3}}return names==='a'?42:0}})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let callable = runtime
+                .callable_from_value(context.eval(source).unwrap())
+                .unwrap();
+            let profile = CostProfile::start();
+            let result = runtime
+                .call_internal(context.realm, &callable, Value::Undefined, &[])
+                .unwrap();
+            let costs = profile.snapshot();
+            assert!(
+                matches!(result, Completion::Return(Value::Int(42))),
+                "{source}: {result:?}"
+            );
+            assert!(
+                costs
+                    .owned_execution_events
+                    .get("for_in_local_step")
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+                "{source}: {costs:?}"
+            );
+            assert!(
+                costs
+                    .owned_execution_events
+                    .get("for_in_completed_without_query")
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+                "{source}: {costs:?}"
+            );
+            assert_eq!(costs.legacy_dispatches, 0);
+            assert_eq!(costs.owned_bridge_exits, 0);
+            assert_eq!(costs.owned_sync_call_bridges, 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn for_in_local_progress_leaves_proxy_admission_and_trap_untouched() {
+        use super::ForInStep;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let value = context.eval("globalThis.forInTrapCalls=0;new Proxy({a:1},{ownKeys(){forInTrapCalls++;throw 42}})").unwrap();
+        let ForInStep::Keys { object, resume } =
+            ForInStep::start(&runtime, context.realm, value).unwrap()
+        else {
+            panic!("expected selected Proxy ownKeys step");
+        };
+        let id = object.object_id();
+        let step = ForInStep::Keys { object, resume }
+            .advance_without_callback(&runtime)
+            .unwrap();
+        let ForInStep::Keys { object, .. } = step else {
+            panic!("Proxy step must remain selected for budgeted dispatch");
+        };
+        assert_eq!(object.object_id(), id);
+        assert!(matches!(
+            context.eval("forInTrapCalls").unwrap(),
+            Value::Int(0)
+        ));
+    }
+
+    #[test]
     fn for_in_proxy_snapshots_and_double_prototype_probe_are_owned_without_replay() {
         for source in [
             "(function(){var baseProto=0,protoKeys=0;var proto=new Proxy({b:2},{ownKeys(t){protoKeys++;return Reflect.ownKeys(t)},getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)},getPrototypeOf(){return null}});var base=new Proxy({a:1},{ownKeys(t){return Reflect.ownKeys(t)},getOwnPropertyDescriptor(t,k){return Reflect.getOwnPropertyDescriptor(t,k)},getPrototypeOf(){baseProto++;return proto}});return function(){var names='';for(var key in base)names+=key;return names==='ab'&&baseProto===2&&protoKeys===2?42:0}})()",
             "(function(){var n=0;var base=new Proxy({a:1},{ownKeys(){return ['a']},getOwnPropertyDescriptor(){n++;return {value:1,writable:true,enumerable:n===1,configurable:true}},getPrototypeOf(){return null}});return function(){var names='';for(var key in base)names+=key;return names==='a'&&n===2?42:0}})()",
             "(function(){var marker={},calls=0,base=new Proxy({}, {ownKeys(){calls++;throw marker}});return function(){try{for(var key in base){}}catch(e){return calls===1&&e===marker?42:0}return 0}})()",
+            "(function(){var marker={},calls=0,proto=new Proxy({p:2},{ownKeys(){calls++;throw marker}}),base=Object.create(proto);base.a=1;return function(){try{for(var key in base){}}catch(e){return calls===1&&e===marker?42:0}return 0}})()",
             "(function(){var base=[1,2],proto={p:3};Object.setPrototypeOf(base,proto);return function(){var names='';for(var key in base){names+=key;if(key==='0')delete base[1]}return names==='0p'?42:0}})()",
         ] {
             let runtime = Runtime::new();

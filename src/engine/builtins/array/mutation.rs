@@ -72,6 +72,9 @@ pub(crate) struct MutationResume {
     kind: MutationKind,
     object: ObjectRef,
     arguments: Vec<Value>,
+    // Push never uses the Pop result slot. A single immediate argument lives
+    // there until completion, avoiding a Vec allocation without moving roots.
+    inline_argument: bool,
     phase: Phase,
     length: u64,
     new_length: u64,
@@ -91,13 +94,30 @@ impl MutationStep {
                 "Array mutation requires generic invocation",
             ));
         };
-        Self::start_values(
-            runtime,
-            realm,
-            kind,
-            this_value.clone(),
-            arguments.readable[..arguments.actual_arg_count].to_vec(),
-        )
+        let values = &arguments.readable[..arguments.actual_arg_count];
+        let inline = match (kind, values) {
+            (
+                MutationKind::Push(_),
+                [
+                    value @ (Value::Undefined
+                    | Value::Null
+                    | Value::Bool(_)
+                    | Value::Int(_)
+                    | Value::Float(_)),
+                ],
+            ) => Some(value.clone()),
+            _ => None,
+        };
+        let values = if inline.is_some() {
+            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "array_mutation_inline_argument",
+            );
+            Vec::new()
+        } else {
+            values.to_vec()
+        };
+        Self::start_arguments(runtime, realm, kind, this_value.clone(), values, inline)
     }
     pub(crate) fn start_values(
         runtime: &Runtime,
@@ -105,6 +125,16 @@ impl MutationStep {
         kind: MutationKind,
         receiver: Value,
         arguments: Vec<Value>,
+    ) -> Result<Self, RuntimeError> {
+        Self::start_arguments(runtime, realm, kind, receiver, arguments, None)
+    }
+    fn start_arguments(
+        runtime: &Runtime,
+        realm: ContextId,
+        kind: MutationKind,
+        receiver: Value,
+        arguments: Vec<Value>,
+        inline: Option<Value>,
     ) -> Result<Self, RuntimeError> {
         let object = match runtime.native_to_object(realm, receiver)? {
             NativeConversion::Value(object) => object,
@@ -118,16 +148,31 @@ impl MutationStep {
                 kind,
                 object,
                 arguments,
+                inline_argument: inline.is_some(),
                 phase: Phase::Length,
                 length: 0,
                 new_length: 0,
                 cursor: 0,
-                result: Value::Undefined,
+                result: inline.unwrap_or(Value::Undefined),
             },
         })
     }
 }
 impl MutationResume {
+    fn argument_count(&self) -> usize {
+        if self.inline_argument {
+            1
+        } else {
+            self.arguments.len()
+        }
+    }
+    fn argument(&self, index: usize) -> Option<&Value> {
+        if self.inline_argument {
+            (index == 0).then_some(&self.result)
+        } else {
+            self.arguments.get(index)
+        }
+    }
     pub(crate) fn resume(
         mut self,
         runtime: &Runtime,
@@ -175,7 +220,7 @@ impl MutationResume {
         };
         match self.kind {
             MutationKind::Push(_) => {
-                self.new_length = self.length.saturating_add(self.arguments.len() as u64);
+                self.new_length = self.length.saturating_add(self.argument_count() as u64);
                 if self.new_length > (1_u64 << 53) - 1 {
                     return Ok(MutationStep::Complete(Completion::Throw(
                         runtime.new_native_error(
@@ -208,8 +253,8 @@ impl MutationResume {
     }
     fn copy_next(mut self, runtime: &Runtime) -> Result<MutationStep, RuntimeError> {
         let (to, from, count, backwards) = match self.kind {
-            MutationKind::Push(ArrayPushKind::Unshift) if !self.arguments.is_empty() => {
-                (self.arguments.len() as u64, 0, self.length, true)
+            MutationKind::Push(ArrayPushKind::Unshift) if self.argument_count() != 0 => {
+                (self.argument_count() as u64, 0, self.length, true)
             }
             MutationKind::Pop(ArrayPopKind::Shift) => (0, 1, self.new_length, false),
             _ => return self.copied(runtime),
@@ -239,9 +284,9 @@ impl MutationResume {
         }
     }
     fn write_next(mut self, runtime: &Runtime) -> Result<MutationStep, RuntimeError> {
-        if let Some(value) = self.arguments.get(self.cursor as usize).cloned() {
+        if let Some(value) = self.argument(self.cursor as usize).cloned() {
             let from = match self.kind {
-                MutationKind::Push(ArrayPushKind::Unshift) if !self.arguments.is_empty() => 0,
+                MutationKind::Push(ArrayPushKind::Unshift) if self.argument_count() != 0 => 0,
                 _ => self.length,
             };
             self.phase = Phase::Write;
@@ -386,5 +431,104 @@ pub(crate) fn finish(
                 runtime.internal_delete_property(realm, &object, &key)?,
             )?,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_inline_argument_uses_actual_count_and_retains_immediate_payload() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let invocation = NativeInvocation::Call {
+            this_value: Value::Object(runtime.new_array(context.realm).unwrap()),
+        };
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        for value in [
+            Value::Undefined,
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(42),
+            Value::Float(-0.0),
+        ] {
+            let arguments = NativeArguments {
+                actual_arg_count: 1,
+                readable: vec![value.clone(), Value::Undefined],
+            };
+            let MutationStep::Read { resume, .. } = MutationStep::start(
+                &runtime,
+                context.realm,
+                MutationKind::Push(ArrayPushKind::Push),
+                &invocation,
+                &arguments,
+            )
+            .unwrap() else {
+                panic!("expected length read");
+            };
+            assert!(resume.inline_argument);
+            assert_eq!(resume.arguments.capacity(), 0);
+            assert_eq!(resume.argument_count(), 1);
+            assert!(
+                resume
+                    .argument(0)
+                    .unwrap()
+                    .same_quickjs_representation(&value)
+            );
+            assert!(resume.argument(1).is_none());
+        }
+        let arguments = NativeArguments {
+            actual_arg_count: 0,
+            readable: vec![Value::Undefined],
+        };
+        let MutationStep::Read { resume, .. } = MutationStep::start(
+            &runtime,
+            context.realm,
+            MutationKind::Push(ArrayPushKind::Push),
+            &invocation,
+            &arguments,
+        )
+        .unwrap() else {
+            panic!("expected length read");
+        };
+        assert!(!resume.inline_argument);
+        assert_eq!(resume.argument_count(), 0);
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("array_mutation_inline_argument")
+                .copied()
+                .unwrap_or(0),
+            5,
+        );
+    }
+
+    #[test]
+    fn push_inline_argument_preserves_observable_mutation_steps() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let value = context.eval(r#"(function () {
+            var trace = '', stored;
+            var target = {
+                get length() { trace += 'g'; return { valueOf: function () { trace += 'n'; return 0; } }; },
+                set length(v) { trace += 'l' + v; },
+                set 0(v) { trace += 's'; stored = v; }
+            };
+            if (Array.prototype.push.call(target, -0) !== 1 ||
+                trace !== 'gnsl1' || 1 / stored !== -Infinity) return false;
+            var a = [2, 3];
+            if (a.unshift(1) !== 3 || a.join(',') !== '1,2,3') return false;
+            var object = {}, b = [];
+            if (b.push(object) !== 1 || b[0] !== object) return false;
+            if (b.push(4, 5) !== 3 || b[1] !== 4 || b[2] !== 5) return false;
+            var frozen = Object.freeze([]), threw = false;
+            try { frozen.push(1); } catch (e) { threw = e instanceof TypeError; }
+            return threw && frozen.length === 0;
+        })()"#).unwrap();
+        assert!(matches!(value, Value::Bool(true)));
     }
 }

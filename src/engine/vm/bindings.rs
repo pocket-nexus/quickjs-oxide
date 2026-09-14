@@ -32,6 +32,80 @@ pub(in crate::engine::vm) const fn is_private_callable_kind(kind: ClosureVariabl
     )
 }
 
+/// Read a freshly authenticated shared cell without creating any owner or
+/// operation boundary. Pending releases must take the canonical path because
+/// its RuntimeOperation drains them before observing the cell.
+#[cfg(feature = "stack-vm")]
+#[inline]
+pub(in crate::engine::vm) fn read_immediate_cell(
+    runtime: &Runtime,
+    root: &VarRefRoot,
+) -> Option<Value> {
+    if !root.belongs_to(runtime) || runtime.0.deferred_references.has_pending() {
+        return None;
+    }
+    let state = runtime.0.state.try_borrow().ok()?;
+    let cell = state.heap.var_ref(root.id()).ok()?;
+    if cell.kind.is_private() {
+        return None;
+    }
+    match &cell.value {
+        RawValue::Undefined => Some(Value::Undefined),
+        RawValue::Null => Some(Value::Null),
+        RawValue::Bool(value) => Some(Value::Bool(*value)),
+        RawValue::Int(value) => Some(Value::Int(*value)),
+        RawValue::Float(value) => Some(Value::Float(*value)),
+        _ => None,
+    }
+}
+
+/// Keep the scalar read cheap; only a non-immediate miss attempts an owned
+/// read under the shared heap guard. The flag distinguishes profiling events.
+#[cfg(feature = "stack-vm")]
+#[inline]
+pub(in crate::engine::vm) fn read_run_cell(
+    runtime: &Runtime,
+    root: &VarRefRoot,
+) -> Result<Option<(Value, bool)>, Error> {
+    if let Some(value) = read_immediate_cell(runtime, root) {
+        return Ok(Some((value, false)));
+    }
+    runtime
+        .try_read_owned_var_ref(root)
+        .map(|value| value.map(|value| (value, true)))
+        .map_err(runtime_error_to_vm_error)
+}
+
+/// Commit only a no-owner immediate replacement. The caller first proves its
+/// operand exists; no stack/heap mutation can occur between that peek and the
+/// successful write, so consuming that same immediate operand cannot fail.
+#[cfg(feature = "stack-vm")]
+#[inline]
+pub(in crate::engine::vm) fn try_write_immediate_cell(
+    runtime: &Runtime,
+    root: &VarRefRoot,
+    value: &Value,
+    expected: Option<(bool, bool, ClosureVariableKind)>,
+) -> bool {
+    let replacement = match value {
+        Value::Undefined => RawValue::Undefined,
+        Value::Null => RawValue::Null,
+        Value::Bool(value) => RawValue::Bool(*value),
+        Value::Int(value) => RawValue::Int(*value),
+        Value::Float(value) => RawValue::Float(*value),
+        _ => return false,
+    };
+    if !root.belongs_to(runtime) || runtime.0.deferred_references.has_pending() {
+        return false;
+    }
+    let Ok(mut state) = runtime.0.state.try_borrow_mut() else {
+        return false;
+    };
+    state
+        .heap
+        .try_replace_immediate_var_ref_value(root.id(), replacement, expected)
+}
+
 /// QuickJS keeps access flags on each closure descriptor rather than on the
 /// shared VarRef. Its ordinary direct-eval prepass may therefore expose one
 /// FunctionName cell through a mutable Normal descriptor. A module import is
@@ -630,4 +704,351 @@ pub(super) fn validate_module_import_collision(descriptor: ClosureVariable) -> R
         ));
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "stack-vm"))]
+mod immediate_cell_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "profiling")]
+    fn owned_cell_reads_keep_global_and_captured_function_identity() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval("let ownedCellGlobal = function() { return 7; };")
+            .unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            (() => {
+                let f = ownedCellGlobal;
+                function get() { return f; }
+                if (get() !== ownedCellGlobal) return false;
+                f = function() { return 9; };
+                return get()() === 9 && ownedCellGlobal() === 7;
+            })()
+        "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        let cost = profile.snapshot();
+        for name in ["global_owned_cell_read", "captured_owned_cell_read"] {
+            assert!(
+                cost.owned_execution_events.get(name).copied().unwrap_or(0) > 0,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn immediate_cell_writes_commit_only_mutable_initialized_owners() {
+        let runtime = Runtime::new();
+        let root = runtime
+            .new_var_ref(Value::Int(1), true, false, ClosureVariableKind::Normal)
+            .unwrap();
+        let metadata = Some((true, false, ClosureVariableKind::Normal));
+        assert!(try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Int(2),
+            metadata
+        ));
+        assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(2));
+        assert!(!try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Int(3),
+            Some((false, false, ClosureVariableKind::Normal))
+        ));
+        assert!(!try_write_immediate_cell(
+            &Runtime::new(),
+            &root,
+            &Value::Int(3),
+            metadata
+        ));
+        {
+            let _state = runtime.0.state.borrow();
+            assert!(!try_write_immediate_cell(
+                &runtime,
+                &root,
+                &Value::Int(3),
+                metadata
+            ));
+        }
+        assert!(!try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Object(runtime.new_object(None).unwrap()),
+            metadata
+        ));
+        assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(2));
+        assert!(try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Float(-0.0),
+            metadata
+        ));
+        let Value::Float(value) = runtime.read_var_ref(&root).unwrap() else {
+            panic!("expected float");
+        };
+        assert!(value.is_sign_negative());
+        runtime.reset_var_ref_uninitialized(&root).unwrap();
+        assert!(!try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Int(3),
+            metadata
+        ));
+        runtime
+            .write_var_ref(&root, Value::Object(runtime.new_object(None).unwrap()))
+            .unwrap();
+        assert!(!try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Int(3),
+            metadata
+        ));
+        let constant = runtime
+            .new_var_ref(Value::Int(1), true, true, ClosureVariableKind::Normal)
+            .unwrap();
+        assert!(!try_write_immediate_cell(
+            &runtime,
+            &constant,
+            &Value::Int(3),
+            None
+        ));
+        assert_eq!(runtime.read_var_ref(&constant).unwrap(), Value::Int(1));
+    }
+
+    #[test]
+    fn immediate_cell_writes_preserve_deferred_release_boundary() {
+        let runtime = Runtime::new();
+        let root = runtime
+            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .unwrap();
+        let object = runtime.new_object(None).unwrap();
+        {
+            let _state = runtime.0.state.borrow();
+            drop(object);
+        }
+        assert!(!try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Int(2),
+            None
+        ));
+        assert!(runtime.0.deferred_references.has_pending());
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .var_ref(root.id())
+                .unwrap()
+                .value,
+            RawValue::Int(1)
+        );
+        runtime.drain_deferred_references().unwrap();
+        assert!(try_write_immediate_cell(
+            &runtime,
+            &root,
+            &Value::Int(2),
+            None
+        ));
+    }
+
+    #[test]
+    fn immediate_cell_writes_preserve_assignment_results_and_error_order() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let x=1; function read(){return x;} function set(v){return x=v;}
+            if(set(2)!==2 || read()!==2)return false;
+            if((x=3)!==3 || read()!==3)return false;
+            set({answer:4}); if(read().answer!==4)return false;
+            set(5); if(read()!==5)return false;
+            set(null); if(read()!==null)return false;
+            set(undefined); if(read()!==undefined)return false;
+            set(true); if(read()!==true)return false;
+            function mapped(arg){function read(){return arg;} arg=7; return arguments[0]===7 && read()===7;}
+            function strict(arg){'use strict'; function read(){return arg;} arg=7; return arguments[0]===1 && read()===7;}
+            let trace='';
+            try { (()=>later=2)(); let later=1; } catch(e){if(e instanceof ReferenceError)trace+='tdz';}
+            const c=1; try { (()=>c=2)(); } catch(e){if(e instanceof TypeError)trace+='const';}
+            return mapped(1) && strict(1) && trace==='tdzconst' && c===1;
+        })()"#).unwrap(), Value::Bool(true));
+        context.eval("let immediateWriteGlobal=1;").unwrap();
+        assert_eq!(context.eval(r#"(()=>{
+            immediateWriteGlobal=2; let a=immediateWriteGlobal;
+            immediateWriteGlobal={answer:3}; let b=immediateWriteGlobal.answer;
+            immediateWriteGlobal=4; let c=immediateWriteGlobal;
+            let calls=0,last=0;
+            Object.defineProperty(globalThis,'cellSetterProbe',{configurable:true,set(v){calls++;last=v;}});
+            cellSetterProbe=8; cellSetterProbe=9; delete globalThis.cellSetterProbe;
+            return a===2 && b===3 && c===4 && calls===2 && last===9;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    #[cfg(feature = "profiling")]
+    fn immediate_cell_write_profiles_prove_both_run_paths() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context.eval("let profileWriteGlobal=1;").unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        context
+            .eval("profileWriteGlobal=2;profileWriteGlobal=3;")
+            .unwrap();
+        assert_eq!(
+            context
+                .eval("(()=>{let x=1;function set(v){x=v;}set(2);set(3);return x;})()")
+                .unwrap(),
+            Value::Int(3)
+        );
+        let cost = profile.snapshot();
+        assert!(
+            cost.owned_execution_events
+                .get("global_immediate_cell_write")
+                .copied()
+                .unwrap_or(0)
+                >= 2
+        );
+        assert!(
+            cost.owned_execution_events
+                .get("captured_immediate_cell_write")
+                .copied()
+                .unwrap_or(0)
+                >= 2
+        );
+    }
+
+    #[test]
+    fn immediate_cell_reads_are_fresh_and_preserve_fallback_boundaries() {
+        let runtime = Runtime::new();
+        let root = runtime
+            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .unwrap();
+        assert_eq!(read_immediate_cell(&runtime, &root), Some(Value::Int(1)));
+        for value in [
+            Value::Null,
+            Value::Undefined,
+            Value::Bool(true),
+            Value::Float(-0.0),
+            Value::Int(7),
+        ] {
+            runtime.write_var_ref(&root, value.clone()).unwrap();
+            assert_eq!(read_immediate_cell(&runtime, &root), Some(value));
+        }
+        let foreign = Runtime::new();
+        assert!(read_immediate_cell(&foreign, &root).is_none());
+        {
+            let _state = runtime.0.state.borrow_mut();
+            assert!(read_immediate_cell(&runtime, &root).is_none());
+        }
+        runtime
+            .write_var_ref(&root, Value::Object(runtime.new_object(None).unwrap()))
+            .unwrap();
+        assert!(read_immediate_cell(&runtime, &root).is_none());
+        runtime.reset_var_ref_uninitialized(&root).unwrap();
+        assert!(read_immediate_cell(&runtime, &root).is_none());
+        let constant = runtime
+            .new_var_ref(Value::Int(9), true, true, ClosureVariableKind::Normal)
+            .unwrap();
+        assert_eq!(
+            read_immediate_cell(&runtime, &constant),
+            Some(Value::Int(9))
+        );
+    }
+
+    #[test]
+    fn immediate_cell_reads_never_drain_deferred_owners() {
+        let runtime = Runtime::new();
+        let root = runtime
+            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .unwrap();
+        let object = runtime.new_object(None).unwrap();
+        {
+            let _state = runtime.0.state.borrow();
+            drop(object);
+        }
+        assert!(runtime.0.deferred_references.has_pending());
+        assert!(read_immediate_cell(&runtime, &root).is_none());
+        assert!(runtime.0.deferred_references.has_pending());
+        runtime.drain_deferred_references().unwrap();
+        assert_eq!(read_immediate_cell(&runtime, &root), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn captured_reads_observe_callbacks_eval_arguments_and_tdz() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let value=1;
+            function read(){return value;}
+            function mutate(next){value=next;}
+            if(read()!==1)return false;
+            mutate(2); if(read()!==2)return false;
+            eval('value=3'); if(read()!==3)return false;
+            mutate({answer:4}); if(read().answer!==4)return false;
+            mutate(-0); if(!Object.is(read(),-0))return false;
+            mutate(NaN); if(!Number.isNaN(read()))return false;
+            function mapped(arg){function inner(){return arg;} arguments[0]=8; return arg===8 && inner()===8;}
+            function strict(arg){'use strict'; function inner(){return arg;} arguments[0]=8; return arg===1 && inner()===1;}
+            let tdz=false; try { (()=>later)(); let later=1; } catch(e){tdz=e instanceof ReferenceError;}
+            const constant=9; function constantRead(){return constant;}
+            return mapped(1) && strict(1) && tdz && constantRead()===9;
+        })()"#).unwrap(), Value::Bool(true));
+        context.eval("let immediateGlobal=1;").unwrap();
+        assert_eq!(context.eval(r#"(()=>{
+            let first=immediateGlobal;
+            immediateGlobal=2;
+            let second=immediateGlobal;
+            immediateGlobal={answer:3};
+            let third=immediateGlobal.answer;
+            let calls=0;
+            Object.defineProperty(globalThis,'cellGetterProbe',{configurable:true,get(){calls++;return calls;}});
+            let a=cellGetterProbe,b=cellGetterProbe;
+            delete globalThis.cellGetterProbe;
+            return first===1 && second===2 && third===3 && a===1 && b===2;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    #[cfg(feature = "profiling")]
+    fn captured_immediate_reads_stay_in_the_authenticated_run() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context.eval("let immediateProfileGlobal=7;").unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context.eval("immediateProfileGlobal").unwrap(),
+            Value::Int(7)
+        );
+        assert_eq!(
+            context
+                .eval("(()=>{let x=2;function get(){return x;}return get()+get();})()")
+                .unwrap(),
+            Value::Int(4)
+        );
+        let cost = profile.snapshot();
+        assert!(
+            cost.owned_execution_events
+                .get("global_immediate_cell_read")
+                .copied()
+                .unwrap_or(0)
+                > 0
+        );
+        assert!(
+            cost.owned_execution_events
+                .get("captured_immediate_cell_read")
+                .copied()
+                .unwrap_or(0)
+                >= 2
+        );
+    }
 }

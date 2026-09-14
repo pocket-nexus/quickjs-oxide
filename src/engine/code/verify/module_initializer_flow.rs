@@ -555,7 +555,7 @@ fn analyze(
             }
             _ => {
                 let frame = frames.last_mut().expect("analysis frame remains present");
-                if instruction.info().effects.javascript_exception
+                if instruction.potential_effects().javascript_exception
                     == crate::engine::code::instruction::JsExceptionEffect::MayThrow
                 {
                     route_exception(frame, after, shapes)?;
@@ -635,7 +635,7 @@ mod tests {
             Instruction::TypeOfIsFunction,
         ] {
             assert!(
-                instruction.info().effects.javascript_exception
+                instruction.potential_effects().javascript_exception
                     == crate::engine::code::instruction::JsExceptionEffect::None
             );
         }

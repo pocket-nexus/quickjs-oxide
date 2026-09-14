@@ -200,7 +200,7 @@ fn prepare_and_enter(
         .checked_add(1)
         .ok_or_else(|| Error::internal("eval resume PC overflow"))?;
     if let Some(request) = request {
-        let entry = request.prepare(runtime)?;
+        let entry = request.prepare(runtime, &mut execution.call_storage)?;
         push_frame(execution, entry)?;
     }
     #[cfg(feature = "profiling")]
@@ -329,7 +329,7 @@ pub(super) fn apply(
         .fault_pc
         .checked_add(1)
         .ok_or_else(|| Error::internal("apply eval resume PC overflow"))?;
-    let entry = request.prepare(runtime)?;
+    let entry = request.prepare(runtime, &mut execution.call_storage)?;
     push_frame(execution, entry)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);

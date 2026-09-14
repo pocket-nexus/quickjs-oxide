@@ -160,7 +160,7 @@ pub(super) fn prototype(
 }
 pub(super) fn ready(
     runtime: &Runtime,
-    execution: &RunningExecution,
+    execution: &mut RunningExecution,
     query: &Query,
     mut request: Box<BytecodeCallRequest>,
     receiver: Completion,
@@ -185,7 +185,7 @@ pub(super) fn ready(
             .map_err(runtime_error_to_vm_error)?));
     }
     request.receiver = receiver.clone();
-    let mut entry = request.prepare(runtime)?;
+    let mut entry = request.prepare(runtime, &mut execution.call_storage)?;
     entry.cold.constructor_return = Some(if derived {
         crate::engine::vm::frame::ConstructorReturn::Derived
     } else {

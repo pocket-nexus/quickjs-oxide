@@ -11,6 +11,88 @@ use crate::engine::vm::frame::{FrameCold, FrameEntry};
 use crate::engine::vm::stack::{FrameStorage, copy_value};
 use crate::engine::vm::{CallInput, Completion, VmActivation};
 
+/// Normal root entries use the same direct window initialization as child
+/// calls. The public borrowed argv needs an independent snapshot, but no
+/// parameter/local binding vectors or temporary RuntimeVmHost are built.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub(in crate::engine::vm) fn execute_call(
+    runtime: &Runtime,
+    caller_realm: crate::engine::heap::ContextId,
+    callable: &crate::engine::object::CallableRef,
+    receiver: Value,
+    new_target: Value,
+    arguments: &[Value],
+    bytecode: crate::engine::code::rooted::FunctionBytecodeRef,
+    closure_slots: Vec<crate::engine::heap::roots::VarRefRoot>,
+) -> Result<Completion, crate::engine::api::runtime_error::RuntimeError> {
+    use crate::engine::api::runtime_error::RuntimeError;
+    let prepared =
+        runtime.prepare_owned_bytecode_frame(callable, receiver, new_target, bytecode)?;
+    if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
+        return Err(RuntimeError::Engine(Error::internal(
+            "function object closure slot count does not match bytecode metadata",
+        )));
+    }
+    let mut original_arguments = Vec::new();
+    original_arguments
+        .try_reserve_exact(arguments.len())
+        .map_err(|_| {
+            RuntimeError::Engine(Error::internal(
+                "original argument snapshot allocation failed",
+            ))
+        })?;
+    for value in arguments {
+        original_arguments.push(copy_value(value).map_err(RuntimeError::Engine)?);
+    }
+    let local_count = prepared.executable.local_definitions.len();
+    let cold = crate::engine::vm::frame::ColdFrame::new(FrameCold {
+        resume_throw: None,
+        regions: Vec::new(),
+        iterator_wait: None,
+        property_wait: None,
+        property_generation: 0,
+        iterator_generation: 0,
+        eval_arguments: None,
+        constructor_return: None,
+        conversion: None,
+        normalized_this: None,
+        return_to: None,
+        entry_guard: None,
+        caller_realm,
+        active_frame: prepared.active_frame.token(),
+        function: callable.as_object().clone(),
+        closure_slots,
+        reusable_captured_locals: vec![false; local_count],
+        input: prepared.input,
+    });
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_call_storage(
+        size_of::<Option<FrameCold>>(),
+        cold.reusable_captured_locals.capacity(),
+        original_arguments.capacity() * size_of::<Value>(),
+    );
+    let entry = FrameEntry {
+        initialize_bindings: true,
+        executable: prepared.executable,
+        cold,
+        storage: FrameStorage {
+            original_arguments,
+            parameters: Vec::new(),
+            locals: Vec::new(),
+            operands: Vec::new(),
+        },
+    };
+    let result = crate::engine::vm::driver::execute(
+        runtime.clone(),
+        entry,
+        crate::engine::vm::execution::ExecutionLimits::default(),
+    )
+    .and_then(|exit| exit.finish(runtime.clone()));
+    prepared.active_frame.finish()?;
+    result.map_err(RuntimeError::Engine)
+}
+
 pub(in crate::engine::vm) fn execute(
     host: RuntimeVmHost,
     input: CallInput,
@@ -72,8 +154,9 @@ pub(in crate::engine::vm) fn prepare(
     let function = current_function
         .ok_or_else(|| Error::internal("published frame has no current function"))?;
     let entry = FrameEntry {
+        initialize_bindings: false,
         executable,
-        cold: Box::new(FrameCold {
+        cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
             resume_throw: None,
             regions: Vec::new(),
             iterator_wait: None,
@@ -147,6 +230,7 @@ pub(in crate::engine::vm) fn detach_frame(
     resume_pc: usize,
 ) -> Result<(RuntimeVmHost, VmActivation, Vec<Value>), Error> {
     let FrameEntry {
+        initialize_bindings: _,
         executable,
         cold,
         storage,
@@ -170,7 +254,7 @@ pub(in crate::engine::vm) fn detach_frame(
         closure_slots,
         reusable_captured_locals,
         input,
-    } = *cold;
+    } = cold.into_inner();
     if resume_throw.is_some()
         || property_wait.is_some()
         || conversion.is_some()

@@ -40,6 +40,28 @@ impl Runtime {
         kind: ActiveFrameKind,
         native_iterator_next_fast_path: bool,
     ) -> Result<ActiveFrameGuard, RuntimeError> {
+        self.push_active_frame_with_continuation(
+            function_root,
+            bytecode_root,
+            realm,
+            flags,
+            kind,
+            native_iterator_next_fast_path,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_active_frame_with_continuation(
+        &self,
+        function_root: ObjectRef,
+        bytecode_root: Option<FunctionBytecodeRef>,
+        realm: ContextId,
+        flags: ActiveFrameFlags,
+        kind: ActiveFrameKind,
+        native_iterator_next_fast_path: bool,
+        native_continuation: bool,
+    ) -> Result<ActiveFrameGuard, RuntimeError> {
         if !function_root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("active-frame function"));
         }
@@ -109,7 +131,7 @@ impl Runtime {
             let depth = state.active_frames.len();
             state.active_frames.push(ActiveFrameRecord {
                 token,
-                native_continuation: false,
+                native_continuation,
                 function: function_root.object_id(),
                 realm,
                 flags,
@@ -192,6 +214,36 @@ impl Runtime {
                 actual_arg_count,
                 readable_arg_count,
             },
+            true,
+        )
+    }
+
+    /// Publish a validated native frame with its final continuation ownership.
+    /// There is no intervening handler between frame creation and this flag.
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn push_native_continuation_active_frame(
+        &self,
+        function_root: ObjectRef,
+        realm: ContextId,
+        target: NativeFunctionId,
+        actual_arg_count: usize,
+        readable_arg_count: usize,
+        iterator_next_raw: bool,
+    ) -> Result<ActiveFrameGuard, RuntimeError> {
+        self.push_active_frame_with_continuation(
+            function_root,
+            None,
+            realm,
+            ActiveFrameFlags {
+                backtrace_hidden: iterator_next_raw,
+                ..ActiveFrameFlags::default()
+            },
+            ActiveFrameKind::Native {
+                target,
+                actual_arg_count,
+                readable_arg_count,
+            },
+            iterator_next_raw,
             true,
         )
     }
@@ -490,6 +542,7 @@ pub(crate) struct BacktraceBarrierGuard {
 
 impl ActiveFrameGuard {
     #[cfg(feature = "stack-vm")]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
         let mut state = self.runtime.0.state.borrow_mut();
         let frame = state

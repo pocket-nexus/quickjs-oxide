@@ -1,6 +1,8 @@
 """Property kernel ownership guards; behavioral coverage remains in Rust/JS."""
 import re
 
+from .for_in_local import DEPENDENCY_FILES, check_local_arms
+
 FILES = (
     "src/engine/object/ordinary_storage.rs",
     "src/engine/object/ordinary.rs",
@@ -51,7 +53,6 @@ def check(ctx):
         ("(ObjectKind::Ordinary,ObjectPayload::Ordinary)" in compact(storage), "ordinary eligibility must include the semantic class"),
         (not re.search(r"\.(?:call_internal|internal_set|materialize_auto_init_property)\s*\(", storage), "storage must not execute callbacks or observable internal methods"),
         ("ordinary_set_fast_path_available" not in ordinary + ordinary_set + dispatch, "ordinary Set must not pre-scan the prototype chain"),
-        ("runtime.validate_object_and_key(&object,&key)?" in compact(ordinary_set) and "runtime.validate_value_domain(&value," in compact(ordinary_set) and "runtime.validate_value_domain(&receiver," in compact(ordinary_set), "Set must validate object, key, value and receiver domains"),
         ("rejected_object.as_ref().unwrap_or(&receiver)" in compact(ordinary_set), "Proxy forwarding diagnostics must use the rejected target"),
         ("if!failure.published{self.release_atoms(atoms)?;}" in compact(runtime), "only pre-publication failures may roll back replacement Atoms"),
     ]
@@ -59,10 +60,19 @@ def check(ctx):
     retained = body.find("retain_edges_transactionally")
     published = body.find("replace_retained_object_slot")
     requirements.append((0 <= retained < published, "replacement edges must be retained before publication"))
-    read, _, _ = ctx.unique_braced_item(ordinary, re.compile(r"fn\s+prepare_ordinary_read\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", "prepared property read")
+    initial, _, _ = ctx.unique_braced_item(ordinary_set, re.compile(r"fn\s+initial_set\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-domain", "shared Set domain selector")
+    ic = compact(initial)
+    positions = [ic.find(x) for x in ("runtime.validate_object_and_key(object,key)?;", "runtime.validate_value_domain(value,", "runtime.validate_value_domain(receiver,", "runtime.ordinary_set_probe(object,key,value,same_receiver)?;")]
+    requirements.append((all(x >= 0 for x in positions) and positions == sorted(positions), "Set shared selector must validate object, key, value and receiver before probing"))
+    for entry, call in (("start_into", "initial_set(runtime,realm,&object,&key,&value,&receiver)?"), ("start_receiver_into", "initial_set(runtime,Some(realm),object,key,&value,&receiver)")):
+        body, _, _ = ctx.unique_braced_item(ordinary_set, re.compile(r"fn\s+" + entry + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-domain", entry)
+        requirements.append((call in compact(body), "both owning and borrowed Set entries must route exact owners through initial_set"))
+    read_wrapper, _, _ = ctx.unique_braced_item(ordinary, re.compile(r"fn\s+prepare_ordinary_read\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", "owning read adapter")
+    requirements.append((compact(read_wrapper).endswith("{self.prepare_ordinary_read_borrowed(object,key,&receiver)}"), "owning read must delegate its exact receiver to the borrowed kernel"))
+    read, _, _ = ctx.unique_braced_item(ordinary, re.compile(r"fn\s+prepare_ordinary_read_borrowed\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", "prepared property read")
     requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|typed_array_convert_element|native_to_bigint|internal_delete_property|internal_prevent_extensions|internal_get_prototype_of|internal_set_prototype_of)\s*\(", read), "prepared property reads must return callbacks without invoking JavaScript"))
-    requirements.append(("self.validate_object_and_key(object,key)?" in compact(read) and "self.validate_value_domain(&receiver," in compact(read), "prepared property reads must validate object, key and receiver domains"))
-    for name in ("prepare_value_property_read", "prepare_string_property_read"):
+    requirements.append(("self.validate_object_and_key(object,key)?" in compact(read) and "self.validate_value_domain(receiver," in compact(read), "prepared property reads must validate object, key and receiver domains"))
+    for name in ("prepare_value_property_read", "prepare_value_property_read_borrowed", "prepare_string_property_read"):
         prepared, _, _ = ctx.unique_braced_item(access, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", name)
         requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|get_value_property_in_realm|get_string_property_with_receiver)\s*\(", prepared), "primitive property preparation must return callbacks without invoking JavaScript"))
     primitive_delete, _, _ = ctx.unique_braced_item(access, re.compile(r"fn\s+primitive_delete_property\s*\([^{}]*\)\s*->[^{}]*\{"), "primitive-property-delete", "primitive Delete")
@@ -83,15 +93,15 @@ def check(ctx):
         (proxy_own, ("start", "method", "resume", "descriptor", "extensible", "converted")),
         (proxy_boolean, ("start", "method", "resume", "boolean", "descriptor")),
         (descriptor, ("start", "next", "has", "read")),
-        (dispatch, ("prepare_has_property", "prepare_typed_array_set")),
+        (dispatch, ("prepare_has_property", "prepare_typed_array_set", "prepare_typed_array_set_in_realm", "try_typed_array_set_primitive", "select_typed_array_set")),
         (proxy_call, ("start", "read", "resume")),
-        (ordinary_set, ("start", "walk", "special_own", "receiver", "define", "advance", "forward", "special", "descriptor", "defined", "array_length")),
+        (ordinary_set, ("initial_set", "start", "start_into", "start_receiver_into", "start_waiting", "walk", "special_own", "receiver", "define", "advance", "forward", "special", "descriptor", "defined", "array_length")),
         (proxy_set, ("start", "method", "resume", "set", "descriptor")),
         (proxy_define, ("start", "method", "resume", "defined", "descriptor")),
         (array_length, ("start", "number")),
         (number, ("start", "from_primitive", "resume")),
         (typed_element, ("start", "from_primitive", "resume")),
-        (typed_write, ("set", "define", "element")),
+        (typed_write, ("set", "set_primitive", "set_primitive_result", "complete_primitive", "define", "element", "finish_element")),
     )
     for source, names in protocols:
         for name in names:
@@ -138,7 +148,8 @@ S05_ROUTES = {
     "src/engine/vm/private_access.rs": ("private_bindings::branded_receiver(", "proxy_get_driver::start_vm_call("),
     "src/engine/vm/construct_driver.rs": ("runtime.validate_class_parent(", "proxy_get_driver::start_class_parent(", "proxy_get_driver::start_public_field("),
     "src/engine/vm/array_driver.rs": ("LiteralDefinitionStep::start(", "proxy_get_driver::start_literal_definition("),
-    "src/engine/vm/frame_operations.rs": ("RunExit::Numeric(kind)", "NumericStep::start(", "proxy_get_driver::start_numeric(", "RunExit::ForIn(next)", "proxy_get_driver::start_for_in_query("),
+    "src/engine/vm/frame_operations.rs": ("modnumeric;", "numeric::{NumericProgress,completeascomplete_numeric}", "RunExit::Numeric(kind)", "complete_numeric(runtime,execution,id,kind)", "RunExit::ForIn(next)", "proxy_get_driver::start_for_in_query("),
+    "src/engine/vm/frame_operations/numeric.rs": ("NumericStep::start(kind,left,right)", "proxy_get_driver::start_numeric(runtime,execution,id,step,depth)", "letright=execution.slots.pop(&mutframe.window)?;", "(execution.slots.pop(&mutframe.window)?,Some(right))"),
     "src/engine/vm/run.rs": ("RunExit::Numeric(kind)", "Instruction::ForInStart=>returnOk(RunExit::ForIn(false))", "Instruction::ForInNext=>returnOk(RunExit::ForIn(true))"),
     "src/engine/vm/proxy_get_driver.rs": ("fnstart_numeric(", "fnstart_for_in_query(", "fnstart_environment(", "fnstart_class_parent(", "fnstart_public_field(", "fnstart_literal_definition("),
     "src/engine/vm/proxy_get_driver/request.rs": ("modarray;", "modscalar;", "modvm;", "enumResume", "enumStep", "Self::Environment(resume)", "Self::VmNumeric(resume)", "Self::ForIn(resume)"),
@@ -147,7 +158,7 @@ S05_ROUTES = {
     "src/engine/vm/proxy_get_driver/request/object.rs": ("LiteralDefinitionStep>forStep", "Self::DefineOrdinary{", "Resume::LiteralDefinition(resume)"),
     "src/engine/vm/proxy_get_driver/request/vm.rs": ("EnvironmentStep>forStep", "NumericStep>forStep", "ForInStep>forStep", "Self::NumericComplete{value,previous}", "Self::ForInComplete{value,done}"),
 }
-S05_FILES = tuple(dict.fromkeys((*S05_PROTOCOLS, *S05_ROUTES)))
+S05_FILES = tuple(dict.fromkeys((*S05_PROTOCOLS, *S05_ROUTES, *DEPENDENCY_FILES)))
 SYNC_CALLBACK = re.compile(
     r"\.(?:call_internal|call_value_internal|construct_internal|construct_with_new_target|"
     r"internal_get|internal_get_own_property|internal_has_property|internal_has_own_property|"
@@ -196,6 +207,8 @@ def check_synchronous_domains(ctx):
             if not re.search(r"\bstep\s*:\s*" + step + r"\b", body) or f"{step}::" not in body:
                 ctx.fail("synchronous-domain-contract", f"{relative}: legacy consumer lost its typed Step input")
             code = code[:start] + ctx.blank(code[start:end]) + code[end:]
+        if relative == "src/engine/vm/for_in/operation.rs":
+            code = check_local_arms(ctx, code, sources)
         if SYNC_CALLBACK.search(code) or re.search(r"\b(?:RuntimeVmHost|VmHost|Future|poll_fn)\b", code):
             ctx.fail("synchronous-domain-contract", f"{relative}: a domain phase synchronously waits on JavaScript")
         if re.search(r"use\s+(?:super::)+\*\s*;", code):
@@ -205,7 +218,7 @@ def check_synchronous_domains(ctx):
         for fragment in fragments:
             if fragment not in code:
                 ctx.fail("synchronous-domain-route", f"{relative}: production route missing {fragment}")
-    for relative in ("src/engine/vm/proxy_get_driver/request/array.rs", "src/engine/vm/proxy_get_driver/request/scalar.rs", "src/engine/vm/proxy_get_driver/request/vm.rs"):
+    for relative in ("src/engine/vm/frame_operations/numeric.rs", "src/engine/vm/proxy_get_driver/request/array.rs", "src/engine/vm/proxy_get_driver/request/scalar.rs", "src/engine/vm/proxy_get_driver/request/vm.rs"):
         if SYNC_CALLBACK.search(sources.get(relative, "")):
             ctx.fail("synchronous-domain-route", f"{relative}: adapter must only translate typed requests")
     vm = re.sub(r"\s+", "", sources.get("src/engine/vm/proxy_get_driver/request/vm.rs", ""))

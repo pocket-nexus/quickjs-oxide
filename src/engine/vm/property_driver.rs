@@ -23,6 +23,23 @@ pub(super) enum ReadKey {
     Computed { keep_key: bool },
 }
 
+/// Only Completed proves that the instruction finished in this same frame.
+/// Deferred preserves the existing callback/query protocol even if it happens
+/// to return Entered after synchronous work.
+pub(super) enum PropertyProgress {
+    Completed,
+    Deferred(CallStep),
+}
+
+impl PropertyProgress {
+    pub(super) fn into_call_step(self) -> CallStep {
+        match self {
+            Self::Completed => CallStep::Entered,
+            Self::Deferred(step) => step,
+        }
+    }
+}
+
 /// Converted inputs stay owned after ToPrimitive's reply, even if lookup next
 /// reaches a Proxy or a callable whose domain continuation is still pending.
 pub(super) struct ConvertedRead {
@@ -56,6 +73,17 @@ pub(super) fn read(
     key_kind: ReadKey,
     keep_receiver: bool,
 ) -> Result<CallStep, Error> {
+    read_progress(runtime, execution, id, key_kind, keep_receiver)
+        .map(PropertyProgress::into_call_step)
+}
+
+pub(super) fn read_progress(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    key_kind: ReadKey,
+    keep_receiver: bool,
+) -> Result<PropertyProgress, Error> {
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let base = execution.slots.peek(&frame.window, usize::from(computed))?;
@@ -75,7 +103,8 @@ pub(super) fn read(
             runtime,
             realm,
             Error::new(crate::engine::api::error::ErrorKind::Type, message),
-        );
+        )
+        .map(PropertyProgress::Deferred);
     }
     let (key, retained_key) = match key_kind {
         ReadKey::Static(index) => {
@@ -108,7 +137,9 @@ pub(super) fn read(
             {
                 NativeConversion::Value(key) => key,
                 NativeConversion::Throw(value) => {
-                    return Ok(CallStep::Complete(Completion::Throw(value)));
+                    return Ok(PropertyProgress::Deferred(CallStep::Complete(
+                        Completion::Throw(value),
+                    )));
                 }
             };
             let retained = keep_key
@@ -120,19 +151,45 @@ pub(super) fn read(
             (key, retained)
         }
     };
-    let base = base.clone();
     let depth = execution.slots.depth(&frame.window);
-    finish_read(
-        runtime,
-        execution,
-        id,
-        base,
-        key,
-        retained_key,
-        keep_receiver,
-        1 + usize::from(computed),
-        depth,
-    )
+    // Lookup borrows the original rooted operand. Only a pending callback
+    // needs a second receiver owner; completed reads move this slot directly.
+    let read = match runtime.prepare_value_property_read_borrowed(realm, base, &key) {
+        Ok(read) => read,
+        Err(error) => {
+            return throw_error(runtime, realm, runtime_error_to_vm_error(error))
+                .map(PropertyProgress::Deferred);
+        }
+    };
+    match read {
+        OrdinaryRead::Complete(value) => complete_read(
+            execution,
+            id,
+            None,
+            retained_key,
+            keep_receiver,
+            1 + usize::from(computed),
+            value.unwrap_or(Value::Undefined),
+            depth,
+        )
+        .map(|()| PropertyProgress::Completed),
+        read => {
+            let preserved_receiver = base.clone();
+            read_pending(
+                runtime,
+                execution,
+                id,
+                preserved_receiver,
+                key,
+                read,
+                retained_key,
+                keep_receiver,
+                1 + usize::from(computed),
+                depth,
+            )
+            .map(PropertyProgress::Deferred)
+        }
+    }
 }
 
 pub(super) fn read_converted(
@@ -183,6 +240,7 @@ pub(super) fn read_converted(
         0,
         depth,
     )
+    .map(PropertyProgress::into_call_step)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -196,13 +254,16 @@ fn finish_read(
     keep_receiver: bool,
     consume: usize,
     depth: usize,
-) -> Result<CallStep, Error> {
+) -> Result<PropertyProgress, Error> {
     let realm = execution.frames.current_mut(id)?.executable.realm;
-    let read = match runtime.prepare_value_property_read(realm, base.clone(), &key) {
+    let read = match runtime.prepare_value_property_read_borrowed(realm, &base, &key) {
         Ok(read) => read,
-        Err(error) => return throw_error(runtime, realm, runtime_error_to_vm_error(error)),
+        Err(error) => {
+            return throw_error(runtime, realm, runtime_error_to_vm_error(error))
+                .map(PropertyProgress::Deferred);
+        }
     };
-    read_prepared(
+    read_prepared_progress(
         runtime,
         execution,
         id,
@@ -218,6 +279,190 @@ fn finish_read(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn read_prepared(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    preserved_receiver: Value,
+    key: PropertyKey,
+    read: OrdinaryRead,
+    retained_key: Option<Value>,
+    keep_receiver: bool,
+    consume: usize,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    read_prepared_progress(
+        runtime,
+        execution,
+        id,
+        preserved_receiver,
+        key,
+        read,
+        retained_key,
+        keep_receiver,
+        consume,
+        depth,
+    )
+    .map(PropertyProgress::into_call_step)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_prepared_progress(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    preserved_receiver: Value,
+    key: PropertyKey,
+    read: OrdinaryRead,
+    retained_key: Option<Value>,
+    keep_receiver: bool,
+    consume: usize,
+    depth: usize,
+) -> Result<PropertyProgress, Error> {
+    match read {
+        OrdinaryRead::Complete(value) => complete_read(
+            execution,
+            id,
+            Some(preserved_receiver),
+            retained_key,
+            keep_receiver,
+            consume,
+            value.unwrap_or(Value::Undefined),
+            depth,
+        )
+        .map(|()| PropertyProgress::Completed),
+        read => read_pending(
+            runtime,
+            execution,
+            id,
+            preserved_receiver,
+            key,
+            read,
+            retained_key,
+            keep_receiver,
+            consume,
+            depth,
+        )
+        .map(PropertyProgress::Deferred),
+    }
+}
+
+// Keep the no-callback path out of the callback dispatcher's large native frame.
+#[allow(clippy::too_many_arguments)]
+fn complete_read(
+    execution: &mut RunningExecution,
+    id: FrameId,
+    mut preserved_receiver: Option<Value>,
+    mut retained_key: Option<Value>,
+    keep_receiver: bool,
+    consume: usize,
+    value: Value,
+    depth: usize,
+) -> Result<(), Error> {
+    if consume > 2 || (preserved_receiver.is_none() && consume == 0) {
+        return Err(Error::internal("property read consumes too many operands"));
+    }
+    let mut value = Some(value);
+    let frame = execution.frames.current_mut(id)?;
+    let discarded = {
+        let mut slots = execution.slots.run_window(&mut frame.window)?;
+        // Moving the base preserves its owner until after result publication.
+        // The remaining removed key may be released inside this window only
+        // when its tag proves that it cannot free storage or drain deferred GC.
+        let immediate_key = preserved_receiver.is_none()
+            && (consume == 1
+                || matches!(
+                    slots.peek(0)?,
+                    Value::Undefined
+                        | Value::Null
+                        | Value::Bool(_)
+                        | Value::Int(_)
+                        | Value::Float(_)
+                ));
+        let mut discarded = [None, None];
+        for destination in discarded.iter_mut().take(consume) {
+            *destination = Some(slots.pop()?);
+        }
+        if preserved_receiver.is_none() {
+            preserved_receiver = discarded[consume - 1].take();
+        }
+        if immediate_key {
+            drop(discarded);
+            publish_read_result(
+                &mut slots,
+                &mut frame.resume_pc,
+                frame.fault_pc,
+                &mut preserved_receiver,
+                &mut retained_key,
+                keep_receiver,
+                &mut value,
+            )?;
+            record_read_completion(depth);
+            return Ok(());
+        }
+        discarded
+    };
+    // Preserve original pop/release order outside RunSlots for owning keys
+    // and externally prepared reads. The base and normalized key stay rooted.
+    drop(discarded);
+    let mut slots = execution.slots.run_window(&mut frame.window)?;
+    publish_read_result(
+        &mut slots,
+        &mut frame.resume_pc,
+        frame.fault_pc,
+        &mut preserved_receiver,
+        &mut retained_key,
+        keep_receiver,
+        &mut value,
+    )?;
+    record_read_completion(depth);
+    Ok(())
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn publish_read_result(
+    slots: &mut super::stack::RunSlots<'_>,
+    resume_pc: &mut usize,
+    fault_pc: usize,
+    preserved_receiver: &mut Option<Value>,
+    retained_key: &mut Option<Value>,
+    keep_receiver: bool,
+    value: &mut Option<Value>,
+) -> Result<(), Error> {
+    if keep_receiver {
+        slots.push(
+            preserved_receiver
+                .take()
+                .ok_or_else(|| Error::internal("property read lost its receiver"))?,
+        )?;
+    }
+    if let Some(key) = retained_key.take() {
+        slots.push(key)?;
+    }
+    *resume_pc = fault_pc
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property resume PC overflow"))?;
+    slots.push(
+        value
+            .take()
+            .ok_or_else(|| Error::internal("property read lost its result"))?,
+    )?;
+    Ok(())
+}
+
+#[inline]
+fn record_read_completion(_depth: usize) {
+    #[cfg(feature = "profiling")]
+    {
+        crate::engine::api::profiling::record_owned_instruction(_depth);
+        crate::engine::api::profiling::record_owned_execution_event(
+            "property_read_completed_directly",
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_pending(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
@@ -359,7 +604,8 @@ pub(super) fn read_prepared(
         .checked_add(1)
         .ok_or_else(|| Error::internal("property resume PC overflow"))?;
     if let Some(request) = request {
-        push_frame(execution, request.prepare(runtime)?)?;
+        let entry = request.prepare(runtime, &mut execution.call_storage)?;
+        push_frame(execution, entry)?;
     } else {
         execution.slots.push(
             &mut frame.window,
@@ -369,4 +615,77 @@ pub(super) fn read_prepared(
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
+}
+
+#[cfg(test)]
+mod read_completion_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn completed_reads_keep_last_receiver_and_result_owners() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let mut context = runtime.new_context();
+        let result = context
+            .eval(
+                r#"(()=>{
+            for(let i=0;i<40;i++) {
+                let self=(()=>{let x={n:i};x.self=x;return x})().self;
+                let item=[{n:i}][0];
+                if(self.self!==self || self.n!==i || item.n!==i)throw 'lost owner';
+                if(({n:i,method(){return this.n}})['method']()!==i)throw 'lost receiver';
+            }
+            return ({child:{tag:42}}).child;
+        })()"#,
+            )
+            .unwrap();
+        runtime.run_gc().unwrap();
+        let Value::Object(object) = result else {
+            panic!("expected surviving result");
+        };
+        assert_eq!(
+            context
+                .get_property(&object, &runtime.intern_property_key("tag").unwrap())
+                .unwrap(),
+            Value::Int(42)
+        );
+        drop(object);
+        drop(context);
+        runtime.run_gc().unwrap();
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn completed_and_pending_reads_keep_keys_receivers_and_terminal_typed_indices() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let trace='', key={toString(){trace+='k';return 'x'}};
+            try { null[key] } catch(e) { if(e instanceof TypeError)trace+='n'; }
+            let o={get x(){trace+='g';return {tag:7}}};
+            if(o[key].tag!==7)throw 'getter result';
+            let a=[];
+            Object.setPrototypeOf(a,{get 0(){trace+=this===a?'h':'!';return 8}});
+            if(a[0]!==8)throw 'hole';
+            let symbol=Symbol(), b={[symbol]:3,1:4,true:5};
+            b[symbol]++;b[1n]++;b[true]++;
+            if(b[symbol]!==4 || b[1]!==5 || b[true]!==6)throw 'retained keys';
+            let buffer=new ArrayBuffer(4,{maxByteLength:8}), t=new Uint8Array(buffer);
+            t[0]=23;
+            Object.setPrototypeOf(t,{get 0(){trace+='bad';return 99}});
+            if(t[0]!==23 || t['-0']!==undefined)throw 'typed initial';
+            buffer.resize(0);
+            if(t[0]!==undefined || t[NaN]!==undefined)throw 'typed terminal';
+            return trace==='nkgh';
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
 }

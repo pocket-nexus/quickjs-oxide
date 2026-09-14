@@ -720,20 +720,19 @@ impl Instruction {
     /// Publication links these operands once, including unreachable code.
     #[must_use]
     pub(crate) const fn constant_property_key_index(&self) -> Option<u32> {
-        self.info().operands.static_name()
+        self.operand_contract().static_name()
     }
 
     #[must_use]
     pub const fn stack_effect(&self) -> (usize, usize) {
-        let effect = self.info().stack;
-        (effect.popped, effect.pushed)
+        self.nominal_stack_effect()
     }
 
     /// Return the linked direct-eval environment carried by either fixed- or
     /// spread-argument eval bytecode.
     #[must_use]
     pub const fn eval_environment(&self) -> Option<u16> {
-        self.info().operands.eval_environment()
+        self.operand_contract().eval_environment()
     }
 }
 
@@ -877,6 +876,14 @@ pub fn verify_parts(
     constant_count: usize,
     declared_max_stack: u16,
 ) -> Result<VerifiedBytecode, Error> {
+    verify_parts_with_visits::<CompactVisits>(code, constant_count, declared_max_stack)
+}
+
+fn verify_parts_with_visits<V: VerificationVisits>(
+    code: &[Instruction],
+    constant_count: usize,
+    declared_max_stack: u16,
+) -> Result<VerifiedBytecode, Error> {
     if declared_max_stack > MAX_STACK_SIZE {
         return Err(Error::internal(
             "declared bytecode stack exceeds QuickJS JS_STACK_SIZE_MAX",
@@ -948,7 +955,7 @@ pub fn verify_parts(
         }
     }
 
-    let mut states: Vec<Option<VerificationState>> = vec![None; code.len()];
+    let mut states = V::new(code.len());
     let mut worklist = VecDeque::from([(
         0_usize,
         VerificationState {
@@ -962,32 +969,16 @@ pub fn verify_parts(
 
     while let Some((pc, state)) = worklist.pop_front() {
         record_maximum_depth(&mut maximum, state.depth, declared_max_stack)?;
-        let slot = states
-            .get_mut(pc)
-            .ok_or_else(|| Error::internal("control flow target is out of bounds"))?;
-        if let Some(previous) = slot {
-            if previous != &state {
-                let message = if previous.depth != state.depth {
-                    "control flow joins with inconsistent stack depth"
-                } else if previous.regions != state.regions {
-                    "control flow joins with inconsistent unwind regions"
-                } else if previous.return_addresses != state.return_addresses {
-                    "control flow joins with inconsistent gosub return addresses"
-                } else {
-                    "control flow joins with inconsistent super-call markers"
-                };
-                return Err(Error::internal(message));
-            }
+        if !states.visit(pc, &state)? {
             continue;
         }
-        *slot = Some(state.clone());
 
         let instruction = &code[pc];
         let crate::engine::code::instruction::StackEffect {
             popped,
             pushed,
             state: stack_state,
-        } = instruction.info().stack;
+        } = instruction.stack_contract();
         let remaining_depth = state
             .depth
             .checked_sub(popped)
@@ -1534,6 +1525,112 @@ struct VerificationState {
     /// Operand-stack bases of authenticated `super_constructor, new.target`
     /// pairs. Nested `super()` argument expressions form a strict LIFO stack.
     super_call_bases: Vec<usize>,
+}
+
+/// The ordinary state has only a depth. Full unwind/gosub/super histories are
+/// stored lazily, preserving the exact FIFO visitation and join diagnostics.
+trait VerificationVisits {
+    fn new(length: usize) -> Self;
+    /// True means this is the first visit; false means an identical revisit.
+    fn visit(&mut self, pc: usize, state: &VerificationState) -> Result<bool, Error>;
+}
+
+struct CompactVisits {
+    // Depth is bounded by MAX_STACK_SIZE before every visit; usize::MAX is
+    // therefore an unambiguous unvisited sentinel, including on 32-bit hosts.
+    depths: Vec<usize>,
+    exceptional: Option<Vec<Option<VerificationState>>>,
+}
+
+impl VerificationVisits for CompactVisits {
+    fn new(length: usize) -> Self {
+        Self {
+            depths: vec![usize::MAX; length],
+            exceptional: None,
+        }
+    }
+
+    #[inline]
+    fn visit(&mut self, pc: usize, state: &VerificationState) -> Result<bool, Error> {
+        let depth = self
+            .depths
+            .get_mut(pc)
+            .ok_or_else(|| Error::internal("control flow target is out of bounds"))?;
+        if *depth != usize::MAX {
+            if *depth != state.depth {
+                return Err(Error::internal(
+                    "control flow joins with inconsistent stack depth",
+                ));
+            }
+            let previous = self
+                .exceptional
+                .as_ref()
+                .and_then(|states| states[pc].as_ref());
+            if previous.map_or(&[][..], |s| s.regions.as_slice()) != state.regions.as_slice() {
+                return Err(Error::internal(
+                    "control flow joins with inconsistent unwind regions",
+                ));
+            }
+            if previous.map_or(&[][..], |s| s.return_addresses.as_slice())
+                != state.return_addresses.as_slice()
+            {
+                return Err(Error::internal(
+                    "control flow joins with inconsistent gosub return addresses",
+                ));
+            }
+            if previous.map_or(&[][..], |s| s.super_call_bases.as_slice())
+                != state.super_call_bases.as_slice()
+            {
+                return Err(Error::internal(
+                    "control flow joins with inconsistent super-call markers",
+                ));
+            }
+            return Ok(false);
+        }
+        *depth = state.depth;
+        if !state.regions.is_empty()
+            || !state.return_addresses.is_empty()
+            || !state.super_call_bases.is_empty()
+        {
+            let states = self
+                .exceptional
+                .get_or_insert_with(|| vec![None; self.depths.len()]);
+            states[pc] = Some(state.clone());
+        }
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+struct FullVisits(Vec<Option<VerificationState>>);
+#[cfg(test)]
+impl VerificationVisits for FullVisits {
+    fn new(length: usize) -> Self {
+        Self(vec![None; length])
+    }
+    fn visit(&mut self, pc: usize, state: &VerificationState) -> Result<bool, Error> {
+        let slot = self
+            .0
+            .get_mut(pc)
+            .ok_or_else(|| Error::internal("control flow target is out of bounds"))?;
+        if let Some(previous) = slot {
+            if previous != state {
+                let message = if previous.depth != state.depth {
+                    "control flow joins with inconsistent stack depth"
+                } else if previous.regions != state.regions.as_slice() {
+                    "control flow joins with inconsistent unwind regions"
+                } else if previous.return_addresses != state.return_addresses.as_slice() {
+                    "control flow joins with inconsistent gosub return addresses"
+                } else {
+                    "control flow joins with inconsistent super-call markers"
+                };
+                return Err(Error::internal(message));
+            }
+            return Ok(false);
+        }
+        *slot = Some(state.clone());
+        Ok(true)
+    }
 }
 
 fn verify_super_call_pair_untouched(
@@ -3890,5 +3987,116 @@ mod tests {
             array_from_underflow.verify().unwrap_err().message(),
             "bytecode stack underflow"
         );
+    }
+}
+
+#[cfg(test)]
+mod compact_visit_tests {
+    use super::*;
+
+    #[test]
+    fn compact_visits_match_full_histories_and_join_error_precedence() {
+        let plain = VerificationState {
+            depth: 4,
+            regions: vec![],
+            return_addresses: vec![],
+            super_call_bases: vec![],
+        };
+        let mut histories = vec![plain.clone()];
+        let mut catch = plain.clone();
+        catch.regions.push(UnwindRegionState::Catch {
+            target: 2,
+            marker_depth: 1,
+        });
+        histories.push(catch.clone());
+        let mut nested = catch.clone();
+        nested.regions.push(UnwindRegionState::Catch {
+            target: 3,
+            marker_depth: 2,
+        });
+        nested.return_addresses.push(3);
+        nested.super_call_bases.push(0);
+        histories.push(nested);
+        let mut gosub = plain.clone();
+        gosub.return_addresses.push(2);
+        histories.push(gosub);
+        let mut super_pair = plain.clone();
+        super_pair.super_call_bases.push(1);
+        histories.push(super_pair);
+        let mut deep = plain.clone();
+        deep.depth = 1024;
+        deep.regions = (0..256)
+            .map(|index| UnwindRegionState::Catch {
+                target: index as u32,
+                marker_depth: index,
+            })
+            .collect();
+        deep.return_addresses = (256..512).collect();
+        deep.super_call_bases = (512..768).collect();
+        histories.push(deep);
+        for previous in &histories {
+            for next in &histories {
+                for depth in [next.depth, next.depth + 1] {
+                    let mut compact = CompactVisits::new(3);
+                    let mut full = FullVisits::new(3);
+                    assert_eq!(
+                        compact.visit(0, &plain).unwrap(),
+                        full.visit(0, &plain).unwrap()
+                    );
+                    assert_eq!(
+                        compact.visit(1, previous).unwrap(),
+                        full.visit(1, previous).unwrap()
+                    );
+                    let mut next = next.clone();
+                    next.depth = depth;
+                    let normalize = |r: Result<bool, Error>| r.map_err(|e| e.message().to_owned());
+                    assert_eq!(
+                        normalize(compact.visit(1, &next)),
+                        normalize(full.visit(1, &next))
+                    );
+                    // An earlier plain entry remains plain after allocating the
+                    // exceptional history table for a different PC.
+                    assert_eq!(
+                        normalize(compact.visit(0, &plain)),
+                        normalize(full.visit(0, &plain))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_visitation_matches_original_verifier_on_flow_and_abrupt_edges() {
+        use Instruction::*;
+        let cases = [
+            vec![PushI32(1), Return],
+            vec![
+                PushTrue,
+                IfFalse(4),
+                PushI32(1),
+                Goto(5),
+                PushI32(2),
+                Return,
+            ],
+            vec![PushTrue, IfFalse(4), PushI32(1), Goto(5), Nop, Return],
+            vec![Catch(4), PushI32(1), Throw, Nop, Drop, ReturnUndefined],
+            vec![Catch(5), Catch(4), PushI32(1), Throw, Throw, Return],
+            vec![Gosub(3), ReturnUndefined, Nop, Ret],
+            vec![Gosub(3), ReturnUndefined, Nop, PushI32(1), Ret],
+            vec![PushI32(1), PushI32(2), MarkSuperCall, Drop, Return],
+            vec![PushI32(1), Return, Goto(99)],
+            vec![PushTrue, IfTrue(0), ReturnUndefined],
+        ];
+        for code in cases {
+            for maximum in [0, 1, 8] {
+                let normalize =
+                    |r: Result<VerifiedBytecode, Error>| r.map_err(|e| e.message().to_owned());
+                assert_eq!(
+                    normalize(verify_parts_with_visits::<CompactVisits>(&code, 0, maximum)),
+                    normalize(verify_parts_with_visits::<FullVisits>(&code, 0, maximum)),
+                    "code={code:?}, maximum={maximum}",
+                );
+            }
+        }
     }
 }

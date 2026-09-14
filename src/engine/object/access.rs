@@ -77,7 +77,7 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Completion, RuntimeError> {
-        let read = self.prepare_string_property_read(realm, string, key, receiver)?;
+        let read = self.prepare_string_property_read(realm, string, key, &receiver)?;
         self.finish_value_property_read(realm, key, read)
     }
 
@@ -86,7 +86,7 @@ impl Runtime {
         realm: ContextId,
         string: &JsString,
         key: &PropertyKey,
-        receiver: Value,
+        receiver: &Value,
     ) -> Result<OrdinaryRead, RuntimeError> {
         let index = self.0.state.borrow().atoms.array_index(key.atom())?;
         if let Some(index) = index
@@ -105,7 +105,7 @@ impl Runtime {
             return Ok(OrdinaryRead::Complete(Some(length)));
         }
         let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::String)?;
-        self.prepare_ordinary_read(&prototype, key, receiver)
+        self.prepare_ordinary_read_borrowed(&prototype, key, receiver)
     }
 
     /// Select a read without invoking its getter. Primitive receivers stay
@@ -116,11 +116,20 @@ impl Runtime {
         receiver: Value,
         key: &PropertyKey,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        self.validate_value_domain(&receiver, "property receiver")?;
-        match &receiver {
-            Value::Object(object) => self.prepare_ordinary_read(object, key, receiver.clone()),
+        self.prepare_value_property_read_borrowed(realm, &receiver, key)
+    }
+
+    pub(crate) fn prepare_value_property_read_borrowed(
+        &self,
+        realm: ContextId,
+        receiver: &Value,
+        key: &PropertyKey,
+    ) -> Result<OrdinaryRead, RuntimeError> {
+        self.validate_value_domain(receiver, "property receiver")?;
+        match receiver {
+            Value::Object(object) => self.prepare_ordinary_read_borrowed(object, key, receiver),
             Value::String(string) => {
-                self.prepare_string_property_read(realm, string, key, receiver.clone())
+                self.prepare_string_property_read(realm, string, key, receiver)
             }
             Value::Bool(_)
             | Value::Int(_)
@@ -135,7 +144,7 @@ impl Runtime {
                     _ => unreachable!(),
                 };
                 let prototype = self.primitive_prototype_for_realm(realm, kind)?;
-                self.prepare_ordinary_read(&prototype, key, receiver)
+                self.prepare_ordinary_read_borrowed(&prototype, key, receiver)
             }
             Value::Undefined | Value::Null => {
                 let suffix = if matches!(receiver, Value::Null) {

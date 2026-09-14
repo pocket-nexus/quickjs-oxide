@@ -34,6 +34,19 @@ pub(super) fn prepare(
         arguments.push(execution.slots.pop(&mut frame.window)?);
     }
     arguments.reverse();
+    #[cfg(feature = "profiling")]
+    {
+        crate::engine::api::profiling::record_call_buffer_capacity(
+            "call.boundary_argv",
+            0,
+            arguments.capacity(),
+            size_of::<Value>(),
+        );
+        crate::engine::api::profiling::record_call_buffer_moves(
+            "call.boundary_argv",
+            arguments.len(),
+        );
+    }
     execution.slots.pop(&mut frame.window)?;
     let receiver = if method {
         execution.slots.pop(&mut frame.window)?

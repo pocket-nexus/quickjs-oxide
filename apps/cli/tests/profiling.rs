@@ -100,6 +100,9 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         .lines()
         .find(|line| line.contains("oxide-compile-vm-cost-v1"))
         .unwrap();
+    assert!(costs.contains("\"exclusive_ns\":"));
+    assert!(costs.contains("\"verify\":{\"attempts\":1,"));
+    assert!(costs.contains("\"publish\":{\"attempts\":1,"));
     if cfg!(feature = "stack-vm") {
         assert!(costs.contains("\"execution_path\":\"owned-stack-with-legacy-bridge\""));
         assert!(!costs.contains("\"owned_instructions\":0"));
@@ -139,4 +142,27 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         .unwrap();
     assert!(costs.contains("\"parse\":{\"attempts\":1,"));
     assert!(costs.contains("\"lowered_functions\":0"));
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn call_buffer_and_suspension_diagnostics_are_scoped_and_sampled() {
+    let output = run(&[
+        "-d",
+        "--profile-json",
+        "-e",
+        "function* g(){yield 7;}var i=g();print(i.next().value);i.next();",
+    ]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"7\n");
+    let report = String::from_utf8(output.stderr).unwrap();
+    let costs = report
+        .lines()
+        .find(|line| line.contains("oxide-compile-vm-cost-v1"))
+        .unwrap();
+    assert!(costs.contains("\"call_buffers_scope\":\"producer-local"));
+    assert!(costs.contains("\"native.readable\":{\"capacity_growths\":"));
+    assert!(costs.contains("\"freeze.encode\":{\"attempts\":"));
+    assert!(costs.contains("\"thaw.decode\":{\"attempts\":"));
+    assert!(costs.contains("\"sample_limit\":4096,\"omitted_samples\":0,\"samples_ns\":[["));
 }

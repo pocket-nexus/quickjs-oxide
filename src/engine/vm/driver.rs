@@ -1,10 +1,15 @@
 //! Own frames and advance ordinary bytecode calls without native recursion.
 
+mod ready;
+
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
+#[cfg(all(test, feature = "profiling"))]
+use crate::engine::vm::BytecodePc;
+use crate::engine::vm::Completion;
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::{ExecutionLimits, RunningExecution};
@@ -12,16 +17,66 @@ use crate::engine::vm::frame::{Frame, FrameEntry, FrameId, ReturnTarget};
 use crate::engine::vm::run::{RunExit, run};
 #[cfg(test)]
 use crate::engine::vm::stack::FrameStorage;
-use crate::engine::vm::{BytecodePc, Completion};
 
 pub(super) fn push_frame(
     execution: &mut RunningExecution,
     entry: FrameEntry,
 ) -> Result<FrameId, Error> {
+    execution
+        .call_storage
+        .reserve_depth(execution.frames.depth() + 1)?;
     let prepared = execution.frames.prepare_push()?;
-    let window = execution
-        .slots
-        .push_frame(&entry.executable.frame_layout(), entry.storage)?;
+    let window = if entry.initialize_bindings {
+        execution.slots.push_initialized_frame(
+            &entry.executable.frame_layout(),
+            entry.storage,
+            &entry.cold.function,
+            entry.executable.metadata.function_name_local,
+        )?
+    } else {
+        execution
+            .slots
+            .push_frame(&entry.executable.frame_layout(), entry.storage)?
+    };
+    Ok(prepared.install(Frame {
+        executable: entry.executable,
+        cold: entry.cold,
+        window,
+        fault_pc: 0,
+        resume_pc: 0,
+    }))
+}
+
+fn push_direct_call_frame(
+    execution: &mut RunningExecution,
+    parent: FrameId,
+    entry: FrameEntry,
+    count: usize,
+    method: bool,
+) -> Result<FrameId, Error> {
+    if !entry.initialize_bindings || !entry.storage.original_arguments.is_empty() {
+        return Err(Error::internal(
+            "direct call received materialized arguments",
+        ));
+    }
+    execution
+        .call_storage
+        .reserve_depth(execution.frames.depth() + 1)?;
+    let mut prepared = execution.frames.prepare_push()?;
+    let frame = prepared.current_mut(parent)?;
+    let resume = frame
+        .fault_pc
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("call resume PC overflow"))?;
+    let window = execution.slots.push_call_frame(
+        &entry.executable.frame_layout(),
+        &mut frame.window,
+        count,
+        method,
+        &entry.cold.function,
+        entry.executable.metadata.function_name_local,
+    )?;
+    frame.resume_pc = resume;
     Ok(prepared.install(Frame {
         executable: entry.executable,
         cold: entry.cold,
@@ -117,20 +172,11 @@ pub(super) fn enter_call(
         };
     // Keep the existing rejection order and exception materialization until
     // general call errors join the owned unwind path. Nothing was consumed.
-    if method
-        && runtime
-            .validate_value_domain(execution.slots.peek(window, count + 1)?, "call this value")
-            .is_err()
+    if !execution
+        .slots
+        .validate_call_value_domains(window, runtime, count, method)?
     {
         return Ok(CallStep::Bridge);
-    }
-    for offset in (0..count).rev() {
-        if runtime
-            .validate_value_domain(execution.slots.peek(window, offset)?, "call argument")
-            .is_err()
-        {
-            return Ok(CallStep::Bridge);
-        }
     }
     let mut bound_arguments = None;
     let mut bound_receiver = None;
@@ -204,30 +250,47 @@ pub(super) fn enter_call(
                     depth,
                 );
             }
-            CallableExecution::Native { target, .. }
-                if crate::engine::builtins::continuation::NativeOperation::for_target(target)
-                    .is_some() =>
+            CallableExecution::Native {
+                target,
+                realm: defining_realm,
+                min_readable_args,
+            } if crate::engine::builtins::continuation::NativeOperation::for_target(target)
+                .is_some() =>
             {
                 let depth = execution.slots.depth(window);
-                let mut arguments = Vec::new();
-                arguments
-                    .try_reserve_exact(count)
-                    .map_err(|_| Error::internal("native call arguments allocation failed"))?;
+                execution.slots.reserve_native_argument_depth(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .active_frames
+                        .len()
+                        .saturating_add(1),
+                )?;
+                let mut arguments = execution.slots.take_native_argument_buffer(count)?;
                 for _ in 0..count {
                     arguments.push(execution.slots.pop(window)?);
                 }
                 arguments.reverse();
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_call_buffer_moves(
+                    "call.native_argv",
+                    arguments.len(),
+                );
                 execution.slots.pop(window)?;
                 let receiver = if method {
                     execution.slots.pop(window)?
                 } else {
                     Value::Undefined
                 };
-                return super::proxy_get_driver::start_callback_call(
+                return super::proxy_get_driver::start_classified_native_call(
                     runtime,
                     execution,
                     id,
                     callable,
+                    target,
+                    defining_realm,
+                    min_readable_args,
                     bound_receiver.unwrap_or(receiver),
                     bound_arguments.unwrap_or(arguments),
                     tail,
@@ -258,10 +321,35 @@ pub(super) fn enter_call(
             .map(CallStep::Complete)
             .map_err(runtime_error_to_vm_error);
     }
-    let mut arguments = Vec::new();
-    arguments
-        .try_reserve_exact(count)
-        .map_err(|_| Error::internal("call arguments allocation failed"))?;
+    if kind == FunctionKind::Normal && bound_arguments.is_none() {
+        let frame = execution.frames.current_mut(id)?;
+        let receiver = if method {
+            super::stack::copy_value(execution.slots.peek(&frame.window, count + 1)?)?
+        } else {
+            Value::Undefined
+        };
+        let request = BytecodeCallRequest {
+            callable,
+            receiver,
+            new_target: Value::Undefined,
+            arguments: Vec::new(),
+            bytecode,
+            closure_slots,
+            caller_realm: realm,
+            return_to: ReturnTarget {
+                value_use: crate::engine::vm::frame::ReturnValue::Push,
+                owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
+                tail,
+                operation: None,
+            },
+        };
+        let entry = request.prepare(runtime, &mut execution.call_storage)?;
+        push_direct_call_frame(execution, id, entry, count, method)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(observed_depth);
+        return Ok(CallStep::Entered);
+    }
+    let mut arguments = execution.slots.take_argument_buffer(count)?;
     let frame = execution.frames.current_mut(id)?;
     for _ in 0..count {
         arguments.push(execution.slots.pop(&mut frame.window)?);
@@ -304,7 +392,7 @@ pub(super) fn enter_call(
         .fault_pc
         .checked_add(1)
         .ok_or_else(|| Error::internal("call resume PC overflow"))?;
-    let entry = request.prepare(runtime)?;
+    let entry = request.prepare(runtime, &mut execution.call_storage)?;
     push_frame(execution, entry)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(observed_depth);
@@ -558,6 +646,7 @@ fn run_frames_with_state(
                 .take()
                 .map(Completion::Throw);
         }
+        let mut conversion_prepared = false;
         let mut exit = if let Some(task) = conversion.take() {
             use crate::engine::vm::conversion_driver::Progress;
             #[cfg(feature = "profiling")]
@@ -663,18 +752,36 @@ fn run_frames_with_state(
         } else if forwarded.is_some() {
             RunExit::Complete
         } else {
-            let result = run(&mut execution, id);
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(match &result {
-                Ok(exit) => exit.diagnostic_name(),
-                Err(_) => "run_exit.EngineError",
-            });
-            let frame = execution.frames.current_mut(id)?;
-            runtime
-                .update_active_bytecode_pc(frame.cold.active_frame, BytecodePc::new(frame.fault_pc))
-                .map_err(runtime_error_to_vm_error)?;
-            result?
+            match ready::run(runtime, &mut execution, id, &mut next_operation)? {
+                ready::Boundary::Exit(exit) => exit,
+                ready::Boundary::Entered => continue,
+                ready::Boundary::Conversion(exit) => {
+                    conversion_prepared = true;
+                    exit
+                }
+                ready::Boundary::Complete(completion) => {
+                    forwarded = Some(completion);
+                    RunExit::Complete
+                }
+            }
         };
+        // Calls do not belong to the outlined frame-operation dispatcher.
+        // Enter them before scanning unrelated cold exits on every invocation.
+        if let RunExit::Call {
+            arguments,
+            method,
+            tail,
+        } = exit
+        {
+            match enter_call(runtime, &mut execution, id, arguments, method, tail)? {
+                CallStep::Entered => continue,
+                CallStep::Complete(completion) => {
+                    forwarded = Some(completion);
+                    exit = RunExit::Complete;
+                }
+                CallStep::Bridge => exit = RunExit::Bridge,
+            }
+        }
         if let RunExit::Environment(super::environment_driver::Operation::Has { source, name }) =
             exit
         {
@@ -745,7 +852,9 @@ fn run_frames_with_state(
                 }
             }
         }
-        if let Some(step) = super::frame_operations::step(runtime, &mut execution, id, exit)? {
+        if exit != RunExit::Complete
+            && let Some(step) = super::frame_operations::step(runtime, &mut execution, id, exit)?
+        {
             match step {
                 CallStep::Entered => continue,
                 CallStep::Complete(completion) => {
@@ -793,23 +902,27 @@ fn run_frames_with_state(
             exit,
             RunExit::ConvertPlus | RunExit::ConvertAdd | RunExit::ConvertPropertyKey
         ) {
-            let frame = execution.frames.current_mut(id)?;
             let addition = exit == RunExit::ConvertAdd;
             let mut invalid = false;
-            for offset in (0..=usize::from(addition)).rev() {
-                invalid |= runtime
-                    .validate_value_domain(
-                        execution.slots.peek(&frame.window, offset)?,
-                        "conversion operand",
-                    )
-                    .is_err();
+            if !conversion_prepared {
+                let frame = execution.frames.current_mut(id)?;
+                for offset in (0..=usize::from(addition)).rev() {
+                    invalid |= runtime
+                        .validate_value_domain(
+                            execution.slots.peek(&frame.window, offset)?,
+                            "conversion operand",
+                        )
+                        .is_err();
+                }
             }
             if invalid {
                 exit = RunExit::Bridge;
             } else {
-                next_operation = next_operation
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("conversion identity exhausted"))?;
+                if !conversion_prepared {
+                    next_operation = next_operation
+                        .checked_add(1)
+                        .ok_or_else(|| Error::internal("conversion identity exhausted"))?;
+                }
                 conversion = Some(crate::engine::vm::conversion_driver::ConversionTask::start(
                     runtime,
                     &mut execution,
@@ -994,21 +1107,6 @@ fn run_frames_with_state(
                 CallStep::Bridge => exit = RunExit::Bridge,
             }
         }
-        if let RunExit::Call {
-            arguments,
-            method,
-            tail,
-        } = exit
-        {
-            match enter_call(runtime, &mut execution, id, arguments, method, tail)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
         if matches!(forwarded, Some(Completion::Throw(_))) {
             let Some(Completion::Throw(value)) = forwarded.take() else {
                 unreachable!()
@@ -1179,6 +1277,132 @@ mod tests {
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::vm::frame::FrameCold;
 
+    #[test]
+    fn same_frame_property_completion_keeps_getters_proxy_traps_and_error_order() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let costs = CostProfile::start();
+        let result = context
+            .eval(
+                "(function(){let events=[]; let plain={x:1}; plain.x=2; let value=plain.x;
+              let accessor={get x(){events.push('g');return plain.x},
+                            set x(v){events.push('s'+v);plain.x=v}};
+              value+=accessor.x; accessor.x=3;
+              let proxy=new Proxy(plain,{get(t,k){events.push('p');return t[k]},
+                                        set(t,k,v){events.push('q');t[k]=v;return true}});
+              value+=proxy.x; proxy.x=4;
+              let key={toString(){events.push('k');return 'x'}};
+              try {null[key]} catch(e){events.push('n')}
+              try {null[key]=9} catch(e){events.push('w')}
+              try {new Proxy({}, {get(){throw 'boom'}}).x}
+              catch(e){events.push(e)} finally {events.push('f')}
+              return JSON.stringify([value,plain.x,events])})()",
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            Value::String(crate::engine::value::JsString::from_static(
+                "[7,4,[\"g\",\"s3\",\"p\",\"q\",\"n\",\"k\",\"w\",\"boom\",\"f\"]]"
+            ))
+        );
+        let costs = costs.snapshot();
+        assert_eq!(costs.legacy_dispatches, 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
+        assert_eq!(costs.owned_sync_call_bridges, 0);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn same_frame_write_rejection_is_a_throw_not_a_completed_instruction() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context
+            .eval(
+                "(function(){'use strict';let events='';
+              let plain={};Object.defineProperty(plain,'x',{value:1,writable:false});
+              try{plain.x=2;events+='bad'}catch(e){events+=e instanceof TypeError?'t':'?'}
+              let proxy=new Proxy({}, {set(){events+='s';return false}});
+              try{proxy.x=2;events+='bad'}catch(e){events+=e instanceof TypeError?'t':'?'}
+              finally{events+='f'}return events})()",
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            Value::String(crate::engine::value::JsString::from_static("tstf"))
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn same_frame_cold_loop_preserves_object_conversion_and_primitive_throw_finally() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let costs = CostProfile::start();
+        let result = context
+            .eval(
+                "(function(){let events=''; let text='a';
+              for(let i=0;i<3;i++) text+='b';
+              let object={valueOf(){events+='v'; return 2}};
+              let result=text+object;
+              try {result+=Symbol('x')} catch(e) {events+=e instanceof TypeError?'t':'?'}
+              finally {events+='f'}
+              return result+':'+events})()",
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            Value::String(crate::engine::value::JsString::from_static("abbb2:vtf"))
+        );
+        let costs = costs.snapshot();
+        assert!(
+            costs
+                .owned_execution_events
+                .get("conversion_completed_without_task")
+                .copied()
+                .unwrap_or(0)
+                >= 4
+        );
+        assert_eq!(costs.legacy_dispatches, 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
+        assert_eq!(costs.owned_sync_call_bridges, 0);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn same_frame_conversion_identity_failure_keeps_operands_and_fault_pc() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let entry = entry(
+            &runtime,
+            &mut context,
+            "(function(){return 'a'+'b'})",
+            Vec::new(),
+        );
+        let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+        let id = push_frame(&mut execution, entry).unwrap();
+        let mut identity = u64::MAX;
+        let result = super::ready::run(&runtime, &mut execution, id, &mut identity);
+        assert!(matches!(result, Err(error) if error.message() == "conversion identity exhausted"));
+        assert_eq!(identity, u64::MAX);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert!(matches!(
+            frame.executable.code[frame.fault_pc],
+            crate::engine::code::bytecode::Instruction::Add
+        ));
+        assert_eq!(frame.resume_pc, frame.fault_pc);
+        assert_eq!(execution.slots.depth(&frame.window), 2);
+        assert_eq!(
+            execution.slots.peek(&frame.window, 0).unwrap(),
+            &Value::String(crate::engine::value::JsString::from_static("b"))
+        );
+        assert_eq!(
+            execution.slots.peek(&frame.window, 1).unwrap(),
+            &Value::String(crate::engine::value::JsString::from_static("a"))
+        );
+        drop(execution);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
     fn execute(
         runtime: Runtime,
         entry: FrameEntry,
@@ -1229,8 +1453,9 @@ mod tests {
             .unwrap();
         let locals = prepared.locals.len();
         FrameEntry {
+            initialize_bindings: false,
             executable: prepared.executable,
-            cold: Box::new(FrameCold {
+            cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
                 resume_throw: None,
                 regions: Vec::new(),
                 iterator_wait: None,

@@ -147,6 +147,113 @@ mod tests {
         assert_eq!(runtime.0.state.borrow().heap.strong_count(id).unwrap(), 1);
     }
 
+    #[cfg(feature = "stack-vm")]
+    #[test]
+    fn resident_field_leaves_preserve_zero_queue_and_ordinary_slot() {
+        use crate::engine::code::bytecode::Instruction;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let base = context.eval("globalThis.fieldProbe={x:7}").unwrap();
+        let callable = runtime
+            .callable_from_value(context.eval("(function(o,v){o.x=v;return o.x})").unwrap())
+            .unwrap();
+        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
+            runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("bytecode")
+        };
+        let code = runtime.snapshot_function_bytecode(&bytecode).unwrap();
+        let key = code
+            .code
+            .iter()
+            .find_map(|op| match op {
+                Instruction::GetField(index) => Some(*index),
+                _ => None,
+            })
+            .unwrap();
+        let queued = runtime.new_object(None).unwrap();
+        let id = queued.object_id();
+        runtime.0.state.borrow_mut().heap.retain_object(id).unwrap();
+        drop(queued);
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .release_raw_no_drain(RawId::Object(id))
+            .unwrap();
+        assert!(
+            runtime
+                .try_ordinary_field_immediate_read(&base, &code, key)
+                .is_none()
+        );
+        assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, key, &Value::Int(17)));
+        assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
+        runtime.run_gc().unwrap();
+        assert_eq!(context.eval("fieldProbe.x").unwrap(), Value::Int(7));
+        assert!(runtime.try_ordinary_field_immediate_write(&base, &code, key, &Value::Int(17)));
+        assert_eq!(
+            runtime.try_ordinary_field_immediate_read(&base, &code, key),
+            Some(Value::Int(17))
+        );
+    }
+
+    #[cfg(feature = "stack-vm")]
+    #[test]
+    fn resident_array_leaves_preserve_existing_zero_queue_and_storage() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let dense = context.eval("globalThis.denseProbe = [7]").unwrap();
+        let typed = context
+            .eval("globalThis.typedProbe = new Int32Array([7])")
+            .unwrap();
+        runtime.run_gc().unwrap();
+        let queued = runtime.new_object(None).unwrap();
+        let queued_id = queued.object_id();
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .retain_object(queued_id)
+            .unwrap();
+        drop(queued);
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .release_raw_no_drain(RawId::Object(queued_id))
+            .unwrap();
+        assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
+        assert!(!runtime.try_typed_array_number_write(&typed, 0, 17.0));
+        assert!(runtime.try_dense_array_immediate_read(&dense, 0).is_none());
+        assert!(runtime.try_array_immediate_read(&dense, 0).is_none());
+        assert!(runtime.try_array_immediate_read(&typed, 0).is_none());
+        assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
+        for value in [&dense, &typed] {
+            let Value::Object(object) = value else {
+                panic!("array receiver");
+            };
+            assert!(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object(object.object_id())
+                    .is_ok()
+            );
+        }
+        runtime.run_gc().unwrap();
+        assert_eq!(
+            context
+                .eval("typedProbe[0] === 7 && denseProbe[0] === 7")
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
     #[test]
     fn primitive_backing_storage_is_only_released_at_a_boundary() {
         let runtime = Runtime::new();

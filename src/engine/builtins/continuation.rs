@@ -13,6 +13,8 @@ use crate::engine::{
     vm::call::{NativeArguments, NativeInvocation},
 };
 
+mod output;
+
 pub(crate) enum NativeOperation {
     #[cfg(test)]
     ActiveFrameProbe,
@@ -731,6 +733,12 @@ impl NativeOperation {
             .or_else(|| DefinitionsKind::for_target(target).map(Self::Definitions))
             .or_else(|| PredicateKind::for_target(target).map(Self::Predicate))
     }
+    /// Compatibility adapter; execution uses start_into to keep immediate
+    /// outcomes out of the generic waiting payload.
+    #[expect(
+        dead_code,
+        reason = "compatibility adapter for callers requiring an owned NativeStep"
+    )]
     pub(crate) fn start(
         self,
         runtime: &Runtime,
@@ -739,7 +747,30 @@ impl NativeOperation {
         arguments: &NativeArguments,
         callable: &crate::engine::object::CallableRef,
     ) -> Result<NativeStep, RuntimeError> {
-        Ok(match self {
+        let mut pending = None;
+        match self.start_into(runtime, realm, invocation, arguments, callable, |step| {
+            pending = Some(step)
+        })? {
+            Some(crate::engine::vm::call::NativeInvokeOutcome::Completion(completion)) => {
+                Ok(NativeStep::Complete(completion))
+            }
+            Some(result) => Ok(NativeStep::Raw(result)),
+            None => pending.ok_or(RuntimeError::Invariant(
+                "native start omitted its waiting step",
+            )),
+        }
+    }
+
+    pub(crate) fn start_into(
+        self,
+        runtime: &Runtime,
+        realm: ContextId,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+        callable: &crate::engine::object::CallableRef,
+        mut waiting: impl FnMut(NativeStep),
+    ) -> Result<Option<crate::engine::vm::call::NativeInvokeOutcome>, RuntimeError> {
+        let step = match self {
             #[cfg(test)]
             Self::ActiveFrameProbe => {
                 NativeStep::Invoke(runtime.prepare_active_frame_probe(realm, arguments)?)
@@ -889,9 +920,12 @@ impl NativeOperation {
             Self::TypedSort(copying) => NativeStep::TypedSort(super::TypedSortStep::start(
                 runtime, realm, copying, invocation, arguments,
             )?),
-            Self::Math(kind) => NativeStep::Math(super::MathStep::start(
-                runtime, realm, kind, invocation, arguments,
-            )?),
+            Self::Math(kind) => {
+                return Ok(output::deliver(
+                    super::MathStep::start(runtime, realm, kind, invocation, arguments)?,
+                    &mut waiting,
+                ));
+            }
             Self::Sum => NativeStep::Sum(super::SumStep::start(
                 runtime, realm, invocation, arguments,
             )?),
@@ -900,9 +934,13 @@ impl NativeOperation {
                     runtime, realm, kind, invocation, arguments,
                 )?)
             }
-            Self::Global(kind) => NativeStep::Global(super::GlobalStep::start(
-                runtime, realm, kind, invocation, arguments,
-            )?),
+            Self::Global(kind) => {
+                return Ok(output::deliver(
+                    super::GlobalStep::start(runtime, realm, kind, invocation, arguments)?
+                        .advance_primitive(runtime, realm)?,
+                    &mut waiting,
+                ));
+            }
             Self::Numeric(kind) => NativeStep::Numeric(super::NumericStep::start(
                 runtime, realm, kind, invocation, arguments,
             )?),
@@ -967,13 +1005,20 @@ impl NativeOperation {
                 invocation.clone(),
                 arguments,
             )?),
-            Self::Pure(target) => NativeStep::Complete(runtime.dispatch_adapted_native_function(
-                callable,
-                target,
-                realm,
-                invocation.clone(),
-                arguments,
-            )?),
+            Self::Pure(target) => {
+                // This registered domain cannot wait. Keep its completion in
+                // the small result channel, without constructing NativeStep.
+                let completion = runtime.dispatch_adapted_native_function(
+                    callable,
+                    target,
+                    realm,
+                    invocation.clone(),
+                    arguments,
+                )?;
+                return Ok(Some(
+                    crate::engine::vm::call::NativeInvokeOutcome::Completion(completion),
+                ));
+            }
             Self::ArrayConstructor => NativeStep::ArrayConstructor(
                 super::ArrayConstructorStep::start(runtime, realm, invocation, arguments)?,
             ),
@@ -1066,7 +1111,7 @@ impl NativeOperation {
                 super::IteratorCreateStep::start(runtime, realm, kind, invocation, arguments)?,
             ),
             Self::ArrayNext => {
-                NativeStep::ArrayNext(super::ArrayNextStep::start(runtime, realm, invocation)?)
+                return start_array_next_into(runtime, realm, invocation, &mut waiting);
             }
             Self::PureIterator(target) => NativeStep::Raw(match target {
                 NativeFunctionId::StringIteratorNext => {
@@ -1132,6 +1177,31 @@ impl NativeOperation {
             Self::Property(kind) => {
                 NativeStep::Property(PropertyStep::start(runtime, realm, kind, arguments)?)
             }
+        };
+        Ok(match step {
+            NativeStep::Complete(completion) => Some(
+                crate::engine::vm::call::NativeInvokeOutcome::Completion(completion),
+            ),
+            NativeStep::Raw(result) => Some(result),
+            step => {
+                waiting(step);
+                None
+            }
         })
     }
+}
+
+/// One Array-next domain entry shared by generic and already-classified native
+/// callers. Invocation adaptation and activation ownership remain with the VM.
+#[inline(never)]
+pub(crate) fn start_array_next_into(
+    runtime: &Runtime,
+    realm: ContextId,
+    invocation: &NativeInvocation,
+    mut waiting: impl FnMut(NativeStep),
+) -> Result<Option<crate::engine::vm::call::NativeInvokeOutcome>, RuntimeError> {
+    Ok(output::deliver(
+        super::ArrayNextStep::start(runtime, realm, invocation)?.advance_local(runtime, realm)?,
+        &mut waiting,
+    ))
 }

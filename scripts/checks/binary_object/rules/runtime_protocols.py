@@ -5,6 +5,7 @@ import re
 from copy import deepcopy
 
 from ..evidence import runtime_protocols as evidence
+from .verifier_kernel import resolve as resolve_verifier_kernel
 
 
 def check(ctx):
@@ -134,19 +135,9 @@ def check(ctx):
     if ctx.bytecode_code.count("Self::Apply(_) | Self::ApplySuper => (3, 1),") != 1:
         ctx.fail("stage3b-apply-stack", "Apply must retain its exact three-pop/one-push verifier effect")
 
-    # The descriptor and compatibility adapter must consume the same model.
-    ctx.require_normalized_code_sha256(
-        "published-instruction-contract",
-        "instruction descriptions must preserve stack, control and JS exception facts",
-        ctx.rust_code_only(ctx.read_source("src/engine/code/instruction.rs")),
-        "b3f1a9fe0e3fdd46ec6a0a89f24b6403fd79802663ea0e4e8032d5992bcf4289",
-    )
-    ctx.require_normalized_code_sha256(
-        "published-instruction-stack-adapter",
-        "the public stack tuple must project the shared descriptor",
-        ctx.stage3b_function("src/engine/code/bytecode.rs", "stack_effect", "published-instruction-stack-adapter"),
-        "86b1606b6e1ea2a8508f9020fd988ebd651175fe51bf44bad398501001263bcb",
-    )
+    # Authenticate the fact-preserving descriptor split and public projection.
+    from .publication_contracts import check_instruction
+    check_instruction(ctx)
 
     tail_stack_effects = (
         "Self::TailCall(argument_count) => (*argument_count as usize + 1, 0),",
@@ -172,9 +163,7 @@ def check(ctx):
             "TailCall and TailCallMethod must preserve argc+1/argc+2 pops and zero pushes",
         )
 
-    verify_parts_item = ctx.stage3b_function(
-        "src/engine/code/bytecode.rs", "verify_parts", "stage3c-tail-verifier"
-    )
+    verify_parts_item = resolve_verifier_kernel(ctx)
 
     normalized_verify_parts = " ".join(verify_parts_item.split())
 
@@ -604,7 +593,9 @@ def check(ctx):
         "stage3d-throw-verifier",
         "the full typed verifier must keep Throw terminal without a guarded or aliased fallthrough path",
         verify_parts_item,
-        "ef9fe333359c127175f3a83bd4c20996702ca11d581096a205ffeb4e30fafe41",
+        ("055bb6802b9422b7ab996d0506ff7f75b5b1aa9251cdadb22e335df7135974e3"
+         if ctx.verifier_kernel_kind == "compact" else
+         "ef9fe333359c127175f3a83bd4c20996702ca11d581096a205ffeb4e30fafe41"),
     )
 
     if normalized_verify_parts.count(tail_terminal_dispatch) != 1:

@@ -75,6 +75,136 @@ fn add_completion(
     }
 }
 
+/// The caller has published the fault PC and checked operand domains. Primitive
+/// addition/unary plus may allocate, but cannot call JavaScript and need no wait.
+pub(super) fn complete_primitives(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    addition: bool,
+) -> Result<Option<super::driver::CallStep>, Error> {
+    let frame = execution.frames.current_mut(id)?;
+    let realm = frame.executable.realm;
+    #[cfg(feature = "profiling")]
+    let depth = execution.slots.depth(&frame.window);
+    let store = if addition && frame.executable.fusion.add_store(frame.fault_pc) {
+        use crate::engine::code::bytecode::Instruction;
+        match frame.executable.code.get(frame.fault_pc + 1) {
+            Some(
+                Instruction::PutLocal(index)
+                | Instruction::PutLocalCheck(index)
+                | Instruction::SetLocal(index)
+                | Instruction::SetLocalCheck(index),
+            ) if matches!(
+                execution.slots.local(&frame.window, *index)?,
+                super::bindings::FrameBinding::Direct(_)
+            ) =>
+            {
+                Some((
+                    *index,
+                    frame.executable.fusion.add_store_span(frame.fault_pc),
+                ))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let (left, right) = {
+        let mut slots = execution.slots.run_window(&mut frame.window)?;
+        for offset in 0..=usize::from(addition) {
+            if matches!(slots.peek(offset)?, Value::Object(_)) {
+                return Ok(None);
+            }
+        }
+        let right = slots.pop()?;
+        let left = if addition { Some(slots.pop()?) } else { None };
+        (left, right)
+    };
+    // End the authenticated window before String/BigInt allocation or release.
+    let completion = if let Some(left) = left {
+        add_completion(runtime, realm, left, right)?
+    } else {
+        match super::numeric::unary_plus_primitive(right) {
+            Ok(value) => Completion::Return(value),
+            Err(error) => {
+                let Some(kind) =
+                    crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
+                else {
+                    return Err(error);
+                };
+                Completion::Throw(
+                    runtime
+                        .new_native_error_from_error(realm, kind, &error)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+            }
+        }
+    };
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "conversion_completed_without_task",
+    );
+    Ok(Some(match completion {
+        Completion::Return(value) => {
+            if let Some((index, span)) = store {
+                // Addition is complete. Publish the canonical store PC before
+                // replacing the binding and releasing its last previous owner.
+                // No authenticated RunSlots borrow crosses either allocation
+                // above or the release below, and no operand read is reordered.
+                frame.resume_pc = frame
+                    .fault_pc
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("conversion resume PC overflow"))?;
+                frame.fault_pc = frame.resume_pc;
+                runtime
+                    .update_active_bytecode_pc(
+                        frame.cold.active_frame,
+                        super::BytecodePc::new(frame.fault_pc),
+                    )
+                    .map_err(runtime_error_to_vm_error)?;
+                let old = execution.slots.replace_local(
+                    &frame.window,
+                    index,
+                    super::bindings::FrameBinding::Direct(value),
+                )?;
+                drop(old);
+                if span == 3 {
+                    // The discarded assignment result would only add a second
+                    // owner and release it while the local keeps the value.
+                    // No callback, allocation or final-owner drain is skipped.
+                    frame.fault_pc += 1;
+                }
+                frame.resume_pc = frame
+                    .fault_pc
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("binding release resume PC overflow"))?;
+                #[cfg(feature = "profiling")]
+                {
+                    crate::engine::api::profiling::record_owned_instruction(depth);
+                    crate::engine::api::profiling::record_owned_instruction(depth - 1);
+                    if span == 3 {
+                        crate::engine::api::profiling::record_owned_instruction(depth - 1);
+                    }
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "primitive_add_store_fused",
+                    );
+                }
+            } else {
+                execution.slots.push(&mut frame.window, value)?;
+                frame.resume_pc = frame
+                    .fault_pc
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("conversion resume PC overflow"))?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_instruction(depth);
+            }
+            super::driver::CallStep::Entered
+        }
+        completion => super::driver::CallStep::Complete(completion),
+    }))
+}
+
 impl ConversionTask {
     #[cfg(feature = "profiling")]
     pub(super) fn operand_count(&self) -> usize {
@@ -565,7 +695,7 @@ fn invoke(
                     operation: Some(super::frame::OperationTarget::Conversion(identity)),
                 },
             };
-            let entry = request.prepare(runtime)?;
+            let entry = request.prepare(runtime, &mut execution.call_storage)?;
             let parent = execution.frames.current_mut(frame)?;
             if parent.cold.conversion.is_some() {
                 return Err(Error::internal(
@@ -594,4 +724,48 @@ fn invoke(
             .resume(runtime, completion)
             .map_err(runtime_error_to_vm_error)?,
     }))
+}
+
+#[cfg(all(test, feature = "profiling"))]
+mod primitive_store_tests {
+    use crate::engine::api::profiling::CostProfile;
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn primitive_store_keeps_conversion_capture_and_throw_observations() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let profile = CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let s='', b=1n;
+            for(let i=0;i<20;i++){ s+='x'; b+=2n; }
+            let capture=()=>s;
+            s+='y';
+            let old=s,trace='';
+            try { s+=Symbol(); } catch(e) { if(e instanceof TypeError)trace+='throw'; }
+            finally { trace+='finally'; }
+            let a='left';
+            a+= {valueOf(){a='changed';return 'right';}};
+            let constant='a', read=constant;
+            try { const x='a'; x+='b'; } catch(e) { if(e instanceof TypeError)read+='!'; }
+            return s===old && capture()===old && s.length===21 && b===41n
+                && trace==='throwfinally' && a==='leftright' && read==='a!';
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        assert!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("primitive_add_store_fused")
+                .copied()
+                .unwrap_or(0)
+                > 0
+        );
+    }
 }

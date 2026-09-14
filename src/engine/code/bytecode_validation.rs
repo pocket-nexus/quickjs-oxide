@@ -96,7 +96,7 @@ fn validate_class_constructor_guard(
             return Err("class constructor guard is not in the entry prologue");
         }
         let crate::engine::code::instruction::StackEffect { popped, pushed, .. } =
-            instruction.info().stack;
+            instruction.stack_contract();
         depth = depth
             .checked_sub(popped)
             .ok_or("class constructor entry prologue has stack underflow")?

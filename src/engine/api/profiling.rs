@@ -9,10 +9,18 @@ mod cost;
 pub(crate) use cost::record_call_preparation;
 #[cfg(feature = "stack-vm")]
 pub(crate) use cost::record_owned_call_storage;
-pub use cost::{CallPreparationCost, CostProfile, CostSnapshot, OwnedStorageCost, PhaseCost};
+pub use cost::{
+    CallBufferCost, CallPreparationCost, CostProfile, CostSnapshot, OwnedStorageCost, PhaseCost,
+    VmPhaseCost,
+};
 pub(crate) use cost::{
     CompilePhase, PhaseTimer, cost_profile_active, record_compiler_storage, record_legacy_dispatch,
     record_legacy_pc_publication, record_lowered_function,
+};
+pub(crate) use cost::{
+    record_call_buffer_capacity, record_call_buffer_copies, record_call_buffer_initialized,
+    record_call_buffer_moves, record_call_buffer_observed, record_call_buffer_share,
+    record_call_raw_buffer_copies,
 };
 
 use super::Runtime;

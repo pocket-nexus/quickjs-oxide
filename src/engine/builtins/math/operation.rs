@@ -1,4 +1,10 @@
 //! Math argument conversion advances in source order while numerical kernels stay pure.
+//!
+//! Owned primitive calls borrow NativeActivation argv and allocate no Math argv.
+//! At the first object, only the remaining suffix becomes continuation-owned;
+//! NativeActivation retains the original arguments across callbacks. Profiling
+//! distinguishes these two starts, without claiming native argument storage or
+//! every primitive conversion is allocation-free.
 use super::{quickjs_binary, quickjs_max, quickjs_min, quickjs_unary};
 #[cfg(feature = "stack-vm")]
 use crate::engine::builtins::native::NativeFunctionId;
@@ -47,8 +53,8 @@ pub(crate) struct MathResume {
 }
 impl MathStep {
     pub(crate) fn start(
-        _runtime: &Runtime,
-        _realm: ContextId,
+        runtime: &Runtime,
+        realm: ContextId,
         kind: MathKind,
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
@@ -64,15 +70,55 @@ impl MathStep {
         let values = arguments
             .readable
             .get(..count)
-            .ok_or(RuntimeError::Invariant("Math argv was not padded"))?
-            .to_vec();
-        MathResume {
-            kind,
-            arguments: values.into_iter(),
-            result: None,
-            count,
+            .ok_or(RuntimeError::Invariant("Math argv was not padded"))?;
+        #[cfg(feature = "stack-vm")]
+        {
+            let mut resume = MathResume {
+                kind,
+                arguments: Vec::new().into_iter(),
+                result: None,
+                count,
+            };
+            for (index, value) in values.iter().enumerate() {
+                if matches!(value, Value::Object(_)) {
+                    // The native activation owns original argv. A suspended
+                    // continuation needs only the not-yet-converted suffix.
+                    resume.arguments = values[index..].to_vec().into_iter();
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "math_remaining_arguments_owned",
+                    );
+                    return resume.next();
+                }
+                // Object arguments above retain the shared waiting protocol.
+                // NativeActivation already owns this primitive: borrow it in
+                // the same conversion kernel used by NumberStep completion.
+                let result = runtime.number_from_primitive(realm, value)?;
+                if let Some(completion) = resume.accept_number(result)? {
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "math_completed_without_argument_storage",
+                    );
+                    return Ok(Self::Complete(completion));
+                }
+            }
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "math_completed_without_argument_storage",
+            );
+            resume.next()
         }
-        .next()
+        #[cfg(not(feature = "stack-vm"))]
+        {
+            let _ = (runtime, realm);
+            MathResume {
+                kind,
+                arguments: values.to_vec().into_iter(),
+                result: None,
+                count,
+            }
+            .next()
+        }
     }
 }
 impl MathResume {
@@ -109,16 +155,28 @@ impl MathResume {
         mut self,
         result: NativeConversion<f64>,
     ) -> Result<MathStep, RuntimeError> {
+        if let Some(completion) = self.accept_number(result)? {
+            Ok(MathStep::Complete(completion))
+        } else {
+            self.next()
+        }
+    }
+
+    /// One numerical accumulation kernel for immediate and suspended inputs.
+    fn accept_number(
+        &mut self,
+        result: NativeConversion<f64>,
+    ) -> Result<Option<Completion>, RuntimeError> {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(MathStep::Complete(Completion::Throw(value)));
+                return Ok(Some(Completion::Throw(value)));
             }
         };
         self.result = Some(match self.kind {
             MathKind::Unary(kind) => quickjs_unary(kind, value),
             MathKind::Clz32 => {
-                return Ok(MathStep::Complete(Completion::Return(Value::Int(
+                return Ok(Some(Completion::Return(Value::Int(
                     Runtime::to_uint32_number(value).leading_zeros() as i32,
                 ))));
             }
@@ -133,9 +191,9 @@ impl MathResume {
                 if let Some(left) = self.result {
                     let product = Runtime::to_uint32_number(left)
                         .wrapping_mul(Runtime::to_uint32_number(value));
-                    return Ok(MathStep::Complete(Completion::Return(Value::Int(
-                        i32::from_ne_bytes(product.to_ne_bytes()),
-                    ))));
+                    return Ok(Some(Completion::Return(Value::Int(i32::from_ne_bytes(
+                        product.to_ne_bytes(),
+                    )))));
                 } else {
                     value
                 }
@@ -164,7 +222,7 @@ impl MathResume {
                 }
             }
         });
-        self.next()
+        Ok(None)
     }
 }
 pub(crate) fn finish(
@@ -181,3 +239,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+mod tests;

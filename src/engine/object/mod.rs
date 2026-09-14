@@ -758,7 +758,6 @@ pub(crate) mod operations;
 mod ordinary_storage;
 
 mod ordinary;
-#[cfg(feature = "stack-vm")]
 pub(crate) use ordinary::OrdinaryRead;
 
 #[cfg(test)]
@@ -772,7 +771,6 @@ pub(crate) use internal_methods::{ProxyCallResume, ProxyCallStep};
 #[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{ProxyOwnResume, ProxyOwnStep};
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::PreparedHas;
 
 #[cfg(feature = "stack-vm")]

@@ -79,6 +79,7 @@ pub(super) fn finish(
     let return_to = frame.cold.return_to;
     let constructor_return = frame.cold.constructor_return.take();
     let guard = frame.cold.entry_guard.take();
+    let mut retired_cold = None;
     let result = if exit == RunExit::Complete {
         let completion = match forwarded {
             Some(completion) => completion,
@@ -90,12 +91,14 @@ pub(super) fn finish(
         };
         // Install the completion owner before releasing any window root.
         execution.slots.clear_frame(frame.window)?;
+        retired_cold = Some(frame.cold);
         Ok(super::suspend::VmRunOutcome::Complete(completion))
     } else {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_bridge();
         let storage = execution.slots.take_frame(frame.window)?;
         let entry = FrameEntry {
+            initialize_bindings: false,
             executable: frame.executable,
             cold: frame.cold,
             storage,
@@ -112,6 +115,9 @@ pub(super) fn finish(
     };
     if let Some(guard) = guard {
         guard.finish().map_err(runtime_error_to_vm_error)?;
+    }
+    if let Some(cold) = retired_cold {
+        execution.call_storage.recycle(cold);
     }
     let completion = match result? {
         super::suspend::VmRunOutcome::Complete(completion) => completion,

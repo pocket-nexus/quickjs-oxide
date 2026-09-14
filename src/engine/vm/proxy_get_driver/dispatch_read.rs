@@ -316,10 +316,14 @@ pub(super) fn get(
                     key,
                     resume,
                 } => {
-                    match runtime
+                    let probe = runtime
                         .prepare_has_property(&object, &key)
-                        .map_err(runtime_error_to_vm_error)?
-                    {
+                        .map_err(runtime_error_to_vm_error)?;
+                    step = Step::PreparedHas { probe, key, resume };
+                    continue;
+                }
+                Step::PreparedHas { probe, key, resume } => {
+                    match probe {
                         PreparedHas::Complete(value) => {
                             step = resume
                                 .boolean(runtime, NativeConversion::Value(value))

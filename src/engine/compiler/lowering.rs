@@ -1360,7 +1360,9 @@ fn build_unlinked_debug(
     pc_sites: &[Option<SourceOffset>],
 ) -> Result<UnlinkedFunctionDebug, Error> {
     let carrier = source.carrier();
-    let definition = locator
+    let mut cursor = locator.cursor();
+    let mut previous_site = definition;
+    let definition = cursor
         .locate(definition)
         .map_err(|error| Error::internal(error.to_string()))?;
     let mut entries = Vec::new();
@@ -1369,9 +1371,15 @@ fn build_unlinked_debug(
         let Some(site) = site else {
             continue;
         };
-        let position = locator
+        // Repeated markers (including across unmarked instructions) were
+        // already validated at this exact offset in the immutable source.
+        if site == previous_site {
+            continue;
+        }
+        let position = cursor
             .locate(site)
             .map_err(|error| Error::internal(error.to_string()))?;
+        previous_site = site;
         if previous_position == Some(position) {
             continue;
         }
@@ -1417,6 +1425,79 @@ mod tests {
         FunctionIrOptions, FunctionSourceInfo, IrScope, ScopeId, SuperCapabilities,
         WITH_OBJECT_LOCAL_NAME, validate_scope_graph,
     };
+
+    #[test]
+    fn debug_source_cache_preserves_gaps_equal_coordinates_and_error_order() {
+        use crate::source::{LineColumn, QuickJsSourceLocator};
+        let offset = |value| SourceOffset::try_from_usize(value).unwrap();
+        // Raw continuation bytes do not advance columns, so distinct offsets
+        // 1 and 2 intentionally share a coordinate and must remain valid.
+        let raw = [b'a', 0x80, b'b'];
+        let source = SourceText::try_from_raw_bytes(&raw).unwrap();
+        let locator = QuickJsSourceLocator::from_bytes(&raw).index().unwrap();
+        let debug = build_unlinked_debug(
+            &source,
+            &locator,
+            JsString::from_static("cache.js"),
+            offset(0),
+            None,
+            &[
+                Some(offset(0)),
+                None,
+                Some(offset(1)),
+                None,
+                Some(offset(1)),
+                Some(offset(2)),
+                Some(offset(3)),
+                None,
+                Some(offset(3)),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            debug.pc2line.unwrap().entries.as_ref(),
+            &[
+                Pc2LineEntry {
+                    pc: 2,
+                    position: LineColumn::new(0, 1)
+                },
+                Pc2LineEntry {
+                    pc: 6,
+                    position: LineColumn::new(0, 2)
+                },
+            ]
+        );
+        let source = SourceText::from_utf8("éx");
+        let locator = QuickJsSourceLocator::new(source.carrier()).index().unwrap();
+        // Repeated valid offsets cannot hide a following invalid new offset;
+        // the first invalid site still wins over later sites and source ranges.
+        let error = build_unlinked_debug(
+            &source,
+            &locator,
+            JsString::from_static("cache.js"),
+            offset(0),
+            Some(offset(9)..offset(10)),
+            &[
+                Some(offset(0)),
+                None,
+                Some(offset(0)),
+                Some(offset(1)),
+                Some(offset(9)),
+            ],
+        )
+        .unwrap_err();
+        assert_eq!(error.message(), "source offset is not a UTF-8 boundary");
+        let error = build_unlinked_debug(
+            &source,
+            &locator,
+            JsString::from_static("cache.js"),
+            offset(9),
+            None,
+            &[Some(offset(1))],
+        )
+        .unwrap_err();
+        assert_eq!(error.message(), "source offset is out of bounds");
+    }
 
     #[test]
     fn captured_with_object_has_close_lifetime_without_lexical_tdz() {

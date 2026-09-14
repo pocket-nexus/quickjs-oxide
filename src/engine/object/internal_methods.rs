@@ -106,6 +106,15 @@ impl Drop for ProxyMethodStackGuard {
     }
 }
 
+// Selection preserves IntegerIndexedElementSet's conversion/fallthrough split.
+// A different valid receiver needs its original descriptor path; ignored
+// canonical indices do not convert the supplied value.
+enum TypedSetSelection {
+    Decline,
+    Ignore,
+    Element(Option<u64>),
+}
+
 impl Runtime {
     fn proxy_method_chain_limit(&self, name: &'static str) -> Option<usize> {
         // Empty-handler forwarding is recursive C code in the pinned build.
@@ -140,9 +149,10 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("call target"));
         }
-        if let Some(callable) = self.as_callable(&object)? {
-            return Ok(DirectCallTarget::Callable(callable));
-        }
+        let object = match self.try_into_callable(object)? {
+            Ok(callable) => return Ok(DirectCallTarget::Callable(callable)),
+            Err(object) => object,
+        };
         if self.is_proxy_object(&object)? {
             return Ok(DirectCallTarget::NonCallableProxy(object));
         }
@@ -650,7 +660,17 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
-        match self.prepare_has_property(object, key)? {
+        self.finish_prepared_has(realm, key, self.prepare_has_property(object, key)?)
+    }
+
+    /// Finish the selected Proxy boundary without replaying a traversed prefix.
+    pub(crate) fn finish_prepared_has(
+        &self,
+        realm: ContextId,
+        key: &PropertyKey,
+        probe: PreparedHas,
+    ) -> Result<NativeConversion<bool>, RuntimeError> {
+        match probe {
             PreparedHas::Complete(value) => Ok(NativeConversion::Value(value)),
             PreparedHas::Proxy(object) => self.proxy_has_property(realm, &object, key),
         }
@@ -896,28 +916,86 @@ impl Runtime {
         value: &Value,
         receiver: &Value,
     ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
+        self.prepare_typed_array_set_in_realm(None, object, key, value, receiver)
+    }
+
+    pub(crate) fn prepare_typed_array_set_in_realm(
+        &self,
+        _realm: Option<ContextId>,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: &Value,
+        receiver: &Value,
+    ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
         use crate::engine::builtins::TypedWriteStep;
+        match self.select_typed_array_set(object, key, receiver)? {
+            TypedSetSelection::Decline => Ok(None),
+            TypedSetSelection::Ignore => Ok(Some(TypedWriteStep::Complete(
+                NativeConversion::Value(true),
+            ))),
+            TypedSetSelection::Element(index) => {
+                #[cfg(feature = "stack-vm")]
+                if let Some(realm) = _realm
+                    && !matches!(value, Value::Object(_))
+                {
+                    return TypedWriteStep::set_primitive(self, realm, object, index, value)
+                        .map(Some);
+                }
+                TypedWriteStep::set(self, object.clone(), index, value.clone()).map(Some)
+            }
+        }
+    }
+
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn try_typed_array_set_primitive(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: &Value,
+        receiver: &Value,
+    ) -> Result<Option<NativeConversion<bool>>, RuntimeError> {
+        if matches!(value, Value::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "primitive typed Set received an object",
+            ));
+        }
+        match self.select_typed_array_set(object, key, receiver)? {
+            TypedSetSelection::Decline => Ok(None),
+            TypedSetSelection::Ignore => Ok(Some(NativeConversion::Value(true))),
+            TypedSetSelection::Element(index) => {
+                crate::engine::builtins::TypedWriteStep::set_primitive_result(
+                    self, realm, object, index, value,
+                )
+                .map(Some)
+            }
+        }
+    }
+
+    fn select_typed_array_set(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        receiver: &Value,
+    ) -> Result<TypedSetSelection, RuntimeError> {
         let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
-            return Ok(None);
+            return Ok(TypedSetSelection::Decline);
         };
         let same_receiver = matches!(receiver, Value::Object(receiver) if receiver == object);
         if same_receiver {
-            let index = match numeric {
+            return Ok(TypedSetSelection::Element(match numeric {
                 CanonicalNumericIndex::Valid(index) => Some(index),
                 CanonicalNumericIndex::Invalid => None,
-            };
-            return TypedWriteStep::set(self, object.clone(), index, value.clone()).map(Some);
+            }));
         }
         if let CanonicalNumericIndex::Valid(index) = numeric
             && self
                 .typed_array_get_index_descriptor(object, index)?
                 .is_some()
         {
-            return Ok(None);
+            return Ok(TypedSetSelection::Decline);
         }
-        Ok(Some(TypedWriteStep::Complete(NativeConversion::Value(
-            true,
-        ))))
+        Ok(TypedSetSelection::Ignore)
     }
 
     pub(super) fn proxy_set(

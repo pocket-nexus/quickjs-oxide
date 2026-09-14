@@ -79,6 +79,38 @@ impl GlobalStep {
             Self::String { value, resume }
         })
     }
+    /// Advance only primitive conversion stages, retaining the original request
+    /// before an object lookup or callback. Parse input precedes radix conversion.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn advance_primitive(
+        mut self,
+        runtime: &Runtime,
+        realm: ContextId,
+    ) -> Result<Self, RuntimeError> {
+        use crate::engine::value::conversion::number::NumberStep;
+        loop {
+            self = match self {
+                Self::String { value, resume } if !matches!(value, Value::Object(_)) => {
+                    resume.string(runtime, runtime.string_from_primitive(realm, &value)?)?
+                }
+                Self::Number { value, resume } if !matches!(value, Value::Object(_)) => {
+                    let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
+                    else {
+                        return Err(RuntimeError::Invariant("primitive global number suspended"));
+                    };
+                    resume.number(result)?
+                }
+                Self::Complete(completion) => {
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "global_completed_without_waiting_state",
+                    );
+                    return Ok(Self::Complete(completion));
+                }
+                step => return Ok(step),
+            };
+        }
+    }
 }
 impl GlobalResume {
     pub(crate) fn string(

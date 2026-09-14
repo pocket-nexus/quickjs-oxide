@@ -1,5 +1,8 @@
 //! One executable owner and one exclusive storage window per running frame.
 
+mod storage;
+pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame};
+
 use crate::engine::api::error::Error;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::ContextId;
@@ -82,8 +85,9 @@ pub(super) struct FrameCold {
 
 /// Owners crossing the driver boundary before installation or after detachment.
 pub(super) struct FrameEntry {
+    pub initialize_bindings: bool,
     pub executable: PublishedFunctionSnapshot,
-    pub cold: Box<FrameCold>,
+    pub cold: ColdFrame,
     pub storage: FrameStorage,
 }
 
@@ -92,7 +96,7 @@ pub(super) struct Frame {
     pub window: FrameWindow,
     pub fault_pc: usize,
     pub resume_pc: usize,
-    pub cold: Box<FrameCold>,
+    pub cold: ColdFrame,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +120,10 @@ impl FrameStore {
             next_generation: 1,
             limit,
         }
+    }
+
+    pub(super) fn depth(&self) -> usize {
+        self.frames.len()
     }
 
     pub(super) fn can_push(&self) -> bool {
@@ -201,6 +209,9 @@ pub(super) struct FramePush<'a> {
     next: u64,
 }
 impl FramePush<'_> {
+    pub(super) fn current_mut(&mut self, id: FrameId) -> Result<&mut Frame, Error> {
+        self.store.current_mut(id)
+    }
     pub(super) fn install(self, frame: Frame) -> FrameId {
         let id = FrameId {
             execution: self.store.execution,
@@ -231,6 +242,39 @@ mod tests {
     use crate::engine::value::Value;
     use crate::engine::vm::stack::{FrameStorage, SlotStore};
 
+    #[test]
+    fn cached_cold_storage_reuses_empty_capacity_without_retaining_runtime() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let mut cache = CallStorage::default();
+        cache.reserve().unwrap();
+        let (mut first, first_slots) = frame(&runtime, context.realm);
+        first.cold.reusable_captured_locals = vec![true; 23];
+        let address = &*first.cold as *const FrameCold;
+        cache.recycle(first.cold);
+        let (flags, grown) = cache.capture_flags(23).unwrap();
+        assert_eq!(grown, 0);
+        assert_eq!(flags, vec![false; 23]);
+        let (second, second_slots) = frame(&runtime, context.realm);
+        let mut contents = second.cold.into_inner();
+        contents.reusable_captured_locals = flags;
+        let (cold, allocated) = cache.install(contents);
+        assert_eq!(allocated, 0);
+        assert_eq!(&*cold as *const FrameCold, address);
+        cache.recycle(cold);
+        drop((
+            first.executable,
+            second.executable,
+            first_slots,
+            second_slots,
+            context,
+            runtime,
+        ));
+        assert!(weak.upgrade().is_none());
+        drop(cache);
+    }
+
     fn frame(runtime: &Runtime, realm: ContextId) -> (Frame, SlotStore) {
         let executable = PublishedFunctionSnapshot::empty_for_test(realm);
         let mut slots = SlotStore::new(0);
@@ -246,7 +290,7 @@ mod tests {
             )
             .unwrap();
         let function = runtime.new_object(None).unwrap();
-        let cold = Box::new(FrameCold {
+        let cold = super::ColdFrame::new(FrameCold {
             resume_throw: None,
             regions: Vec::new(),
             iterator_wait: None,
@@ -337,6 +381,7 @@ mod tests {
     fn entry(runtime: &Runtime, realm: ContextId) -> FrameEntry {
         let (frame, _slots) = frame(runtime, realm);
         FrameEntry {
+            initialize_bindings: false,
             executable: frame.executable,
             cold: frame.cold,
             storage: FrameStorage {

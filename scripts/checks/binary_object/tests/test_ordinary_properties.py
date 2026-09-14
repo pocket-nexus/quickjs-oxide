@@ -75,10 +75,10 @@ class OrdinaryPropertyContracts(unittest.TestCase):
             (storage, "ObjectKind::Ordinary", "ObjectKind::ModuleNamespace"),
             (storage, "fn locate(", "fn bad() { self.call_internal(); } fn locate("),
             (dispatch, "impl Runtime {", "fn ordinary_set_fast_path_available() {} impl Runtime {"),
-            (ordinary_set, "runtime.validate_value_domain(&value,", "runtime.skip_domain(&value,"),
+            (ordinary_set, "runtime.validate_value_domain(value,", "runtime.skip_domain(value,"),
             (ordinary_set, "rejected_object.as_ref().unwrap_or(&receiver)", "&receiver"),
             (ordinary, "use crate::engine::object::ordinary_storage::ReadProbe;", "self.call_internal(); use crate::engine::object::ordinary_storage::ReadProbe;"),
-            (access, 'self.validate_value_domain(&receiver,', 'self.internal_get(); self.validate_value_domain(&receiver,'),
+            (access, 'self.validate_value_domain(receiver,', 'self.internal_get(); self.validate_value_domain(receiver,'),
             (runtime, "if !failure.published", "if failure.published"),
             (heap, ".retain_edges_transactionally(&new_edges)", ".skip_retain(&new_edges)"),
         ]
@@ -122,3 +122,49 @@ class OrdinaryPropertyContracts(unittest.TestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertTrue(self.scan([(path, "pub(crate) enum LiteralDefinitionStep", fragment + "\npub(crate) enum LiteralDefinitionStep")]))
+
+    def test_shared_borrowed_property_domain_entries_cannot_bypass_validation(self):
+        set_path = 'src/engine/object/ordinary/set.rs'
+        read_path = 'src/engine/object/ordinary.rs'
+        mutations = [
+            (set_path, 'runtime.validate_object_and_key(object, key)?;', 'runtime.skip_object_and_key(object, key)?;'),
+            (set_path, 'runtime.validate_value_domain(receiver,', 'runtime.skip_value_domain(receiver,'),
+            (set_path, 'initial_set(runtime, realm, &object, &key, &value, &receiver)?', 'unchecked_set(runtime, realm, &object, &key, &value, &receiver)?'),
+            (set_path, 'initial_set(runtime, Some(realm), object, key, &value, &receiver)', 'unchecked_set(runtime, Some(realm), object, key, &value, &receiver)'),
+            (read_path, 'self.prepare_ordinary_read_borrowed(object, key, &receiver)', 'self.prepare_ordinary_read_borrowed(object, key, &Value::Undefined)'),
+            (read_path, 'self.validate_value_domain(receiver,', 'self.skip_value_domain(receiver,'),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.scan([mutation]))
+
+    def test_local_for_in_requires_same_object_guard_and_authenticated_helpers(self):
+        path = 'src/engine/vm/for_in/operation.rs'
+        mutations = [
+            (path, 'if !runtime.is_proxy_object(&object)? =>', 'if runtime.is_proxy_object(&object)? =>'),
+            (path, 'if !runtime.is_proxy_object(&object)? =>', '=>'),
+            (path, 'let reply = runtime.internal_has_own_property(resume.realm, &object, &key)?;', 'let reply = runtime.internal_has_own_property(resume.realm, &other, &key)?;'),
+            (path, 'let keys = runtime.own_property_keys(&object)?;', 'runtime.call_internal(); let keys = runtime.own_property_keys(&object)?;'),
+            (path, 'step => return Ok(step),', 'step => return Ok(Self::Complete { value: Value::Undefined, done: None }),'),
+            ('src/engine/object/internal_methods.rs', 'self.proxy_snapshot_if_any(object)\n            .map(|value| value.is_some())', 'Ok(false)'),
+            ('src/engine/object/internal_methods.rs', 'return Ok(NativeConversion::Value(flags.is_some()));', 'self.call_internal(); return Ok(NativeConversion::Value(flags.is_some()));'),
+            ('src/engine/object/properties.rs', 'self.get_own_property_in_operation(object, key)', 'self.internal_get_own_property(realm, object, key)'),
+            ('src/engine/modules/namespace.rs', 'let mut atoms = Vec::new();', 'self.call_internal(); let mut atoms = Vec::new();'),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.scan([mutation]))
+
+    def test_numeric_extraction_preserves_connected_owned_route(self):
+        parent = 'src/engine/vm/frame_operations.rs'
+        child = 'src/engine/vm/frame_operations/numeric.rs'
+        mutations = [
+            (parent, 'complete_numeric(runtime, execution, id, kind)', 'legacy_numeric(runtime, execution, id, kind)'),
+            (parent, 'complete as complete_numeric', 'legacy_complete as complete_numeric'),
+            (child, 'NumericStep::start(kind, left, right)', 'NumericStep::legacy_start(kind, left, right)'),
+            (child, 'proxy_get_driver::start_numeric(runtime, execution, id, step, depth)', 'proxy_get_driver::legacy_numeric(runtime, execution, id, step, depth)'),
+            (child, 'let right = execution.slots.pop(&mut frame.window)?;', 'runtime.to_primitive(); let right = execution.slots.pop(&mut frame.window)?;'),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(self.scan([mutation]))

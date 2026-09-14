@@ -815,7 +815,7 @@ impl Runtime {
         }
     }
 
-    fn replace_dense_array_value(
+    pub(super) fn replace_dense_array_value(
         &self,
         object: &ObjectRef,
         index: u32,
@@ -846,13 +846,23 @@ impl Runtime {
     ) -> Result<Option<(u32, bool)>, RuntimeError> {
         let length = self.intern_property_key("length")?;
         let state = self.0.state.borrow();
-        let object_data = state.heap.object(object.object_id())?;
+        Self::array_length_state_in_heap(&state.heap, object.object_id(), length.atom())
+    }
+
+    // Shared structural contract for the public rooted accessor and short
+    // non-observing Array iterator storage transactions.
+    pub(crate) fn array_length_state_in_heap(
+        heap: &crate::engine::heap::Heap,
+        object: ObjectId,
+        length: Atom,
+    ) -> Result<Option<(u32, bool)>, RuntimeError> {
+        let object_data = heap.object(object)?;
         if !matches!(object_data.payload, ObjectPayload::Array { .. }) {
             return Ok(None);
         }
-        let shape = state.heap.shape(object_data.shape)?;
+        let shape = heap.shape(object_data.shape)?;
         let index = shape
-            .find(length.atom())
+            .find(length)
             .ok_or(RuntimeError::Invariant("Array has no length property"))?;
         if index != 0 {
             return Err(RuntimeError::Invariant(

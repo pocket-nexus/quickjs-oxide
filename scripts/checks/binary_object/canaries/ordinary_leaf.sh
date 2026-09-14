@@ -121,10 +121,15 @@ expect_full_rewrite_rejected published-executable-wrong-runtime published-execut
     src/engine/code/executable.rs \
     '        if !function.belongs_to(self) {' \
     '        if false {'
+if grep -q 'data: Rc<PublishedFunctionData>' "$repository_root/src/engine/code/executable.rs"; then
+    publication_data_type='Rc<PublishedFunctionData>'
+else
+    publication_data_type='PublishedFunctionData'
+fi
 expect_full_rewrite_rejected published-executable-mutable-layout published-executable-owner \
     src/engine/code/executable.rs \
-    '    data: PublishedFunctionData,' \
-    '    pub(crate) data: PublishedFunctionData,'
+    "    data: $publication_data_type," \
+    "    pub(crate) data: $publication_data_type,"
 
 expect_full_rewrite_rejected published-frame-code-substitution published-frame-owner \
     src/engine/vm/host_bridge.rs \
@@ -158,3 +163,24 @@ expect_rewrite_rejected frame-layout-actual-arguments-truncation published-frame
     src/engine/code/function/layout.rs \
     'actual_count.max(usize::from(self.metadata.argument_count))' \
     'usize::from(self.metadata.argument_count)'
+
+expect_full_rewrite_rejected published-cache-drop-root published-executable-owner \
+    src/engine/code/executable.rs \
+    '            root: Some(root),' \
+    '            root: None,'
+expect_full_rewrite_rejected published-cache-wrong-node published-executable-owner \
+    src/engine/code/executable.rs \
+    'let bytecode = state.heap.function_bytecode(function.bytecode_id())?;' \
+    'let bytecode = state.heap.function_bytecode(other.bytecode_id())?;'
+expect_full_rewrite_rejected published-cache-skip-realm published-executable-owner \
+    src/engine/code/executable.rs \
+    '        state.heap.context(bytecode.realm)?;' \
+    '        // missing realm authentication'
+expect_full_rewrite_rejected published-cache-eval-index-alias published-executable-owner \
+    src/engine/code/executable.rs \
+    'self.index == other.index && Rc::ptr_eq(&self.environments, &other.environments)' \
+    'Rc::ptr_eq(&self.environments, &other.environments)'
+expect_full_rewrite_rejected published-function-timed-dead-verifier published-function-verification \
+    src/engine/code/verify/verified.rs \
+    '        verify_unlinked_tree(&function)?;' \
+    '        if false { verify_unlinked_tree(&function)?; }'

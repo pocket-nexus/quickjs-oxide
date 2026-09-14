@@ -291,12 +291,19 @@ mod enabled {
         if !json {
             writeln!(
                 out,
-                "Oxide compile/VM costs: scope=thread-interval, execution=see-owned-and-legacy-counters, timing=inclusive-wall-ns (not additive); IR capacities=partial boundary snapshots"
+                "Oxide compile/VM costs: scope=thread-interval, execution=see-owned-and-legacy-counters, timing=inclusive-and-exclusive-wall-ns (inclusive not additive); IR capacities=partial boundary snapshots"
             )?;
             writeln!(
                 out,
-                "parse={:?} resolution={:?} lowering={:?}",
-                costs.parse, costs.resolution, costs.lowering
+                "parse={:?} resolution={:?} lowering={:?} blocks={:?} fusion={:?} relocation={:?} verify={:?} publish={:?}",
+                costs.parse,
+                costs.resolution,
+                costs.lowering,
+                costs.blocks,
+                costs.fusion,
+                costs.relocation,
+                costs.verify,
+                costs.publish
             )?;
             writeln!(
                 out,
@@ -324,6 +331,22 @@ mod enabled {
                 "call_preparation={:?} (successful preparation; cumulative capacities; partial root copies)",
                 costs.call_preparation
             )?;
+            writeln!(
+                out,
+                "call_buffers={:?} (producer-local cumulative counters; observed buffers are not allocations)",
+                costs.call_buffers
+            )?;
+            for (name, phase) in &costs.vm_phases {
+                writeln!(
+                    out,
+                    "vm_phase={name} attempts={} inclusive_ns={} exclusive_ns={} samples={} omitted={}",
+                    phase.cost.attempts,
+                    phase.cost.inclusive_ns,
+                    phase.cost.exclusive_ns,
+                    phase.samples_ns.len(),
+                    phase.omitted_samples
+                )?;
+            }
             return writeln!(
                 out,
                 "legacy_dispatches={} pc_publications={} max_operand_depth={}; all-call allocations and total retain/release accounting unavailable",
@@ -366,6 +389,14 @@ mod enabled {
             (
                 "slots_initialized",
                 costs.owned_storage.slots_initialized as u64,
+            ),
+            (
+                "physical_none_initializations",
+                costs.owned_storage.physical_none_initializations,
+            ),
+            (
+                "maximum_initialized_slots",
+                costs.owned_storage.maximum_initialized_slots as u64,
             ),
             (
                 "maximum_reserved_slots",
@@ -411,6 +442,51 @@ mod enabled {
                 write!(out, ",")?;
             }
             write!(out, "\"{name}\":{value}")?;
+        }
+        write!(out, "}}")?;
+        write!(
+            out,
+            ",\"call_buffers_scope\":\"producer-local-successful-capacity-and-copy-observations; not total allocator or retain/release accounting\""
+        )?;
+        write!(out, ",\"call_buffers\":{{")?;
+        for (index, (name, cost)) in costs.call_buffers.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "\"{name}\":{{")?;
+            for (field_index, (field, value)) in cost.fields().into_iter().enumerate() {
+                if field_index != 0 {
+                    write!(out, ",")?;
+                }
+                write!(out, "\"{field}\":{value}")?;
+            }
+            write!(out, "}}")?;
+        }
+        write!(out, "}}")?;
+        write!(
+            out,
+            ",\"vm_phase_samples_basis\":\"first-4096-attempts-per-phase; includes errors; [inclusive,exclusive] ns; child phases share one exclusive clock\""
+        )?;
+        write!(out, ",\"vm_phases\":{{")?;
+        for (index, (name, phase)) in costs.vm_phases.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(
+                out,
+                "\"{name}\":{{\"attempts\":{},\"inclusive_ns\":{},\"exclusive_ns\":{},\"sample_limit\":4096,\"omitted_samples\":{},\"samples_ns\":[",
+                phase.cost.attempts,
+                phase.cost.inclusive_ns,
+                phase.cost.exclusive_ns,
+                phase.omitted_samples
+            )?;
+            for (sample_index, [inclusive, exclusive]) in phase.samples_ns.iter().enumerate() {
+                if sample_index != 0 {
+                    write!(out, ",")?;
+                }
+                write!(out, "[{inclusive},{exclusive}]")?;
+            }
+            write!(out, "]}}")?;
         }
         write!(out, "}}")?;
         write!(
@@ -500,6 +576,11 @@ mod enabled {
             ("parse", costs.parse),
             ("resolution", costs.resolution),
             ("lowering", costs.lowering),
+            ("blocks", costs.blocks),
+            ("fusion", costs.fusion),
+            ("relocation", costs.relocation),
+            ("verify", costs.verify),
+            ("publish", costs.publish),
         ]
         .into_iter()
         .enumerate()
@@ -509,10 +590,11 @@ mod enabled {
             }
             write!(
                 out,
-                "\"{}\":{{\"attempts\":{},\"inclusive_ns\":{},\"storage_samples\":{},\"maximum_observed_ir_capacity_bytes\":{}}}",
+                "\"{}\":{{\"attempts\":{},\"inclusive_ns\":{},\"exclusive_ns\":{},\"storage_samples\":{},\"maximum_observed_ir_capacity_bytes\":{}}}",
                 name,
                 phase.attempts,
                 phase.inclusive_ns,
+                phase.exclusive_ns,
                 phase.storage_samples,
                 phase.maximum_observed_ir_capacity_bytes
             )?;

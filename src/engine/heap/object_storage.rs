@@ -7,6 +7,12 @@ pub(crate) struct SlotReplacementError {
 }
 
 impl Heap {
+    /// A short storage transaction must decline when the ordinary path has
+    /// pending cleanup to observe at its next RuntimeOperation boundary.
+    pub(crate) fn has_pending_zero_cleanup(&self) -> bool {
+        !self.zero_queue.is_empty()
+    }
+
     /// Read one live object record.
     pub fn object(&self, id: ObjectId) -> Result<&ObjectData, HeapError> {
         match self.live_node(RawId::Object(id))?.data {
@@ -2043,5 +2049,16 @@ impl Heap {
             });
         }
         Ok(index)
+    }
+}
+
+impl ObjectData {
+    /// A dense prefix entry is an existing own data value. Missing entries
+    /// need the authoritative property lookup, including the prototype path.
+    pub(crate) fn dense_array_value(&self, index: u32) -> Option<&RawValue> {
+        match &self.payload {
+            ObjectPayload::Array { dense: Some(dense) } => dense.get(index as usize),
+            _ => None,
+        }
     }
 }

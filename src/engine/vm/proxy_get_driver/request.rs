@@ -483,6 +483,11 @@ pub(super) enum Step {
         key: PropertyKey,
         resume: Resume,
     },
+    PreparedHas {
+        probe: crate::engine::object::PreparedHas,
+        key: PropertyKey,
+        resume: Resume,
+    },
     PreparedRead {
         read: OrdinaryRead,
         key: PropertyKey,

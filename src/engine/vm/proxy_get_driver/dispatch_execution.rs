@@ -44,7 +44,7 @@ pub(super) fn finish(
                     continue;
                 }
                 if !query.natives.is_empty() {
-                    step = query.finish_native(runtime, Ok(completion))?;
+                    step = query.finish_native(runtime, &mut execution.slots, Ok(completion))?;
                     continue;
                 }
                 let (_depth, push) = match query
@@ -97,12 +97,10 @@ pub(super) fn finish(
                     | Finish::Discard(depth) => (depth, false),
                     Finish::PropertyRead(depth) => (depth, true),
                     Finish::Call { depth, tail } => {
-                        if tail {
-                            #[cfg(feature = "profiling")]
-                            crate::engine::api::profiling::record_owned_instruction(depth);
-                            return Ok(Next::Done(Progress::Call(CallStep::Complete(completion))));
-                        }
-                        (depth, true)
+                        return super::finish_call_instruction(
+                            execution, owner, completion, depth, tail,
+                        )
+                        .map(Next::Done);
                     }
                     Finish::Conversion(wait) => {
                         return super::super::conversion_driver::ConversionTask::from_wait(
@@ -122,20 +120,9 @@ pub(super) fn finish(
                 let Some(Finish::ForIn(_depth)) = query.finish.take() else {
                     return Err(Error::internal("for-in result lost its instruction"));
                 };
-                let parent = execution.frames.current_mut(owner.frame()?)?;
-                execution.slots.push(&mut parent.window, value)?;
-                if let Some(done) = done {
-                    execution
-                        .slots
-                        .push(&mut parent.window, Value::Bool(done))?;
-                }
-                parent.resume_pc = parent
-                    .fault_pc
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("for-in resume PC overflow"))?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_instruction(_depth);
-                return Ok(Next::Done(Progress::Call(CallStep::Entered)));
+                return super::finish_for_in(execution, owner.frame()?, value, done, _depth)
+                    .map(Progress::Call)
+                    .map(Next::Done);
             }
             Step::NumericComplete { value, previous } => {
                 let Some(Finish::Numeric(_depth)) = query.finish.take() else {
@@ -151,7 +138,7 @@ pub(super) fn finish(
                         "raw native result escaped a child operation",
                     ));
                 }
-                step = query.finish_native_outcome(runtime, Ok(result))?;
+                step = query.finish_native_outcome(runtime, &mut execution.slots, Ok(result))?;
                 continue;
             }
             next => {
@@ -235,7 +222,8 @@ pub(super) fn activation(
                 arguments,
                 resume,
             } => {
-                step = native_scope(
+                step = Step::Complete(Completion::Return(Value::Undefined));
+                native_scope(
                     runtime,
                     execution,
                     query,
@@ -247,6 +235,7 @@ pub(super) fn activation(
                     invocation,
                     arguments,
                     resume,
+                    &mut step,
                 )?;
                 continue;
             }
@@ -352,7 +341,7 @@ pub(super) fn prepare(
                         operation: Some(OperationTarget::PropertyGet(identity)),
                     },
                 }
-                .prepare(runtime)?;
+                .prepare(runtime, &mut execution.call_storage)?;
                 return Ok(Next::Call {
                     entry,
                     pc: 0,

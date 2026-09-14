@@ -153,6 +153,11 @@ impl From<crate::engine::builtins::ArrayNextStep> for Step {
         use crate::engine::builtins::ArrayNextStep as T;
         match step {
             T::Complete(result) => Self::NativeRawComplete(result),
+            T::PreparedRead { read, key, resume } => Self::PreparedRead {
+                read,
+                key,
+                resume: Resume::ArrayNext(resume),
+            },
             T::Read {
                 object,
                 key,
@@ -667,6 +672,16 @@ impl From<crate::engine::builtins::ArraySliceStep> for Step {
         use crate::engine::builtins::ArraySliceStep as T;
         match step {
             T::Complete(result) => Self::Complete(result),
+            T::PreparedRead { read, key, resume } => Self::PreparedRead {
+                read,
+                key,
+                resume: Resume::ArraySlice(resume),
+            },
+            T::PreparedHas { probe, key, resume } => Self::PreparedHas {
+                probe,
+                key,
+                resume: Resume::ArraySlice(resume),
+            },
             T::Read {
                 object,
                 key,

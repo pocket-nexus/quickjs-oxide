@@ -137,8 +137,8 @@ expect_full_rewrite_rejected stage3c-publisher-alias-tail-bypass \
     $'    use OrdinaryLeafOp as O;\n    if let O::TailCall(argument_count) = &operation {\n        return Ok(Instruction::Call(*argument_count));\n    }\n    let instruction = match operation {\n        OrdinaryLeafOp::Nop => Instruction::Nop,\n        OrdinaryLeafOp::Object => Instruction::Object,\n        OrdinaryLeafOp::ToObject => Instruction::ToObject,\n        OrdinaryLeafOp::ToPropKey => Instruction::ToPropKey,\n        OrdinaryLeafOp::PushThis => Instruction::PushThis,\n        OrdinaryLeafOp::PushI32(value) => Instruction::PushI32(value),'
 expect_full_rewrite_rejected stage3c-stack-effect-guarded-bypass \
     stage3c-tail-verifier src/engine/code/bytecode.rs \
-    $'    const fn nominal_stack_effect(&self) -> (usize, usize) {\n        match self {' \
-    $'    const fn nominal_stack_effect(&self) -> (usize, usize) {\n        if let Self::TailCall(0) | Self::TailCallMethod(0) = self {\n            return (1, 1);\n        }\n        match self {'
+    $'const fn nominal_stack_effect(&self) -> (usize, usize) {\n        match self {' \
+    $'const fn nominal_stack_effect(&self) -> (usize, usize) {\n        if let Self::TailCall(0) | Self::TailCallMethod(0) = self {\n            return (1, 1);\n        }\n        match self {'
 expect_full_rewrite_rejected stage3c-verifier-alias-fallthrough \
     stage3c-tail-verifier src/engine/code/bytecode.rs \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses' \
@@ -202,3 +202,29 @@ expect_full_rewrite_rejected instruction-description-static-name-bypass publishe
     src/engine/code/instruction.rs \
     $'pub(crate) const fn static_name(self) -> Option<u32> {\n        let mut index = 0;' \
     $'pub(crate) const fn static_name(self) -> Option<u32> {\n        return None;\n        let mut index = 0;'
+
+if grep -q 'fn stack_contract' "$repository_root/src/engine/code/instruction.rs"; then
+    expect_full_rewrite_rejected instruction-split-stack-bypass published-instruction-contract \
+        src/engine/code/instruction.rs \
+        '            stack: self.stack_contract(),' \
+        '            stack: StackEffect { popped: 0, pushed: 0, state: StackStateEffect::Ordinary },'
+    expect_full_rewrite_rejected instruction-split-effects-bypass published-instruction-contract \
+        src/engine/code/instruction.rs \
+        '            effects: self.potential_effects(),' \
+        '            effects: PotentialEffects { javascript_exception: JsExceptionEffect::None, may_call_js: false, may_allocate: false },'
+    stack_adapter_before=$'pub const fn stack_effect(&self) -> (usize, usize) {\n        self.nominal_stack_effect()'
+else
+    expect_full_rewrite_rejected instruction-direct-control-bypass published-instruction-contract \
+        src/engine/code/instruction.rs \
+        '            control: self.control_effect(),' \
+        '            control: ControlEffect::Next,'
+    expect_full_rewrite_rejected instruction-direct-exception-bypass published-instruction-contract \
+        src/engine/code/instruction.rs \
+        '                javascript_exception: self.javascript_exception_effect(),' \
+        '                javascript_exception: JsExceptionEffect::None,'
+    stack_adapter_before=$'pub const fn stack_effect(&self) -> (usize, usize) {\n        let effect = self.info().stack;\n        (effect.popped, effect.pushed)'
+fi
+expect_full_rewrite_rejected instruction-nominal-adapter-bypass published-instruction-stack-adapter \
+    src/engine/code/bytecode.rs \
+    "$stack_adapter_before" \
+    $'pub const fn stack_effect(&self) -> (usize, usize) {\n        (0, 0)'

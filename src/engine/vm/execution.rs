@@ -210,6 +210,8 @@ impl Drop for ExecutionGuard {
 pub(super) struct RunningExecution {
     pub frames: FrameStore,
     pub slots: SlotStore,
+    pub query_storage: super::proxy_get_driver::QueryStorage,
+    pub call_storage: super::frame::CallStorage,
     /// Cold completion owns its payload before the active window is cleared.
     pub pending: Option<Value>,
     /// A typed root terminal result; never represented by a manufactured JS Value.
@@ -245,6 +247,8 @@ impl RunningExecution {
         Ok(Self {
             frames: FrameStore::new(guard.registration.id, limits.frames),
             slots: SlotStore::new(limits.slots),
+            query_storage: super::proxy_get_driver::QueryStorage::default(),
+            call_storage: super::frame::CallStorage::default(),
             pending: None,
             pending_call: None,
             root_query: None,

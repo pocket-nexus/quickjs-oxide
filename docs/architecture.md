@@ -192,6 +192,15 @@ S03 已验收：`value/number/{operations,integer,format,float16}.rs` 分别拥�
 
 `vm/frame.rs` 的 Frame 持有 executable、窗口索引和 boxed cold state；`vm/stack.rs` 管理互斥的原始实参、形参、局部及 operand 区间。`vm/execution.rs` 的作用域登记只保存 domain/identity，不把运行 Value 放进 Runtime。`vm/run.rs` 直接执行已覆盖的普通槽与纯 Number 操作。`host_bridge/owned.rs` 是临时单向交接适配器：遇到未覆盖指令时，输入和 PC 尚未消费，现有 owner 移回旧路径；默认配置保持原执行器。引用预检、完整成本与后续语义迁移仍待完成。
 
+S08/S09 当前 PC 选择（覆盖上述早期迁移记录的表示方式）：`run` 每次实际 dispatch/span
+入口直接写 Frame fault PC，仅把 resume PC 保留为局部值；Drop guard 在正常、错误、
+冷出口、挂起和 Rust unwind 时物化 resume。Runtime 活跃帧发布仍在既有 driver
+观察出口执行，不随 Frame fault 写入变成逐指令发布。有限融合与 AddStore 的错误
+位置不变，异步 CPU 采样不承诺任意时刻的精确 JS PC。该选择来自普通 A/B 的逐项
+权衡，不以少写次数代替吞吐证据；完整阶段验收仍在进行，详见
+[有限融合与观察点](architecture/owned-fusion.md) 和
+[开发测量记录](reports/primitive-vm-s08-development.md)。
+
 S03 的 `heap/slot_ownership.rs` 提供受限引用预检和提交：Runtime 域、借用、
 deferred references、zero queue 与 primitive 共享存储共同决定是否能热释放。
 不能热释放时保留原操作数交接；`SlotStore` 负责逻辑 owner 的移动、复制、重排

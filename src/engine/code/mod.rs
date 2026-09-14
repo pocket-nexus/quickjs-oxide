@@ -21,3 +21,6 @@ pub(crate) mod runtime;
 pub(crate) mod dynamic_source;
 
 mod executable;
+
+#[cfg(feature = "stack-vm")]
+pub(crate) mod fusion;

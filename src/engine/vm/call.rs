@@ -9,7 +9,7 @@ mod native;
 #[cfg(feature = "stack-vm")]
 pub(in crate::engine::vm) use native::PreparedNativeCall;
 
-mod prepare;
+pub(in crate::engine::vm) mod prepare;
 pub(crate) mod prototype;
 pub(in crate::engine::vm) use prepare::PreparedBytecodeFrame;
 
@@ -60,6 +60,16 @@ impl Runtime {
                     let target = *target;
                     let this_value = this_value.clone();
                     let arguments = arguments.clone();
+                    #[cfg(feature = "profiling")]
+                    {
+                        // Cloning this Rc slice shares storage: no raw element
+                        // copy, new allocation, or root retain is inferred.
+                        crate::engine::api::profiling::record_call_buffer_share(
+                            "bound.raw_snapshot",
+                            arguments.len(),
+                            size_of::<crate::engine::heap::RawValue>(),
+                        );
+                    }
                     drop(state);
                     let target = ObjectRef::from_borrowed_handle(self.clone(), target)?;
                     let target = CallableRef::from_validated_object(target);
@@ -68,6 +78,18 @@ impl Runtime {
                         .iter()
                         .map(|argument| self.root_raw_value(argument))
                         .collect::<Result<Vec<_>, _>>()?;
+                    #[cfg(feature = "profiling")]
+                    {
+                        crate::engine::api::profiling::record_call_buffer_observed(
+                            "bound.rooted_snapshot",
+                            arguments.capacity(),
+                            size_of::<Value>(),
+                        );
+                        crate::engine::api::profiling::record_call_buffer_copies(
+                            "bound.rooted_snapshot",
+                            &arguments,
+                        );
+                    }
                     return Ok(CallableExecution::Bound {
                         target,
                         this_value,
@@ -787,8 +809,8 @@ pub(crate) enum NativeInvocation {
     Setter { this_value: Value },
 }
 
-pub(crate) enum NativeInvocationAdaptation {
-    Invoke(NativeInvocation),
+pub(crate) enum NativeInvocationAdaptation<I = NativeInvocation> {
+    Invoke(I),
     Complete(Completion),
 }
 

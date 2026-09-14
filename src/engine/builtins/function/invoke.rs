@@ -123,10 +123,24 @@ impl InvokeStep {
                         return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
+                let forwarded = actual.get(1..).unwrap_or(&[]).to_vec();
+                #[cfg(feature = "profiling")]
+                {
+                    crate::engine::api::profiling::record_call_buffer_capacity(
+                        "function.call_suffix",
+                        0,
+                        forwarded.capacity(),
+                        size_of::<Value>(),
+                    );
+                    crate::engine::api::profiling::record_call_buffer_copies(
+                        "function.call_suffix",
+                        &forwarded,
+                    );
+                }
                 return Ok(Self::Call {
                     target,
                     receiver,
-                    arguments: actual.get(1..).unwrap_or(&[]).to_vec(),
+                    arguments: forwarded,
                 });
             }
             InvokeKind::Apply => {
@@ -214,6 +228,12 @@ impl InvokeResume {
             }
             NativeConversion::Value(arguments) => arguments,
         };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_call_buffer_observed(
+            "invoke.argv_carrier",
+            arguments.capacity(),
+            size_of::<Value>(),
+        );
         Ok(match self.target {
             ForwardTarget::Call { target, receiver } => InvokeStep::Call {
                 target,

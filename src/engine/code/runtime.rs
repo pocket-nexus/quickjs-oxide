@@ -41,6 +41,10 @@ impl Runtime {
         realm: ContextId,
         function: bytecode_publish::VerifiedFunction,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Publish,
+        );
         let flat_functions = bytecode_publish::flatten_unlinked_tree(function.into_function())?;
         #[cfg(feature = "test262-host")]
         if !self.0.dynamic_import_bytecode_allowed.get()
@@ -223,6 +227,9 @@ impl Runtime {
 
                 let owned_atoms = auxiliary_atoms.clone();
                 let bytecode = FunctionBytecodeData {
+                    executable: Default::default(),
+                    #[cfg(feature = "stack-vm")]
+                    fusion: Default::default(),
                     code: function.code.into(),
                     constants: linked_constants.into(),
                     property_key_atoms: (!property_key_atoms.is_empty())

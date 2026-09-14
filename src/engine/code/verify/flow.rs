@@ -282,7 +282,7 @@ fn class_initializer_bridge_kind(
 pub(super) fn explicit_control_flow_target(
     instruction: &crate::engine::code::bytecode::Instruction,
 ) -> Option<usize> {
-    let target = instruction.info().control.target()?;
+    let target = instruction.control_effect().target()?;
     usize::try_from(target).ok()
 }
 

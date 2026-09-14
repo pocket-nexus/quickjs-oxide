@@ -13,6 +13,18 @@ pub(super) fn advance(
     query: &mut Query,
     pending: &mut Step,
 ) -> Result<Next, Error> {
+    // A completed native next reply carries only ObjectIteratorStep. Extract
+    // that payload in place before moving any wide generic scheduler state.
+    if let Step::IteratorNextComplete(result) = pending {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_iteration.advance.visit",
+        );
+        let result = std::mem::replace(result, crate::engine::builtins::ObjectIteratorStep::Done);
+        if let Some(result) = complete_next(runtime, execution, query, result, pending)? {
+            return Ok(Next::Done(Progress::Call(result)));
+        }
+    }
     let mut step = pending.take();
     loop {
         #[cfg(feature = "profiling")]
@@ -109,25 +121,12 @@ pub(super) fn advance(
                 continue;
             }
             Step::IteratorNextComplete(result) => {
-                if let Some(parent) = query.parents.pop() {
-                    step = parent
-                        .iterator_next(runtime, result)
-                        .map_err(runtime_error_to_vm_error)?;
-                    continue;
+                step =
+                    Step::IteratorNextComplete(crate::engine::builtins::ObjectIteratorStep::Done);
+                if let Some(result) = complete_next(runtime, execution, query, result, &mut step)? {
+                    return Ok(Next::Done(Progress::Call(result)));
                 }
-                let Some(Finish::IteratorNext(mut pending)) = query.finish.take() else {
-                    return Err(Error::internal("iterator lost its continuation"));
-                };
-                let action = pending.next_query(runtime, result)?;
-                match continue_iterator(runtime, execution, query, pending, action)? {
-                    IteratorProgress::Step(next) => {
-                        step = next;
-                        continue;
-                    }
-                    IteratorProgress::Done(result) => {
-                        return Ok(Next::Done(Progress::Call(result)));
-                    }
-                }
+                continue;
             }
 
             Step::IteratorCall {
@@ -142,18 +141,23 @@ pub(super) fn advance(
                     && target.descriptor().cproto
                         == crate::engine::builtins::native::NativeCProto::IteratorNext
                 {
-                    step = Step::Native {
+                    step = Step::Complete(super::Completion::Return(Value::Undefined));
+                    super::native_scope(
+                        runtime,
+                        execution,
+                        query,
                         callable,
                         target,
                         defining_realm,
                         min_readable_args,
-                        mode: super::super::call::NativeInvokeMode::IteratorNextRaw,
-                        invocation: super::super::call::NativeInvocation::Call {
+                        super::super::call::NativeInvokeMode::IteratorNextRaw,
+                        super::super::call::NativeInvocation::Call {
                             this_value: Value::Object(iterator),
                         },
-                        arguments: Vec::new(),
-                        resume: Resume::IteratorNext(resume),
-                    };
+                        Vec::new(),
+                        Resume::IteratorNext(resume),
+                        &mut step,
+                    )?;
                 } else {
                     step = Step::Call {
                         target: DirectCallTarget::Callable(callable),
@@ -280,5 +284,32 @@ pub(super) fn advance(
                 return Ok(Next::Continue);
             }
         }
+    }
+}
+
+/// The parent reply and root iterator finish paths have one ordering source.
+fn complete_next(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    query: &mut Query,
+    result: crate::engine::builtins::ObjectIteratorStep,
+    output: &mut Step,
+) -> Result<Option<super::super::driver::CallStep>, Error> {
+    if let Some(parent) = query.parents.pop() {
+        *output = parent
+            .iterator_next(runtime, result)
+            .map_err(runtime_error_to_vm_error)?;
+        return Ok(None);
+    }
+    let Some(Finish::IteratorNext(mut pending)) = query.finish.take() else {
+        return Err(Error::internal("iterator lost its continuation"));
+    };
+    let action = pending.next_query(runtime, result)?;
+    match continue_iterator(runtime, execution, query, pending, action)? {
+        IteratorProgress::Step(next) => {
+            *output = next;
+            Ok(None)
+        }
+        IteratorProgress::Done(result) => Ok(Some(result)),
     }
 }

@@ -344,6 +344,9 @@ impl RootedVmActivation {
         runtime: &Runtime,
         resume: VmActivationResume,
     ) -> Result<PreparedResume, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _profile_phase =
+            crate::engine::api::profiling::PhaseTimer::start_vm("thaw.prepare_owned");
         self.validate_resume(runtime, &resume)?;
         let Self {
             mut host,
@@ -474,6 +477,8 @@ pub(crate) fn freeze(
     suspension: VmSuspension,
     original_arguments: Vec<Value>,
 ) -> Result<EncodedVmActivation, RuntimeError> {
+    #[cfg(feature = "profiling")]
+    let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.encode");
     let (kind, parts) = suspension.into_parts().map_err(RuntimeError::Engine)?;
     let bytecode = host.executable.root().ok_or(RuntimeError::Invariant(
         "resumable host has no current bytecode root",
@@ -563,6 +568,8 @@ pub(crate) fn thaw(
     data: &GeneratorActivationData,
     expected_function_kind: FunctionKind,
 ) -> Result<RootedVmActivation, RuntimeError> {
+    #[cfg(feature = "profiling")]
+    let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("thaw.decode");
     runtime.0.state.borrow().heap.context(resume_caller_realm)?;
     let bytecode_probe = FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), data.bytecode)?;
     let executable = runtime.snapshot_function_bytecode(&bytecode_probe)?;

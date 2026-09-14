@@ -15,6 +15,10 @@ pub(crate) struct VerifiedFunction(UnlinkedFunction);
 
 impl VerifiedFunction {
     pub(crate) fn script(function: UnlinkedFunction) -> Result<Self, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Verify,
+        );
         verify_unlinked_tree(&function)?;
         Ok(Self(function))
     }
@@ -22,6 +26,10 @@ impl VerifiedFunction {
     pub(in crate::engine::code) fn ordinary_leaf(
         function: UnlinkedFunction,
     ) -> Result<Self, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Verify,
+        );
         verify_unlinked_ordinary_leaf(&function)?;
         Ok(Self(function))
     }
@@ -30,6 +38,10 @@ impl VerifiedFunction {
         function: UnlinkedFunction,
         expected: EvalPublicationInput<'_>,
     ) -> Result<Self, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Verify,
+        );
         verify_unlinked_eval_tree_with_profile_and_arguments(
             &function,
             expected.kind,
@@ -50,6 +62,10 @@ impl VerifiedFunction {
     pub(crate) fn module(
         module: UnlinkedModule,
     ) -> Result<UnlinkedModuleParts<Self>, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Verify,
+        );
         verify_unlinked_module_tree(&module)?;
         let UnlinkedModuleParts {
             name,

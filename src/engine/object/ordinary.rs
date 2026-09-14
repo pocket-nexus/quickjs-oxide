@@ -94,7 +94,7 @@ impl Runtime {
         self.finish_prepared_read(realm, key, read)
     }
 
-    pub(super) fn finish_prepared_read(
+    pub(crate) fn finish_prepared_read(
         &self,
         realm: ContextId,
         key: &PropertyKey,
@@ -126,9 +126,20 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<OrdinaryRead, RuntimeError> {
+        self.prepare_ordinary_read_borrowed(object, key, &receiver)
+    }
+
+    /// Lookup borrows its already-rooted receiver; only a waiting result needs
+    /// another owner. Data reads do not acquire a temporary receiver root.
+    pub(crate) fn prepare_ordinary_read_borrowed(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        receiver: &Value,
+    ) -> Result<OrdinaryRead, RuntimeError> {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
-        self.validate_value_domain(&receiver, "property receiver")?;
+        self.validate_value_domain(receiver, "property receiver")?;
         use crate::engine::object::ordinary_storage::ReadProbe;
         let mut prototype = None;
         loop {
@@ -139,7 +150,10 @@ impl Runtime {
                     return Ok(OrdinaryRead::Complete(Some(Value::Undefined)));
                 }
                 ReadProbe::Getter(Some(getter)) => {
-                    return Ok(OrdinaryRead::Call { getter, receiver });
+                    return Ok(OrdinaryRead::Call {
+                        getter,
+                        receiver: receiver.clone(),
+                    });
                 }
                 ReadProbe::Missing(Some(next)) => prototype = Some(next),
                 ReadProbe::Missing(None) => return Ok(OrdinaryRead::Complete(None)),
@@ -147,7 +161,7 @@ impl Runtime {
                     return Ok(OrdinaryRead::Special {
                         kind,
                         object: current.clone(),
-                        receiver,
+                        receiver: receiver.clone(),
                     });
                 }
                 ReadProbe::Special(kind) => {
@@ -177,7 +191,10 @@ impl Runtime {
                             CompleteOrdinaryPropertyDescriptor::Accessor {
                                 get: Some(getter),
                                 ..
-                            } => OrdinaryRead::Call { getter, receiver },
+                            } => OrdinaryRead::Call {
+                                getter,
+                                receiver: receiver.clone(),
+                            },
                             CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. } => {
                                 OrdinaryRead::Complete(Some(Value::Undefined))
                             }

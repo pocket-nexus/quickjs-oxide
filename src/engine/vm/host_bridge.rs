@@ -778,6 +778,32 @@ impl Runtime {
         if self.bytecode_call_would_overflow() {
             return self.bytecode_stack_overflow_completion(caller_realm, &bytecode);
         }
+        #[cfg(feature = "stack-vm")]
+        if !bytecode.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("function bytecode"));
+        }
+        #[cfg(feature = "stack-vm")]
+        if self
+            .0
+            .state
+            .borrow()
+            .heap
+            .function_bytecode(bytecode.bytecode_id())?
+            .metadata
+            .function_kind
+            == FunctionKind::Normal
+        {
+            return owned::execute_call(
+                self,
+                caller_realm,
+                callable,
+                this_value,
+                new_target,
+                arguments,
+                bytecode,
+                closure_slots,
+            );
+        }
         let (mut host, input, active_frame) = self.prepare_bytecode_host(
             caller_realm,
             callable,
@@ -2956,6 +2982,86 @@ impl VmHost for RuntimeVmHost {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "stack-vm")]
+    #[test]
+    fn owned_root_rejects_foreign_bytecode_before_looking_up_its_raw_id() {
+        let foreign = Runtime::new();
+        let mut foreign_context = foreign.new_context();
+        let callable = CallableRef::from_validated_object(eval_object(
+            &mut foreign_context,
+            "(function(){return 42})",
+        ));
+        let crate::engine::vm::call::CallableExecution::Bytecode {
+            bytecode,
+            closure_slots,
+        } = foreign.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("fixture must be bytecode");
+        };
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .function_bytecode(bytecode.bytecode_id())
+                .is_err()
+        );
+        let result = runtime.execute_bytecode_callable(
+            context.realm,
+            &callable,
+            Value::Undefined,
+            Value::Undefined,
+            &[],
+            bytecode,
+            closure_slots,
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::WrongRuntime("function bytecode"))
+        ));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert!(foreign.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[cfg(feature = "stack-vm")]
+    #[test]
+    fn owned_root_closure_mismatch_keeps_error_shape_and_retires_active_guard() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let callable = CallableRef::from_validated_object(eval_object(
+            &mut context,
+            "(function(){let captured=42; return function(){return captured}})()",
+        ));
+        let crate::engine::vm::call::CallableExecution::Bytecode {
+            bytecode,
+            closure_slots,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("fixture must be bytecode");
+        };
+        assert!(!closure_slots.is_empty());
+        let result = runtime.execute_bytecode_callable(
+            context.realm,
+            &callable,
+            Value::Undefined,
+            Value::Undefined,
+            &[],
+            bytecode,
+            Vec::new(),
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Engine(error))
+                if error.message() == "function object closure slot count does not match bytecode metadata"
+        ));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        // The rejected entry must not disturb later ordinary root calls.
+        assert_eq!(context.eval("(function(){return 42})()").unwrap(), Value::Int(42));
+    }
+
     #[test]
     fn unpublished_host_cannot_enter_published_execution() {
         let runtime = Runtime::new();

@@ -74,6 +74,29 @@ impl ElementStep {
         }
     }
 }
+/// Shared primitive conversion after ToPrimitive has completed.
+pub(super) fn encode_primitive(
+    runtime: &Runtime,
+    realm: ContextId,
+    element: TypedArrayElementKind,
+    value: Value,
+) -> Result<NativeConversion<[u8; 8]>, RuntimeError> {
+    Ok(if element.is_bigint() {
+        match runtime.bigint_from_primitive(realm, value)? {
+            NativeConversion::Value(bigint) => {
+                NativeConversion::Value(typed_array_encode_bigint(&bigint)?)
+            }
+            NativeConversion::Throw(value) => NativeConversion::Throw(value),
+        }
+    } else {
+        match runtime.number_from_primitive(realm, &value)? {
+            NativeConversion::Value(number) => {
+                NativeConversion::Value(typed_array_encode_number(element, number))
+            }
+            NativeConversion::Throw(value) => NativeConversion::Throw(value),
+        }
+    })
+}
 fn from_primitive(
     runtime: &Runtime,
     realm: ContextId,
@@ -85,21 +108,7 @@ fn from_primitive(
             ElementStep::Complete(NativeConversion::Throw(value))
         }
         PrimitiveStep::Complete(Completion::Return(value)) => {
-            let bytes = if element.is_bigint() {
-                match runtime.bigint_from_primitive(realm, value)? {
-                    NativeConversion::Value(bigint) => {
-                        NativeConversion::Value(typed_array_encode_bigint(&bigint)?)
-                    }
-                    NativeConversion::Throw(value) => NativeConversion::Throw(value),
-                }
-            } else {
-                match runtime.number_from_primitive(realm, &value)? {
-                    NativeConversion::Value(number) => {
-                        NativeConversion::Value(typed_array_encode_number(element, number))
-                    }
-                    NativeConversion::Throw(value) => NativeConversion::Throw(value),
-                }
-            };
+            let bytes = encode_primitive(runtime, realm, element, value)?;
             ElementStep::Complete(bytes)
         }
         PrimitiveStep::Get {

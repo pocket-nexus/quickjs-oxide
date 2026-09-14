@@ -29,8 +29,12 @@ mod dispatch_iteration;
 mod dispatch_read;
 mod dispatch_write;
 
+mod native;
 mod request;
+mod storage;
+use native::start_into as native_scope;
 use request::{Resume, Step};
+pub(super) use storage::QueryStorage;
 
 pub(super) struct PendingProxyGet {
     identity: u64,
@@ -55,7 +59,17 @@ impl Parents {
         self.0.is_empty()
     }
     fn try_reserve(&mut self, additional: usize) -> Result<(), std::collections::TryReserveError> {
-        self.0.try_reserve(additional)
+        let previous = self.0.capacity();
+        storage::reserve(&mut self.0, additional, "query.parents")?;
+        #[cfg(feature = "profiling")]
+        if self.0.capacity() != previous {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "query_parent_capacity_growth",
+            );
+        }
+        #[cfg(not(feature = "profiling"))]
+        let _ = previous;
+        Ok(())
     }
     fn push(&mut self, resume: Resume) {
         #[cfg(feature = "profiling")]
@@ -78,6 +92,7 @@ struct Query {
     realm: crate::engine::heap::ContextId,
     parents: Parents,
     natives: Vec<NativeScope>,
+    spare_parents: Vec<Parents>,
     finish: Option<Finish>,
 }
 struct NativeScope {
@@ -97,16 +112,19 @@ impl Query {
     fn finish_native(
         &mut self,
         runtime: &Runtime,
+        slots: &mut super::stack::SlotStore,
         result: Result<Completion, Error>,
     ) -> Result<Step, Error> {
         self.finish_native_outcome(
             runtime,
+            slots,
             result.map(super::call::NativeInvokeOutcome::Completion),
         )
     }
     fn finish_native_outcome(
         &mut self,
         runtime: &Runtime,
+        slots: &mut super::stack::SlotStore,
         result: Result<super::call::NativeInvokeOutcome, Error>,
     ) -> Result<Step, Error> {
         let scope = self
@@ -114,34 +132,11 @@ impl Query {
             .pop()
             .ok_or_else(|| Error::internal("native result has no scope"))?;
         while self.parents.pop().is_some() {}
-        self.parents = scope.parents;
+        let empty = std::mem::replace(&mut self.parents, scope.parents);
+        // Reservation happens before installing the native scope.
+        self.spare_parents.push(empty);
         self.realm = scope.parent_realm;
-        // Ordinary next calls materialize the result while the native frame is active.
-        // Raw direct next keeps value/done and uses the calling realm.
-        let result = result
-            .map_err(crate::engine::api::runtime_error::RuntimeError::Engine)
-            .and_then(|result| match (scope.call.activation.mode, result) {
-                (
-                    super::call::NativeInvokeMode::Ordinary,
-                    super::call::NativeInvokeOutcome::IteratorNextRaw { value, done },
-                ) => Ok(super::call::NativeInvokeOutcome::Completion(
-                    Completion::Return(Value::Object(runtime.new_iterator_result(
-                        scope.call.activation.realm,
-                        value,
-                        done,
-                    )?)),
-                )),
-                (_, result) => Ok(result),
-            });
-        let result = scope
-            .call
-            .activation
-            .finish(result)
-            .map_err(runtime_error_to_vm_error)?;
-        scope
-            .resume
-            .native(runtime, result)
-            .map_err(runtime_error_to_vm_error)
+        native::finish(runtime, slots, scope.call, scope.resume, result)
     }
 }
 impl Drop for Query {
@@ -222,8 +217,20 @@ fn finish_instruction(
     owner: ReturnOwner,
     completion: Completion,
     push: bool,
-    _depth: usize,
+    depth: usize,
 ) -> Result<Progress, Error> {
+    finish_instruction_call(execution, owner, completion, push, depth).map(Progress::Call)
+}
+
+// Shared instruction completion keeps the broad conversion transport outside
+// callers that already know they are completing an ordinary property opcode.
+fn finish_instruction_call(
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    completion: Completion,
+    push: bool,
+    _depth: usize,
+) -> Result<CallStep, Error> {
     match completion {
         Completion::Return(value) => {
             let parent = execution.frames.current_mut(owner.frame()?)?;
@@ -236,9 +243,9 @@ fn finish_instruction(
                 .ok_or_else(|| Error::internal("property resume PC overflow"))?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(_depth);
-            Ok(Progress::Call(CallStep::Entered))
+            Ok(CallStep::Entered)
         }
-        completion => Ok(Progress::Call(CallStep::Complete(completion))),
+        completion => Ok(CallStep::Complete(completion)),
     }
 }
 
@@ -398,8 +405,7 @@ pub(super) fn start_prototype(
     let realm = parent.executable.realm;
     let result = (|| {
         let mut parents = Vec::new();
-        parents
-            .try_reserve(1)
+        storage::reserve(&mut parents, 1, "query.parents")
             .map_err(|_| Error::internal("property continuation allocation failed"))?;
         parents.push(Resume::ReadOwner(object.clone()));
         let step = ProxyPrototypeStep::start(runtime, realm, object, kind)
@@ -499,6 +505,225 @@ pub(super) fn start_callback_call(
         Finish::Call { depth, tail },
     )? {
         Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("native call returned a conversion")),
+    }
+}
+
+/// Enter a native target already normalized and classified by `enter_call`.
+/// Generic callback entry still performs normalization for its other callers.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_classified_native_call(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: Value,
+    arguments: Vec<Value>,
+    tail: bool,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    let realm = parent.executable.realm;
+    let owner = ReturnOwner::Frame(frame);
+    let result = (|| {
+        // This synchronous corridor borrows only the parent's slots and idle
+        // buffers. Runtime/host reentry can create another RunningExecution,
+        // but cannot access this execution's uniquely owned QueryStorage.
+        let cached = execution.query_storage.cached_native_buffers();
+        // Preserve the cleanup boundary of normalize_callback's classification.
+        // The owning target and its immutable metadata came from that same
+        // classifier before operands were consumed; native preparation still
+        // authenticates the snapshot before activation publication.
+        {
+            let _operation = runtime.operation();
+        }
+        let Some(buffers) = cached else {
+            return start_uncached_native_call(
+                runtime,
+                execution,
+                owner,
+                identity,
+                realm,
+                callable,
+                target,
+                defining_realm,
+                min_readable_args,
+                receiver,
+                arguments,
+                tail,
+                depth,
+            );
+        };
+        let mut waiting_call = None;
+        let result = (|| {
+            if !execution.frames.can_push_with_continuations(0)
+                || runtime.host_stack_would_overflow()
+            {
+                return Ok(Some(overflow(runtime, realm)?));
+            }
+            buffers.reserve_native()?;
+            let kind = crate::engine::builtins::continuation::NativeOperation::for_target(target)
+                .ok_or_else(|| Error::internal("classified native lost owned operation"))?;
+            let mut waiting = Step::Complete(Completion::Return(Value::Undefined));
+            let mut activation = None;
+            let immediate = native::begin_into(
+                runtime,
+                &mut execution.slots,
+                realm,
+                callable,
+                target,
+                defining_realm,
+                min_readable_args,
+                super::call::NativeInvokeMode::Ordinary,
+                super::call::NativeInvocation::Call {
+                    this_value: receiver,
+                },
+                arguments,
+                kind,
+                &mut waiting,
+                &mut activation,
+            )?;
+            if let Some(result) = immediate {
+                return native::identity_completion(result).map(Some);
+            }
+            // Carry the exact already-started activation and selected wait.
+            // A getter/coercion callback is never probed or invoked again.
+            waiting_call = Some((activation.expect("native wait has an activation"), waiting));
+            Ok(None)
+        })();
+        match result {
+            Ok(None) => {
+                let (call, waiting) = waiting_call.take().expect("native wait has an activation");
+                let mut query = execution
+                    .query_storage
+                    .take_cached()
+                    .expect("borrowed native cache entry remains reserved")
+                    .into_query(realm, Finish::Call { depth, tail });
+                native::install_waiting(&mut query, call, Resume::Identity);
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "native_call_direct_wait",
+                );
+                drive_native_call(runtime, execution, owner, identity, query, Ok(waiting))
+            }
+            result => {
+                // Finish/drop the instruction result before completing the
+                // idle reservation, matching the previous recycle boundary.
+                // No Query driver runs inside instruction finishing.
+                let result = result.and_then(|completion| {
+                    finish_call_instruction_call(
+                        execution,
+                        owner,
+                        completion.expect("native completion"),
+                        depth,
+                        tail,
+                    )
+                });
+                execution.query_storage.complete_cached_native();
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "native_call_completed_without_query",
+                );
+                result
+            }
+        }
+    })();
+    match result {
+        Ok(step) => Ok(step),
+        Err(error) => super::property_driver::throw_error(runtime, realm, error),
+    }
+}
+
+fn finish_call_instruction(
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    completion: Completion,
+    depth: usize,
+    tail: bool,
+) -> Result<Progress, Error> {
+    finish_call_instruction_call(execution, owner, completion, depth, tail).map(Progress::Call)
+}
+
+fn finish_call_instruction_call(
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    completion: Completion,
+    depth: usize,
+    tail: bool,
+) -> Result<CallStep, Error> {
+    if tail {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(depth);
+        return Ok(CallStep::Complete(completion));
+    }
+    finish_instruction_call(execution, owner, completion, true, depth)
+}
+
+// Keep cold Query construction and broad Progress transport off the cached
+// immediate-call path. Its budget, activation and effect order stay in start_into.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn start_uncached_native_call(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    identity: u64,
+    realm: crate::engine::heap::ContextId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: Value,
+    arguments: Vec<Value>,
+    tail: bool,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    let mut query =
+        execution
+            .query_storage
+            .acquire(realm, Vec::new(), Finish::Call { depth, tail });
+    let mut output = Step::Complete(Completion::Return(Value::Undefined));
+    let result = native::start_into(
+        runtime,
+        execution,
+        &mut query,
+        callable,
+        target,
+        defining_realm,
+        min_readable_args,
+        super::call::NativeInvokeMode::Ordinary,
+        super::call::NativeInvocation::Call {
+            this_value: receiver,
+        },
+        arguments,
+        Resume::Identity,
+        &mut output,
+    )
+    .map(|()| output);
+    drive_native_call(runtime, execution, owner, identity, query, result)
+}
+
+#[inline(never)]
+fn drive_native_call(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    identity: u64,
+    query: Query,
+    result: Result<Step, Error>,
+) -> Result<CallStep, Error> {
+    match drive(runtime, execution, owner, identity, query, result)? {
+        Progress::Call(step) => Ok(step),
+        // Internal invariant errors pass unchanged through throw_error.
         Progress::Conversion(_) => Err(Error::internal("native call returned a conversion")),
     }
 }
@@ -708,6 +933,65 @@ pub(super) fn start_write(
     strict: bool,
     depth: usize,
 ) -> Result<CallStep, Error> {
+    start_write_progress(
+        runtime, execution, frame, object, key, value, receiver, strict, depth,
+    )
+    .map(super::property_driver::PropertyProgress::into_call_step)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_write_progress(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    object: ObjectRef,
+    key: PropertyKey,
+    value: Value,
+    receiver: Value,
+    strict: bool,
+    depth: usize,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    start_write_adapted(
+        runtime,
+        execution,
+        frame,
+        Some(object),
+        key,
+        value,
+        receiver,
+        strict,
+        depth,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_receiver_write_progress(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    key: PropertyKey,
+    value: Value,
+    receiver: Value,
+    strict: bool,
+    depth: usize,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    start_write_adapted(
+        runtime, execution, frame, None, key, value, receiver, strict, depth,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_write_adapted(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    object: Option<ObjectRef>,
+    key: PropertyKey,
+    value: Value,
+    receiver: Value,
+    strict: bool,
+    depth: usize,
+) -> Result<super::property_driver::PropertyProgress, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
         .cold
@@ -717,67 +1001,193 @@ pub(super) fn start_write(
     parent.cold.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
-        let step = crate::engine::object::SetStep::start(
-            runtime,
-            Some(realm),
-            object,
-            key.clone(),
-            value,
-            receiver,
-        )
-        .map_err(runtime_error_to_vm_error)?;
-        let step = step
-            .advance_without_callback(runtime)
-            .map_err(runtime_error_to_vm_error)?;
-        if let crate::engine::object::SetStep::Complete(action) = step {
-            if !matches!(
-                action,
-                crate::engine::object::operations::PropertySetAction::Call { .. }
-            ) {
-                let completion = runtime
-                    .finish_property_set(
-                        request::set_result(action).map_err(runtime_error_to_vm_error)?,
-                        &key,
-                        strict,
-                    )
-                    .map_err(runtime_error_to_vm_error)?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "write_completed_without_query",
-                );
-                return finish_instruction(
+        let mut waiting_result = None;
+        let waiting = |step| {
+            waiting_result = Some(if waiting_result.is_some() {
+                Err(Error::internal("Set start repeated its waiting step"))
+            } else {
+                // The selector borrows the finalization key. Only a pending
+                // continuation needs a separate finalization owner.
+                advance_write_pending(
+                    runtime,
                     execution,
-                    ReturnOwner::Frame(frame),
-                    completion,
-                    false,
+                    frame,
+                    identity,
+                    step,
+                    key.clone(),
+                    strict,
                     depth,
-                );
-            }
-            return advance(
+                )
+            });
+        };
+        let action = match object {
+            Some(object) => crate::engine::object::SetStep::start_into(
                 runtime,
-                execution,
-                frame,
-                identity,
-                Vec::new(),
-                Step::SetComplete(action),
-                Finish::Write { key, strict, depth },
-            );
+                Some(realm),
+                object,
+                key.clone(),
+                value,
+                receiver,
+                waiting,
+            ),
+            None => crate::engine::object::SetStep::start_receiver_into(
+                runtime, realm, &key, value, receiver, waiting,
+            ),
         }
+        .map_err(runtime_error_to_vm_error)?;
+        match action {
+            Some(action) => finish_write_action(
+                runtime, execution, frame, identity, action, key, strict, depth,
+            ),
+            None => waiting_result
+                .ok_or_else(|| Error::internal("Set start omitted its waiting step"))?,
+        }
+    })();
+    match result {
+        Ok(progress) => Ok(progress),
+        Err(error) => finish_write_error(runtime, realm, error),
+    }
+}
 
-        advance(
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn advance_write_pending(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    identity: u64,
+    step: crate::engine::object::SetStep,
+    key: PropertyKey,
+    strict: bool,
+    depth: usize,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    // Set's initial operation guard has already left before entering this sink.
+    match step
+        .advance_without_callback(runtime)
+        .map_err(runtime_error_to_vm_error)?
+    {
+        crate::engine::object::SetStep::Complete(action) => finish_write_action(
+            runtime, execution, frame, identity, action, key, strict, depth,
+        ),
+        step => schedule_write(
             runtime,
             execution,
             frame,
             identity,
-            Vec::new(),
             step.into(),
-            Finish::Write { key, strict, depth },
+            key,
+            strict,
+            depth,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_write_action(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    identity: u64,
+    action: crate::engine::object::operations::PropertySetAction,
+    key: PropertyKey,
+    strict: bool,
+    depth: usize,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    if matches!(
+        action,
+        crate::engine::object::operations::PropertySetAction::Call { .. }
+    ) {
+        return schedule_write_action(
+            runtime, execution, frame, identity, action, key, strict, depth,
+        );
+    }
+    let completion = runtime
+        .finish_property_set(
+            request::set_result(action).map_err(runtime_error_to_vm_error)?,
+            &key,
+            strict,
         )
-    })();
-    match finish_error(runtime, realm, result)? {
-        Progress::Call(step) => Ok(step),
+        .map_err(runtime_error_to_vm_error)?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("write_completed_without_query");
+    use super::property_driver::PropertyProgress;
+    match finish_instruction_call(
+        execution,
+        ReturnOwner::Frame(frame),
+        completion,
+        false,
+        depth,
+    )? {
+        CallStep::Entered => Ok(PropertyProgress::Completed),
+        step => Ok(PropertyProgress::Deferred(step)),
+    }
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn schedule_write_action(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    identity: u64,
+    action: crate::engine::object::operations::PropertySetAction,
+    key: PropertyKey,
+    strict: bool,
+    depth: usize,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    schedule_write(
+        runtime,
+        execution,
+        frame,
+        identity,
+        Step::SetComplete(action),
+        key,
+        strict,
+        depth,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_write(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    identity: u64,
+    step: Step,
+    key: PropertyKey,
+    strict: bool,
+    depth: usize,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    write_call_progress(advance(
+        runtime,
+        execution,
+        frame,
+        identity,
+        Vec::new(),
+        step,
+        Finish::Write { key, strict, depth },
+    )?)
+}
+
+fn write_call_progress(
+    progress: Progress,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    match progress {
+        Progress::Call(step) => Ok(super::property_driver::PropertyProgress::Deferred(step)),
         Progress::Conversion(_) => Err(Error::internal("Set returned a conversion operation")),
     }
+}
+
+// Error materialization runs only after all initial write input owners have
+// left. Successful completion never crosses this cold normalization boundary.
+#[inline(never)]
+fn finish_write_error(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    error: Error,
+) -> Result<super::property_driver::PropertyProgress, Error> {
+    super::property_driver::throw_error(runtime, realm, error)
+        .map(super::property_driver::PropertyProgress::Deferred)
 }
 
 pub(super) fn reply(
@@ -939,21 +1349,10 @@ pub(super) fn start_root(
         super::driver::RootOperation::Promise(step) => step.into(),
         super::driver::RootOperation::Async(step) => step.into(),
     };
-    let result = drive(
-        runtime,
-        execution,
-        ReturnOwner::Root,
-        1,
-        Query {
-            #[cfg(feature = "profiling")]
-            had_callback: false,
-            realm,
-            parents: Parents::default(),
-            natives: Vec::new(),
-            finish: Some(Finish::Root),
-        },
-        Ok(step),
-    );
+    let query = execution
+        .query_storage
+        .acquire(realm, Vec::new(), Finish::Root);
+    let result = drive(runtime, execution, ReturnOwner::Root, 1, query, Ok(step));
     finish_error(runtime, realm, result)
 }
 
@@ -981,19 +1380,13 @@ fn advance(
     finish: Finish,
 ) -> Result<Progress, Error> {
     let realm = execution.frames.current_mut(frame)?.executable.realm;
+    let query = execution.query_storage.acquire(realm, parents, finish);
     drive(
         runtime,
         execution,
         ReturnOwner::Frame(frame),
         identity,
-        Query {
-            #[cfg(feature = "profiling")]
-            had_callback: false,
-            realm,
-            parents: Parents(parents),
-            natives: Vec::new(),
-            finish: Some(finish),
-        },
+        query,
         Ok(step),
     )
 }
@@ -1028,20 +1421,25 @@ fn drive(
                         "query_completed_without_callback"
                     },
                 );
+                query.recycle(&mut execution.query_storage);
                 return Ok(result);
             }
             Ok(Next::Call { entry, pc, resume }) => {
                 #[cfg(feature = "profiling")]
                 let had_callback = std::mem::replace(&mut query.had_callback, true);
-                put_pending(
-                    execution,
-                    owner,
-                    Box::new(PendingProxyGet {
-                        identity,
-                        query,
-                        resume,
-                    }),
-                )?;
+                let pending = Box::new(PendingProxyGet {
+                    identity,
+                    query,
+                    resume,
+                });
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_call_buffer_capacity(
+                    "query.pending_box",
+                    0,
+                    1,
+                    size_of::<PendingProxyGet>(),
+                );
+                put_pending(execution, owner, pending)?;
                 match push_frame(execution, entry) {
                     Ok(id) => {
                         #[cfg(feature = "profiling")]
@@ -1072,9 +1470,12 @@ fn drive(
             }
             Err(error) if !query.natives.is_empty() => {
                 // The native frame and all argv roots are still owned here.
-                step = query.finish_native(runtime, Err(error));
+                step = query.finish_native(runtime, &mut execution.slots, Err(error));
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                query.recycle(&mut execution.query_storage);
+                return Err(error);
+            }
         }
     }
 }
@@ -1175,6 +1576,7 @@ fn advance_inner(
             Step::Convert { .. }
             | Step::Converted { .. }
             | Step::Has { .. }
+            | Step::PreparedHas { .. }
             | Step::Read { .. }
             | Step::PreparedRead { .. }
             | Step::Call { .. }
@@ -1299,19 +1701,22 @@ fn invoke(
     } = classification
         && crate::engine::builtins::continuation::NativeOperation::for_target(target).is_some()
     {
-        step = Step::Native {
-            mode: super::call::NativeInvokeMode::Ordinary,
+        native_scope(
+            runtime,
+            execution,
+            query,
             callable,
             target,
             defining_realm,
             min_readable_args,
-            invocation: super::call::NativeInvocation::Call {
+            super::call::NativeInvokeMode::Ordinary,
+            super::call::NativeInvocation::Call {
                 this_value: receiver,
             },
             arguments,
             resume,
-        };
-        *next_step = step;
+            next_step,
+        )?;
         return Ok(Next::Continue);
     }
     if let CallableExecution::Bytecode {
@@ -1372,7 +1777,7 @@ fn invoke(
                     operation: Some(OperationTarget::PropertyGet(identity)),
                 },
             };
-            let entry = request.prepare(runtime)?;
+            let entry = request.prepare(runtime, &mut execution.call_storage)?;
             let resume = if kind == FunctionKind::Async && !module_link {
                 query
                     .parents
@@ -1422,6 +1827,172 @@ mod native_scope_tests {
     use super::*;
     use crate::engine::api::{Context, ErrorKind};
 
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn narrow_native_completion_keeps_pc_tail_waiting_and_cleanup_order() {
+        use crate::engine::api::profiling::CostProfile;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let profile = CostProfile::start();
+        let value = context.eval(r#"(function(){
+            var total=0, gets=0, values=0, traps=0, errors=0, map=new Map();
+            function tail(x){return Math.min(8,x)}
+            for(var i=0;i<8;i++){
+                total+=Math.min(3,5);total++;
+                if(map.set(i,i)!==map)return 0;
+                var arg={get valueOf(){gets++;return function(){values++;map.set('nested',41);return 2}}};
+                total+=tail(arg);
+                var proxy=new Proxy({},{get(t,k){if(k==='valueOf'){traps++;return function(){return 4}}}});
+                total+=Math.max(proxy,1);
+                try{Math.min(Symbol());return 0}catch(e){if(e instanceof TypeError)errors++}
+                try{Math.max({valueOf(){throw 17}});return 0}catch(e){if(e===17)errors++}
+            }
+            return total===80&&gets===8&&values===8&&traps===8&&errors===16&&map.get('nested')===41&&tail(2)===2?42:0;
+        })()"#).unwrap();
+        assert_eq!(value, Value::Int(42));
+        let costs = profile.snapshot();
+        assert!(
+            costs
+                .owned_execution_events
+                .get("native_call_completed_without_query")
+                .copied()
+                .unwrap_or(0)
+                > 20,
+            "{costs:?}"
+        );
+        assert!(
+            costs
+                .owned_execution_events
+                .get("native_call_direct_wait")
+                .copied()
+                .unwrap_or(0)
+                > 0,
+            "{costs:?}"
+        );
+        assert_eq!(costs.legacy_dispatches, 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
+        assert_eq!(costs.owned_sync_call_bridges, 0);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn narrow_native_completion_keeps_foreign_error_realm_on_cold_and_warm_calls() {
+        let runtime = Runtime::new();
+        let mut caller = runtime.new_context();
+        let mut defining = runtime.new_context();
+        let minimum = defining.eval("Math.min").unwrap();
+        let prototype = defining.eval("TypeError.prototype").unwrap();
+        let global = caller.global_object().unwrap();
+        for (name, value) in [
+            ("foreignMinimum", minimum),
+            ("foreignErrorPrototype", prototype),
+        ] {
+            caller
+                .set_property(&global, &runtime.intern_property_key(name).unwrap(), value)
+                .unwrap();
+        }
+        drop(defining);
+        assert_eq!(caller.eval("(function(){var n=0;function tail(x){return foreignMinimum(x)}for(var i=0;i<8;i++){if(tail(42)!==42)return 0;try{tail(Symbol());return 0}catch(e){if(Object.getPrototypeOf(e)!==foreignErrorPrototype)return 0;n++}}return n===8?42:0})()").unwrap(),Value::Int(42));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn narrow_native_completion_keeps_budget_before_coercion_and_activation() {
+        use crate::engine::vm::{
+            call::BytecodeCallRequest,
+            execution::ExecutionLimits,
+            frame::{ReturnTarget, ReturnValue},
+        };
+        for cached in [false, true] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let parent_callable = runtime
+                .callable_from_value(context.eval("(function(){return 1+2})").unwrap())
+                .unwrap();
+            let callable = runtime
+                .callable_from_value(context.eval("Math.min").unwrap())
+                .unwrap();
+            let argument = context
+                .eval("globalThis.nativeBudgetCalls=0;({valueOf(){nativeBudgetCalls++;return 42}})")
+                .unwrap();
+            let CallableExecution::Native {
+                target,
+                realm,
+                min_readable_args,
+            } = runtime.bytecode_for_callable(&callable).unwrap()
+            else {
+                panic!("native")
+            };
+            let CallableExecution::Bytecode {
+                bytecode,
+                closure_slots,
+            } = runtime.bytecode_for_callable(&parent_callable).unwrap()
+            else {
+                panic!("bytecode")
+            };
+            let mut execution = RunningExecution::new(
+                &runtime,
+                ExecutionLimits {
+                    frames: 1,
+                    slots: 32,
+                },
+            )
+            .unwrap();
+            let entry = BytecodeCallRequest {
+                callable: parent_callable,
+                receiver: Value::Undefined,
+                new_target: Value::Undefined,
+                arguments: Vec::new(),
+                bytecode,
+                closure_slots,
+                caller_realm: context.realm,
+                return_to: ReturnTarget {
+                    value_use: ReturnValue::Push,
+                    owner: ReturnOwner::Root,
+                    tail: false,
+                    operation: None,
+                },
+            }
+            .prepare(&runtime, &mut execution.call_storage)
+            .unwrap();
+            let frame = super::super::driver::push_frame(&mut execution, entry).unwrap();
+            if cached {
+                let query = execution.query_storage.acquire(
+                    context.realm,
+                    Vec::new(),
+                    Finish::Call {
+                        depth: 0,
+                        tail: false,
+                    },
+                );
+                query.recycle(&mut execution.query_storage);
+            }
+            let result = start_classified_native_call(
+                &runtime,
+                &mut execution,
+                frame,
+                callable,
+                target,
+                realm,
+                min_readable_args,
+                Value::Undefined,
+                vec![argument],
+                false,
+                0,
+            )
+            .unwrap();
+            assert!(matches!(result, CallStep::Complete(Completion::Throw(_))));
+            let parent = execution.frames.current_mut(frame).unwrap();
+            assert_eq!(parent.cold.property_generation, 1);
+            assert_eq!(parent.resume_pc, 0);
+            assert_eq!(execution.slots.depth(&parent.window), 0);
+            assert_eq!(runtime.0.state.borrow().active_frames.len(), 1);
+            drop(execution);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            assert_eq!(context.eval("nativeBudgetCalls").unwrap(), Value::Int(0));
+        }
+    }
+
     fn prepare(
         runtime: &Runtime,
         context: &mut Context,
@@ -1456,6 +2027,7 @@ mod native_scope_tests {
     #[test]
     fn nested_native_scope_errors_keep_frames_until_capture_and_restore_parent_realm() {
         let runtime = Runtime::new();
+        let mut slots = super::super::stack::SlotStore::new(0);
         let mut caller = runtime.new_context();
         let mut outer = runtime.new_context();
         let mut inner = runtime.new_context();
@@ -1481,12 +2053,14 @@ mod native_scope_tests {
                     parent_realm: outer.realm,
                 },
             ],
+            spare_parents: Vec::with_capacity(2),
             finish: Some(Finish::PropertyRead(0)),
         };
         assert_eq!(query.continuation_depth(), 2);
         let step = query
             .finish_native(
                 &runtime,
+                &mut slots,
                 Err(Error::new(ErrorKind::Type, "nested native failure")),
             )
             .unwrap();
@@ -1511,6 +2085,7 @@ mod native_scope_tests {
         let step = query
             .finish_native(
                 &runtime,
+                &mut slots,
                 Ok(Completion::Throw(Value::Object(error.clone()))),
             )
             .unwrap();
@@ -1520,112 +2095,6 @@ mod native_scope_tests {
         assert_eq!(query.realm, caller.realm);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn native_scope(
-    runtime: &Runtime,
-    execution: &RunningExecution,
-    query: &mut Query,
-    callable: crate::engine::object::CallableRef,
-    target: crate::engine::builtins::native::NativeFunctionId,
-    defining_realm: crate::engine::heap::ContextId,
-    min_readable_args: u8,
-    mode: super::call::NativeInvokeMode,
-    invocation: super::call::NativeInvocation,
-    arguments: Vec<Value>,
-    resume: Resume,
-) -> Result<Step, Error> {
-    let realm = query.realm;
-    let Some(kind) = crate::engine::builtins::continuation::NativeOperation::for_target(target)
-    else {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_sync_call_bridge();
-        let native_realm = if matches!(mode, super::call::NativeInvokeMode::IteratorNextRaw)
-            || target.uses_calling_realm()
-        {
-            realm
-        } else {
-            defining_realm
-        };
-        let result = runtime
-            .invoke_native_function(
-                &callable,
-                native_realm,
-                target,
-                min_readable_args,
-                invocation,
-                &arguments,
-                mode,
-            )
-            .map_err(runtime_error_to_vm_error)?;
-        return resume
-            .native(runtime, result)
-            .map_err(runtime_error_to_vm_error);
-    };
-    if !execution
-        .frames
-        .can_push_with_continuations(query.continuation_depth())
-        || runtime.host_stack_would_overflow()
-    {
-        return resume
-            .resume(runtime, overflow(runtime, realm)?)
-            .map_err(runtime_error_to_vm_error);
-    }
-    query
-        .natives
-        .try_reserve(1)
-        .map_err(|_| Error::internal("native continuation allocation failed"))?;
-    let native_realm = if matches!(mode, super::call::NativeInvokeMode::IteratorNextRaw)
-        || target.uses_calling_realm()
-    {
-        realm
-    } else {
-        defining_realm
-    };
-    let mut call = runtime
-        .prepare_native_invocation(
-            &callable,
-            native_realm,
-            target,
-            min_readable_args,
-            invocation,
-            &arguments,
-            mode,
-        )
-        .map_err(runtime_error_to_vm_error)?;
-    call.activation
-        .own_continuation()
-        .map_err(runtime_error_to_vm_error)?;
-    query.natives.push(NativeScope {
-        call,
-        parents: std::mem::take(&mut query.parents),
-        resume,
-        parent_realm: realm,
-    });
-    query.realm = native_realm;
-    let native = query.natives.last().expect("native scope was installed");
-    let invocation = runtime
-        .adapt_native_invocation(
-            target,
-            native_realm,
-            native.call.invocation.clone(),
-            &native.call.activation.arguments,
-        )
-        .map_err(runtime_error_to_vm_error)?;
-    Ok(match invocation {
-        super::call::NativeInvocationAdaptation::Complete(result) => Step::Complete(result),
-        super::call::NativeInvocationAdaptation::Invoke(invocation) => kind
-            .start(
-                runtime,
-                native_realm,
-                &invocation,
-                &native.call.activation.arguments,
-                &native.call.activation.callable,
-            )
-            .map_err(runtime_error_to_vm_error)?
-            .into(),
-    })
 }
 
 pub(super) fn start_iterator_read(
@@ -1698,14 +2167,156 @@ pub(super) fn start_iterator_next(
     let Value::Object(iterator) = iterator else {
         return Err(Error::internal("iterator record lost object receiver"));
     };
-    let step = crate::engine::builtins::IteratorNextStep::start(
+    let step = crate::engine::builtins::IteratorNextStep::start_callable(
         runtime,
         pending.realm(),
         iterator,
-        Value::Object(method.into_object()),
+        method,
     )
     .map_err(runtime_error_to_vm_error)?;
+    // A read-only discriminator selects the shared Array-next domain, not a
+    // workload or an iterator source representation. Full native validation
+    // still happens at its original entry boundary.
+    let direct = pending.is_next_iteration()
+        && execution.query_storage.has_cached_entry()
+        && match &step {
+            crate::engine::builtins::IteratorNextStep::Call { callable, .. } => {
+                let state = runtime.0.state.borrow();
+                matches!(state.heap.object(callable.as_object().object_id()).map(|object| &object.payload),
+                    Ok(crate::engine::heap::ObjectPayload::NativeFunction { data, .. })
+                        if data.target == crate::engine::builtins::native::NativeFunctionId::ArrayIteratorNext)
+            }
+            _ => false,
+        };
+    if direct {
+        let realm = pending.realm();
+        let result = start_array_next_direct(runtime, execution, pending, step);
+        return match finish_error(runtime, realm, result)? {
+            Progress::Call(step) => Ok(step),
+            Progress::Conversion(_) => {
+                Err(Error::internal("iterator returned unrelated conversion"))
+            }
+        };
+    }
     start_iterator_query(runtime, execution, pending, step.into(), true)
+}
+
+#[inline(never)]
+fn start_array_next_direct(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    mut pending: Box<super::iterator_driver::PendingIterator>,
+    step: crate::engine::builtins::IteratorNextStep,
+) -> Result<Progress, Error> {
+    use crate::engine::builtins::{IteratorNextStep, ObjectIteratorStep};
+    let IteratorNextStep::Call {
+        callable,
+        iterator,
+        resume,
+    } = step
+    else {
+        return Err(Error::internal("direct next lost its callable phase"));
+    };
+    let frame = pending.frame();
+    let realm = pending.realm();
+    let identity = iterator_query_identity(execution, frame)?;
+    let Some((target, defining_realm, min_readable_args)) = runtime
+        .direct_native_callable_metadata(&callable)
+        .map_err(runtime_error_to_vm_error)?
+    else {
+        return Err(Error::internal("direct Array-next lost native metadata"));
+    };
+    let completion = if !execution.frames.can_push_with_continuations(0)
+        || runtime.host_stack_would_overflow()
+    {
+        // Budget failures are parsed by the same iterator continuation and
+        // disable the owned iterator region through PendingIterator::finish.
+        match overflow(runtime, realm)? {
+            Completion::Throw(value) => ObjectIteratorStep::Throw(value),
+            _ => return Err(Error::internal("iterator overflow did not throw")),
+        }
+    } else {
+        if !execution.query_storage.reserve_cached_native_entry()? {
+            return Err(Error::internal("direct native entry lost reserved storage"));
+        }
+        let mut waiting = Step::Complete(Completion::Return(Value::Undefined));
+        let mut waiting_call = None;
+        let result = native::begin_into(
+            runtime,
+            &mut execution.slots,
+            realm,
+            callable,
+            target,
+            defining_realm,
+            min_readable_args,
+            super::call::NativeInvokeMode::IteratorNextRaw,
+            super::call::NativeInvocation::Call {
+                this_value: Value::Object(iterator),
+            },
+            Vec::new(),
+            crate::engine::builtins::continuation::NativeOperation::ArrayNext,
+            &mut waiting,
+            &mut waiting_call,
+        )?;
+        let Some(result) = result else {
+            // The first native step may already have advanced the iterator.
+            // Install exactly that activation and selected wait, never restart.
+            let mut query =
+                execution
+                    .query_storage
+                    .acquire(realm, Vec::new(), Finish::IteratorNext(pending));
+            native::install_waiting(
+                &mut query,
+                waiting_call.expect("native wait has an activation"),
+                Resume::IteratorNext(resume),
+            );
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "iterator_native_direct_wait",
+            );
+            return drive(
+                runtime,
+                execution,
+                ReturnOwner::Frame(frame),
+                identity,
+                query,
+                Ok(waiting),
+            );
+        };
+        match resume
+            .raw_completion(result)
+            .map_err(runtime_error_to_vm_error)?
+        {
+            Ok(result) => result,
+            Err(_) => {
+                return Err(Error::internal(
+                    "Array-next returned an ordinary result object",
+                ));
+            }
+        }
+    };
+    let action = pending.next_query(runtime, completion)?;
+    if !matches!(action, super::iterator_driver::IteratorAction::Finish) {
+        return Err(Error::internal(
+            "direct ForOfNext did not finish its instruction",
+        ));
+    }
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "iterator_native_completed_without_query",
+    );
+    super::iterator_driver::finish(execution, pending).map(Progress::Call)
+}
+
+fn iterator_query_identity(execution: &mut RunningExecution, frame: FrameId) -> Result<u64, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("iterator query identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    Ok(identity)
 }
 fn start_iterator_query(
     runtime: &Runtime,
@@ -1716,13 +2327,7 @@ fn start_iterator_query(
 ) -> Result<CallStep, Error> {
     let frame = pending.frame();
     let realm = pending.realm();
-    let parent = execution.frames.current_mut(frame)?;
-    let identity = parent
-        .cold
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("iterator query identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    let identity = iterator_query_identity(execution, frame)?;
     let finish = if next {
         Finish::IteratorNext(pending)
     } else {
@@ -1937,11 +2542,11 @@ fn continue_iterator(
                 return Err(Error::internal("iterator record lost object receiver"));
             };
             (
-                crate::engine::builtins::IteratorNextStep::start(
+                crate::engine::builtins::IteratorNextStep::start_callable(
                     runtime,
                     pending.realm(),
                     iterator,
-                    Value::Object(callable.into_object()),
+                    callable,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into(),
@@ -1963,7 +2568,8 @@ pub(super) fn start_numeric(
     frame: FrameId,
     step: super::numeric::operation::NumericStep,
     depth: usize,
-) -> Result<CallStep, Error> {
+) -> Result<super::frame_operations::NumericProgress, Error> {
+    use super::frame_operations::NumericProgress;
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     let identity = parent
@@ -1978,10 +2584,17 @@ pub(super) fn start_numeric(
             crate::engine::api::profiling::record_owned_execution_event(
                 "numeric_completed_without_query",
             );
-            return finish_numeric(execution, frame, value, previous, depth);
+            return match finish_numeric(execution, frame, value, previous, depth)? {
+                CallStep::Entered => Ok(NumericProgress::Completed),
+                _ => Err(Error::internal(
+                    "immediate numeric completion changed its frame protocol",
+                )),
+            };
         }
         super::numeric::operation::NumericStep::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(value)));
+            return Ok(NumericProgress::Deferred(CallStep::Complete(
+                Completion::Throw(value),
+            )));
         }
         step => step,
     };
@@ -1995,7 +2608,7 @@ pub(super) fn start_numeric(
         Finish::Numeric(depth),
     );
     match finish_error(runtime, realm, result)? {
-        Progress::Call(step) => Ok(step),
+        Progress::Call(step) => Ok(NumericProgress::Deferred(step)),
         Progress::Conversion(_) => Err(Error::internal(
             "numeric operation returned conversion task",
         )),
@@ -2088,15 +2701,83 @@ pub(super) fn start_for_in_query(
     step: super::for_in::operation::ForInStep,
     depth: usize,
 ) -> Result<CallStep, Error> {
-    let realm = execution.frames.current_mut(frame)?.executable.realm;
-    start_instruction_query(
+    use super::for_in::operation::ForInStep;
+    let parent = execution.frames.current_mut(frame)?;
+    let realm = parent.executable.realm;
+    let identity = parent
+        .cold
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("instruction query identity exhausted"))?;
+    parent.cold.property_generation = identity;
+    // Empty Query acquisition has no budget check. Local non-Proxy steps do
+    // not push parents; the first waiting Proxy keeps its original admission
+    // check and effect order in advance/dispatch, with continuation depth zero.
+    let result = (|| match step
+        .advance_without_callback(runtime)
+        .map_err(runtime_error_to_vm_error)?
+    {
+        ForInStep::Complete { value, done } => {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "for_in_completed_without_query",
+            );
+            finish_for_in(execution, frame, value, done, depth)
+        }
+        ForInStep::Throw(value) => Ok(CallStep::Complete(Completion::Throw(value))),
+        step => start_for_in_pending(runtime, execution, frame, identity, step, depth),
+    })();
+    match result {
+        Ok(step) => Ok(step),
+        Err(error) => super::property_driver::throw_error(runtime, realm, error),
+    }
+}
+
+// Keep the wide query transport and its selected Proxy step off the local path.
+#[inline(never)]
+fn start_for_in_pending(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    identity: u64,
+    step: super::for_in::operation::ForInStep,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    match advance(
         runtime,
         execution,
         frame,
-        realm,
+        identity,
+        Vec::new(),
         step.into(),
         Finish::ForIn(depth),
-    )
+    )? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
+    }
+}
+
+fn finish_for_in(
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    value: Value,
+    done: Option<bool>,
+    _depth: usize,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    execution.slots.push(&mut parent.window, value)?;
+    if let Some(done) = done {
+        execution
+            .slots
+            .push(&mut parent.window, Value::Bool(done))?;
+    }
+    parent.resume_pc = parent
+        .fault_pc
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("for-in resume PC overflow"))?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_instruction(_depth);
+    Ok(CallStep::Entered)
 }
 
 pub(super) fn start_literal_definition(
@@ -2140,5 +2821,42 @@ pub(super) fn start_import(
         Progress::Conversion(_) => Err(Error::internal(
             "dynamic import returned an untyped conversion",
         )),
+    }
+}
+
+#[cfg(test)]
+mod write_completion_tests {
+    use super::*;
+
+    #[test]
+    fn write_completion_runs_following_opcode_once_across_local_waiting_and_throw() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            (() => {
+                let trace = '', calls = 0;
+                const target = {x: 0}, marker = {};
+                const setter = {set x(v) { calls++; target.x = v; }};
+                const proxy = new Proxy({}, {set() { calls++; throw marker; }});
+                const frozen = Object.freeze({x: 1});
+                for (let i = 0; i < 3; i++) {
+                    target.x = i; trace += 'a';
+                    setter.x = i + 1; trace += 'b';
+                    try { proxy.x = i; trace += '?'; }
+                    catch (e) { trace += e === marker ? 'c' : '?'; }
+                    try { (function() { 'use strict'; frozen.x = i; })(); trace += '?'; }
+                    catch (e) { trace += e instanceof TypeError ? 'd' : '?'; }
+                }
+                return trace === 'abcdabcdabcd' && calls === 6 && target.x === 3;
+            })()
+        "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

@@ -176,6 +176,7 @@ impl RunExit {
     }
 }
 
+mod fusion;
 mod program_counter;
 use program_counter::ProgramCounter;
 
@@ -223,19 +224,22 @@ fn release_displaced(
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
     let mut slots = execution.slots.run_window(&mut frame.window)?;
-    let runtime = frame.cold.function.runtime();
-    let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
+    let cold = &mut *frame.cold;
+    let runtime = cold.function.runtime();
+    let mut pc = ProgramCounter::new(&mut frame.resume_pc);
     loop {
-        pc.fault = pc.resume;
+        frame.fault_pc = pc.resume;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("run_frame_fault_pc_write");
         let instruction = frame
             .executable
             .code
-            .get(pc.fault)
+            .get(frame.fault_pc)
             .ok_or_else(|| Error::internal("owned bytecode ended without return"))?;
         #[cfg(feature = "profiling")]
         let observed_depth = slots.depth();
-        let mut next_pc = pc
-            .fault
+        let mut next_pc = frame
+            .fault_pc
             .checked_add(1)
             .ok_or_else(|| Error::internal("owned program counter overflow"))?;
         let handled = match instruction {
@@ -272,29 +276,65 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::PushThis => {
-                let value = if let Some(value) = &frame.cold.normalized_this {
+                let value = if let Some(value) = &cold.normalized_this {
                     copy_value(value)?
                 } else if frame.executable.metadata.strict
-                    || matches!(frame.cold.input.this_value, Value::Object(_))
+                    || matches!(cold.input.this_value, Value::Object(_))
                 {
-                    copy_value(&frame.cold.input.this_value)?
-                } else if matches!(frame.cold.input.this_value, Value::Undefined | Value::Null) {
-                    copy_value(&Value::Object(frame.cold.input.callee_global.clone()))?
+                    copy_value(&cold.input.this_value)?
+                } else if matches!(cold.input.this_value, Value::Undefined | Value::Null) {
+                    copy_value(&Value::Object(cold.input.callee_global.clone()))?
                 } else {
                     return Ok(RunExit::NormalizeThis);
                 };
                 slots.push(value)?;
                 true
             }
-            Instruction::PutField(index) => return Ok(RunExit::SetProperty(Some(*index))),
-            Instruction::PutArrayEl => return Ok(RunExit::SetProperty(None)),
-            Instruction::GetField(index) | Instruction::GetField2(index) => {
+            Instruction::PutField(index) => {
+                let Some(identity) = cold.property_generation.checked_add(1) else {
+                    return Ok(RunExit::SetProperty(Some(*index)));
+                };
+                if !slots.ordinary_field_immediate_write(runtime, &frame.executable, *index)? {
+                    return Ok(RunExit::SetProperty(Some(*index)));
+                }
+                cold.property_generation = identity;
+                true
+            }
+            Instruction::PutArrayEl => {
+                let Some(identity) = cold.property_generation.checked_add(1) else {
+                    return Ok(RunExit::SetProperty(None));
+                };
+                if !slots.typed_array_number_write(runtime)? {
+                    return Ok(RunExit::SetProperty(None));
+                }
+                cold.property_generation = identity;
+                true
+            }
+            Instruction::GetField(index) => {
+                if !slots.ordinary_field_immediate_read(runtime, &frame.executable, *index)? {
+                    return Ok(RunExit::GetField {
+                        index: *index,
+                        keep_receiver: false,
+                    });
+                }
+                true
+            }
+            Instruction::GetField2(index) => {
                 return Ok(RunExit::GetField {
                     index: *index,
                     keep_receiver: matches!(instruction, Instruction::GetField2(_)),
                 });
             }
-            Instruction::GetArrayEl | Instruction::GetArrayEl2 | Instruction::GetArrayEl3 => {
+            Instruction::GetArrayEl => {
+                if !slots.array_immediate_read(runtime)? {
+                    return Ok(RunExit::GetElement {
+                        keep_receiver: false,
+                        keep_key: false,
+                    });
+                }
+                true
+            }
+            Instruction::GetArrayEl2 | Instruction::GetArrayEl3 => {
                 return Ok(RunExit::GetElement {
                     keep_receiver: !matches!(instruction, Instruction::GetArrayEl),
                     keep_key: matches!(instruction, Instruction::GetArrayEl3),
@@ -304,7 +344,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 return Ok(RunExit::Construct(*count));
             }
             Instruction::PushNewTarget => {
-                slots.push(copy_value(&frame.cold.input.new_target)?)?;
+                slots.push(copy_value(&cold.input.new_target)?)?;
                 true
             }
             Instruction::InitializeDerivedLocal(index) => {
@@ -353,16 +393,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::ReturnDerived(index) => return Ok(RunExit::ReturnDerived(*index)),
-            Instruction::CheckCtor if !matches!(frame.cold.input.new_target, Value::Undefined) => {
-                true
-            }
+            Instruction::CheckCtor if !matches!(cold.input.new_target, Value::Undefined) => true,
             Instruction::CheckCtor => {
                 return Ok(RunExit::Pure(
                     super::pure_operations::PureOperation::ConstructorWithoutNew,
                 ));
             }
             Instruction::PushActiveFunction => {
-                slots.push(Value::Object(frame.cold.function.clone()))?;
+                slots.push(Value::Object(cold.function.clone()))?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_storage(
                     crate::engine::api::profiling::OwnedStorageEvent::Copy { heap_root: true },
@@ -371,17 +409,54 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::InitDerivedConstructor => return Ok(RunExit::InitDerivedConstructor),
             Instruction::PutVar(index) | Instruction::PutVarInit(index) => {
-                return Ok(RunExit::Environment(
-                    super::environment_driver::Operation::Put {
-                        source: super::environment_driver::WriteTarget::Global {
-                            index: *index,
-                            initialize: matches!(instruction, Instruction::PutVarInit(_)),
+                let root = frame
+                    .executable
+                    .closure_variables
+                    .get(usize::from(*index))
+                    .filter(|descriptor| {
+                        !descriptor.kind.is_private()
+                            && matches!(
+                                descriptor.name,
+                                crate::engine::code::function::metadata::ClosureVariableName::Atom(
+                                    _
+                                )
+                            )
+                    })
+                    .and_then(|_| cold.closure_slots.get(usize::from(*index)));
+                let stored = if matches!(instruction, Instruction::PutVar(_)) {
+                    if let Some(root) = root {
+                        super::bindings::try_write_immediate_cell(
+                            runtime,
+                            root,
+                            slots.peek(0)?,
+                            None,
+                        )
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if stored {
+                    slots.pop()?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "global_immediate_cell_write",
+                    );
+                    true
+                } else {
+                    return Ok(RunExit::Environment(
+                        super::environment_driver::Operation::Put {
+                            source: super::environment_driver::WriteTarget::Global {
+                                index: *index,
+                                initialize: matches!(instruction, Instruction::PutVarInit(_)),
+                            },
+                            name: 0, // Global names come from the authenticated closure descriptor.
+                            strict: frame.executable.metadata.strict,
+                            check_presence: true,
                         },
-                        name: 0, // Global names come from the authenticated closure descriptor.
-                        strict: frame.executable.metadata.strict,
-                        check_presence: true,
-                    },
-                ));
+                    ));
+                }
             }
             Instruction::DeleteVar(index) => {
                 return Ok(RunExit::Environment(
@@ -389,12 +464,40 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::GetVar(index) | Instruction::GetVarUndef(index) => {
-                return Ok(RunExit::Environment(
-                    super::environment_driver::Operation::GlobalGet {
-                        index: *index,
-                        strict: matches!(instruction, Instruction::GetVar(_)),
-                    },
-                ));
+                let immediate = frame
+                    .executable
+                    .closure_variables
+                    .get(usize::from(*index))
+                    .filter(|descriptor| {
+                        !descriptor.kind.is_private()
+                            && matches!(
+                                descriptor.name,
+                                crate::engine::code::function::metadata::ClosureVariableName::Atom(
+                                    _
+                                )
+                            )
+                    })
+                    .and_then(|_| cold.closure_slots.get(usize::from(*index)))
+                    .map(|root| super::bindings::read_run_cell(runtime, root))
+                    .transpose()?
+                    .flatten();
+                if let Some((value, _owned)) = immediate {
+                    slots.push(value)?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(if _owned {
+                        "global_owned_cell_read"
+                    } else {
+                        "global_immediate_cell_read"
+                    });
+                    true
+                } else {
+                    return Ok(RunExit::Environment(
+                        super::environment_driver::Operation::GlobalGet {
+                            index: *index,
+                            strict: matches!(instruction, Instruction::GetVar(_)),
+                        },
+                    ));
+                }
             }
             Instruction::GlobalReference(index) => {
                 return Ok(RunExit::Environment(
@@ -775,66 +878,174 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     ));
                 }
             }
-            Instruction::GetVarRef(index)
-            | Instruction::GetVarRefCheck(index)
-            | Instruction::PutVarRef(index)
+            Instruction::GetVarRef(index) | Instruction::GetVarRefCheck(index) => {
+                if let Some((value, _owned)) = cold
+                    .closure_slots
+                    .get(usize::from(*index))
+                    .map(|root| super::bindings::read_run_cell(runtime, root))
+                    .transpose()?
+                    .flatten()
+                {
+                    slots.push(value)?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(if _owned {
+                        "captured_owned_cell_read"
+                    } else {
+                        "captured_immediate_cell_read"
+                    });
+                    true
+                } else {
+                    return Ok(RunExit::Binding {
+                        source: BindingSource::Closure,
+                        index: *index,
+                        write: false,
+                        checked: matches!(instruction, Instruction::GetVarRefCheck(_)),
+                        keep: false,
+                    });
+                }
+            }
+            Instruction::PutVarRef(index)
             | Instruction::SetVarRef(index)
             | Instruction::PutVarRefCheck(index) => {
-                return Ok(RunExit::Binding {
-                    source: BindingSource::Closure,
-                    index: *index,
-                    write: matches!(
-                        instruction,
-                        Instruction::PutVarRef(_)
-                            | Instruction::SetVarRef(_)
-                            | Instruction::PutVarRefCheck(_)
-                    ),
-                    checked: matches!(
-                        instruction,
-                        Instruction::GetVarRefCheck(_) | Instruction::PutVarRefCheck(_)
-                    ),
-                    keep: matches!(instruction, Instruction::SetVarRef(_)),
-                });
+                let stored = if let (Some(root), Some(descriptor)) = (
+                    cold.closure_slots.get(usize::from(*index)),
+                    frame.executable.closure_variables.get(usize::from(*index)),
+                ) {
+                    super::bindings::try_write_immediate_cell(
+                        runtime,
+                        root,
+                        slots.peek(0)?,
+                        Some((descriptor.is_lexical, descriptor.is_const, descriptor.kind)),
+                    )
+                } else {
+                    false
+                };
+                if stored {
+                    if !matches!(instruction, Instruction::SetVarRef(_)) {
+                        slots.pop()?;
+                    }
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "captured_immediate_cell_write",
+                    );
+                    true
+                } else {
+                    return Ok(RunExit::Binding {
+                        source: BindingSource::Closure,
+                        index: *index,
+                        write: true,
+                        checked: matches!(instruction, Instruction::PutVarRefCheck(_)),
+                        keep: matches!(instruction, Instruction::SetVarRef(_)),
+                    });
+                }
             }
-            Instruction::GetLocal(index)
-            | Instruction::GetLocalCheck(index)
-            | Instruction::PutLocal(index)
+            Instruction::PutLocal(index)
             | Instruction::SetLocal(index)
             | Instruction::PutLocalCheck(index)
             | Instruction::SetLocalCheck(index)
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_)) =>
             {
-                return Ok(RunExit::Binding {
-                    source: BindingSource::Local,
-                    index: *index,
-                    write: !matches!(
-                        instruction,
-                        Instruction::GetLocal(_) | Instruction::GetLocalCheck(_)
-                    ),
-                    checked: matches!(
-                        instruction,
-                        Instruction::GetLocalCheck(_)
-                            | Instruction::PutLocalCheck(_)
-                            | Instruction::SetLocalCheck(_)
-                    ),
-                    keep: matches!(
+                let stored = if let (FrameBinding::Captured(root), Some(definition)) = (
+                    slots.local(*index)?,
+                    frame.executable.local_definitions.get(usize::from(*index)),
+                ) {
+                    super::bindings::try_write_immediate_cell(
+                        runtime,
+                        root,
+                        slots.peek(0)?,
+                        Some((definition.is_lexical, definition.is_const, definition.kind)),
+                    )
+                } else {
+                    false
+                };
+                if stored {
+                    if !matches!(
                         instruction,
                         Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                    ),
-                });
+                    ) {
+                        slots.pop()?;
+                    }
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "captured_immediate_cell_write",
+                    );
+                    true
+                } else {
+                    return Ok(RunExit::Binding {
+                        source: BindingSource::Local,
+                        index: *index,
+                        write: true,
+                        checked: matches!(
+                            instruction,
+                            Instruction::PutLocalCheck(_) | Instruction::SetLocalCheck(_)
+                        ),
+                        keep: matches!(
+                            instruction,
+                            Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
+                        ),
+                    });
+                }
             }
             Instruction::GetArg(index)
             | Instruction::PutArg(index)
             | Instruction::SetArg(index)
                 if matches!(slots.parameter(*index)?, FrameBinding::Captured(_)) =>
             {
-                return Ok(RunExit::Binding {
-                    source: BindingSource::Argument,
-                    index: *index,
-                    write: !matches!(instruction, Instruction::GetArg(_)),
-                    checked: false,
-                    keep: matches!(instruction, Instruction::SetArg(_)),
-                });
+                let immediate = if matches!(instruction, Instruction::GetArg(_)) {
+                    match slots.parameter(*index)? {
+                        FrameBinding::Captured(root) => {
+                            super::bindings::read_run_cell(runtime, root)?
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                if let Some((value, _owned)) = immediate {
+                    slots.push(value)?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(if _owned {
+                        "captured_owned_cell_read"
+                    } else {
+                        "captured_immediate_cell_read"
+                    });
+                    true
+                } else if !matches!(instruction, Instruction::GetArg(_))
+                    && match (
+                        slots.parameter(*index)?,
+                        frame
+                            .executable
+                            .argument_definitions
+                            .get(usize::from(*index)),
+                    ) {
+                        (FrameBinding::Captured(root), Some(definition)) => {
+                            super::bindings::try_write_immediate_cell(
+                                runtime,
+                                root,
+                                slots.peek(0)?,
+                                Some((definition.is_lexical, definition.is_const, definition.kind)),
+                            )
+                        }
+                        _ => false,
+                    }
+                {
+                    if !matches!(instruction, Instruction::SetArg(_)) {
+                        slots.pop()?;
+                    }
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "captured_immediate_cell_write",
+                    );
+                    true
+                } else {
+                    return Ok(RunExit::Binding {
+                        source: BindingSource::Argument,
+                        index: *index,
+                        write: !matches!(instruction, Instruction::GetArg(_)),
+                        checked: false,
+                        keep: matches!(instruction, Instruction::SetArg(_)),
+                    });
+                }
             }
             Instruction::InitializeLocal(index)
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_))
@@ -850,18 +1061,57 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                if let FrameBinding::Direct(value) = slots.local(*index)? {
-                    let copied = copy_value(value)?;
-                    slots.push(copied)?;
-                    true
-                } else if matches!(instruction, Instruction::GetLocalCheck(_))
-                    && matches!(slots.local(*index)?, FrameBinding::Uninitialized)
-                {
-                    return Ok(RunExit::LexicalUninitialized(*index));
-                } else {
-                    false
+                if let Some(update) = frame.executable.fusion.update(frame.fault_pc) {
+                    if fusion::update_local(&mut slots, *index, update)? {
+                        #[cfg(feature = "profiling")]
+                        fusion::record_span(
+                            &frame.executable.code
+                                [frame.fault_pc..frame.fault_pc + update.instructions],
+                            observed_depth,
+                        );
+                        pc.resume = frame.fault_pc + update.instructions;
+                        continue;
+                    }
+                }
+                match slots.local(*index)? {
+                    FrameBinding::Direct(value) => {
+                        let copied = copy_value(value)?;
+                        slots.push(copied)?;
+                        true
+                    }
+                    FrameBinding::Captured(root) => {
+                        if let Some((value, _owned)) =
+                            super::bindings::read_run_cell(runtime, root)?
+                        {
+                            slots.push(value)?;
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_owned_execution_event(
+                                if _owned {
+                                    "captured_owned_cell_read"
+                                } else {
+                                    "captured_immediate_cell_read"
+                                },
+                            );
+                            true
+                        } else {
+                            return Ok(RunExit::Binding {
+                                source: BindingSource::Local,
+                                index: *index,
+                                write: false,
+                                checked: matches!(instruction, Instruction::GetLocalCheck(_)),
+                                keep: false,
+                            });
+                        }
+                    }
+                    FrameBinding::Uninitialized
+                        if matches!(instruction, Instruction::GetLocalCheck(_)) =>
+                    {
+                        return Ok(RunExit::LexicalUninitialized(*index));
+                    }
+                    _ => false,
                 }
             }
+
             Instruction::ThrowReadOnly(index) | Instruction::ThrowRedeclaration(index) => {
                 return Ok(RunExit::BindingError {
                     index: *index,
@@ -911,7 +1161,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_)) {
                     return Ok(RunExit::CloseCaptured(*index));
                 } else {
-                    frame.cold.reusable_captured_locals[usize::from(*index)] = false;
+                    cold.reusable_captured_locals[usize::from(*index)] = false;
                     true
                 }
             }
@@ -931,7 +1181,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 };
                 if ready {
                     let old = slots.replace_local(*index, FrameBinding::Uninitialized)?;
-                    frame.cold.reusable_captured_locals[usize::from(*index)] = false;
+                    cold.reusable_captured_locals[usize::from(*index)] = false;
                     if matches!(old, FrameBinding::Direct(_)) {
                         release_displaced(runtime, old)?;
                     }
@@ -1140,6 +1390,48 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::BitAnd => binary(&mut slots, |a, b| Value::Int(a.int32() & b.int32()))?,
             Instruction::BitOr => binary(&mut slots, |a, b| Value::Int(a.int32() | b.int32()))?,
             Instruction::BitXor => binary(&mut slots, |a, b| Value::Int(a.int32() ^ b.int32()))?,
+            Instruction::Lt
+            | Instruction::Lte
+            | Instruction::Gt
+            | Instruction::Gte
+            | Instruction::Eq
+            | Instruction::Neq
+            | Instruction::StrictEq
+            | Instruction::StrictNeq
+                if frame.executable.fusion.compare_branch(frame.fault_pc) =>
+            {
+                let branch_pc = frame.fault_pc + 1;
+                let Some(target) = fusion::compare_branch(
+                    &mut slots,
+                    instruction,
+                    &frame.executable.code[branch_pc],
+                )?
+                else {
+                    if matches!(instruction, Instruction::StrictEq | Instruction::StrictNeq) {
+                        return Ok(RunExit::StrictEquality(matches!(
+                            instruction,
+                            Instruction::StrictNeq
+                        )));
+                    }
+                    return Ok(RunExit::Numeric(
+                        super::numeric::operation::NumericKind::for_instruction(instruction)
+                            .ok_or_else(|| {
+                                Error::internal("comparison has no numeric operation")
+                            })?,
+                    ));
+                };
+                #[cfg(feature = "profiling")]
+                fusion::record_span(
+                    &frame.executable.code[frame.fault_pc..frame.fault_pc + 2],
+                    observed_depth,
+                );
+                pc.resume = if target == usize::MAX {
+                    frame.fault_pc + 2
+                } else {
+                    target
+                };
+                continue;
+            }
             Instruction::Lt => binary(&mut slots, |a, b| Value::Bool(a.float() < b.float()))?,
             Instruction::Lte => binary(&mut slots, |a, b| Value::Bool(a.float() <= b.float()))?,
             Instruction::Gt => binary(&mut slots, |a, b| Value::Bool(a.float() > b.float()))?,
@@ -1290,6 +1582,205 @@ mod tests {
     use crate::engine::heap::SlotReleaseReadiness;
 
     #[test]
+    fn resident_ordinary_fields_keep_scalar_updates_and_following_pc() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let profile = CostProfile::start();
+        assert_eq!(context.eval("(function(){var o={x:0,u:undefined,n:null,b:true,f:1.5,z:-0};for(var i=0;i<8;i++){o.x=i;o.x+=1;if(o.x!==i+1)return 0;}if(o.u!==undefined||o.n!==null||o.b!==true||o.f!==1.5||!Object.is(o.z,-0))return 0;try{throw o.x}catch(e){return e+34}})()").unwrap(),Value::Int(42));
+        let costs = profile.snapshot();
+        for event in [
+            "ordinary_field_immediate_read_in_run",
+            "ordinary_field_immediate_write_in_run",
+        ] {
+            assert!(
+                costs
+                    .owned_execution_events
+                    .get(event)
+                    .copied()
+                    .unwrap_or(0)
+                    >= 8,
+                "{event}: {costs:?}"
+            );
+        }
+        assert_eq!(costs.legacy_dispatches, 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
+        assert_eq!(costs.owned_sync_call_bridges, 0);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn resident_ordinary_field_fallback_preserves_accessor_proxy_strict_and_receiver_rules() {
+        for source in [
+            "(function(){var n=0,o={get x(){n++;return 41}};return o.x+n})()",
+            "(function(){var n=0,o={set x(v){n++;this.y=v}};o.x=41;return o.y+n})()",
+            "(function(){var n=0,o=new Proxy({x:40},{get(t,k,r){n++;return Reflect.get(t,k,r)},set(t,k,v,r){n++;return Reflect.set(t,k,v,r)}});o.x=40;return o.x+n})()",
+            "(function(){var marker={},n=0,o={get x(){n++;throw marker}};try{o.x;return 0}catch(e){return e===marker&&n===1?42:0}})()",
+            "(function(){'use strict';var o=Object.freeze({x:7});try{o.x=17;return 0}catch(e){return e instanceof TypeError&&o.x===7?42:0}})()",
+            "(function(){var o=Object.create({x:7});o.x=42;return o.x})()",
+            "(function(){var marker={},o={x:marker};if(o.x!==marker)return 0;o.x=42;return o.x})()",
+            "(function(){var o={x:42,f(){return this.x}};return o.f()})()",
+            "(function(){return ({x:42}).x})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn resident_typed_reads_share_decoding_and_following_exception_pc() {
+        for kind in [
+            "Int8",
+            "Uint8",
+            "Uint8Clamped",
+            "Int16",
+            "Uint16",
+            "Int32",
+            "Uint32",
+            "Float16",
+            "Float32",
+            "Float64",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let source = format!(
+                "(function(){{var a=new {kind}Array(1),n=0;for(var value of [257.5,-129.5,NaN,Infinity,-0]){{a[0]=value;var x=a[0];if(!Object.is(x,Reflect.get(a,'0')))return 0;n++}}a[0]=37;try{{throw a[0]}}catch(e){{return e+n}}}})()"
+            );
+            let profile = CostProfile::start();
+            assert_eq!(context.eval(&source).unwrap(), Value::Int(42), "{kind}");
+            let costs = profile.snapshot();
+            assert!(
+                costs
+                    .owned_execution_events
+                    .get("typed_array_number_read_leaf")
+                    .copied()
+                    .unwrap_or(0)
+                    >= 6,
+                "{kind}: {costs:?}"
+            );
+            assert_eq!(costs.legacy_dispatches, 0);
+            assert_eq!(costs.owned_bridge_exits, 0);
+            assert_eq!(costs.owned_sync_call_bridges, 0);
+        }
+    }
+
+    #[test]
+    fn resident_typed_read_fallback_keeps_resizing_conversion_and_proxy_once() {
+        for source in [
+            "(function(){var b=new ArrayBuffer(4,{maxByteLength:8}),a=new Uint8Array(b,2,2),track=new Uint8Array(b,2);a[0]=42;b.resize(1);if(a[0]!==undefined||track[0]!==undefined)return 0;b.resize(8);a[0]=42;return a[0]===42&&track[0]===42&&track[5]===0?42:0})()",
+            "(function(){var a=new Uint8Array([42]),n=0,key={toString(){n++;a.buffer.transfer();return '0'}};return a[key]===undefined&&n===1?42:0})()",
+            "(function(){var b=new ArrayBuffer(4,{maxByteLength:8}),a=new Uint8Array(b),n=0,key={toString(){n++;b.resize(0);return '0'}};return a[key]===undefined&&n===1?42:0})()",
+            "(function(){var a=new Uint8Array([42]),n=0,marker={},key={toString(){n++;throw marker}};try{a[key];return 0}catch(e){return e===marker&&n===1?42:0}})()",
+            "(function(){var n=0,a=new Proxy(new Uint8Array([41]),{get(t,k){n++;return Reflect.get(t,k)}});return a[0]+n})()",
+            "(function(){var a=new Uint8Array(new SharedArrayBuffer(1));a[0]=42;return a[0]})()",
+            "(function(){var a=new BigInt64Array([42n]);return a[0]===42n?42:0})()",
+            "(function(){return new Uint8Array([42])[0]})()",
+            "(function(){var a=new Uint8Array([42]);return a[-1]===undefined&&a['-0']===undefined&&a[1]===undefined?42:0})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn resident_dense_reads_keep_scalar_results_and_following_pc() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let profile = CostProfile::start();
+        assert_eq!(context.eval("(function(){var a=[undefined,null,true,42,1.5,-0];if(a[0]!==undefined||a[1]!==null||a[2]!==true||a[3]!==42||a[4]!==1.5||!Object.is(a[5],-0))return 0;try{var x=a[3];throw x}catch(e){return e}})()").unwrap(), Value::Int(42));
+        let costs = profile.snapshot();
+        assert!(
+            costs
+                .owned_execution_events
+                .get("array_immediate_read_in_run")
+                .copied()
+                .unwrap_or(0)
+                >= 7,
+            "{costs:?}"
+        );
+        assert_eq!(costs.legacy_dispatches, 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
+        assert_eq!(costs.owned_sync_call_bridges, 0);
+    }
+
+    #[test]
+    fn resident_dense_read_fallback_keeps_getter_proxy_and_method_effects_once() {
+        for source in [
+            "(function(){var n=0,a=[];Object.defineProperty(a,0,{get(){n++;return 41}});return a[0]+n})()",
+            "(function(){var n=0,a=new Proxy([41],{get(t,k,r){n++;return Reflect.get(t,k,r)}});return a[0]+n})()",
+            "(function(){var n=0,marker={},a=[];Object.defineProperty(a,0,{get(){n++;throw marker}});try{a[0];return 0}catch(e){return n===1&&e===marker?42:0}})()",
+            "(function(){var a=[,];Object.setPrototypeOf(a,{0:42});return a[0]})()",
+            "(function(){var marker={},a=[marker];return a[0]===marker?42:0})()",
+            "(function(){var a=[function(){return this.x}];a.x=42;return a[0]()})()",
+            "(function(){var a=[40];a[0]++;return a[0]+1})()",
+            "(function(){return [42][0]})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn resident_typed_writes_share_numeric_encoding_and_preserve_following_pc() {
+        for kind in [
+            "Int8",
+            "Uint8",
+            "Uint8Clamped",
+            "Int16",
+            "Uint16",
+            "Int32",
+            "Uint32",
+            "Float16",
+            "Float32",
+            "Float64",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let source = format!(
+                "(function(){{var C={kind}Array, a=new C(1), b=new C(1),n=0;for(var value of [257.5,-129.5,NaN,Infinity,-0]){{a[0]=value;Reflect.set(b,'0',value);if(!Object.is(a[0],b[0]))return 0;n++}}try{{a[0]=7;throw 35}}catch(e){{return a[0]+e+n}}}})()"
+            );
+            let profile = CostProfile::start();
+            assert_eq!(context.eval(&source).unwrap(), Value::Int(47), "{kind}");
+            let costs = profile.snapshot();
+            assert!(
+                costs
+                    .owned_execution_events
+                    .get("typed_array_number_write_in_run")
+                    .copied()
+                    .unwrap_or(0)
+                    >= 6,
+                "{kind}: {costs:?}"
+            );
+            assert_eq!(costs.legacy_dispatches, 0);
+            assert_eq!(costs.owned_bridge_exits, 0);
+            assert_eq!(costs.owned_sync_call_bridges, 0);
+        }
+    }
+
+    #[test]
+    fn resident_typed_write_fallback_keeps_conversion_exception_and_receiver_rules() {
+        for source in [
+            "(function(){var a=new Uint8Array(1),n=0;a[0]={valueOf(){n++;return 42}};return a[0]===42&&n===1?42:0})()",
+            "(function(){var a=new Uint8Array(1),marker={},n=0;try{a[0]={valueOf(){n++;throw marker}};return 0}catch(e){return e===marker&&n===1&&a[0]===0?42:0}})()",
+            "(function(){'use strict';var a=new Uint8Array(1);a[3]=42;a[-1]=42;a['-0']=42;return a[0]===0&&a[3]===undefined&&a['-0']===undefined?42:0})()",
+            "(function(){var a=new Uint8Array(1),n=0;a.buffer.transfer();a[0]=7;a[0]={valueOf(){n++;return 42}};return a[0]===undefined&&n===1?42:0})()",
+            "(function(){var a=new Uint8Array(new SharedArrayBuffer(1));a[0]=42;return a[0]})()",
+            "(function(){var a=new BigInt64Array(1);try{a[0]=42;return 0}catch(e){a[0]=42n;return e instanceof TypeError&&a[0]===42n?42:0}})()",
+            "(function(){var n=0,p=new Proxy(new Uint8Array(1),{set(t,k,v){n++;return Reflect.set(t,k,v,t)}});p[0]=42;return n===1?42:0})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
     fn ordinary_recursion_uses_one_execution_on_a_two_mib_native_stack() {
         std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
@@ -1379,7 +1870,9 @@ mod tests {
         assert_eq!(result, Value::Int(4950));
         let costs = profile.snapshot();
         assert!(costs.owned_instructions > 1000, "{costs:?}");
-        assert_eq!(costs.owned_execution_events["run_frame_fault_pc_write"], 1);
+        // Fault stays observable in Frame at each dispatch; only resume is cached.
+        let fault_writes = costs.owned_execution_events["run_frame_fault_pc_write"];
+        assert!(fault_writes > 100 && fault_writes <= costs.owned_instructions);
         assert_eq!(costs.owned_execution_events["run_frame_resume_pc_write"], 1);
         assert_eq!(costs.owned_execution_events["runtime_pc_publication"], 1);
         assert!(

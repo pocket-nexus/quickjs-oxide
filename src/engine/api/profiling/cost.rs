@@ -7,18 +7,39 @@
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
-use std::time::Instant;
+mod buffers;
+pub use buffers::CallBufferCost;
+pub(crate) use buffers::{
+    record_call_buffer_capacity, record_call_buffer_copies, record_call_buffer_initialized,
+    record_call_buffer_moves, record_call_buffer_observed, record_call_buffer_share,
+    record_call_raw_buffer_copies,
+};
+mod phases;
+pub(crate) use phases::{CompilePhase, PhaseTimer};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PhaseCost {
     /// Entries, including operations which return an error or unwind.
     pub attempts: u64,
     pub inclusive_ns: u128,
+    /// Time excluding measured child phases in the same collector.
+    /// Uninstrumented work and nested collectors remain charged to this phase.
+    pub exclusive_ns: u128,
     /// Boundary snapshots, not allocations or continuous memory sampling.
     pub storage_samples: u64,
     /// Largest partial owned-Vec capacity snapshot in this phase. Excludes
     /// referenced payloads and temporary worklists; not a compiler peak total.
     pub maximum_observed_ir_capacity_bytes: u64,
+}
+
+/// Attempt durations, including errors and unwinding. Only the first 4096
+/// samples per phase are retained; omitted samples are counted explicitly.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VmPhaseCost {
+    pub cost: PhaseCost,
+    /// [inclusive, exclusive] wall-clock nanoseconds, clamped to u64.
+    pub samples_ns: Vec<[u64; 2]>,
+    pub omitted_samples: u64,
 }
 
 /// Partial owned-core costs. Capacity peaks are per store, not process totals.
@@ -31,7 +52,11 @@ pub struct OwnedStorageCost {
     pub maximum_frame_capacity: usize,
     pub frames_pushed: u64,
     pub maximum_frame_depth: usize,
+    /// Logical frame-slot initialization, including reused inactive slots.
     pub slots_initialized: u64,
+    /// Physical writes of None when the initialized backing high-water grows.
+    pub physical_none_initializations: u64,
+    pub maximum_initialized_slots: usize,
     pub maximum_reserved_slots: usize,
     pub maximum_live_slots: usize,
     pub slot_moves: u64,
@@ -74,6 +99,11 @@ pub struct CostSnapshot {
     pub parse: PhaseCost,
     pub resolution: PhaseCost,
     pub lowering: PhaseCost,
+    pub blocks: PhaseCost,
+    pub fusion: PhaseCost,
+    pub relocation: PhaseCost,
+    pub verify: PhaseCost,
+    pub publish: PhaseCost,
     /// Successfully lowered function drafts, including nested functions.
     /// This is not a count of published functions or a unique-code inventory.
     pub lowered_functions: u64,
@@ -105,6 +135,8 @@ pub struct CostSnapshot {
     pub owned_execution_events: std::collections::BTreeMap<&'static str, u64>,
     pub owned_storage: OwnedStorageCost,
     pub call_preparation: CallPreparationCost,
+    pub call_buffers: std::collections::BTreeMap<&'static str, CallBufferCost>,
+    pub vm_phases: std::collections::BTreeMap<&'static str, VmPhaseCost>,
 }
 
 type Collector = RefCell<CostSnapshot>;
@@ -205,7 +237,9 @@ pub(crate) fn record_owned_call_storage(
     if let Some(collector) = current() {
         let mut snapshot = collector.borrow_mut();
         let cost = &mut snapshot.call_preparation;
-        cost.owned_frame_allocations = cost.owned_frame_allocations.saturating_add(1);
+        cost.owned_frame_allocations = cost
+            .owned_frame_allocations
+            .saturating_add(u64::from(frame_bytes != 0));
         cost.owned_frame_bytes = cost.owned_frame_bytes.saturating_add(frame_bytes as u64);
         cost.owned_captured_reuse_allocations = cost
             .owned_captured_reuse_allocations
@@ -222,42 +256,6 @@ pub(crate) fn record_owned_call_storage(
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum CompilePhase {
-    Parse,
-    Resolution,
-    Lowering,
-}
-
-pub(crate) struct PhaseTimer {
-    active: Option<(Rc<Collector>, Instant, CompilePhase)>,
-}
-
-impl PhaseTimer {
-    pub(crate) fn start(phase: CompilePhase) -> Self {
-        Self {
-            active: current().map(|collector| (collector, Instant::now(), phase)),
-        }
-    }
-}
-
-impl Drop for PhaseTimer {
-    fn drop(&mut self) {
-        let Some((collector, start, phase)) = &self.active else {
-            return;
-        };
-        let elapsed = start.elapsed().as_nanos();
-        let mut costs = collector.borrow_mut();
-        let cost = match phase {
-            CompilePhase::Parse => &mut costs.parse,
-            CompilePhase::Resolution => &mut costs.resolution,
-            CompilePhase::Lowering => &mut costs.lowering,
-        };
-        cost.attempts = cost.attempts.saturating_add(1);
-        cost.inclusive_ns = cost.inclusive_ns.saturating_add(elapsed);
-    }
-}
-
 pub(crate) fn cost_profile_active() -> bool {
     current().is_some()
 }
@@ -265,11 +263,7 @@ pub(crate) fn cost_profile_active() -> bool {
 pub(crate) fn record_compiler_storage(phase: CompilePhase, bytes: u64) {
     if let Some(collector) = current() {
         let mut costs = collector.borrow_mut();
-        let cost = match phase {
-            CompilePhase::Parse => &mut costs.parse,
-            CompilePhase::Resolution => &mut costs.resolution,
-            CompilePhase::Lowering => &mut costs.lowering,
-        };
+        let cost = phase.cost_mut(&mut costs);
         cost.storage_samples = cost.storage_samples.saturating_add(1);
         cost.maximum_observed_ir_capacity_bytes =
             cost.maximum_observed_ir_capacity_bytes.max(bytes);
@@ -342,6 +336,7 @@ pub(crate) enum OwnedStorageEvent {
     FrameCapacity { before: usize, after: usize },
     FramePush(usize),
     Initialize(usize),
+    NoneInitialization { count: usize, high_water: usize },
     Occupancy { reserved: usize, live: usize },
     Move(usize),
     Clear(usize),
@@ -396,6 +391,12 @@ pub(crate) fn record_owned_storage(event: OwnedStorageEvent) {
         }
         OwnedStorageEvent::Initialize(count) => {
             cost.slots_initialized = cost.slots_initialized.saturating_add(count as u64)
+        }
+        OwnedStorageEvent::NoneInitialization { count, high_water } => {
+            cost.physical_none_initializations = cost
+                .physical_none_initializations
+                .saturating_add(count as u64);
+            cost.maximum_initialized_slots = cost.maximum_initialized_slots.max(high_water);
         }
         OwnedStorageEvent::Occupancy { reserved, live } => {
             cost.maximum_reserved_slots = cost.maximum_reserved_slots.max(reserved);
@@ -502,7 +503,10 @@ mod tests {
             );
             let cost = profile.snapshot().call_preparation;
             assert_eq!(cost.frames_prepared, 1);
-            assert_eq!(cost.parameter_buffer_allocations, 1);
+            assert_eq!(
+                cost.parameter_buffer_allocations,
+                u64::from(!cfg!(feature = "stack-vm"))
+            );
             assert_eq!(cost.parameter_slots_initialized, values.len().max(2) as u64);
             assert_eq!(cost.parameter_value_copies, values.len() as u64);
             assert_eq!(

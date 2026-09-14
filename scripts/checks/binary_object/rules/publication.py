@@ -17,22 +17,9 @@ def check(ctx):
         ctx.rust_code_only(ctx.read_source(layout_path)),
         "d4a55e91e2b1a47c5c52cb8a9cfe88a3654aa2f99f1a1c8cc1bbce47be351ac9",
     )
-    ctx.require_normalized_code_sha256(
-        "published-executable-owner",
-        "Execution snapshots must pair immutable metadata with their owning Runtime root",
-        ctx.rust_code_only(ctx.read_source("src/engine/code/executable.rs")),
-        "29cedc499bb4182c4f77eb787e20a0a4e12276f32d820045d7e056ceba3a12e1",
-    )
-    # The owning wrapper is the only path from a draft to verified publication.
-    # Authenticate constructors too: checking a consumer call alone would allow
-    # the wrapper to stop invoking its role-specific verifier. The eval input
-    # now borrows code-owned authority fields; all role checks remain intact.
-    ctx.require_normalized_code_sha256(
-        "published-function-verification",
-        "VerifiedFunction must own its exact draft and authenticate each publication role",
-        ctx.rust_code_only(ctx.read_source("src/engine/code/verify/verified.rs")),
-        "1c0f9ca9afbe05a4525057b1f0d456fd8d42f858e995fd714bd202edf15a281e",
-    )
+    from .publication_contracts import check_executable, check_verified
+    check_executable(ctx)
+    check_verified(ctx)
     if ctx.consumer_exists:
         consumer_production_code = ctx.consumer_code.split("#[cfg(test)]", 1)[0]
         consumer_top_level_item_pattern = re.compile(

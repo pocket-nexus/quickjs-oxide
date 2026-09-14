@@ -182,25 +182,35 @@ pub(crate) struct InstructionInfo {
 
 impl Instruction {
     pub(crate) const fn info(&self) -> InstructionInfo {
-        let (popped, pushed) = self.nominal_stack_effect();
         InstructionInfo {
-            stack: StackEffect {
-                popped,
-                pushed,
-                state: self.stack_state_effect(),
-            },
-            effects: PotentialEffects {
-                javascript_exception: self.javascript_exception_effect(),
-                may_call_js: self.may_call_js(),
-                may_allocate: self.may_allocate(),
-            },
+            stack: self.stack_contract(),
+            effects: self.potential_effects(),
             control: self.control_effect(),
             operands: self.operand_contract(),
         }
     }
 
+    /// Read only the needed part of the canonical contract. Verification and
+    /// block discovery must not construct unrelated operand/effect payloads.
+    pub(crate) const fn stack_contract(&self) -> StackEffect {
+        let (popped, pushed) = self.nominal_stack_effect();
+        StackEffect {
+            popped,
+            pushed,
+            state: self.stack_state_effect(),
+        }
+    }
+
+    pub(crate) const fn potential_effects(&self) -> PotentialEffects {
+        PotentialEffects {
+            javascript_exception: self.javascript_exception_effect(),
+            may_call_js: self.may_call_js(),
+            may_allocate: self.may_allocate(),
+        }
+    }
+
     #[must_use]
-    const fn nominal_stack_effect(&self) -> (usize, usize) {
+    pub(crate) const fn nominal_stack_effect(&self) -> (usize, usize) {
         match self {
             Self::Nop
             | Self::CheckCtor
@@ -610,7 +620,7 @@ impl Instruction {
         }
     }
 
-    const fn control_effect(&self) -> ControlEffect {
+    pub(crate) const fn control_effect(&self) -> ControlEffect {
         match self {
             Self::IfFalse(target) => ControlEffect::Branch(*target),
             Self::IfTrue(target) => ControlEffect::Branch(*target),
@@ -809,7 +819,7 @@ impl Instruction {
             | Self::Await => ControlEffect::Suspend,
         }
     }
-    const fn operand_contract(&self) -> OperandContract {
+    pub(crate) const fn operand_contract(&self) -> OperandContract {
         use Operand as O;
         match self {
             Self::PushI32(value) => OperandContract([Some(O::Integer(*value)), None, None]),

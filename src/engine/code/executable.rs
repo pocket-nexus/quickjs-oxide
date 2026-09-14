@@ -40,7 +40,7 @@ impl std::ops::Deref for PublishedEvalEnvironment {
 
 pub(crate) struct PublishedFunctionSnapshot {
     root: Option<FunctionBytecodeRef>,
-    data: PublishedFunctionData,
+    data: Rc<PublishedFunctionData>,
 }
 
 impl std::ops::Deref for PublishedFunctionSnapshot {
@@ -88,7 +88,9 @@ impl PublishedFunctionSnapshot {
     pub(crate) fn empty_for_test(realm: ContextId) -> Self {
         Self {
             root: None,
-            data: PublishedFunctionData {
+            data: Rc::new(PublishedFunctionData {
+                #[cfg(feature = "stack-vm")]
+                fusion: Default::default(),
                 code: Rc::from([]),
                 constants: Rc::from([]),
                 property_key_atoms: None,
@@ -99,7 +101,7 @@ impl PublishedFunctionSnapshot {
                 arg_eval_variable_object_local: None,
                 metadata: FunctionMetadata::default(),
                 realm,
-            },
+            }),
         }
     }
 }
@@ -113,11 +115,14 @@ impl std::ops::DerefMut for PublishedFunctionSnapshot {
             self.root.is_none(),
             "published snapshots remain immutable in tests"
         );
-        &mut self.data
+        Rc::get_mut(&mut self.data).expect("synthetic executable remains uniquely owned")
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct PublishedFunctionData {
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
     pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
     pub(crate) constants: Rc<[BytecodeConstant]>,
     pub(crate) property_key_atoms: Option<Rc<[Atom]>>,
@@ -147,9 +152,10 @@ impl Runtime {
         // The realm is a strong edge of the bytecode node. Validating it here
         // makes a corrupt realm edge fail before entering a VM frame.
         state.heap.context(bytecode.realm)?;
-        Ok(PublishedFunctionSnapshot {
-            root: Some(root),
-            data: PublishedFunctionData {
+        let data = bytecode.executable.get_or_init(|| {
+            let data = Rc::new(PublishedFunctionData {
+                #[cfg(feature = "stack-vm")]
+                fusion: bytecode.fusion.clone(),
                 code: bytecode.code.clone(),
                 constants: bytecode.constants.clone(),
                 property_key_atoms: bytecode.property_key_atoms.clone(),
@@ -163,7 +169,27 @@ impl Runtime {
                     .and_then(|layout| layout.arg_eval_variable_object_local),
                 metadata: bytecode.metadata,
                 realm: bytecode.realm,
-            },
+            });
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_call_buffer_capacity(
+                "executable.published_data_rc",
+                0,
+                1,
+                size_of::<PublishedFunctionData>(),
+            );
+            data
+        });
+        let data = data.clone();
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_call_buffer_share(
+            "executable.published_data_rc",
+            1,
+            size_of::<PublishedFunctionData>(),
+        );
+
+        Ok(PublishedFunctionSnapshot {
+            root: Some(root),
+            data,
         })
     }
 }
@@ -201,6 +227,11 @@ mod tests {
             Err(RuntimeError::WrongRuntime("function bytecode"))
         ));
         let snapshot = runtime.snapshot_function_bytecode(&function).unwrap();
+        let second = runtime.snapshot_function_bytecode(&function).unwrap();
+        assert!(Rc::ptr_eq(&snapshot.data, &second.data));
+        // Two frame headers share one projection but each keeps the bytecode
+        // root alive independently. The cache itself owns no rooting handle.
+        drop(second);
         let id = function.bytecode_id();
         drop(function);
         assert_eq!(snapshot.root().unwrap().bytecode_id(), id);

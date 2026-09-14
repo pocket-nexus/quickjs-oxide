@@ -13,16 +13,20 @@ use crate::source::SourceOffset;
 /// `compute_stack_size`. Keep instruction slots stable with Nops so existing
 /// IR-index jump remapping and debug PCs remain valid.
 pub(super) fn fold_quickjs_constant_branches(code: &mut [Instruction]) {
-    let entries = crate::engine::compiler::flow::block_entries(code);
+    // Most functions contain no foldable constant/conditional pair. Materialize
+    // the original entry map only when the first such pair needs it, before any
+    // rewrite; subsequent folds must use those same original structural entries.
+    let mut entries = None;
 
     for pc in 0..code.len().saturating_sub(1) {
-        // A hostile or hand-built control-flow edge may enter the conditional
-        // without executing its adjacent constant. Compiler-generated QuickJS
-        // patterns never do, but skipping preserves the verifier trust boundary.
-        if entries[pc + 1] {
-            continue;
-        }
-        let effects = code[pc].info().effects;
+        let truthy = match code[pc] {
+            Instruction::Undefined | Instruction::Null | Instruction::PushFalse => false,
+            Instruction::PushTrue => true,
+            Instruction::PushI32(value) => value != 0,
+            Instruction::PushAtomValueIndex(_) => true,
+            _ => continue,
+        };
+        let effects = code[pc].potential_effects();
         // Preserve QuickJS's existing elimination of tagged integer-atom String
         // materialization. No other allocation or observable JS effect is waived.
         if effects.may_call_js
@@ -32,18 +36,19 @@ pub(super) fn fold_quickjs_constant_branches(code: &mut [Instruction]) {
         {
             continue;
         }
-        let truthy = match code[pc] {
-            Instruction::Undefined | Instruction::Null | Instruction::PushFalse => false,
-            Instruction::PushTrue => true,
-            Instruction::PushI32(value) => value != 0,
-            Instruction::PushAtomValueIndex(_) => true,
-            _ => continue,
-        };
         let (branch_on_true, target) = match code[pc + 1] {
             Instruction::IfFalse(target) => (false, target),
             Instruction::IfTrue(target) => (true, target),
             _ => continue,
         };
+        // A hostile or hand-built control-flow edge may enter the conditional
+        // without executing its adjacent constant. Preserve that independent
+        // entry, including when it was named by a branch folded earlier here.
+        let entries =
+            entries.get_or_insert_with(|| crate::engine::compiler::flow::block_entries(code));
+        if entries[pc + 1] {
+            continue;
+        }
         code[pc] = if truthy == branch_on_true {
             Instruction::Goto(target)
         } else {
@@ -61,6 +66,24 @@ pub(super) fn apply_quickjs_late_throw_sites(
         return Err(Error::internal(
             "lowered instructions and source markers have different lengths",
         ));
+    }
+    // With neither labels nor late throws, this projection cannot modify any
+    // source marker or encounter a label-validation error. Keep all functions
+    // containing control targets on the full path even without a late throw:
+    // that path also authenticates malformed targets before stack verification.
+    if !code.iter().any(|instruction| {
+        matches!(
+            instruction,
+            Instruction::Goto(_)
+                | Instruction::IfFalse(_)
+                | Instruction::IfTrue(_)
+                | Instruction::Catch(_)
+                | Instruction::Gosub(_)
+                | Instruction::ThrowReadOnly(_)
+                | Instruction::ThrowRedeclaration(_)
+        )
+    }) {
+        return Ok(());
     }
     // Maintenance invariant: every new label-bearing instruction or
     // resolve-labels peephole must update this projection and add a pinned
@@ -369,4 +392,66 @@ pub(super) fn apply_quickjs_late_throw_sites(
         pc_sites[index] = site;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_quickjs_late_throw_sites, fold_quickjs_constant_branches};
+    use crate::engine::code::bytecode::Instruction;
+
+    #[test]
+    fn lazy_branch_entries_preserve_targets_of_earlier_removed_branches() {
+        use Instruction::*;
+        // The first rewrite removes the only branch to PC 4. The second
+        // candidate must still see the original entry map and remain intact.
+        let mut code = [
+            Nop,
+            PushFalse,
+            IfTrue(4),
+            PushTrue,
+            IfTrue(6),
+            Nop,
+            ReturnUndefined,
+        ];
+        fold_quickjs_constant_branches(&mut code);
+        assert!(matches!(code[1], Nop));
+        assert!(matches!(code[2], Nop));
+        assert!(matches!(code[3], PushTrue));
+        assert!(matches!(code[4], IfTrue(6)));
+    }
+
+    #[test]
+    fn late_throw_projection_keeps_straight_line_sites_and_validation_order() {
+        use crate::source::SourceOffset;
+        use Instruction::*;
+        let start = Some(SourceOffset::try_from_usize(3).unwrap());
+        let dead = Some(SourceOffset::try_from_usize(29).unwrap());
+        let code = [PushI32(1), Return, Nop];
+        let original = [start, None, dead];
+        let mut sites = original;
+        apply_quickjs_late_throw_sites(&code, &mut sites).unwrap();
+        assert_eq!(sites, original);
+        assert_eq!(
+            apply_quickjs_late_throw_sites(&code, &mut [])
+                .unwrap_err()
+                .message(),
+            "lowered instructions and source markers have different lengths"
+        );
+        // No late throw is present, but unreachable invalid targets must still
+        // fail in the projection before later publication validators run.
+        for target in [Goto(9), IfTrue(9), IfFalse(9), Catch(9), Gosub(9)] {
+            let code = [ReturnUndefined, target];
+            assert_eq!(
+                apply_quickjs_late_throw_sites(&code, &mut [start, dead])
+                    .unwrap_err()
+                    .message(),
+                "jump target is out of bounds"
+            );
+        }
+        // A late throw with no labels still requires the ordered dead-source
+        // projection: it inherits the final source marker after its terminal.
+        let mut sites = [start, dead];
+        apply_quickjs_late_throw_sites(&[ThrowReadOnly(0), Nop], &mut sites).unwrap();
+        assert_eq!(sites, [dead, dead]);
+    }
 }

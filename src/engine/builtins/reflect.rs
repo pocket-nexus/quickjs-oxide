@@ -55,6 +55,19 @@ impl Runtime {
                         operation: "snapshotting fast Array values",
                     })?;
                 values.extend_from_slice(dense);
+                #[cfg(feature = "profiling")]
+                {
+                    crate::engine::api::profiling::record_call_buffer_capacity(
+                        "arguments.fast_raw",
+                        0,
+                        values.capacity(),
+                        size_of::<crate::engine::heap::RawValue>(),
+                    );
+                    crate::engine::api::profiling::record_call_buffer_initialized(
+                        "arguments.fast_raw",
+                        values.len(),
+                    );
+                }
                 values
             } else {
                 let (mapped, fast_len) = match &object_data.payload {
@@ -69,6 +82,19 @@ impl Runtime {
                     RuntimeError::Invariant("fast argument length does not fit usize")
                 })?;
                 let mut ordered = vec![None; capacity];
+                #[cfg(feature = "profiling")]
+                {
+                    crate::engine::api::profiling::record_call_buffer_capacity(
+                        "arguments.fast_ordering",
+                        0,
+                        ordered.capacity(),
+                        size_of::<Option<crate::engine::heap::RawValue>>(),
+                    );
+                    crate::engine::api::profiling::record_call_buffer_initialized(
+                        "arguments.fast_ordering",
+                        ordered.len(),
+                    );
+                }
                 for (entry, slot) in shape.entries().iter().zip(&object_data.slots) {
                     let Some(index) = state.atoms.array_index(entry.atom)? else {
                         continue;
@@ -117,11 +143,38 @@ impl Runtime {
             }
         };
 
-        raw_values
+        #[cfg(feature = "profiling")]
+        {
+            // The Arguments ordering collect may reuse its input allocation;
+            // observe this raw buffer without inventing a second allocation.
+            crate::engine::api::profiling::record_call_buffer_observed(
+                "arguments.fast_raw",
+                raw_values.capacity(),
+                size_of::<crate::engine::heap::RawValue>(),
+            );
+            crate::engine::api::profiling::record_call_raw_buffer_copies(
+                "arguments.fast_raw",
+                &raw_values,
+            );
+        }
+        let values = raw_values
             .iter()
             .map(|value| self.root_raw_value(value))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some)
+            .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(feature = "profiling")]
+        {
+            // This iterator borrows raw_values and cannot reuse its backing Vec.
+            crate::engine::api::profiling::record_call_buffer_observed(
+                "arguments.fast_rooted",
+                values.capacity(),
+                size_of::<Value>(),
+            );
+            crate::engine::api::profiling::record_call_buffer_copies(
+                "arguments.fast_rooted",
+                &values,
+            );
+        }
+        Ok(Some(values))
     }
 
     /// Install the global `Reflect` `JS_OBJECT_DEF` equivalent. The object is

@@ -94,14 +94,23 @@ reject profiling flags with an explanatory error.
 
 `-d --profile-json` reuses the same CLI and benchmark workload entry. Its
 `oxide-compile-vm-cost-v1` record describes the **legacy** execution path:
-parse/resolution/lowering attempts and inclusive monotonic wall nanoseconds,
+parse/resolution/lowering, blocks, fusion, relocation, verify and publish attempts
+and inclusive/exclusive monotonic wall nanoseconds,
 successfully lowered function drafts (including children), final instruction
 count and inline typed-code bytes, maximum verified stack, dynamic dispatches,
 successful PC publications, and operand depth observed at dispatch boundaries.
 Failed parses still count as attempts; lowered drafts are not published-code
 or unique-code counts. Inline code bytes exclude boxed operands and metadata.
-Phase time includes nested compilation and callbacks, so phase totals are not
-additive. Each phase also records the number of storage snapshots and the
+Inclusive phase time includes nested compilation and callbacks and is not
+additive. `exclusive_ns` subtracts measured child phases in the same collector;
+uninstrumented work and nested collectors remain charged to their parent.
+Verify covers draft authentication; publish covers flattening, linking and heap
+publication (including the heap boundary's independent checks). Blocks covers
+compiler block discovery; fusion covers the owned execution projection.
+Relocation covers IR fragment moves and target-bearing lowered instructions,
+not the entire lowering/emission loop. Fine-grained diagnostic timers introduce
+overhead and must not be compared against ordinary compile-only timings.
+Each phase also records the number of storage snapshots and the
 largest observed partial owned-Vec capacity: the function arena, operations,
 constants, bindings, scopes, local/parameter descriptors, closure variables,
 eval environments, and each scope’s binding-index vector. These are boundary
@@ -186,14 +195,55 @@ internal migration boundary; it is not a host delimiter.
 Temporary request/continuation Box allocations and Proxy operation state storage
 are outside `call_preparation` coverage.
 
-`owned_storage` records successful SlotStore/FrameStore Vec capacity increases,
-per-store capacity and frame-depth peaks, slot initialization, reserved/live slot
-peaks, logical owner moves, frame/arena cleanup clears, value copies, and narrow
-hot releases. Moves include entry/handoff transfers and pop; rotations count the
-owners participating, not machine copies. Clears count occupied slots removed by
-frame/arena cleanup; a hot release followed by pop is reported separately. Empty
-reserved operands contribute to initialization and reserved capacity, not live
-slots. Reusing capacity does not count as a new growth event.
+The current S08/S09 run keeps only resume PC local; fault PC is written directly
+into Frame at each actual dispatch entry. `owned_execution_events` separates:
+
+| Counter | Current meaning |
+| --- | --- |
+| `run_frame_fault_pc_write` | Source-level Frame fault assignment at each actual run dispatch entry, including entries that subsequently take a cold/error exit. A fused span does not manufacture writes for its skipped canonical dispatches. |
+| `run_frame_resume_pc_write` | Publication of the local resume value when its ProgramCounter guard drops on normal, Result-error, cold, suspension, or Rust-unwind exit. |
+| `runtime_pc_publication` | Existing driver publication to the active Runtime frame at observation boundaries; this is not a per-instruction counter. |
+
+These source-level counters are not machine store counts. The ordinary-loop
+fixture expects fault writes greater than 100 and no greater than its committed
+owned instruction count, with resume and Runtime publication each 1. That bound
+is fixture-specific, not a universal relationship for failed dispatches. Earlier
+both-local PC experiments had different write counts and remain historical
+measurements. The local-resume choice came from ordinary paired candidate
+measurements, not from assuming fewer stores are faster. See the
+[S08 development evidence](reports/primitive-vm-s08-development.md).
+
+`owned_storage` records SlotStore/FrameStore capacity changes, frame-depth and
+slot peaks, logical owner moves, cleanup clears, value copies, and narrow hot
+releases. Its slot counts distinguish logical frame extent from initialized
+backing storage and allocated capacity:
+
+| Field | Meaning |
+| --- | --- |
+| `slots_initialized` | Cumulative logical slots reserved by successfully installed frames, including reused slots and unused operand capacity. This compatibility counter does not count physical writes of `None`. |
+| `physical_none_initializations` | Cumulative slots first written as `None` when a SlotStore's initialized backing grows. Reusing that backing adds zero. Later owner clears and binding writes are not included. Growth before a failed frame installation still counts. |
+| `maximum_initialized_slots` | Largest initialized backing length observed for one SlotStore; includes inactive `None` entries retained after frame return. It can exceed the interval's successful active-extent peak after a failed installation or when collection starts after a larger frame has returned. |
+| `maximum_reserved_slots` | Largest successful active frame extent (`active_end`) observed for one SlotStore, including reserved but unused operands. Inactive backing above `active_end` is excluded. |
+| `maximum_live_slots` | Largest observed number of occupied binding/value slots in one SlotStore. Unused operands and inactive backing are excluded. |
+| `maximum_slot_capacity` | Largest observed SlotStore `Vec::capacity()`, measured in entries. Allocated capacity can exceed initialized length; it is not allocator usable bytes or a process memory peak. |
+| `slot_capacity_growths` | Number of observed increases in allocated SlotStore capacity. Reusing capacity or extending initialized length within existing capacity is not a growth event. |
+
+A SlotStore retains its initialized high-water backing until the owning
+execution releases it. Every inactive entry is `None`: frame cleanup releases
+its owners, and suspension handoff moves them into `FrameStorage`. Retained
+backing therefore holds no JavaScript values or roots above `active_end` and
+does not consume the logical active-slot budget. Repeated calls can increase
+`slots_initialized` while `physical_none_initializations` remains unchanged.
+When collection starts after warm-up, a reused push observes the existing
+initialized length and allocated capacity without counting earlier physical
+initializations or allocation growths.
+These are per-store observations within the collection interval, not additive
+process-wide peaks or evidence of a throughput improvement.
+
+Moves include entry/handoff transfers and pop; rotations count participating
+owners, not machine copies. Clears count occupied slots removed by frame/arena
+cleanup; a hot release followed by pop is reported separately. Empty reserved
+operands count toward logical initialization and active extent, not live slots.
 
 `copied_heap_roots` and `hot_heap_root_releases` cover Object/Symbol operations at
 the narrow slot boundaries only. Primitive Rc operations, binding/cold-payload
@@ -225,3 +275,84 @@ owned 入口另记录 FrameCold Box 的成功分配、captured-reuse 位标记 V
 此字段覆盖内。所有容量为累计观察值，不是同时存活峰值；不能与
 `owned_storage` 的逐 arena 峰值相加。root 复制也仅覆盖列明的边界，
 不等于全 Runtime retain/release 统计。正式性能仍须使用关闭诊断的构建。
+
+
+### S09 调用临时缓冲区与暂停阶段诊断
+
+owned 普通根调用和普通子调用直接初始化 SlotStore 参数/局部区，因此其
+`parameter_buffer_allocations`、`local_buffer_allocations` 为零；原始 argv
+独立保留，参数复制与 Undefined padding 仍分别计数。普通未绑定子调用的
+`call_outgoing_tail_transferred` 表示原始 argv 从 caller 操作数尾区直接转移，
+不是省略参数副本。FrameCold、捕获标记和 unwind regions 只复用清空后的容量，
+按最大同时活动帧深度预留；`owned_frame_allocations` 不计复用命中。
+
+`oxide-compile-vm-cost-v1.call_buffers` 按实际生产者分组：
+`native.readable`、`bound.raw_snapshot`、`bound.rooted_snapshot`、`bound.merge`、
+`apply.indexed`、`arguments.fast_raw/fast_ordering/fast_rooted`、
+`function.call_suffix`、`call.boundary_argv`。Array/Arguments 快照也供 spread
+使用，因此共享生产者不强行归到 apply 一类。`invoke.argv_carrier` 只观察
+已经构造完成的参数容器，不重复计分配或复制。
+
+- `capacity_growths`、`capacity_growth_bytes`、`allocated_capacity_bytes` 只在
+  明确的成功 reserve/new-allocation 边界记录；分别是增长次数、净容量增长
+  字节和增长后容量字节的累计和。都不是 malloc usable bytes。
+- `buffers_observed`、`observed_capacity_bytes` 是缓冲区容量观察；特别是
+  `collect<Result<Vec<_>>>` 的内部增长次数不可从最终容量推断，其结果只记录
+  observation，不伪称一次分配。失败的 collect 内部部分分配也未覆盖。
+- `slots_initialized`、`values_copied`、`values_moved` 是已观察到的初始化、
+  Value 复制和 owner 移入数量。初始化包含对应复制/移入，三者不能相加。
+  native Undefined padding 只计初始化；indexed apply 的 getter 回复计移入。
+- `heap_root_copies` 只计 Object/Symbol root 复制或 raw 到 root 的提升；
+  `primitive_rc_copies` 计 String/堆 BigInt 的共享引用复制，短 BigInt 归入
+  `immediate_copies`。RawValue 的 ObjectId/Atom 复制单列为
+  `raw_heap_edges_copied`，不当作 Runtime root retain；raw 的 String/堆 BigInt
+  共享引用另计 `raw_primitive_rc_copies`。
+
+各生产者代表不同真实步骤；bound raw 快照仅共享 Rc slice，记录现有长度
+观察，不推断新分配或逐 RawValue 复制；root 提升和合并 argv 才各自发生
+列明的 Value 复制。共享容器 Rc 的复制以 `shared_storage_clones` 单列，不计入 primitive Value Rc 字段。`call_preparation` 与 `owned_storage` 仍是另两种部分观察，
+与新 map 的统计可能重叠，不能相加作为全调用总数。这里没有全局 allocator
+拦截、完整 GC/析构 release 账或所有临时容器覆盖。
+
+`vm_phases` 包含 `bytecode.prepare`、`native.prepare`、`freeze.detach`、
+`freeze.owned_export`、`freeze.encode`、`thaw.decode`、`thaw.prepare_owned`。
+每项记录 attempts（含错误/展开）、inclusive/exclusive 纳秒，以及前 4096 次
+`[inclusive, exclusive]` 原始样本和 omitted_samples。VM 与编译计时共用同一
+嵌套时钟；父阶段 exclusive 扣除直接测量子阶段，inclusive 不能相加。
+这些阶段是明确的 Rust 操作边界；未计时的 GC/release 工作仍包含在所在阶段中，
+不伪称单独 GC 暂停。样本截断后不能把前 4096 次的分位数称为完整调用分布。
+
+暂停探针在事件数不超过上限时可报告完整样本 p50/p95/p99 与最大值。所有诊断
+计时和样本保存均只存在于 `profiling` 构建，并有测量开销；正式吞吐和生产
+RSS 比较使用关闭 profiling 的独立构建，不与诊断、测试或构建并行。
+
+owned native continuation 现在接收已有独占 argv Vec，沿同一 metadata/realm
+验证入口补齐 Undefined padding 后直接交给 NativeArguments，实际 arity
+不变；`native.incoming_argv` 只记录该源容器观察。`native.readable` 对此路径
+记录 buffer 所拥有 Value 的逻辑转移和实际 padding 增长，不计 argv 复制；
+借用式同步入口仍记录新 readable Vec 和真实 Value 复制。两者都保留额外
+实参直到 native 完成、抛错或放弃，未把状态等待期间的 owner 提前回收。
+
+Native 调用方的空 argv 容量由 execution-owned pool 回收：`call.native_argv`
+记录调用方实际 reserve 的容量增长和从 operand 栈移交的 Value owner；
+`call.native_pool` 单独记录空 Vec 容器池元数据的容量增长（元素为 Vec header，
+不是 Value）。池按同时存活的 active-frame 深度预留，native readable 中的参数
+仅在错误物化、active-frame 退出后释放，再回收空容量。等待中的 native scope
+仍独占其完整参数；丢弃 continuation 使用原有 owner 清理，不回收活值。
+
+### Local continuation and recycler allocation producers
+
+The call-buffer ledger additionally observes successful reserves at `query.parents`,
+`query.native_scopes`, `query.spare_parents`, `query.free_pool`,
+`cold.empty_pool`, `cold.capture_pool`, `cold.region_pool`, `cold.capture_flags`
+and `cold.regions`. Reuse and failed reserves add no capacity growth. Recycler
+metadata backing and the reusable allocations it points to are separate producers.
+
+`query.pending_box`, `iterator.pending_box` and `cold.frame_box` record each
+successful fixed-size Box allocation as capacity 0 → 1, using its payload size.
+`executable.published_data_rc` records the lazy immutable metadata allocation
+once and each shared snapshot handle clone separately; clones allocate no payload.
+Those byte counts exclude allocator metadata and the Rc header. Existing cold-frame
+allocation counters overlap `cold.frame_box`; do not add them together.
+`native_activation_prepared` counts successful guard publication, not allocations.
+These local counters do not constitute global allocator or retain/release totals.

@@ -19,6 +19,17 @@ use crate::engine::vm::call::{
 };
 use crate::engine::vm::frames::ActiveFrameKind;
 
+// Adapted ABI variants transport the same input owner. Only borrowed inputs
+// whose variant actually changes need an additional root handle.
+fn native_invocation_input(invocation: std::borrow::Cow<'_, NativeInvocation>) -> Value {
+    match invocation.into_owned() {
+        NativeInvocation::Call { this_value }
+        | NativeInvocation::Getter { this_value }
+        | NativeInvocation::Setter { this_value } => this_value,
+        NativeInvocation::Construct { new_target } => new_target,
+    }
+}
+
 impl Runtime {
     /// Tail-forward an ordinary `Function.prototype.call` invocation without
     /// retaining an otherwise redundant native frame around the target call.
@@ -71,6 +82,15 @@ impl Runtime {
         let mut arguments = Vec::with_capacity(total);
         arguments.extend_from_slice(bound_arguments);
         arguments.extend_from_slice(call_arguments);
+        #[cfg(feature = "profiling")]
+        {
+            use crate::engine::api::profiling::{
+                record_call_buffer_capacity, record_call_buffer_copies,
+            };
+            record_call_buffer_capacity("bound.merge", 0, arguments.capacity(), size_of::<Value>());
+            record_call_buffer_copies("bound.merge", bound_arguments);
+            record_call_buffer_copies("bound.merge", call_arguments);
+        }
         Ok(NativeConversion::Value(arguments))
     }
 
@@ -249,6 +269,46 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<NativeInvocationAdaptation, RuntimeError> {
+        match self.adapt_native_invocation_input(
+            target,
+            realm,
+            std::borrow::Cow::Owned(invocation),
+            arguments,
+        )? {
+            NativeInvocationAdaptation::Invoke(invocation) => {
+                Ok(NativeInvocationAdaptation::Invoke(invocation.into_owned()))
+            }
+            NativeInvocationAdaptation::Complete(completion) => {
+                Ok(NativeInvocationAdaptation::Complete(completion))
+            }
+        }
+    }
+
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn adapt_native_invocation_borrowed<'a>(
+        &self,
+        target: NativeFunctionId,
+        realm: ContextId,
+        invocation: &'a NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<NativeInvocationAdaptation<std::borrow::Cow<'a, NativeInvocation>>, RuntimeError>
+    {
+        self.adapt_native_invocation_input(
+            target,
+            realm,
+            std::borrow::Cow::Borrowed(invocation),
+            arguments,
+        )
+    }
+
+    fn adapt_native_invocation_input<'a>(
+        &self,
+        target: NativeFunctionId,
+        realm: ContextId,
+        invocation: std::borrow::Cow<'a, NativeInvocation>,
+        arguments: &NativeArguments,
+    ) -> Result<NativeInvocationAdaptation<std::borrow::Cow<'a, NativeInvocation>>, RuntimeError>
+    {
         let frame =
             self.0
                 .state
@@ -280,20 +340,20 @@ impl Runtime {
         }
         // Some handlers do not inspect their adapted this/new-target input,
         // but keeping it rooted for the full dispatch is part of the ABI.
-        let invocation = match (target.descriptor().cproto, invocation) {
+        let invocation = match (target.descriptor().cproto, invocation.as_ref()) {
             (
                 NativeCProto::Generic
                 | NativeCProto::GenericMagic
                 | NativeCProto::UnaryF64
                 | NativeCProto::BinaryF64,
-                NativeInvocation::Call { this_value },
-            ) => NativeInvocation::Call { this_value },
+                NativeInvocation::Call { .. },
+            ) => invocation,
             (
                 NativeCProto::Generic
                 | NativeCProto::GenericMagic
                 | NativeCProto::UnaryF64
                 | NativeCProto::BinaryF64,
-                NativeInvocation::Construct { new_target },
+                NativeInvocation::Construct { .. },
             ) => {
                 // QuickJS's generic and floating-point ABIs receive
                 // new.target in their receiver slot when an embedding
@@ -301,14 +361,14 @@ impl Runtime {
                 // function object. Floating-point argument conversion stays
                 // in the handler so abrupt completions keep their defining
                 // realm and left-to-right order.
-                NativeInvocation::Call {
-                    this_value: new_target,
-                }
+                std::borrow::Cow::Owned(NativeInvocation::Call {
+                    this_value: native_invocation_input(invocation),
+                })
             }
             (
                 NativeCProto::Constructor | NativeCProto::ConstructorMagic,
-                NativeInvocation::Construct { new_target },
-            ) => NativeInvocation::Construct { new_target },
+                NativeInvocation::Construct { .. },
+            ) => invocation,
             (
                 NativeCProto::Constructor | NativeCProto::ConstructorMagic,
                 NativeInvocation::Call { .. },
@@ -322,43 +382,43 @@ impl Runtime {
             (
                 NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
                 NativeInvocation::Call { .. },
-            ) => NativeInvocation::Construct {
+            ) => std::borrow::Cow::Owned(NativeInvocation::Construct {
                 new_target: Value::Undefined,
-            },
+            }),
             (
                 NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
-                NativeInvocation::Construct { new_target },
-            ) => NativeInvocation::Construct { new_target },
-            (
-                NativeCProto::Getter | NativeCProto::GetterMagic,
-                NativeInvocation::Call { this_value },
-            ) => NativeInvocation::Getter { this_value },
-            (
-                NativeCProto::Getter | NativeCProto::GetterMagic,
-                NativeInvocation::Construct { new_target },
-            ) => NativeInvocation::Getter {
-                this_value: new_target,
-            },
-            (
-                NativeCProto::Setter | NativeCProto::SetterMagic,
-                NativeInvocation::Call { this_value },
-            ) => NativeInvocation::Setter { this_value },
-            (
-                NativeCProto::Setter | NativeCProto::SetterMagic,
-                NativeInvocation::Construct { new_target },
-            ) => NativeInvocation::Setter {
-                this_value: new_target,
-            },
-            (NativeCProto::IteratorNext, NativeInvocation::Call { this_value }) => {
-                NativeInvocation::Call { this_value }
+                NativeInvocation::Construct { .. },
+            ) => invocation,
+            (NativeCProto::Getter | NativeCProto::GetterMagic, NativeInvocation::Call { .. }) => {
+                std::borrow::Cow::Owned(NativeInvocation::Getter {
+                    this_value: native_invocation_input(invocation),
+                })
             }
-            (NativeCProto::IteratorNext, NativeInvocation::Construct { new_target }) => {
+            (
+                NativeCProto::Getter | NativeCProto::GetterMagic,
+                NativeInvocation::Construct { .. },
+            ) => std::borrow::Cow::Owned(NativeInvocation::Getter {
+                this_value: native_invocation_input(invocation),
+            }),
+            (NativeCProto::Setter | NativeCProto::SetterMagic, NativeInvocation::Call { .. }) => {
+                std::borrow::Cow::Owned(NativeInvocation::Setter {
+                    this_value: native_invocation_input(invocation),
+                })
+            }
+            (
+                NativeCProto::Setter | NativeCProto::SetterMagic,
+                NativeInvocation::Construct { .. },
+            ) => std::borrow::Cow::Owned(NativeInvocation::Setter {
+                this_value: native_invocation_input(invocation),
+            }),
+            (NativeCProto::IteratorNext, NativeInvocation::Call { .. }) => invocation,
+            (NativeCProto::IteratorNext, NativeInvocation::Construct { .. }) => {
                 // Iterator-next functions are non-constructors by default.
                 // If an embedder independently enables [[Construct]], QuickJS
                 // passes new.target through the same native receiver slot.
-                NativeInvocation::Call {
-                    this_value: new_target,
-                }
+                std::borrow::Cow::Owned(NativeInvocation::Call {
+                    this_value: native_invocation_input(invocation),
+                })
             }
             (_, NativeInvocation::Getter { .. } | NativeInvocation::Setter { .. }) => {
                 return Err(RuntimeError::Invariant(

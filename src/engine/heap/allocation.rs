@@ -156,7 +156,7 @@ impl Heap {
     /// succeed.
     pub fn allocate_function_bytecode(
         &mut self,
-        bytecode: FunctionBytecodeData,
+        mut bytecode: FunctionBytecodeData,
     ) -> Result<FunctionBytecodeId, HeapError> {
         if bytecode
             .constants
@@ -1289,6 +1289,20 @@ impl Heap {
             bytecode.metadata.max_stack,
         )
         .map_err(|_| HeapError::Invariant("function bytecode failed generic verification"))?;
+        // A draft may have been assembled from another node's fields. Never
+        // reuse its projection: only this authenticated immutable payload may
+        // initialize the cache after publication.
+        bytecode.executable = Default::default();
+        #[cfg(feature = "stack-vm")]
+        {
+            // Fusion is another derived projection. Authorize spans only from
+            // the exact code and local definitions verified above, never from
+            // a caller-supplied or previously published draft's plan.
+            bytecode.fusion = crate::engine::code::fusion::FusionPlan::build(
+                &bytecode.code,
+                &bytecode.local_definitions,
+            );
+        }
         let (index, generation) = self.reserve(HeapNodeKind::FunctionBytecode)?;
         let id = FunctionBytecodeId { index, generation };
         let edges = function_bytecode_edges(&bytecode);

@@ -277,6 +277,11 @@ pub(super) fn set(
                     receiver,
                 )
                 .map_err(runtime_error_to_vm_error)?
+                // The budget check and parent reservation above must precede
+                // any storage effects. Only shared no-callback phases advance;
+                // selected setters and exotic waits keep their exact state.
+                .advance_without_callback(runtime)
+                .map_err(runtime_error_to_vm_error)?
                 .into();
                 continue;
             }
@@ -445,5 +450,110 @@ pub(super) fn define(
                 return Ok(Next::Continue);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod local_set_tests {
+    use super::super::Parents;
+    use super::*;
+    use crate::engine::api::Value;
+    use crate::engine::vm::execution::ExecutionLimits;
+
+    #[test]
+    fn local_set_dispatch_budget_failure_precedes_array_write() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(array) = context.eval("[]").unwrap() else {
+            panic!("expected array");
+        };
+        let key = runtime.property_key_for_index(0).unwrap();
+        let mut query = Query {
+            #[cfg(feature = "profiling")]
+            had_callback: false,
+            realm: context.realm,
+            parents: Parents::default(),
+            natives: Vec::new(),
+            spare_parents: Vec::new(),
+            finish: None,
+        };
+        let mut pending = Step::Set {
+            object: array.clone(),
+            key: key.clone(),
+            value: Value::Int(7),
+            receiver: Value::Object(array.clone()),
+            resume: Resume::RootSet,
+        };
+        let mut execution = RunningExecution::new(
+            &runtime,
+            ExecutionLimits {
+                frames: 0,
+                slots: 0,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            set(
+                &runtime,
+                &mut execution,
+                ReturnOwner::Root,
+                1,
+                &mut query,
+                &mut pending
+            )
+            .unwrap(),
+            Next::Continue
+        ));
+        assert!(matches!(pending, Step::Complete(Completion::Throw(_))));
+        assert!(query.parents.is_empty());
+        assert!(runtime.get_own_property(&array, &key).unwrap().is_none());
+        assert_eq!(
+            runtime.array_length_state_if_genuine(&array).unwrap(),
+            Some((0, true))
+        );
+    }
+
+    #[test]
+    fn local_set_dispatch_keeps_setters_proxy_and_array_length_order() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(function () {
+            var setterCalls = 0, setterLength = -1, stored;
+            var proto = Object.create(Array.prototype);
+            Object.defineProperty(proto, '0', { set: function (value) {
+                setterCalls++; setterLength = this.length; stored = value;
+            }});
+            var a = []; Object.setPrototypeOf(a, proto);
+            if (a.push(7) !== 1 || setterCalls !== 1 || setterLength !== 0 ||
+                stored !== 7 || Object.hasOwn(a, '0')) return false;
+            var trace = [], target = [];
+            var proxy = new Proxy(target, {set: function (t, k, v, r) {
+                trace.push(k + ':' + t.length); return Reflect.set(t, k, v, r);
+            }});
+            if (Array.prototype.push.call(proxy, 9) !== 1 || target[0] !== 9 ||
+                trace.join(',') !== '0:0,length:1') return false;
+            var b = [];
+            Object.defineProperty(b, 'length', {writable: false});
+            var rejected = false;
+            try { b.push(1); } catch (e) { rejected = e instanceof TypeError; }
+            if (!rejected || b.length !== 0 || Object.hasOwn(b, '0')) return false;
+            var order = '', length = 0, receiver = {
+                get length() { order += 'g'; return length; },
+                set length(v) { order += 'l'; length = v; },
+                set 0(v) { order += 'a'; },
+                set 1(v) { order += 'b'; throw 23; }
+            };
+            var failure;
+            try { Array.prototype.push.call(receiver, 1, 2); } catch(e) { failure = e; }
+            return failure === 23 && order === 'gab' && length === 0;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

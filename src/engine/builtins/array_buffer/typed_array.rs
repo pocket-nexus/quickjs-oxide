@@ -1064,15 +1064,9 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("TypedArray"));
         }
         let state = self.0.state.borrow();
-        let ObjectPayload::TypedArray(data) = state.heap.object(object.object_id())?.payload else {
-            return Ok(None);
-        };
-        Ok(Some(TypedArraySnapshot {
-            buffer: data.view.buffer,
-            byte_offset: data.view.byte_offset,
-            fixed_byte_length: data.view.fixed_byte_length,
-            element: data.element,
-        }))
+        Ok(typed_array_snapshot_from_payload(
+            &state.heap.object(object.object_id())?.payload,
+        ))
     }
 
     pub(crate) fn typed_array_snapshot(
@@ -1280,15 +1274,20 @@ impl Runtime {
         index: u64,
     ) -> Result<Option<Value>, RuntimeError> {
         let snapshot = self.typed_array_snapshot(object)?;
-        let access = self.snapshot_buffer_access(snapshot.buffer)?;
-        let state = Self::typed_array_state_with_buffer(snapshot, access.state);
-        if state.out_of_bounds || index >= u64::from(state.length) {
-            return Ok(None);
+        #[cfg(feature = "stack-vm")]
+        match self.ordinary_typed_array_word(snapshot, index, None)? {
+            OrdinaryTypedWord::Missing => return Ok(None),
+            OrdinaryTypedWord::Word(bytes) => {
+                return Ok(Some(typed_array_decode(snapshot.element, bytes)));
+            }
+            OrdinaryTypedWord::Shared => {}
         }
-        let absolute = typed_array_absolute_byte_offset(state.snapshot, index)?;
-        let width = usize::from(state.snapshot.element.byte_length());
+        let access = self.snapshot_buffer_access(snapshot.buffer)?;
+        let Some((absolute, width)) = typed_array_word_range(snapshot, access.state, index)? else {
+            return Ok(None);
+        };
         let bytes = self.read_buffer_word(&access, absolute, width)?;
-        Ok(Some(typed_array_decode(state.snapshot.element, bytes)))
+        Ok(Some(typed_array_decode(snapshot.element, bytes)))
     }
 
     pub(crate) fn typed_array_get_index_descriptor(
@@ -1380,15 +1379,103 @@ impl Runtime {
         bytes: &[u8; 8],
     ) -> Result<bool, RuntimeError> {
         let snapshot = self.typed_array_snapshot(object)?;
-        let access = self.snapshot_buffer_access(snapshot.buffer)?;
-        let state = Self::typed_array_state_with_buffer(snapshot, access.state);
-        if state.out_of_bounds || index >= u64::from(state.length) {
-            return Ok(false);
+        #[cfg(feature = "stack-vm")]
+        match self.ordinary_typed_array_word(snapshot, index, Some(bytes))? {
+            OrdinaryTypedWord::Missing => return Ok(false),
+            OrdinaryTypedWord::Word(_) => return Ok(true),
+            OrdinaryTypedWord::Shared => {}
         }
-        let absolute = typed_array_absolute_byte_offset(state.snapshot, index)?;
-        let width = usize::from(state.snapshot.element.byte_length());
+        let access = self.snapshot_buffer_access(snapshot.buffer)?;
+        let Some((absolute, width)) = typed_array_word_range(snapshot, access.state, index)? else {
+            return Ok(false);
+        };
         self.write_buffer_word(&access, absolute, &bytes[..width])?;
         Ok(true)
+    }
+
+    /// A rooted view owns its ordinary backing throughout this synchronous
+    /// leaf. No token/root is needed when validation and word access consume
+    /// the same state borrow. Conversion has already completed; this helper
+    /// never calls user code, allocates a JS value, or releases an owner.
+    /// Shared backing must leave the borrow before obtaining its access token.
+    #[cfg(feature = "stack-vm")]
+    fn ordinary_typed_array_word(
+        &self,
+        snapshot: TypedArraySnapshot,
+        index: u64,
+        write: Option<&[u8; 8]>,
+    ) -> Result<OrdinaryTypedWord, RuntimeError> {
+        let mut state = self.0.state.try_borrow_mut().map_err(|_| {
+            RuntimeError::Invariant(
+                "ArrayBuffer-family snapshot attempted during a runtime-state borrow",
+            )
+        })?;
+        ordinary_typed_array_word_in_heap(&mut state.heap, snapshot, index, write)
+    }
+
+    /// Scoped numeric read shared by the resident indexed-read selector. The
+    /// caller proves no-drain input release before taking this heap borrow.
+    /// Decode allocates no owner because BigInt kinds are declined first.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn typed_array_number_read_in_heap(
+        heap: &mut crate::engine::heap::Heap,
+        object: ObjectId,
+        index: u32,
+    ) -> Option<Value> {
+        let data = heap.object(object).ok()?;
+        let snapshot = typed_array_snapshot_from_payload(&data.payload)?;
+        if snapshot.element.is_bigint() {
+            return None;
+        }
+        let OrdinaryTypedWord::Word(bytes) =
+            ordinary_typed_array_word_in_heap(heap, snapshot, u64::from(index), None).ok()?
+        else {
+            return None;
+        };
+        Some(typed_array_decode(snapshot.element, bytes))
+    }
+
+    /// Resident VM leaf: every decline precedes the only byte write. The
+    /// owning input may be dropped after success without running heap cleanup.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn try_typed_array_number_write(
+        &self,
+        base: &Value,
+        index: u32,
+        number: f64,
+    ) -> bool {
+        use crate::engine::heap::SlotReleaseReadiness;
+        let Value::Object(object) = base else {
+            return false;
+        };
+        if !matches!(
+            self.slot_value_release_readiness(base),
+            Ok(SlotReleaseReadiness::Ready)
+        ) {
+            return false;
+        }
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return false;
+        };
+        let Ok(data) = state.heap.object(object.object_id()) else {
+            return false;
+        };
+        let Some(snapshot) = typed_array_snapshot_from_payload(&data.payload) else {
+            return false;
+        };
+        if snapshot.element.is_bigint() {
+            return false;
+        }
+        let bytes = typed_array_encode_number(snapshot.element, number);
+        matches!(
+            ordinary_typed_array_word_in_heap(
+                &mut state.heap,
+                snapshot,
+                u64::from(index),
+                Some(&bytes)
+            ),
+            Ok(OrdinaryTypedWord::Word(_))
+        )
     }
 
     pub(crate) fn typed_array_set_index(
@@ -1426,6 +1513,73 @@ impl Runtime {
     ) -> Result<bool, RuntimeError> {
         Ok(self.typed_array_read_index(object, index)?.is_none())
     }
+}
+
+fn typed_array_snapshot_from_payload(payload: &ObjectPayload) -> Option<TypedArraySnapshot> {
+    let ObjectPayload::TypedArray(data) = payload else {
+        return None;
+    };
+    Some(TypedArraySnapshot {
+        buffer: data.view.buffer,
+        byte_offset: data.view.byte_offset,
+        fixed_byte_length: data.view.fixed_byte_length,
+        element: data.element,
+    })
+}
+
+#[cfg(feature = "stack-vm")]
+fn ordinary_typed_array_word_in_heap(
+    heap: &mut crate::engine::heap::Heap,
+    snapshot: TypedArraySnapshot,
+    index: u64,
+    write: Option<&[u8; 8]>,
+) -> Result<OrdinaryTypedWord, RuntimeError> {
+    match heap.object(snapshot.buffer)?.kind {
+        crate::engine::heap::ObjectKind::SharedArrayBuffer => {
+            return Ok(OrdinaryTypedWord::Shared);
+        }
+        crate::engine::heap::ObjectKind::ArrayBuffer => {}
+        _ => {
+            return Err(RuntimeError::Invariant(
+                "ArrayBuffer-family access reached another object class",
+            ));
+        }
+    }
+    let buffer = heap.buffer_state(snapshot.buffer)?;
+    let Some((absolute, width)) = typed_array_word_range(snapshot, buffer, index)? else {
+        return Ok(OrdinaryTypedWord::Missing);
+    };
+    let bytes = if let Some(bytes) = write {
+        heap.write_array_buffer_word(snapshot.buffer, absolute, &bytes[..width])?;
+        [0; 8]
+    } else {
+        heap.read_array_buffer_word(snapshot.buffer, absolute, width)?
+    };
+    Ok(OrdinaryTypedWord::Word(bytes))
+}
+
+#[cfg(feature = "stack-vm")]
+enum OrdinaryTypedWord {
+    Shared,
+    Missing,
+    Word([u8; 8]),
+}
+
+// One range calculation for rooted-token and scoped ordinary word access.
+// Bounds precede offset arithmetic, including detached and resized views.
+fn typed_array_word_range(
+    snapshot: TypedArraySnapshot,
+    buffer: crate::engine::heap::ArrayBufferState,
+    index: u64,
+) -> Result<Option<(usize, usize)>, RuntimeError> {
+    let state = Runtime::typed_array_state_with_buffer(snapshot, buffer);
+    if state.out_of_bounds || index >= u64::from(state.length) {
+        return Ok(None);
+    }
+    Ok(Some((
+        typed_array_absolute_byte_offset(snapshot, index)?,
+        usize::from(snapshot.element.byte_length()),
+    )))
 }
 
 fn typed_array_absolute_byte_offset(

@@ -227,7 +227,7 @@ pub(super) fn initializer(
             .checked_add(1)
             .ok_or_else(|| Error::internal("initializer resume PC overflow"))?;
         if let Some(request) = request {
-            let entry = request.prepare(runtime)?;
+            let entry = request.prepare(runtime, &mut execution.call_storage)?;
             push_frame(execution, entry)?;
         }
         #[cfg(feature = "profiling")]

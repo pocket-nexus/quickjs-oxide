@@ -12,6 +12,12 @@ use crate::engine::{
 };
 pub(crate) enum ArrayNextStep {
     Complete(NativeInvokeOutcome),
+    #[cfg(feature = "stack-vm")]
+    PreparedRead {
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+        resume: ArrayNextResume,
+    },
     Read {
         object: ObjectRef,
         key: PropertyKey,
@@ -66,6 +72,17 @@ impl ArrayNextStep {
                 done: true,
             }));
         };
+        #[cfg(feature = "stack-vm")]
+        if let Some(value) = Self::dense_immediate_next(runtime, iterator, source, index, kind)? {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "array_next_dense_immediate_leaf",
+            );
+            return Ok(Self::Complete(NativeInvokeOutcome::IteratorNextRaw {
+                value,
+                done: false,
+            }));
+        }
         let source = ObjectRef::from_borrowed_handle(runtime.clone(), source)?;
         let resume = ArrayNextResume {
             realm,
@@ -159,7 +176,7 @@ impl ArrayNextResume {
         }
     }
     fn length(mut self, runtime: &Runtime, length: u32) -> Result<ArrayNextStep, RuntimeError> {
-        if self.index >= length {
+        let Some(next_index) = live_next_index(self.index, length) else {
             let mut state = runtime.0.state.borrow_mut();
             let cleanup = state
                 .heap
@@ -171,13 +188,13 @@ impl ArrayNextResume {
                     done: true,
                 },
             ));
-        }
+        };
         runtime
             .0
             .state
             .borrow_mut()
             .heap
-            .set_array_iterator_index(self.iterator.object_id(), self.index + 1)?;
+            .set_array_iterator_index(self.iterator.object_id(), next_index)?;
         if self.kind == ArrayIteratorKind::Key {
             return Ok(ArrayNextStep::Complete(
                 NativeInvokeOutcome::IteratorNextRaw {
@@ -194,6 +211,12 @@ impl ArrayNextResume {
         })
     }
 }
+// Shared advance/completion decision. An in-range Uint32 index always has a
+// representable successor; neither caller can overflow at the last element.
+fn live_next_index(index: u32, length: u32) -> Option<u32> {
+    (index < length).then(|| index + 1)
+}
+
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
@@ -202,6 +225,16 @@ pub(crate) fn finish(
     loop {
         step = match step {
             ArrayNextStep::Complete(result) => return Ok(result),
+            #[cfg(feature = "stack-vm")]
+            ArrayNextStep::PreparedRead { read, key, resume } => {
+                let completion = match runtime.finish_prepared_read(realm, &key, read)? {
+                    NativeConversion::Value(value) => {
+                        Completion::Return(value.unwrap_or(Value::Undefined))
+                    }
+                    NativeConversion::Throw(value) => Completion::Throw(value),
+                };
+                resume.resume(runtime, completion)?
+            }
             ArrayNextStep::Read {
                 object,
                 key,
@@ -216,3 +249,9 @@ pub(crate) fn finish(
         };
     }
 }
+
+#[cfg(feature = "stack-vm")]
+mod local;
+
+#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+mod tests;

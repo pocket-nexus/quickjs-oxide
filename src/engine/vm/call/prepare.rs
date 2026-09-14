@@ -20,6 +20,13 @@ pub(in crate::engine::vm) struct PreparedBytecodeFrame {
     pub locals: Vec<FrameBinding>,
 }
 
+/// Common validated call owners, without legacy binding-buffer headers.
+pub(in crate::engine::vm) struct PreparedBytecodeHeader {
+    pub executable: PublishedFunctionSnapshot,
+    pub active_frame: ActiveFrameGuard,
+    pub input: CallInput,
+}
+
 impl Runtime {
     pub(in crate::engine::vm) fn prepare_bytecode_frame(
         &self,
@@ -29,6 +36,80 @@ impl Runtime {
         arguments: &[Value],
         bytecode: FunctionBytecodeRef,
     ) -> Result<PreparedBytecodeFrame, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _profile_phase =
+            crate::engine::api::profiling::PhaseTimer::start_vm("bytecode.prepare");
+        let PreparedBytecodeHeader {
+            executable,
+            active_frame,
+            input,
+        } = self.prepare_bytecode_header(callable, this_value, new_target, bytecode)?;
+        let local_definitions = &executable.local_definitions;
+        let metadata = executable.metadata;
+        let argument_slots = executable.frame_layout().argument_slots(arguments.len());
+        let mut frame_arguments = Vec::new();
+        let mut frame_locals = Vec::new();
+        frame_arguments.reserve(argument_slots);
+        frame_arguments.extend(arguments.iter().cloned().map(FrameBinding::Direct));
+        frame_arguments.resize_with(argument_slots, || FrameBinding::Direct(Value::Undefined));
+        frame_locals.reserve(local_definitions.len());
+        frame_locals.extend(
+            local_definitions
+                .iter()
+                .enumerate()
+                .map(|(index, definition)| {
+                    initial_local_binding(
+                        definition.is_lexical,
+                        metadata.function_name_local == Some(index as u16),
+                        callable.as_object(),
+                    )
+                }),
+        );
+        #[cfg(feature = "profiling")]
+        if crate::engine::api::profiling::cost_profile_active() {
+            crate::engine::api::profiling::record_call_preparation(
+                argument_slots,
+                frame_arguments.capacity() * size_of::<FrameBinding>(),
+                local_definitions.len(),
+                frame_locals.capacity() * size_of::<FrameBinding>(),
+                arguments.len(),
+                arguments
+                    .iter()
+                    .filter(|value| matches!(value, Value::Object(_) | Value::Symbol(_)))
+                    .count(),
+                1 + usize::from(metadata.function_name_local.is_some()),
+            );
+        }
+        Ok(PreparedBytecodeFrame {
+            executable,
+            active_frame,
+            input,
+            arguments: frame_arguments,
+            locals: frame_locals,
+        })
+    }
+
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn prepare_owned_bytecode_frame(
+        &self,
+        callable: &CallableRef,
+        this_value: Value,
+        new_target: Value,
+        bytecode: FunctionBytecodeRef,
+    ) -> Result<PreparedBytecodeHeader, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        let _profile_phase =
+            crate::engine::api::profiling::PhaseTimer::start_vm("bytecode.prepare");
+        self.prepare_bytecode_header(callable, this_value, new_target, bytecode)
+    }
+
+    fn prepare_bytecode_header(
+        &self,
+        callable: &CallableRef,
+        this_value: Value,
+        new_target: Value,
+        bytecode: FunctionBytecodeRef,
+    ) -> Result<PreparedBytecodeHeader, RuntimeError> {
         let executable = self.snapshot_function_bytecode(&bytecode)?;
         let PublishedFunctionData {
             local_definitions,
@@ -45,43 +126,15 @@ impl Runtime {
             realm,
             metadata.strict,
         )?;
-        let argument_slots = executable.frame_layout().argument_slots(arguments.len());
-        let mut frame_arguments = Vec::with_capacity(argument_slots);
-        frame_arguments.extend(arguments.iter().cloned().map(FrameBinding::Direct));
-        frame_arguments.resize_with(argument_slots, || FrameBinding::Direct(Value::Undefined));
-        let mut frame_locals = Vec::with_capacity(local_definitions.len());
-        frame_locals.extend(local_definitions.iter().map(|definition| {
-            if definition.is_lexical {
-                FrameBinding::Uninitialized
-            } else {
-                FrameBinding::Direct(Value::Undefined)
-            }
-        }));
-        if let Some(index) = metadata.function_name_local {
-            let binding =
-                frame_locals
-                    .get_mut(usize::from(index))
-                    .ok_or(RuntimeError::Invariant(
-                        "function-name local is outside the frame",
-                    ))?;
-            *binding = FrameBinding::Direct(Value::Object(callable.as_object().clone()));
+        if metadata
+            .function_name_local
+            .is_some_and(|index| usize::from(index) >= local_definitions.len())
+        {
+            return Err(RuntimeError::Invariant(
+                "function-name local is outside the frame",
+            ));
         }
-        #[cfg(feature = "profiling")]
-        if crate::engine::api::profiling::cost_profile_active() {
-            crate::engine::api::profiling::record_call_preparation(
-                frame_arguments.len(),
-                frame_arguments.capacity() * size_of::<FrameBinding>(),
-                frame_locals.len(),
-                frame_locals.capacity() * size_of::<FrameBinding>(),
-                arguments.len(),
-                arguments
-                    .iter()
-                    .filter(|value| matches!(value, Value::Object(_) | Value::Symbol(_)))
-                    .count(),
-                1 + usize::from(metadata.function_name_local.is_some()),
-            );
-        }
-        Ok(PreparedBytecodeFrame {
+        Ok(PreparedBytecodeHeader {
             executable,
             active_frame,
             input: CallInput {
@@ -89,8 +142,21 @@ impl Runtime {
                 new_target,
                 callee_global,
             },
-            arguments: frame_arguments,
-            locals: frame_locals,
         })
+    }
+}
+
+/// Shared initial binding shape for both legacy vectors and owned windows.
+pub(in crate::engine::vm) fn initial_local_binding(
+    lexical: bool,
+    function_name: bool,
+    callable: &crate::engine::object::ObjectRef,
+) -> FrameBinding {
+    if function_name {
+        FrameBinding::Direct(Value::Object(callable.clone()))
+    } else if lexical {
+        FrameBinding::Uninitialized
+    } else {
+        FrameBinding::Direct(Value::Undefined)
     }
 }

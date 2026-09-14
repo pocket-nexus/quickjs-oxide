@@ -34,6 +34,16 @@ impl SliceKind {
 }
 pub(crate) enum SliceStep {
     Complete(Completion),
+    PreparedRead {
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+        resume: SliceResume,
+    },
+    PreparedHas {
+        probe: crate::engine::object::PreparedHas,
+        key: PropertyKey,
+        resume: SliceResume,
+    },
     Read {
         object: ObjectRef,
         key: PropertyKey,
@@ -127,7 +137,7 @@ impl SliceStep {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-        Ok(Self::Read {
+        Self::Read {
             object: object.clone(),
             key: runtime.intern_property_key("length")?,
             resume: SliceResume {
@@ -146,10 +156,58 @@ impl SliceStep {
                 result: None,
                 values: Vec::new(),
             },
-        })
+        }
+        .advance_local(runtime, realm)
     }
 }
 impl SliceResume {
+    pub(crate) fn resume(
+        self,
+        runtime: &Runtime,
+        result: Completion,
+    ) -> Result<SliceStep, RuntimeError> {
+        let realm = self.realm;
+        self.resume_once(runtime, result)?
+            .advance_local(runtime, realm)
+    }
+    pub(crate) fn number(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<f64>,
+    ) -> Result<SliceStep, RuntimeError> {
+        let realm = self.realm;
+        self.number_once(runtime, result)?
+            .advance_local(runtime, realm)
+    }
+    pub(crate) fn boolean(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<bool>,
+    ) -> Result<SliceStep, RuntimeError> {
+        let realm = self.realm;
+        self.boolean_once(runtime, result)?
+            .advance_local(runtime, realm)
+    }
+    pub(crate) fn defined(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<InternalDefineResult>,
+    ) -> Result<SliceStep, RuntimeError> {
+        let realm = self.realm;
+        self.defined_once(runtime, result)?
+            .advance_local(runtime, realm)
+    }
+    pub(crate) fn set(
+        self,
+        runtime: &Runtime,
+        key: PropertyKey,
+        result: NativeConversion<InternalSetResult>,
+    ) -> Result<SliceStep, RuntimeError> {
+        let realm = self.realm;
+        self.set_once(runtime, key, result)?
+            .advance_local(runtime, realm)
+    }
+
     fn argument(&self, index: usize) -> Value {
         self.arguments
             .get(index)
@@ -161,7 +219,7 @@ impl SliceResume {
             .clone()
             .ok_or(RuntimeError::Invariant("Array slice result missing"))
     }
-    pub(crate) fn resume(
+    fn resume_once(
         mut self,
         runtime: &Runtime,
         result: Completion,
@@ -214,7 +272,7 @@ impl SliceResume {
             _ => Err(RuntimeError::Invariant("Array slice value phase mismatch")),
         }
     }
-    pub(crate) fn number(
+    fn number_once(
         mut self,
         runtime: &Runtime,
         result: NativeConversion<f64>,
@@ -356,7 +414,7 @@ impl SliceResume {
             resume: self,
         })
     }
-    pub(crate) fn boolean(
+    fn boolean_once(
         mut self,
         runtime: &Runtime,
         result: NativeConversion<bool>,
@@ -397,7 +455,7 @@ impl SliceResume {
             )),
         }
     }
-    pub(crate) fn defined(
+    fn defined_once(
         mut self,
         runtime: &Runtime,
         result: NativeConversion<InternalDefineResult>,
@@ -462,7 +520,7 @@ impl SliceResume {
             resume: self,
         })
     }
-    pub(crate) fn set(
+    fn set_once(
         mut self,
         runtime: &Runtime,
         key: PropertyKey,
@@ -487,6 +545,7 @@ impl SliceResume {
         ))))
     }
 }
+mod local;
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
@@ -495,6 +554,18 @@ pub(crate) fn finish(
     loop {
         step = match step {
             SliceStep::Complete(result) => return Ok(result),
+            SliceStep::PreparedRead { read, key, resume } => {
+                let completion = match runtime.finish_prepared_read(realm, &key, read)? {
+                    NativeConversion::Value(value) => {
+                        Completion::Return(value.unwrap_or(Value::Undefined))
+                    }
+                    NativeConversion::Throw(value) => Completion::Throw(value),
+                };
+                resume.resume(runtime, completion)?
+            }
+            SliceStep::PreparedHas { probe, key, resume } => {
+                resume.boolean(runtime, runtime.finish_prepared_has(realm, &key, probe)?)?
+            }
             SliceStep::Read {
                 object,
                 key,

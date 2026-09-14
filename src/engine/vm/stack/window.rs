@@ -79,6 +79,54 @@ impl RunSlots<'_> {
             .release_operand_current(self.window, from_top, runtime)
     }
 
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn typed_array_number_write(
+        &mut self,
+        runtime: &Runtime,
+    ) -> Result<bool, Error> {
+        self.store
+            .typed_array_number_write_current(self.window, runtime)
+    }
+
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn array_immediate_read(
+        &mut self,
+        runtime: &Runtime,
+    ) -> Result<bool, Error> {
+        self.store
+            .array_immediate_read_current(self.window, runtime)
+    }
+
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn ordinary_field_immediate_read(
+        &mut self,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        key_index: u32,
+    ) -> Result<bool, Error> {
+        self.store.ordinary_field_immediate_read_current(
+            self.window,
+            runtime,
+            executable,
+            key_index,
+        )
+    }
+
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn ordinary_field_immediate_write(
+        &mut self,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        key_index: u32,
+    ) -> Result<bool, Error> {
+        self.store.ordinary_field_immediate_write_current(
+            self.window,
+            runtime,
+            executable,
+            key_index,
+        )
+    }
+
     pub(in crate::engine::vm) fn binary_number(
         &mut self,
         operation: impl FnOnce(
@@ -87,5 +135,29 @@ impl RunSlots<'_> {
         ) -> Value,
     ) -> Result<bool, Error> {
         self.store.binary_number_current(self.window, operation)
+    }
+    pub(in crate::engine::vm) fn consume_number_pair(
+        &mut self,
+        operation: impl FnOnce(
+            crate::engine::value::number::operations::Number,
+            crate::engine::value::number::operations::Number,
+        ) -> bool,
+    ) -> Result<Option<bool>, Error> {
+        self.store
+            .consume_number_pair_current(self.window, operation)
+    }
+
+    pub(in crate::engine::vm) fn update_number_local(
+        &mut self,
+        index: u16,
+        operation: impl FnOnce(
+            crate::engine::value::number::operations::Number,
+        ) -> (
+            crate::engine::value::number::operations::Number,
+            Option<crate::engine::value::number::operations::Number>,
+        ),
+    ) -> Result<bool, Error> {
+        self.store
+            .update_number_local_current(self.window, index, operation)
     }
 }

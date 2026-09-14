@@ -78,6 +78,8 @@ impl ArgumentsResume {
             }
             Phase::Item { length, mut values } => {
                 values.push(value);
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_call_buffer_moves("apply.indexed", 1);
                 self.next(runtime, length, values)
             }
             Phase::Number => Err(RuntimeError::Invariant(
@@ -122,6 +124,13 @@ impl ArgumentsResume {
             .map_err(|_| HeapError::Allocation {
                 operation: "reserving the argument-list snapshot",
             })?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_call_buffer_capacity(
+            "apply.indexed",
+            0,
+            values.capacity(),
+            size_of::<Value>(),
+        );
         self.next(runtime, length, values)
     }
     fn next(
