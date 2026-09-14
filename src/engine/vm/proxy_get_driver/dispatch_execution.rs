@@ -12,9 +12,14 @@ pub(super) fn finish(
     owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_execution.finish.visit",
+        );
         match step {
             Step::RootDescriptor(result) => {
                 if !matches!(owner, ReturnOwner::Root)
@@ -110,22 +115,8 @@ pub(super) fn finish(
                         .map(Next::Done);
                     }
                 };
-                return match completion {
-                    Completion::Return(value) => {
-                        let parent = execution.frames.current_mut(owner.frame()?)?;
-                        if push {
-                            execution.slots.push(&mut parent.window, value)?;
-                        }
-                        parent.resume_pc = parent
-                            .fault_pc
-                            .checked_add(1)
-                            .ok_or_else(|| Error::internal("property resume PC overflow"))?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_instruction(_depth);
-                        Ok(Next::Done(Progress::Call(CallStep::Entered)))
-                    }
-                    completion => Ok(Next::Done(Progress::Call(CallStep::Complete(completion)))),
-                };
+                return super::finish_instruction(execution, owner, completion, push, _depth)
+                    .map(Next::Done);
             }
             Step::ForInComplete { value, done } => {
                 let Some(Finish::ForIn(_depth)) = query.finish.take() else {
@@ -150,18 +141,9 @@ pub(super) fn finish(
                 let Some(Finish::Numeric(_depth)) = query.finish.take() else {
                     return Err(Error::internal("numeric result lost its instruction"));
                 };
-                let parent = execution.frames.current_mut(owner.frame()?)?;
-                if let Some(previous) = previous {
-                    execution.slots.push(&mut parent.window, previous)?;
-                }
-                execution.slots.push(&mut parent.window, value)?;
-                parent.resume_pc = parent
-                    .fault_pc
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_instruction(_depth);
-                return Ok(Next::Done(Progress::Call(CallStep::Entered)));
+                return super::finish_numeric(execution, owner.frame()?, value, previous, _depth)
+                    .map(Progress::Call)
+                    .map(Next::Done);
             }
             Step::NativeRawComplete(result) => {
                 if !query.parents.is_empty() {
@@ -172,7 +154,10 @@ pub(super) fn finish(
                 step = query.finish_native_outcome(runtime, Ok(result))?;
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }
@@ -184,9 +169,14 @@ pub(super) fn activation(
     owner: ReturnOwner,
     identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_execution.activation.visit",
+        );
         let realm = query.realm;
         match step {
             Step::ResumeFrame {
@@ -261,7 +251,10 @@ pub(super) fn activation(
                 continue;
             }
 
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }
@@ -273,9 +266,14 @@ pub(super) fn prepare(
     owner: ReturnOwner,
     identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_execution.prepare.visit",
+        );
         let realm = query.realm;
         match step {
             Step::ModuleCallbackOperation {
@@ -457,7 +455,10 @@ pub(super) fn prepare(
                     .into();
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }

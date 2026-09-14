@@ -10,7 +10,7 @@ use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
-use crate::engine::vm::stack::{FrameWindow, SlotStore, copy_value};
+use crate::engine::vm::stack::{RunSlots, copy_value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
@@ -118,6 +118,67 @@ pub(super) enum RunExit {
     Bridge,
 }
 
+#[cfg(feature = "profiling")]
+impl RunExit {
+    pub(super) fn diagnostic_name(self) -> &'static str {
+        match self {
+            Self::Import => "run_exit.Import",
+            Self::Pure(..) => "run_exit.Pure",
+            Self::ApplyEval(..) => "run_exit.ApplyEval",
+            Self::Apply(..) => "run_exit.Apply",
+            Self::Eval { .. } => "run_exit.Eval",
+            Self::Call { .. } => "run_exit.Call",
+            Self::SetProperty(..) => "run_exit.SetProperty",
+            Self::GetField { .. } => "run_exit.GetField",
+            Self::GetElement { .. } => "run_exit.GetElement",
+            Self::InitializeDerived(..) => "run_exit.InitializeDerived",
+            Self::LexicalUninitialized(..) => "run_exit.LexicalUninitialized",
+            Self::Binding { .. } => "run_exit.Binding",
+            Self::ClassInitializer(..) => "run_exit.ClassInitializer",
+            Self::DefineClass { .. } => "run_exit.DefineClass",
+            Self::DefineProperty { .. } => "run_exit.DefineProperty",
+            Self::Environment(..) => "run_exit.Environment",
+            Self::GetSuper => "run_exit.GetSuper",
+            Self::Predicate(..) => "run_exit.Predicate",
+            Self::HomeObject => "run_exit.HomeObject",
+            Self::SuperProperty(..) => "run_exit.SuperProperty",
+            Self::ReturnDerived(..) => "run_exit.ReturnDerived",
+            Self::InitDerivedConstructor => "run_exit.InitDerivedConstructor",
+            Self::Construct(..) => "run_exit.Construct",
+            Self::ConvertAdd => "run_exit.ConvertAdd",
+            Self::ConvertPlus => "run_exit.ConvertPlus",
+            Self::ConvertPropertyKey => "run_exit.ConvertPropertyKey",
+            Self::NormalizeThis => "run_exit.NormalizeThis",
+            Self::Arguments(..) => "run_exit.Arguments",
+            Self::Rest(..) => "run_exit.Rest",
+            Self::InstantiateClosure(..) => "run_exit.InstantiateClosure",
+            Self::SetName(..) => "run_exit.SetName",
+            Self::CloseCaptured(..) => "run_exit.CloseCaptured",
+            Self::ResetCaptured(..) => "run_exit.ResetCaptured",
+            Self::Catch(..) => "run_exit.Catch",
+            Self::DropCatch => "run_exit.DropCatch",
+            Self::NipCatch => "run_exit.NipCatch",
+            Self::Throw => "run_exit.Throw",
+            Self::BindingError { .. } => "run_exit.BindingError",
+            Self::PrivateInitialize { .. } => "run_exit.PrivateInitialize",
+            Self::PrivateAccess { .. } => "run_exit.PrivateAccess",
+            Self::StrictEquality(..) => "run_exit.StrictEquality",
+            Self::Numeric(..) => "run_exit.Numeric",
+            Self::ForIn(..) => "run_exit.ForIn",
+            Self::LogicalNot => "run_exit.LogicalNot",
+            Self::CopyData { .. } => "run_exit.CopyData",
+            Self::ReplaceBinding { .. } => "run_exit.ReplaceBinding",
+            Self::ReleaseOperand { .. } => "run_exit.ReleaseOperand",
+            Self::Complete => "run_exit.Complete",
+            Self::Suspend(..) => "run_exit.Suspend",
+            Self::Bridge => "run_exit.Bridge",
+        }
+    }
+}
+
+mod program_counter;
+use program_counter::ProgramCounter;
+
 fn number(value: &Value) -> Option<Number> {
     value.as_number_repr()
 }
@@ -131,21 +192,10 @@ fn immediate(value: &Value) -> bool {
     )
 }
 fn binary(
-    slots: &mut SlotStore,
-    window: &mut FrameWindow,
+    slots: &mut RunSlots<'_>,
     operation: impl FnOnce(Number, Number) -> Value,
 ) -> Result<bool, Error> {
-    let (Some(left), Some(right)) = (
-        number(slots.peek(window, 1)?),
-        number(slots.peek(window, 0)?),
-    ) else {
-        return Ok(false);
-    };
-    let result = operation(left, right);
-    slots.pop(window)?;
-    slots.pop(window)?;
-    slots.push(window, result)?;
-    Ok(true)
+    slots.binary_number(operation)
 }
 
 fn release_displaced(
@@ -172,20 +222,20 @@ fn release_displaced(
 
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let slots = &mut execution.slots;
+    let mut slots = execution.slots.run_window(&mut frame.window)?;
     let runtime = frame.cold.function.runtime();
+    let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
     loop {
-        frame.fault_pc = frame.resume_pc;
+        pc.fault = pc.resume;
         let instruction = frame
             .executable
             .code
-            .get(frame.fault_pc)
+            .get(pc.fault)
             .ok_or_else(|| Error::internal("owned bytecode ended without return"))?;
-        let window = &mut frame.window;
         #[cfg(feature = "profiling")]
-        let observed_depth = slots.depth(window);
-        let mut next_pc = frame
-            .fault_pc
+        let observed_depth = slots.depth();
+        let mut next_pc = pc
+            .fault
             .checked_add(1)
             .ok_or_else(|| Error::internal("owned program counter overflow"))?;
         let handled = match instruction {
@@ -233,7 +283,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 } else {
                     return Ok(RunExit::NormalizeThis);
                 };
-                slots.push(window, value)?;
+                slots.push(value)?;
                 true
             }
             Instruction::PutField(index) => return Ok(RunExit::SetProperty(Some(*index))),
@@ -254,7 +304,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 return Ok(RunExit::Construct(*count));
             }
             Instruction::PushNewTarget => {
-                slots.push(window, copy_value(&frame.cold.input.new_target)?)?;
+                slots.push(copy_value(&frame.cold.input.new_target)?)?;
                 true
             }
             Instruction::InitializeDerivedLocal(index) => {
@@ -312,7 +362,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::PushActiveFunction => {
-                slots.push(window, Value::Object(frame.cold.function.clone()))?;
+                slots.push(Value::Object(frame.cold.function.clone()))?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_storage(
                     crate::engine::api::profiling::OwnedStorageEvent::Copy { heap_root: true },
@@ -542,7 +592,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::ToObject => {
-                if matches!(slots.peek(window, 0)?, Value::Object(_)) {
+                if matches!(slots.peek(0)?, Value::Object(_)) {
                     true
                 } else {
                     return Ok(RunExit::Environment(
@@ -550,7 +600,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     ));
                 }
             }
-            Instruction::ToPropKey => match slots.peek(window, 0)? {
+            Instruction::ToPropKey => match slots.peek(0)? {
                 Value::Int(_) | Value::String(_) => true,
                 Value::Symbol(symbol) if symbol.belongs_to(runtime) => true,
                 _ => return Ok(RunExit::ConvertPropertyKey),
@@ -672,23 +722,23 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::Nop | Instruction::MarkSuperCall => true,
             Instruction::PushI32(number) => {
-                slots.push(window, Value::Int(*number))?;
+                slots.push(Value::Int(*number))?;
                 true
             }
             Instruction::Undefined => {
-                slots.push(window, Value::Undefined)?;
+                slots.push(Value::Undefined)?;
                 true
             }
             Instruction::Null => {
-                slots.push(window, Value::Null)?;
+                slots.push(Value::Null)?;
                 true
             }
             Instruction::PushTrue => {
-                slots.push(window, Value::Bool(true))?;
+                slots.push(Value::Bool(true))?;
                 true
             }
             Instruction::PushFalse => {
-                slots.push(window, Value::Bool(false))?;
+                slots.push(Value::Bool(false))?;
                 true
             }
             Instruction::PushConst(index) => {
@@ -717,7 +767,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     crate::engine::api::profiling::record_owned_storage(
                         crate::engine::api::profiling::OwnedStorageEvent::Copy { heap_root: false },
                     );
-                    slots.push(window, value)?;
+                    slots.push(value)?;
                     true
                 } else {
                     return Ok(RunExit::Pure(
@@ -752,7 +802,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetLocal(index)
             | Instruction::PutLocalCheck(index)
             | Instruction::SetLocalCheck(index)
-                if matches!(slots.local(window, *index)?, FrameBinding::Captured(_)) =>
+                if matches!(slots.local(*index)?, FrameBinding::Captured(_)) =>
             {
                 return Ok(RunExit::Binding {
                     source: BindingSource::Local,
@@ -776,7 +826,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::GetArg(index)
             | Instruction::PutArg(index)
             | Instruction::SetArg(index)
-                if matches!(slots.parameter(window, *index)?, FrameBinding::Captured(_)) =>
+                if matches!(slots.parameter(*index)?, FrameBinding::Captured(_)) =>
             {
                 return Ok(RunExit::Binding {
                     source: BindingSource::Argument,
@@ -787,7 +837,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::InitializeLocal(index)
-                if matches!(slots.local(window, *index)?, FrameBinding::Captured(_))
+                if matches!(slots.local(*index)?, FrameBinding::Captured(_))
                     && frame.executable.local_definitions[usize::from(*index)].kind
                         == crate::engine::code::function::metadata::ClosureVariableKind::Normal =>
             {
@@ -800,12 +850,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                if let FrameBinding::Direct(value) = slots.local(window, *index)? {
+                if let FrameBinding::Direct(value) = slots.local(*index)? {
                     let copied = copy_value(value)?;
-                    slots.push(window, copied)?;
+                    slots.push(copied)?;
                     true
                 } else if matches!(instruction, Instruction::GetLocalCheck(_))
-                    && matches!(slots.local(window, *index)?, FrameBinding::Uninitialized)
+                    && matches!(slots.local(*index)?, FrameBinding::Uninitialized)
                 {
                     return Ok(RunExit::LexicalUninitialized(*index));
                 } else {
@@ -858,7 +908,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::CloseLocal(index) => {
                 // An uncaptured local keeps its value until the next scope entry.
                 // Captured cells must first root and detach their shared value.
-                if matches!(slots.local(window, *index)?, FrameBinding::Captured(_)) {
+                if matches!(slots.local(*index)?, FrameBinding::Captured(_)) {
                     return Ok(RunExit::CloseCaptured(*index));
                 } else {
                     frame.cold.reusable_captured_locals[usize::from(*index)] = false;
@@ -866,10 +916,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::SetLocalUninitialized(index) => {
-                if matches!(slots.local(window, *index)?, FrameBinding::Captured(_)) {
+                if matches!(slots.local(*index)?, FrameBinding::Captured(_)) {
                     return Ok(RunExit::ResetCaptured(*index));
                 }
-                let ready = match slots.local(window, *index)? {
+                let ready = match slots.local(*index)? {
                     FrameBinding::Uninitialized => true,
                     FrameBinding::Direct(old) => {
                         runtime
@@ -880,7 +930,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     _ => false,
                 };
                 if ready {
-                    let old = slots.replace_local(window, *index, FrameBinding::Uninitialized)?;
+                    let old = slots.replace_local(*index, FrameBinding::Uninitialized)?;
                     frame.cold.reusable_captured_locals[usize::from(*index)] = false;
                     if matches!(old, FrameBinding::Direct(_)) {
                         release_displaced(runtime, old)?;
@@ -908,7 +958,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let ready = definition.is_lexical
                     && definition.kind
                         == crate::engine::code::function::metadata::ClosureVariableKind::Normal
-                    && match slots.local(window, *index)? {
+                    && match slots.local(*index)? {
                         FrameBinding::Uninitialized => true,
                         FrameBinding::Direct(old) => {
                             runtime
@@ -919,8 +969,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         _ => false,
                     };
                 if ready {
-                    let next = slots.pop(window)?;
-                    let old = slots.replace_local(window, *index, FrameBinding::Direct(next))?;
+                    let next = slots.pop()?;
+                    let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
                     if matches!(old, FrameBinding::Direct(_)) {
                         release_displaced(runtime, old)?;
                     }
@@ -929,7 +979,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     && definition.is_lexical
                     && definition.kind
                         == crate::engine::code::function::metadata::ClosureVariableKind::Normal
-                    && matches!(slots.local(window, *index)?, FrameBinding::Direct(_))
+                    && matches!(slots.local(*index)?, FrameBinding::Direct(_))
                 {
                     return Ok(RunExit::ReplaceBinding {
                         source: BindingSource::Local,
@@ -941,7 +991,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ready
             }
             Instruction::PutLocalCheck(index) | Instruction::SetLocalCheck(index)
-                if matches!(slots.local(window, *index)?, FrameBinding::Uninitialized) =>
+                if matches!(slots.local(*index)?, FrameBinding::Uninitialized) =>
             {
                 return Ok(RunExit::LexicalUninitialized(*index));
             }
@@ -949,20 +999,20 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetLocal(index)
             | Instruction::PutLocalCheck(index)
             | Instruction::SetLocalCheck(index) => {
-                if matches!(slots.local(window, *index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                if matches!(slots.local(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
                 {
                     let next = if matches!(
                         instruction,
                         Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
                     ) {
-                        copy_value(slots.peek(window, 0)?)?
+                        copy_value(slots.peek(0)?)?
                     } else {
-                        slots.pop(window)?
+                        slots.pop()?
                     };
-                    let old = slots.replace_local(window, *index, FrameBinding::Direct(next))?;
+                    let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
                     release_displaced(runtime, old)?;
                     true
-                } else if matches!(slots.local(window, *index)?, FrameBinding::Direct(_)) {
+                } else if matches!(slots.local(*index)?, FrameBinding::Direct(_)) {
                     return Ok(RunExit::ReplaceBinding {
                         source: BindingSource::Local,
                         index: *index,
@@ -977,27 +1027,26 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::GetArg(index) => {
-                if let FrameBinding::Direct(value) = slots.parameter(window, *index)? {
+                if let FrameBinding::Direct(value) = slots.parameter(*index)? {
                     let copied = copy_value(value)?;
-                    slots.push(window, copied)?;
+                    slots.push(copied)?;
                     true
                 } else {
                     false
                 }
             }
             Instruction::PutArg(index) | Instruction::SetArg(index) => {
-                if matches!(slots.parameter(window, *index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
                 {
                     let next = if matches!(instruction, Instruction::SetArg(_)) {
-                        copy_value(slots.peek(window, 0)?)?
+                        copy_value(slots.peek(0)?)?
                     } else {
-                        slots.pop(window)?
+                        slots.pop()?
                     };
-                    let old =
-                        slots.replace_parameter(window, *index, FrameBinding::Direct(next))?;
+                    let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
                     release_displaced(runtime, old)?;
                     true
-                } else if matches!(slots.parameter(window, *index)?, FrameBinding::Direct(_)) {
+                } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(_)) {
                     return Ok(RunExit::ReplaceBinding {
                         source: BindingSource::Argument,
                         index: *index,
@@ -1009,15 +1058,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::Dup => {
-                slots.insert_copy(window, 0, 0)?;
+                slots.insert_copy(0, 0)?;
                 true
             }
             Instruction::Dup1 => {
-                slots.insert_copy(window, 1, 1)?;
+                slots.insert_copy(1, 1)?;
                 true
             }
             Instruction::Dup3 => {
-                slots.duplicate_operands(window, 3)?;
+                slots.duplicate_operands(3)?;
                 true
             }
             Instruction::Insert2 | Instruction::Insert3 | Instruction::Insert4 => {
@@ -1026,8 +1075,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     Instruction::Insert3 => 3,
                     _ => 4,
                 };
-                slots.peek(window, count - 1)?;
-                slots.insert_copy(window, 0, count)?;
+                slots.peek(count - 1)?;
+                slots.insert_copy(0, count)?;
                 true
             }
             Instruction::Perm3 | Instruction::Perm4 | Instruction::Perm5 => {
@@ -1036,68 +1085,68 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     Instruction::Perm4 => 3,
                     _ => 4,
                 };
-                slots.rotate_operands(window, 1, count, false)?;
+                slots.rotate_operands(1, count, false)?;
                 true
             }
             Instruction::Rot4Left => {
-                slots.rotate_operands(window, 0, 4, true)?;
+                slots.rotate_operands(0, 4, true)?;
                 true
             }
             Instruction::Drop => {
-                if slots.release_operand(window, 0, runtime)? {
-                    slots.pop(window)?;
+                if slots.release_operand(0, runtime)? {
+                    slots.pop()?;
                     true
                 } else {
                     return Ok(RunExit::ReleaseOperand { keep_top: false });
                 }
             }
             Instruction::Swap => {
-                slots.rotate_operands(window, 0, 2, false)?;
+                slots.rotate_operands(0, 2, false)?;
                 true
             }
             Instruction::Nip => {
-                if slots.release_operand(window, 1, runtime)? {
-                    let right = slots.pop(window)?;
-                    slots.pop(window)?;
-                    slots.push(window, right)?;
+                if slots.release_operand(1, runtime)? {
+                    let right = slots.pop()?;
+                    slots.pop()?;
+                    slots.push(right)?;
                     true
                 } else {
                     return Ok(RunExit::ReleaseOperand { keep_top: true });
                 }
             }
             Instruction::Add => {
-                if binary(slots, window, |a, b| value(a.add(b)))? {
+                if binary(&mut slots, |a, b| value(a.add(b)))? {
                     true
                 } else {
                     return Ok(RunExit::ConvertAdd);
                 }
             }
-            Instruction::Sub => binary(slots, window, |a, b| value(a.sub(b)))?,
-            Instruction::Mul => binary(slots, window, |a, b| value(a.mul(b)))?,
-            Instruction::Div => binary(slots, window, |a, b| value(a.div(b)))?,
-            Instruction::Mod => binary(slots, window, |a, b| value(a.rem(b)))?,
-            Instruction::Pow => binary(slots, window, |a, b| value(a.pow(b)))?,
-            Instruction::Shl => binary(slots, window, |a, b| {
+            Instruction::Sub => binary(&mut slots, |a, b| value(a.sub(b)))?,
+            Instruction::Mul => binary(&mut slots, |a, b| value(a.mul(b)))?,
+            Instruction::Div => binary(&mut slots, |a, b| value(a.div(b)))?,
+            Instruction::Mod => binary(&mut slots, |a, b| value(a.rem(b)))?,
+            Instruction::Pow => binary(&mut slots, |a, b| value(a.pow(b)))?,
+            Instruction::Shl => binary(&mut slots, |a, b| {
                 Value::Int(a.int32().wrapping_shl(b.int32() as u32 & 31))
             })?,
-            Instruction::Sar => binary(slots, window, |a, b| {
+            Instruction::Sar => binary(&mut slots, |a, b| {
                 Value::Int(a.int32() >> (b.int32() as u32 & 31))
             })?,
-            Instruction::Shr => binary(slots, window, |a, b| {
+            Instruction::Shr => binary(&mut slots, |a, b| {
                 value(Number::compact(f64::from(
                     (a.int32() as u32) >> (b.int32() as u32 & 31),
                 )))
             })?,
-            Instruction::BitAnd => binary(slots, window, |a, b| Value::Int(a.int32() & b.int32()))?,
-            Instruction::BitOr => binary(slots, window, |a, b| Value::Int(a.int32() | b.int32()))?,
-            Instruction::BitXor => binary(slots, window, |a, b| Value::Int(a.int32() ^ b.int32()))?,
-            Instruction::Lt => binary(slots, window, |a, b| Value::Bool(a.float() < b.float()))?,
-            Instruction::Lte => binary(slots, window, |a, b| Value::Bool(a.float() <= b.float()))?,
-            Instruction::Gt => binary(slots, window, |a, b| Value::Bool(a.float() > b.float()))?,
-            Instruction::Gte => binary(slots, window, |a, b| Value::Bool(a.float() >= b.float()))?,
+            Instruction::BitAnd => binary(&mut slots, |a, b| Value::Int(a.int32() & b.int32()))?,
+            Instruction::BitOr => binary(&mut slots, |a, b| Value::Int(a.int32() | b.int32()))?,
+            Instruction::BitXor => binary(&mut slots, |a, b| Value::Int(a.int32() ^ b.int32()))?,
+            Instruction::Lt => binary(&mut slots, |a, b| Value::Bool(a.float() < b.float()))?,
+            Instruction::Lte => binary(&mut slots, |a, b| Value::Bool(a.float() <= b.float()))?,
+            Instruction::Gt => binary(&mut slots, |a, b| Value::Bool(a.float() > b.float()))?,
+            Instruction::Gte => binary(&mut slots, |a, b| Value::Bool(a.float() >= b.float()))?,
             Instruction::StrictEq | Instruction::StrictNeq => {
                 let negate = matches!(instruction, Instruction::StrictNeq);
-                if binary(slots, window, |a, b| {
+                if binary(&mut slots, |a, b| {
                     Value::Bool((a.float() == b.float()) != negate)
                 })? {
                     true
@@ -1105,8 +1154,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     return Ok(RunExit::StrictEquality(negate));
                 }
             }
-            Instruction::Eq => binary(slots, window, |a, b| Value::Bool(a.float() == b.float()))?,
-            Instruction::Neq => binary(slots, window, |a, b| Value::Bool(a.float() != b.float()))?,
+            Instruction::Eq => binary(&mut slots, |a, b| Value::Bool(a.float() == b.float()))?,
+            Instruction::Neq => binary(&mut slots, |a, b| Value::Bool(a.float() != b.float()))?,
             Instruction::Not => return Ok(RunExit::LogicalNot),
             Instruction::Neg
             | Instruction::Plus
@@ -1115,7 +1164,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::Dec
             | Instruction::PostInc
             | Instruction::PostDec => {
-                if let Some(old) = number(slots.peek(window, 0)?) {
+                if let Some(old) = number(slots.peek(0)?) {
                     let next = match instruction {
                         Instruction::Neg => old.negate(),
                         Instruction::Plus => old,
@@ -1126,9 +1175,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         )),
                     };
                     if !matches!(instruction, Instruction::PostInc | Instruction::PostDec) {
-                        slots.pop(window)?;
+                        slots.pop()?;
                     }
-                    slots.push(window, value(next))?;
+                    slots.push(value(next))?;
                     true
                 } else if matches!(instruction, Instruction::Plus) {
                     return Ok(RunExit::ConvertPlus);
@@ -1141,9 +1190,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::IfTrue(target) | Instruction::IfFalse(target)
-                if immediate(slots.peek(window, 0)?) =>
+                if immediate(slots.peek(0)?) =>
             {
-                let truthy = slots.pop(window)?.to_boolean_primitive();
+                let truthy = slots.pop()?.to_boolean_primitive();
                 if truthy == matches!(instruction, Instruction::IfTrue(_)) {
                     next_pc = *target as usize;
                 }
@@ -1164,12 +1213,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::Gosub(target) => {
                 let pc = i32::try_from(next_pc)
                     .map_err(|_| Error::internal("gosub return PC does not fit Int"))?;
-                slots.push(window, Value::Int(pc))?;
+                slots.push(Value::Int(pc))?;
                 next_pc = *target as usize;
                 true
             }
             Instruction::Ret => {
-                let Value::Int(target) = slots.pop(window)? else {
+                let Value::Int(target) = slots.pop()? else {
                     return Err(Error::internal("invalid ret value"));
                 };
                 next_pc =
@@ -1180,7 +1229,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::DropGosub => {
-                if !matches!(slots.pop(window)?, Value::Int(_)) {
+                if !matches!(slots.pop()?, Value::Int(_)) {
                     return Err(Error::internal("invalid gosub cleanup value"));
                 }
                 true
@@ -1199,23 +1248,23 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     _ => unreachable!(),
                 };
                 if kind != super::VmSuspendKind::Initial {
-                    slots.peek(window, 0)?;
+                    slots.peek(0)?;
                 }
-                frame.resume_pc = next_pc;
+                pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_instruction(observed_depth);
                 return Ok(RunExit::Suspend(kind));
             }
             Instruction::Return => {
-                execution.pending = Some(slots.pop(window)?);
-                frame.resume_pc = next_pc;
+                execution.pending = Some(slots.pop()?);
+                pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_instruction(observed_depth);
                 return Ok(RunExit::Complete);
             }
             Instruction::ReturnUndefined => {
                 execution.pending = Some(Value::Undefined);
-                frame.resume_pc = next_pc;
+                pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_instruction(observed_depth);
                 return Ok(RunExit::Complete);
@@ -1230,7 +1279,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(observed_depth);
-        frame.resume_pc = next_pc;
+        pc.resume = next_pc;
     }
 }
 
@@ -1330,6 +1379,13 @@ mod tests {
         assert_eq!(result, Value::Int(4950));
         let costs = profile.snapshot();
         assert!(costs.owned_instructions > 1000, "{costs:?}");
+        assert_eq!(costs.owned_execution_events["run_frame_fault_pc_write"], 1);
+        assert_eq!(costs.owned_execution_events["run_frame_resume_pc_write"], 1);
+        assert_eq!(costs.owned_execution_events["runtime_pc_publication"], 1);
+        assert!(
+            costs.owned_execution_events["slot_authentication"] < 20,
+            "{costs:?}"
+        );
         assert_eq!(
             costs.owned_bridge_exits, 0,
             "the ordinary numeric loop must not use the bridge"

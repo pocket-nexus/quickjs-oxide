@@ -219,6 +219,8 @@ impl Runtime {
             ));
         };
         *frame_pc = Some(pc);
+        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
         Ok(())
     }
 

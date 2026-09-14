@@ -394,6 +394,25 @@ mod enabled {
             write!(out, ",\"{}\":{}", name, value)?;
         }
         write!(out, "}}")?;
+        write!(out, ",\"owned_execution_layouts\":{{")?;
+        for (index, (name, [size, align])) in costs.owned_execution_layouts.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(
+                out,
+                "\"{name}\":{{\"size_bytes\":{size},\"align_bytes\":{align}}}"
+            )?;
+        }
+        write!(out, "}}")?;
+        write!(out, ",\"owned_execution_events\":{{")?;
+        for (index, (name, value)) in costs.owned_execution_events.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "\"{name}\":{value}")?;
+        }
+        write!(out, "}}")?;
         write!(
             out,
             ",\"call_preparation\":{{\"coverage\":\"bytecode-preparation-and-owned-frame-storage\",\"basis\":\"cumulative-capacities; argument-buffers-are-observations; excludes bound/apply scratch and total Runtime retains\""

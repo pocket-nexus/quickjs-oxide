@@ -11,9 +11,16 @@ pub(super) fn primitive(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_conversion.primitive.visit",
+        );
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
         let realm = query.realm;
         match step {
             Step::String { value, resume } => {
@@ -61,28 +68,51 @@ pub(super) fn primitive(
                 hint,
                 resume,
             } => {
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("primitive continuation allocation failed"))?;
-                query.parents.push(resume);
-                step = crate::engine::value::conversion::primitive::PrimitiveResume::start(
+                let next = crate::engine::value::conversion::primitive::PrimitiveResume::start(
                     runtime, realm, value, hint,
-                )
-                .into();
+                );
+                step = match next {
+                    crate::engine::value::conversion::primitive::PrimitiveStep::Complete(
+                        result,
+                    ) => resume
+                        .resume(runtime, result)
+                        .map_err(runtime_error_to_vm_error)?,
+                    next => {
+                        query.parents.try_reserve(1).map_err(|_| {
+                            Error::internal("primitive continuation allocation failed")
+                        })?;
+                        query.parents.push(resume);
+                        next.into()
+                    }
+                };
                 continue;
             }
             Step::Number { value, resume } => {
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                query.parents.push(resume);
-                step = crate::engine::value::conversion::number::NumberStep::start(
+                // Only a request which can suspend needs a parent owner. Complete
+                // results (including JS throws) use the same typed reply consumer.
+                let next = crate::engine::value::conversion::number::NumberStep::start(
                     runtime, realm, value,
                 )
-                .map_err(runtime_error_to_vm_error)?
-                .into();
+                .map_err(runtime_error_to_vm_error)?;
+                step = match next {
+                    crate::engine::value::conversion::number::NumberStep::Complete(result) => {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "conversion_immediate",
+                        );
+                        resume
+                            .number(runtime, result)
+                            .map_err(runtime_error_to_vm_error)?
+                            .into()
+                    }
+                    next => {
+                        query.parents.try_reserve(1).map_err(|_| {
+                            Error::internal("property continuation allocation failed")
+                        })?;
+                        query.parents.push(resume);
+                        next.into()
+                    }
+                };
                 continue;
             }
             Step::NumberComplete(result) => {
@@ -112,14 +142,24 @@ pub(super) fn primitive(
                 value,
                 resume,
             } => {
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
-                query.parents.push(resume);
-                step = crate::engine::builtins::ElementStep::start(runtime, realm, element, value)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                // Only a request which can suspend needs a parent owner. Complete
+                // results (including JS throws) use the same typed reply consumer.
+                let next =
+                    crate::engine::builtins::ElementStep::start(runtime, realm, element, value)
+                        .map_err(runtime_error_to_vm_error)?;
+                step = match next {
+                    crate::engine::builtins::ElementStep::Complete(result) => resume
+                        .element(runtime, result)
+                        .map_err(runtime_error_to_vm_error)?
+                        .into(),
+                    next => {
+                        query.parents.try_reserve(1).map_err(|_| {
+                            Error::internal("property continuation allocation failed")
+                        })?;
+                        query.parents.push(resume);
+                        next.into()
+                    }
+                };
                 continue;
             }
             Step::ElementComplete(result) => {
@@ -144,7 +184,10 @@ pub(super) fn primitive(
                     .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }
@@ -156,9 +199,16 @@ pub(super) fn constructor(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_conversion.constructor.visit",
+        );
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
         let realm = query.realm;
         match step {
             Step::ConstructorSource { new_target, resume } => {
@@ -296,7 +346,10 @@ pub(super) fn constructor(
                     .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }

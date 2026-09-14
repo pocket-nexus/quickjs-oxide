@@ -45,15 +45,44 @@ impl PendingProxyGet {
     }
 }
 
+#[derive(Default)]
+struct Parents(Vec<Resume>);
+impl Parents {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    fn try_reserve(&mut self, additional: usize) -> Result<(), std::collections::TryReserveError> {
+        self.0.try_reserve(additional)
+    }
+    fn push(&mut self, resume: Resume) {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("parent_push");
+        self.0.push(resume);
+    }
+    fn pop(&mut self) -> Option<Resume> {
+        let result = self.0.pop();
+        #[cfg(feature = "profiling")]
+        if result.is_some() {
+            crate::engine::api::profiling::record_owned_execution_event("parent_pop");
+        }
+        result
+    }
+}
+
 struct Query {
+    #[cfg(feature = "profiling")]
+    had_callback: bool,
     realm: crate::engine::heap::ContextId,
-    parents: Vec<Resume>,
+    parents: Parents,
     natives: Vec<NativeScope>,
     finish: Option<Finish>,
 }
 struct NativeScope {
     call: super::call::PreparedNativeCall,
-    parents: Vec<Resume>,
+    parents: Parents,
     resume: Resume,
     parent_realm: crate::engine::heap::ContextId,
 }
@@ -130,7 +159,7 @@ impl Drop for Query {
 }
 
 enum Next {
-    Continue(Step),
+    Continue,
     Invoke {
         target: DirectCallTarget,
         receiver: Value,
@@ -165,6 +194,52 @@ enum Finish {
         tail: bool,
     },
     Conversion(super::conversion_driver::ConversionWait),
+}
+
+fn finish_numeric(
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    value: Value,
+    previous: Option<Value>,
+    _depth: usize,
+) -> Result<CallStep, Error> {
+    let parent = execution.frames.current_mut(frame)?;
+    if let Some(previous) = previous {
+        execution.slots.push(&mut parent.window, previous)?;
+    }
+    execution.slots.push(&mut parent.window, value)?;
+    parent.resume_pc = parent
+        .fault_pc
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_instruction(_depth);
+    Ok(CallStep::Entered)
+}
+
+fn finish_instruction(
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    completion: Completion,
+    push: bool,
+    _depth: usize,
+) -> Result<Progress, Error> {
+    match completion {
+        Completion::Return(value) => {
+            let parent = execution.frames.current_mut(owner.frame()?)?;
+            if push {
+                execution.slots.push(&mut parent.window, value)?;
+            }
+            parent.resume_pc = parent
+                .fault_pc
+                .checked_add(1)
+                .ok_or_else(|| Error::internal("property resume PC overflow"))?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_instruction(_depth);
+            Ok(Progress::Call(CallStep::Entered))
+        }
+        completion => Ok(Progress::Call(CallStep::Complete(completion))),
+    }
 }
 
 pub(super) enum Progress {
@@ -651,6 +726,44 @@ pub(super) fn start_write(
             receiver,
         )
         .map_err(runtime_error_to_vm_error)?;
+        let step = step
+            .advance_without_callback(runtime)
+            .map_err(runtime_error_to_vm_error)?;
+        if let crate::engine::object::SetStep::Complete(action) = step {
+            if !matches!(
+                action,
+                crate::engine::object::operations::PropertySetAction::Call { .. }
+            ) {
+                let completion = runtime
+                    .finish_property_set(
+                        request::set_result(action).map_err(runtime_error_to_vm_error)?,
+                        &key,
+                        strict,
+                    )
+                    .map_err(runtime_error_to_vm_error)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "write_completed_without_query",
+                );
+                return finish_instruction(
+                    execution,
+                    ReturnOwner::Frame(frame),
+                    completion,
+                    false,
+                    depth,
+                );
+            }
+            return advance(
+                runtime,
+                execution,
+                frame,
+                identity,
+                Vec::new(),
+                Step::SetComplete(action),
+                Finish::Write { key, strict, depth },
+            );
+        }
+
         advance(
             runtime,
             execution,
@@ -832,8 +945,10 @@ pub(super) fn start_root(
         ReturnOwner::Root,
         1,
         Query {
+            #[cfg(feature = "profiling")]
+            had_callback: false,
             realm,
-            parents: Vec::new(),
+            parents: Parents::default(),
             natives: Vec::new(),
             finish: Some(Finish::Root),
         },
@@ -872,8 +987,10 @@ fn advance(
         ReturnOwner::Frame(frame),
         identity,
         Query {
+            #[cfg(feature = "profiling")]
+            had_callback: false,
             realm,
-            parents,
+            parents: Parents(parents),
             natives: Vec::new(),
             finish: Some(finish),
         },
@@ -889,12 +1006,33 @@ fn drive(
     mut query: Query,
     mut step: Result<Step, Error>,
 ) -> Result<Progress, Error> {
+    #[cfg(feature = "profiling")]
+    {
+        use crate::engine::api::profiling::record_owned_execution_layout as layout;
+        layout::<Step>("Step");
+        layout::<Resume>("Resume");
+        layout::<Next>("Next");
+        layout::<super::conversion_driver::ConversionTask>("ConversionTask");
+        layout::<super::frame::FrameCold>("FrameCold");
+    }
     loop {
         let result = step
             .and_then(|step| advance_inner(runtime, execution, owner, identity, &mut query, step));
         match result {
-            Ok(Next::Done(result)) => return Ok(result),
+            Ok(Next::Done(result)) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    if query.had_callback {
+                        "query_completed_after_callback"
+                    } else {
+                        "query_completed_without_callback"
+                    },
+                );
+                return Ok(result);
+            }
             Ok(Next::Call { entry, pc, resume }) => {
+                #[cfg(feature = "profiling")]
+                let had_callback = std::mem::replace(&mut query.had_callback, true);
                 put_pending(
                     execution,
                     owner,
@@ -906,6 +1044,10 @@ fn drive(
                 )?;
                 match push_frame(execution, entry) {
                     Ok(id) => {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "query_bytecode_callback",
+                        );
                         let child = execution.frames.current_mut(id)?;
                         child.resume_pc = pc;
                         child.fault_pc = pc.saturating_sub(1);
@@ -915,11 +1057,15 @@ fn drive(
                         let pending = take_pending(execution, owner)?;
                         drop(pending.resume);
                         query = pending.query;
+                        #[cfg(feature = "profiling")]
+                        {
+                            query.had_callback = had_callback;
+                        }
                         step = Err(error);
                     }
                 }
             }
-            Ok(Next::Continue(_) | Next::Invoke { .. }) => {
+            Ok(Next::Continue | Next::Invoke { .. }) => {
                 return Err(Error::internal(
                     "query dispatch escaped without a terminal step",
                 ));
@@ -950,7 +1096,7 @@ fn advance_inner(
             ReturnOwner,
             u64,
             &mut Query,
-            Step,
+            &mut Step,
         ) -> Result<Next, Error> = match &step {
             Step::RootDescriptor(..)
             | Step::Complete { .. }
@@ -1034,10 +1180,13 @@ fn advance_inner(
             | Step::Call { .. }
             | Step::Descriptor { .. } => dispatch_read::get,
         };
-        let next = dispatch(runtime, execution, owner, identity, query, step)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("query_dispatch");
+        let next = dispatch(runtime, execution, owner, identity, query, &mut step)?;
         let (target, receiver, arguments, resume) = match next {
-            Next::Continue(next) => {
-                step = next;
+            Next::Continue => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event("query_continue");
                 continue;
             }
             Next::Invoke {
@@ -1050,8 +1199,9 @@ fn advance_inner(
         };
         match invoke(
             runtime, execution, owner, identity, query, target, receiver, arguments, resume,
+            &mut step,
         )? {
-            Next::Continue(next) => step = next,
+            Next::Continue => {}
             next => return Ok(next),
         }
     }
@@ -1068,6 +1218,7 @@ fn invoke(
     receiver: Value,
     arguments: Vec<Value>,
     resume: Resume,
+    next_step: &mut Step,
 ) -> Result<Next, Error> {
     let realm = query.realm;
     let step;
@@ -1081,7 +1232,8 @@ fn invoke(
                 step = resume
                     .resume(runtime, overflow(runtime, realm)?)
                     .map_err(runtime_error_to_vm_error)?;
-                return Ok(Next::Continue(step));
+                *next_step = step;
+                return Ok(Next::Continue);
             }
             query
                 .parents
@@ -1093,7 +1245,8 @@ fn invoke(
             )
             .map_err(runtime_error_to_vm_error)?
             .into();
-            return Ok(Next::Continue(step));
+            *next_step = step;
+            return Ok(Next::Continue);
         }
     };
     let super::call::NormalizedCallback {
@@ -1107,7 +1260,8 @@ fn invoke(
             step = resume
                 .resume(runtime, Completion::Throw(value))
                 .map_err(runtime_error_to_vm_error)?;
-            return Ok(Next::Continue(step));
+            *next_step = step;
+            return Ok(Next::Continue);
         }
     };
     if matches!(classification, CallableExecution::Proxy) {
@@ -1118,7 +1272,8 @@ fn invoke(
             step = resume
                 .resume(runtime, overflow(runtime, realm)?)
                 .map_err(runtime_error_to_vm_error)?;
-            return Ok(Next::Continue(step));
+            *next_step = step;
+            return Ok(Next::Continue);
         }
         query
             .parents
@@ -1134,7 +1289,8 @@ fn invoke(
         )
         .map_err(runtime_error_to_vm_error)?
         .into();
-        return Ok(Next::Continue(step));
+        *next_step = step;
+        return Ok(Next::Continue);
     }
     if let CallableExecution::Native {
         target,
@@ -1155,7 +1311,8 @@ fn invoke(
             arguments,
             resume,
         };
-        return Ok(Next::Continue(step));
+        *next_step = step;
+        return Ok(Next::Continue);
     }
     if let CallableExecution::Bytecode {
         bytecode,
@@ -1184,7 +1341,8 @@ fn invoke(
                 step = resume
                     .resume(runtime, completion)
                     .map_err(runtime_error_to_vm_error)?;
-                return Ok(Next::Continue(step));
+                *next_step = step;
+                return Ok(Next::Continue);
             }
             let resume = if matches!(kind, FunctionKind::Normal | FunctionKind::Async) {
                 resume
@@ -1243,7 +1401,8 @@ fn invoke(
     step = resume
         .resume(runtime, completion)
         .map_err(runtime_error_to_vm_error)?;
-    Ok(Next::Continue(step))
+    *next_step = step;
+    Ok(Next::Continue)
 }
 
 fn overflow(runtime: &Runtime, realm: crate::engine::heap::ContextId) -> Result<Completion, Error> {
@@ -1304,18 +1463,20 @@ mod native_scope_tests {
         let first = prepare(&runtime, &mut outer, "Object.getPrototypeOf");
         let second = prepare(&runtime, &mut inner, "Reflect.setPrototypeOf");
         let mut query = Query {
+            #[cfg(feature = "profiling")]
+            had_callback: false,
             realm: inner.realm,
-            parents: Vec::new(),
+            parents: Parents::default(),
             natives: vec![
                 NativeScope {
                     call: first,
-                    parents: Vec::new(),
+                    parents: Parents::default(),
                     resume: Resume::Identity,
                     parent_realm: caller.realm,
                 },
                 NativeScope {
                     call: second,
-                    parents: Vec::new(),
+                    parents: Parents::default(),
                     resume: Resume::Identity,
                     parent_realm: outer.realm,
                 },
@@ -1811,6 +1972,19 @@ pub(super) fn start_numeric(
         .checked_add(1)
         .ok_or_else(|| Error::internal("numeric query identity exhausted"))?;
     parent.cold.property_generation = identity;
+    let step = match step {
+        super::numeric::operation::NumericStep::Complete { value, previous } => {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "numeric_completed_without_query",
+            );
+            return finish_numeric(execution, frame, value, previous, depth);
+        }
+        super::numeric::operation::NumericStep::Throw(value) => {
+            return Ok(CallStep::Complete(Completion::Throw(value)));
+        }
+        step => step,
+    };
     let result = advance(
         runtime,
         execution,

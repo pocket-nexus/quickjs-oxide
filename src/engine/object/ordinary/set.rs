@@ -87,6 +87,87 @@ impl SetStep {
         .walk(runtime, object)
     }
 
+    /// Finish local storage phases without installing scheduler parents. Stop
+    /// before any Proxy, descriptor, setter or user conversion request.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn advance_without_callback(
+        mut self,
+        runtime: &Runtime,
+    ) -> Result<Self, RuntimeError> {
+        loop {
+            self = match self {
+                Self::Continue { resume } => resume.advance(runtime)?,
+                Self::Special {
+                    object,
+                    key,
+                    value,
+                    receiver,
+                    resume,
+                } if !matches!(value, Value::Object(_)) => {
+                    let realm = resume
+                        .state
+                        .realm
+                        .ok_or(RuntimeError::Invariant("typed Set requires a realm"))?;
+                    let result = match runtime
+                        .prepare_typed_array_set(&object, &key, &value, &receiver)?
+                    {
+                        None => None,
+                        Some(request) => {
+                            let crate::engine::builtins::TypedWriteStep::Complete(result) =
+                                request.complete_primitive(runtime, realm)?
+                            else {
+                                return Err(RuntimeError::Invariant(
+                                    "primitive typed write suspended",
+                                ));
+                            };
+                            Some(match result {
+                                NativeConversion::Value(_) => {
+                                    NativeConversion::Value(InternalSetResult::Accepted)
+                                }
+                                NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                            })
+                        }
+                    };
+                    resume.special(runtime, result)?
+                }
+                Self::Descriptor {
+                    object,
+                    key,
+                    resume,
+                } if matches!(runtime.array_own_key(&object, &key)?, ArrayOwnKey::Index(_)) => {
+                    let descriptor = runtime.get_own_property(&object, &key)?;
+                    resume.descriptor(runtime, NativeConversion::Value(descriptor))?
+                }
+                Self::Define {
+                    object,
+                    key,
+                    descriptor,
+                    resume,
+                } if matches!(runtime.array_own_key(&object, &key)?, ArrayOwnKey::Index(_)) => {
+                    // A genuine Array index cannot request length/value coercion.
+                    // The common definition kernel still enforces flags, sparse
+                    // transitions, extensibility and the writable length bound.
+                    let result = match runtime.define_own_property_in_realm(
+                        resume.state.realm,
+                        &object,
+                        &key,
+                        &descriptor,
+                    )? {
+                        PropertyDefineOutcome::Defined(true) => {
+                            NativeConversion::Value(InternalDefineResult::Defined)
+                        }
+                        PropertyDefineOutcome::Defined(false) => {
+                            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object))
+                        }
+                        PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
+                    };
+                    resume.defined(runtime, result)?
+                }
+                step => return Ok(step),
+            };
+        }
+    }
+
     /// Old callers consume the same domain protocol synchronously. The owned
     /// VM only uses this for the remaining Array/TypedArray conversion steps.
     pub(crate) fn finish_sync(self, runtime: &Runtime) -> Result<Self, RuntimeError> {

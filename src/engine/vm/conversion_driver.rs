@@ -52,6 +52,29 @@ pub(super) enum Progress {
     PropertyWrite(Box<super::property_write_driver::ConvertedWrite>),
 }
 
+fn add_completion(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    left: Value,
+    right: Value,
+) -> Result<Completion, Error> {
+    match super::numeric::add_primitives(left, right) {
+        Ok(value) => Ok(Completion::Return(value)),
+        Err(error) => {
+            let Some(kind) =
+                crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
+            else {
+                return Err(error);
+            };
+            Ok(Completion::Throw(
+                runtime
+                    .new_native_error_from_error(realm, kind, &error)
+                    .map_err(runtime_error_to_vm_error)?,
+            ))
+        }
+    }
+}
+
 impl ConversionTask {
     #[cfg(feature = "profiling")]
     pub(super) fn operand_count(&self) -> usize {
@@ -256,6 +279,15 @@ impl ConversionTask {
                         }
                         match finish {
                             Finish::AddLeft(right) => {
+                                if !matches!(right, Value::Object(_)) {
+                                    #[cfg(feature = "profiling")]
+                                    crate::engine::api::profiling::record_owned_execution_event(
+                                        "add_completed_with_primitive_rhs",
+                                    );
+                                    return Ok(Progress::Complete(add_completion(
+                                        runtime, realm, value, right,
+                                    )?));
+                                }
                                 return Ok(Progress::Ready(Self {
                                     frame,
                                     identity,
@@ -268,19 +300,7 @@ impl ConversionTask {
                                     ),
                                 }));
                             }
-                            Finish::AddRight(left) => {
-                                match super::numeric::add_primitives(left, value) {
-                                    Ok(value) => Completion::Return(value),
-                                    Err(error) => {
-                                        let Some(kind) = crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind()) else { return Err(error); };
-                                        Completion::Throw(
-                                            runtime
-                                                .new_native_error_from_error(realm, kind, &error)
-                                                .map_err(runtime_error_to_vm_error)?,
-                                        )
-                                    }
-                                }
-                            }
+                            Finish::AddRight(left) => add_completion(runtime, realm, left, value)?,
                             Finish::Predicate(mut input) => {
                                 input.key = value;
                                 return Ok(Progress::Predicate(input));

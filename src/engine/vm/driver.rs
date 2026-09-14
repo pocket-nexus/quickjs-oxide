@@ -664,6 +664,11 @@ fn run_frames_with_state(
             RunExit::Complete
         } else {
             let result = run(&mut execution, id);
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(match &result {
+                Ok(exit) => exit.diagnostic_name(),
+                Err(_) => "run_exit.EngineError",
+            });
             let frame = execution.frames.current_mut(id)?;
             runtime
                 .update_active_bytecode_pc(frame.cold.active_frame, BytecodePc::new(frame.fault_pc))

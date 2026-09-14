@@ -108,6 +108,9 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         assert!(costs.contains("\"owned_sync_call_bridges\":0,"));
         assert!(!costs.contains("\"frames_pushed\":0"));
         assert!(!costs.contains("\"slot_capacity_growths\":0"));
+        assert!(costs.contains("\"Next\":{\"size_bytes\":"));
+        assert!(costs.contains("\"query_completed_without_callback\":"));
+        assert!(costs.contains("\"runtime_pc_publication\":"));
     } else {
         assert!(costs.contains("\"execution_path\":\"legacy\""));
         assert!(costs.contains("\"owned_instructions\":0"));

@@ -13,9 +13,14 @@ pub(super) fn prototype(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_read.prototype.visit",
+        );
         let realm = query.realm;
         match step {
             Step::OwnComplete(descriptor) => {
@@ -122,7 +127,10 @@ pub(super) fn prototype(
                 }
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }
@@ -134,9 +142,14 @@ pub(super) fn attributes(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_read.attributes.visit",
+        );
         let realm = query.realm;
         match step {
             Step::Delete {
@@ -251,7 +264,10 @@ pub(super) fn attributes(
                     .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }
@@ -263,9 +279,12 @@ pub(super) fn get(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("dispatch_read.get.visit");
         let realm = query.realm;
         let (target, receiver, arguments, resume) =
             match step {
@@ -405,7 +424,10 @@ pub(super) fn get(
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                _ => return Ok(Next::Continue(step)),
+                next => {
+                    *pending = next;
+                    return Ok(Next::Continue);
+                }
             };
         return Ok(Next::Invoke {
             target,

@@ -1494,3 +1494,10 @@ impl Resume {
         }
     }
 }
+impl Step {
+    /// Move the selected domain payload once. The vacant state owns no roots;
+    /// a helper installs its next request here before returning Continue.
+    pub(super) fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::Complete(Completion::Return(Value::Undefined)))
+    }
+}

@@ -301,6 +301,7 @@ mod tests {
 
 #[cfg(feature = "stack-vm")]
 pub(crate) use cost::{
-    OwnedStorageEvent, record_owned_bridge, record_owned_instruction, record_owned_storage,
+    OwnedStorageEvent, record_owned_bridge, record_owned_execution_event,
+    record_owned_execution_layout, record_owned_instruction, record_owned_storage,
     record_owned_sync_call_bridge,
 };

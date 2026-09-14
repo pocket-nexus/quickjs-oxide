@@ -11,9 +11,12 @@ pub(super) fn keys(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("dispatch_write.keys.visit");
         let realm = query.realm;
         match step {
             Step::SnapshotEnumerable {
@@ -135,7 +138,10 @@ pub(super) fn keys(
                 };
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }
@@ -147,9 +153,12 @@ pub(super) fn set(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("dispatch_write.set.visit");
         let realm = query.realm;
         match step {
             Step::SetContinue(resume) => {
@@ -305,7 +314,10 @@ pub(super) fn set(
                 .into();
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }
@@ -317,9 +329,12 @@ pub(super) fn define(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("dispatch_write.define.visit");
         let realm = query.realm;
         match step {
             Step::Defined(result) => {
@@ -425,7 +440,10 @@ pub(super) fn define(
                     .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }

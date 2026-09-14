@@ -44,6 +44,9 @@ pub(in crate::engine::vm) struct FrameStorage {
     pub operands: Vec<Value>,
 }
 
+mod window;
+pub(in crate::engine::vm) use window::RunSlots;
+
 impl SlotStore {
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
         Self {
@@ -55,6 +58,19 @@ impl SlotStore {
             #[cfg(feature = "profiling")]
             live_slots: 0,
         }
+    }
+
+    /// The exclusive borrow prevents arena growth, frame changes and any window
+    /// reuse until run returns to its observation boundary.
+    pub(in crate::engine::vm) fn run_window<'a>(
+        &'a mut self,
+        window: &'a mut FrameWindow,
+    ) -> Result<RunSlots<'a>, Error> {
+        self.check_current(window)?;
+        Ok(RunSlots {
+            store: self,
+            window,
+        })
     }
 
     /// All capacity checks precede ownership installation. Arguments already
@@ -153,6 +169,8 @@ impl SlotStore {
     }
 
     fn check_current(&self, window: &FrameWindow) -> Result<(), Error> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("slot_authentication");
         if !Rc::ptr_eq(&self.owner, &window.owner)
             || self.windows.last() != Some(&window.id)
             || self.slots.len() != window.whole.end
@@ -174,6 +192,10 @@ impl SlotStore {
         from_top: usize,
     ) -> Result<&Value, Error> {
         self.check_current(window)?;
+        self.peek_current(window, from_top)
+    }
+
+    fn peek_current(&self, window: &FrameWindow, from_top: usize) -> Result<&Value, Error> {
         let offset = from_top
             .checked_add(1)
             .and_then(|offset| window.depth.checked_sub(offset))
@@ -184,6 +206,58 @@ impl SlotStore {
         }
     }
 
+    /// Number operands have no release effects. Authenticate the window and both
+    /// operands before replacing either owner; a non-number leaves the stack intact.
+    #[cfg(test)]
+    pub(in crate::engine::vm) fn binary_number(
+        &mut self,
+        window: &mut FrameWindow,
+        operation: impl FnOnce(
+            crate::engine::value::number::operations::Number,
+            crate::engine::value::number::operations::Number,
+        ) -> Value,
+    ) -> Result<bool, Error> {
+        self.check_current(window)?;
+        self.binary_number_current(window, operation)
+    }
+
+    fn binary_number_current(
+        &mut self,
+        window: &mut FrameWindow,
+        operation: impl FnOnce(
+            crate::engine::value::number::operations::Number,
+            crate::engine::value::number::operations::Number,
+        ) -> Value,
+    ) -> Result<bool, Error> {
+        let offset = window
+            .depth
+            .checked_sub(2)
+            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+        let index = window.operands.start + offset;
+        let [
+            Some(FrameBinding::Direct(left)),
+            Some(FrameBinding::Direct(right)),
+        ] = &self.slots[index..index + 2]
+        else {
+            return Err(Error::internal("owned operand slot is not a value"));
+        };
+        let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
+            return Ok(false);
+        };
+        let result = operation(left, right);
+        self.slots[index] = Some(FrameBinding::Direct(result));
+        self.slots[index + 1] = None;
+        window.depth -= 1;
+        #[cfg(feature = "profiling")]
+        {
+            self.live_slots -= 1;
+            // One result owner enters storage; neither numeric input is moved out.
+            record_owned_storage(Cost::Move(1));
+            crate::engine::api::profiling::record_owned_execution_event("binary_number_in_place");
+        }
+        Ok(true)
+    }
+
     /// Move an owned value into an already reserved, empty operand slot.
     pub(in crate::engine::vm) fn push(
         &mut self,
@@ -191,6 +265,10 @@ impl SlotStore {
         value: Value,
     ) -> Result<(), Error> {
         self.check_current(window)?;
+        self.push_current(window, value)
+    }
+
+    fn push_current(&mut self, window: &mut FrameWindow, value: Value) -> Result<(), Error> {
         if window.depth >= window.operands.len() {
             return Err(Error::internal(
                 "owned operand stack exceeds verified capacity",
@@ -214,7 +292,19 @@ impl SlotStore {
     }
 
     /// Rotate existing owners in place. No retain, release, or allocation occurs.
+    #[cfg(test)]
     pub(in crate::engine::vm) fn rotate_operands(
+        &mut self,
+        window: &FrameWindow,
+        skip_top: usize,
+        count: usize,
+        left: bool,
+    ) -> Result<(), Error> {
+        self.check_current(window)?;
+        self.rotate_operands_current(window, skip_top, count, left)
+    }
+
+    fn rotate_operands_current(
         &mut self,
         window: &FrameWindow,
         skip_top: usize,
@@ -225,7 +315,7 @@ impl SlotStore {
             .checked_add(count)
             .filter(|_| count > 0)
             .ok_or_else(|| Error::internal("invalid owned operand rotation"))?;
-        self.peek(window, extent - 1)?;
+        self.peek_current(window, extent - 1)?;
         let end = window.operands.start + window.depth - skip_top;
         #[cfg(feature = "profiling")]
         if count > 1 {
@@ -242,26 +332,47 @@ impl SlotStore {
 
     /// Copy once, then install by moving owners inside the reserved window.
     /// All shape/capacity checks and the fallible retain precede mutation.
+    #[cfg(test)]
     pub(in crate::engine::vm) fn insert_copy(
         &mut self,
         window: &mut FrameWindow,
         source_from_top: usize,
         destination_from_top: usize,
     ) -> Result<(), Error> {
-        self.peek(window, source_from_top)?;
+        self.check_current(window)?;
+        self.insert_copy_current(window, source_from_top, destination_from_top)
+    }
+
+    fn insert_copy_current(
+        &mut self,
+        window: &mut FrameWindow,
+        source_from_top: usize,
+        destination_from_top: usize,
+    ) -> Result<(), Error> {
+        self.peek_current(window, source_from_top)?;
         if destination_from_top > window.depth || window.depth >= window.operands.len() {
             return Err(Error::internal("owned insertion exceeds verified capacity"));
         }
-        let copied = copy_value(self.peek(window, source_from_top)?)?;
-        self.push(window, copied)?;
-        self.rotate_operands(window, 0, destination_from_top + 1, false)
+        let copied = copy_value(self.peek_current(window, source_from_top)?)?;
+        self.push_current(window, copied)?;
+        self.rotate_operands_current(window, 0, destination_from_top + 1, false)
     }
 
     /// Retain a sequence into reserved slots. If a retain fails, the committed
     /// prefix stays inside the logical window for the driver's error cleanup.
     /// This error is terminal, never a bridge/retry: no local rollback may drop
     /// roots and unexpectedly drain deferred releases inside the run loop.
+    #[cfg(test)]
     pub(in crate::engine::vm) fn duplicate_operands(
+        &mut self,
+        window: &mut FrameWindow,
+        count: usize,
+    ) -> Result<(), Error> {
+        self.check_current(window)?;
+        self.duplicate_operands_current(window, count)
+    }
+
+    fn duplicate_operands_current(
         &mut self,
         window: &mut FrameWindow,
         count: usize,
@@ -269,7 +380,7 @@ impl SlotStore {
         let source = count
             .checked_sub(1)
             .ok_or_else(|| Error::internal("empty owned operand duplication"))?;
-        self.peek(window, source)?;
+        self.peek_current(window, source)?;
         if count > window.operands.len() - window.depth {
             return Err(Error::internal(
                 "owned duplication exceeds verified capacity",
@@ -277,15 +388,20 @@ impl SlotStore {
         }
         for _ in 0..count {
             // As depth grows, this fixed offset visits the next original slot.
-            let copied = copy_value(self.peek(window, source)?)?;
-            self.push(window, copied)?;
+            let copied = copy_value(self.peek_current(window, source)?)?;
+            self.push_current(window, copied)?;
         }
         Ok(())
     }
 
     /// Logical pop removes ownership immediately. No dead value survives above sp.
     pub(in crate::engine::vm) fn pop(&mut self, window: &mut FrameWindow) -> Result<Value, Error> {
-        self.peek(window, 0)?;
+        self.check_current(window)?;
+        self.pop_current(window)
+    }
+
+    fn pop_current(&mut self, window: &mut FrameWindow) -> Result<Value, Error> {
+        self.peek_current(window, 0)?;
         window.depth -= 1;
         #[cfg(feature = "profiling")]
         {
@@ -321,13 +437,24 @@ impl SlotStore {
 
     /// Preflight and release one operand without moving any other owner. A
     /// false result leaves both the value and logical depth untouched.
+    #[cfg(test)]
     pub(in crate::engine::vm) fn release_operand(
         &mut self,
         window: &FrameWindow,
         from_top: usize,
         runtime: &Runtime,
     ) -> Result<bool, Error> {
-        self.peek(window, from_top)?;
+        self.check_current(window)?;
+        self.release_operand_current(window, from_top, runtime)
+    }
+
+    fn release_operand_current(
+        &mut self,
+        window: &FrameWindow,
+        from_top: usize,
+        runtime: &Runtime,
+    ) -> Result<bool, Error> {
+        self.peek_current(window, from_top)?;
         let index = window.operands.start + window.depth - from_top - 1;
         let Some(FrameBinding::Direct(value)) = &mut self.slots[index] else {
             unreachable!()
@@ -348,6 +475,10 @@ impl SlotStore {
         index: u16,
     ) -> Result<&FrameBinding, Error> {
         self.check_current(window)?;
+        self.local_current(window, index)
+    }
+
+    fn local_current(&self, window: &FrameWindow, index: u16) -> Result<&FrameBinding, Error> {
         if usize::from(index) >= window.locals.len() {
             return Err(Error::internal("owned local index is out of bounds"));
         }
@@ -387,7 +518,17 @@ impl SlotStore {
         index: u16,
         value: FrameBinding,
     ) -> Result<FrameBinding, Error> {
-        self.local(window, index)?;
+        self.check_current(window)?;
+        self.replace_local_current(window, index, value)
+    }
+
+    fn replace_local_current(
+        &mut self,
+        window: &FrameWindow,
+        index: u16,
+        value: FrameBinding,
+    ) -> Result<FrameBinding, Error> {
+        self.local_current(window, index)?;
         #[cfg(feature = "profiling")]
         record_owned_storage(Cost::Move(2));
         Ok(self.slots[window.locals.start + usize::from(index)]
@@ -448,6 +589,10 @@ impl SlotStore {
         index: u16,
     ) -> Result<&FrameBinding, Error> {
         self.check_current(window)?;
+        self.parameter_current(window, index)
+    }
+
+    fn parameter_current(&self, window: &FrameWindow, index: u16) -> Result<&FrameBinding, Error> {
         if usize::from(index) >= window.parameters.len() {
             return Err(Error::internal("owned parameter index is out of bounds"));
         }
@@ -462,7 +607,17 @@ impl SlotStore {
         index: u16,
         value: FrameBinding,
     ) -> Result<FrameBinding, Error> {
-        self.parameter(window, index)?;
+        self.check_current(window)?;
+        self.replace_parameter_current(window, index, value)
+    }
+
+    fn replace_parameter_current(
+        &mut self,
+        window: &FrameWindow,
+        index: u16,
+        value: FrameBinding,
+    ) -> Result<FrameBinding, Error> {
+        self.parameter_current(window, index)?;
         #[cfg(feature = "profiling")]
         record_owned_storage(Cost::Move(2));
         Ok(self.slots[window.parameters.start + usize::from(index)]
@@ -550,6 +705,7 @@ impl SlotStore {
 /// The running stack's copy boundary. Object retain is fallible and neither
 /// drains references nor calls JS; primitive Rc copies preserve representation.
 /// Releases are separate, so a failed retain cannot repeat a committed release.
+#[inline]
 pub(in crate::engine::vm) fn copy_value(value: &Value) -> Result<Value, Error> {
     let copied = match value {
         Value::Undefined => Value::Undefined,
@@ -557,6 +713,18 @@ pub(in crate::engine::vm) fn copy_value(value: &Value) -> Result<Value, Error> {
         Value::Bool(value) => Value::Bool(*value),
         Value::Int(value) => Value::Int(*value),
         Value::Float(value) => Value::Float(*value),
+        _ => return copy_reference(value),
+    };
+    #[cfg(feature = "profiling")]
+    record_copy(value);
+    Ok(copied)
+}
+
+// Keep fallible heap retains and their error formatting out of scalar copies.
+// This is not cold: String/BigInt copies also share this boundary.
+#[inline(never)]
+fn copy_reference(value: &Value) -> Result<Value, Error> {
+    let copied = match value {
         Value::String(value) => Value::String(value.clone()),
         Value::BigInt(value) => Value::BigInt(value.clone()),
         Value::Object(value) => Value::Object(
@@ -569,12 +737,28 @@ pub(in crate::engine::vm) fn copy_value(value: &Value) -> Result<Value, Error> {
                 .try_clone()
                 .map_err(|error| Error::internal(error.to_string()))?,
         ),
+        Value::Undefined | Value::Null | Value::Bool(_) | Value::Int(_) | Value::Float(_) => {
+            unreachable!("scalar copy entered reference helper")
+        }
     };
     #[cfg(feature = "profiling")]
+    record_copy(value);
+    Ok(copied)
+}
+
+#[cfg(feature = "profiling")]
+fn record_copy(value: &Value) {
     record_owned_storage(Cost::Copy {
         heap_root: matches!(value, Value::Object(_) | Value::Symbol(_)),
     });
-    Ok(copied)
+    crate::engine::api::profiling::record_owned_execution_event(match value {
+        Value::String(_) => "slot_copy.StringRc",
+        Value::BigInt(value) if value.as_i64().is_some() => "slot_copy.BigIntImmediate",
+        Value::BigInt(_) => "slot_copy.BigIntRc",
+        Value::Object(_) => "slot_copy.ObjectRetain",
+        Value::Symbol(_) => "slot_copy.SymbolRetain",
+        _ => "slot_copy.Immediate",
+    });
 }
 
 #[cfg(feature = "profiling")]
@@ -599,6 +783,73 @@ mod tests {
             locals: Vec::new(),
             operands: Vec::new(),
         }
+    }
+
+    #[test]
+    #[cfg(feature = "profiling")]
+    fn copy_cost_distinguishes_short_bigints_from_shared_heap_bigints() {
+        let short = Value::BigInt("1".parse().unwrap());
+        let heap = Value::BigInt("18446744073709551616".parse().unwrap());
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(super::copy_value(&short).unwrap(), short);
+        assert_eq!(super::copy_value(&heap).unwrap(), heap);
+        let cost = profile.snapshot();
+        assert_eq!(cost.owned_storage.value_copies, 2);
+        assert_eq!(cost.owned_storage.copied_heap_roots, 0);
+        assert_eq!(cost.owned_execution_events["slot_copy.BigIntImmediate"], 1);
+        assert_eq!(cost.owned_execution_events["slot_copy.BigIntRc"], 1);
+    }
+
+    #[test]
+    fn numeric_replacement_is_transactional_and_clears_the_dead_owner() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 2;
+        let mut slots = SlotStore::new(8);
+        let mut window = slots
+            .push_frame(&owner.frame_layout(), empty_storage())
+            .unwrap();
+        assert!(
+            slots
+                .binary_number(&mut window, |_, _| unreachable!())
+                .is_err()
+        );
+        slots.push(&mut window, Value::Int(7)).unwrap();
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        slots.push(&mut window, Value::Object(object)).unwrap();
+        assert!(
+            !slots
+                .binary_number(&mut window, |_, _| unreachable!())
+                .unwrap()
+        );
+        assert_eq!(slots.depth(&window), 2);
+        assert_eq!(slots.peek(&window, 1).unwrap(), &Value::Int(7));
+        assert!(
+            matches!(slots.peek(&window, 0).unwrap(), Value::Object(root) if root.object_id() == id)
+        );
+        drop(slots.pop(&mut window).unwrap());
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        slots.push(&mut window, Value::Int(3)).unwrap();
+        let child = slots
+            .push_frame(&owner.frame_layout(), empty_storage())
+            .unwrap();
+        assert!(
+            slots
+                .binary_number(&mut window, |_, _| unreachable!())
+                .is_err()
+        );
+        slots.clear_frame(child).unwrap();
+        assert!(
+            slots
+                .binary_number(&mut window, |left, right| left.sub(right).into())
+                .unwrap()
+        );
+        assert_eq!(slots.depth(&window), 1);
+        assert!(slots.slots[window.operands.start + 1].is_none());
+        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(4));
+        slots.clear_frame(window).unwrap();
     }
 
     #[test]

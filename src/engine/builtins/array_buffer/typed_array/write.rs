@@ -70,6 +70,33 @@ impl TypedWriteStep {
             },
         })
     }
+    /// Advance only a primitive input through the shared conversion and write
+    /// kernels. Object inputs retain the original request for the owned driver.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn complete_primitive(
+        self,
+        runtime: &Runtime,
+        realm: ContextId,
+    ) -> Result<Self, RuntimeError> {
+        match self {
+            Self::Element {
+                element,
+                value,
+                resume,
+            } if !matches!(value, Value::Object(_)) => {
+                let ElementStep::Complete(result) =
+                    ElementStep::start(runtime, realm, element, value)?
+                else {
+                    return Err(RuntimeError::Invariant(
+                        "primitive element conversion suspended",
+                    ));
+                };
+                resume.element(runtime, result)
+            }
+            step => Ok(step),
+        }
+    }
+
     pub(crate) fn finish_sync(
         self,
         runtime: &Runtime,

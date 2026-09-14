@@ -11,9 +11,14 @@ pub(super) fn advance(
     _owner: ReturnOwner,
     _identity: u64,
     query: &mut Query,
-    mut step: Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
+    let mut step = pending.take();
     loop {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "dispatch_iteration.advance.visit",
+        );
         let realm = query.realm;
         match step {
             Step::RegExpSpecies { regexp, resume } => {
@@ -270,7 +275,10 @@ pub(super) fn advance(
                 continue;
             }
 
-            _ => return Ok(Next::Continue(step)),
+            next => {
+                *pending = next;
+                return Ok(Next::Continue);
+            }
         }
     }
 }

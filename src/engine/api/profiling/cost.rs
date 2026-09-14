@@ -97,6 +97,12 @@ pub struct CostSnapshot {
     /// runtime boundary. Includes callback-free callees; not all nested calls.
     pub owned_sync_call_bridges: u64,
     pub owned_max_operand_depth: usize,
+    /// Rust inline layouts as [size bytes, alignment bytes]; excludes owned
+    /// allocations and is not a measurement of dynamic payload-copy traffic.
+    pub owned_execution_layouts: std::collections::BTreeMap<&'static str, [usize; 2]>,
+    /// Observed owned scheduler events. Missing entries are unobserved, not
+    /// measurements of legacy behavior; these are not machine copy counts.
+    pub owned_execution_events: std::collections::BTreeMap<&'static str, u64>,
     pub owned_storage: OwnedStorageCost,
     pub call_preparation: CallPreparationCost,
 }
@@ -341,6 +347,27 @@ pub(crate) enum OwnedStorageEvent {
     Clear(usize),
     Copy { heap_root: bool },
     HotRelease { heap_root: bool },
+}
+
+#[cfg(feature = "stack-vm")]
+pub(crate) fn record_owned_execution_layout<T>(name: &'static str) {
+    if let Some(collector) = current() {
+        collector
+            .borrow_mut()
+            .owned_execution_layouts
+            .entry(name)
+            .or_insert([size_of::<T>(), align_of::<T>()]);
+    }
+}
+
+#[cfg(feature = "stack-vm")]
+pub(crate) fn record_owned_execution_event(name: &'static str) {
+    let Some(collector) = current() else {
+        return;
+    };
+    let mut snapshot = collector.borrow_mut();
+    let count = snapshot.owned_execution_events.entry(name).or_default();
+    *count = count.saturating_add(1);
 }
 
 #[cfg(feature = "stack-vm")]
