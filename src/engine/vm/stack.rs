@@ -727,14 +727,12 @@ impl SlotStore {
         if *key < 0 {
             return Ok(false);
         }
-        let number = match value {
-            Value::Int(value) => f64::from(*value),
-            Value::Float(value) => *value,
-            _ => return Ok(false),
+        let typed = match value {
+            Value::Int(value) => runtime.try_typed_array_number_write(base,*key as u32,f64::from(*value)),
+            Value::Float(value) => runtime.try_typed_array_number_write(base,*key as u32,*value),
+            _ => false,
         };
-        if !runtime.try_typed_array_number_write(base, *key as u32, number) {
-            return Ok(false);
-        }
+        if !typed && !runtime.try_dense_array_write_scalar(base,*key as u32,value).map_err(super::exception::runtime_error_to_vm_error)? {return Ok(false);}
         // The successful leaf proved base's sole release cannot drain. Only
         // numeric input moves occur before its Drop; no proof can change.
         let value = self.slots[index + 2].take();
@@ -749,7 +747,7 @@ impl SlotStore {
             self.live_slots -= 3;
             record_owned_storage(Cost::Move(3));
             crate::engine::api::profiling::record_owned_execution_event(
-                "typed_array_number_write_in_run",
+                if typed { "typed_array_number_write_in_run" } else { "dense_array_scalar_write_in_run" },
             );
         }
         Ok(true)
@@ -832,42 +830,20 @@ impl SlotStore {
         Ok(true)
     }
 
+
+
     #[cfg(feature = "stack-vm")]
-    fn ordinary_field_immediate_write_current(
-        &mut self,
-        window: &mut FrameWindow,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        key_index: u32,
-    ) -> Result<bool, Error> {
-        let offset = window
-            .depth
-            .checked_sub(2)
-            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
-        let index = window.operands().start + offset;
-        let [
-            Some(FrameBinding::Direct(base)),
-            Some(FrameBinding::Direct(value)),
-        ] = &self.slots[index..index + 2]
-        else {
-            return Err(Error::internal("owned operand slot is not a value"));
-        };
-        if !runtime.try_ordinary_field_immediate_write(base, executable, key_index, value) {
-            return Ok(false);
-        }
-        let value = self.slots[index + 1].take();
-        let base = self.slots[index].take();
-        window.depth = offset;
-        drop(value);
-        drop(base);
-        #[cfg(feature = "profiling")]
-        {
-            self.live_slots -= 2;
-            record_owned_storage(Cost::Move(2));
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_field_immediate_write_in_run",
-            );
-        }
+    fn property_ic_write_scalar_current(&mut self, window: &mut FrameWindow, runtime: &Runtime, executable: &crate::engine::code::runtime::PublishedFunctionSnapshot, pc: usize, key: u32) -> Result<bool, Error> {
+        let offset=window.depth.checked_sub(2).ok_or_else(||Error::internal("owned operand stack underflow"))?;
+        let index=window.operands().start+offset;
+        let [Some(FrameBinding::Direct(base)),Some(FrameBinding::Direct(value))]=&self.slots[index..index+2] else {return Err(Error::internal("owned operand slot is not a value"))};
+        if !runtime.try_property_ic_write_scalar(base,executable,pc,key,value).map_err(super::exception::runtime_error_to_vm_error)? {return Ok(false);}
+        let base=self.slots[index].take();
+        let value=self.slots[index+1].take();
+        window.depth=offset;
+        drop((base,value));
+        #[cfg(feature="profiling")]
+        {self.live_slots-=2;record_owned_storage(Cost::Move(2));}
         Ok(true)
     }
 
@@ -1610,6 +1586,7 @@ mod tests {
                 _ => None,
             })
             .unwrap();
+        let write_pc = code.code.iter().position(|op| matches!(op, Instruction::PutField(_))).unwrap();
         for source in [
             "({get x(){throw 42}})",
             "({x:'reference'})",
@@ -1645,7 +1622,7 @@ mod tests {
                 !slots
                     .run_window(&mut window)
                     .unwrap()
-                    .ordinary_field_immediate_write(&runtime, &code, key)
+                    .property_ic_write_scalar(&runtime, &code, write_pc, key)
                     .unwrap()
             );
             assert_eq!(window.depth, 3);

@@ -282,3 +282,257 @@ mod tests {
         assert_ne!(first, second);
     }
 }
+
+impl Runtime {
+    pub(crate) fn try_property_ic_write_owned(
+        &self,
+        base: &Value,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key: u32,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let Some(atom) = linked_field_atom(self, executable, key) else {
+            return Ok(false);
+        };
+        let Value::Object(object) = base else {
+            return Ok(false);
+        };
+        if !object.belongs_to(self) {
+            return Ok(false);
+        }
+        let Some(cache) = executable.property_read_ic.write_site(pc) else {
+            return Ok(false);
+        };
+        let raw = self.raw_property_value(value)?;
+        let mut state = self.0.state.borrow_mut();
+        let id = object.object_id();
+        let slot = match cache.slot(&state.heap, self.domain_id(), executable.realm, id) {
+            Some(slot) => slot,
+            None => {
+                cache.miss(
+                    &state.heap,
+                    &state.atoms,
+                    self.domain_id(),
+                    executable.realm,
+                    id,
+                    atom,
+                );
+                let Some(slot) = cache.slot(&state.heap, self.domain_id(), executable.realm, id)
+                else {
+                    return Ok(false);
+                };
+                slot
+            }
+        };
+        // Input owners remain rooted; retain the new value before releasing the
+        // old edge. The caller has ended RunSlots and published the current PC.
+        state.replace_property_slot(id, slot, crate::engine::heap::PropertySlot::Data(raw))?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("property_write_ic.hit");
+        Ok(true)
+    }
+
+    pub(crate) fn try_dense_array_write_owned(
+        &self,
+        base: &Value,
+        index: u32,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let Value::Object(object) = base else {
+            return Ok(false);
+        };
+        if !object.belongs_to(self) {
+            return Ok(false);
+        }
+        let raw = self.raw_property_value(value)?;
+        let mut state = self.0.state.borrow_mut();
+        let data = state.heap.object(object.object_id())?;
+        if data.kind != crate::engine::heap::ObjectKind::Array
+            || data.dense_array_value(index).is_none()
+        {
+            return Ok(false);
+        }
+        let atoms = state.retain_raw_value_atoms([&raw])?;
+        match state
+            .heap
+            .replace_array_dense_value(object.object_id(), index, raw)
+        {
+            Ok(cleanup) => state.apply_cleanup(cleanup)?,
+            Err(error) => {
+                state.release_atoms(atoms)?;
+                return Err(error.into());
+            }
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn try_define_field_owned(
+        &self,
+        base: &Value,
+        executable: &PublishedFunctionSnapshot,
+        key: u32,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let Some(atom) = linked_field_atom(self, executable, key) else {
+            return Ok(false);
+        };
+        let Value::Object(object) = base else {
+            return Ok(false);
+        };
+        if !object.belongs_to(self) {
+            return Ok(false);
+        }
+        let raw = self.raw_property_value(value)?;
+        let mut state = self.0.state.borrow_mut();
+        let data = state.heap.object(object.object_id())?;
+        if !super::is_ordinary(data)
+            || !data.extensible
+            || state.heap.shape(data.shape)?.find(atom).is_some()
+        {
+            return Ok(false);
+        }
+        state.store_selected_property_slot(
+            object.object_id(),
+            atom,
+            crate::engine::object::shape::PropertyFlags::data(true, true, true),
+            crate::engine::heap::PropertySlot::Data(raw),
+            None,
+        )?;
+        Ok(true)
+    }
+
+    pub(crate) fn try_delete_own_data(
+        &self,
+        base: &Value,
+        key: &crate::engine::object::PropertyKey,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let Value::Object(object) = base else {
+            return Ok(None);
+        };
+        if !object.belongs_to(self) {
+            return Ok(None);
+        }
+        {
+            let state = self.0.state.borrow();
+            let data = state.heap.object(object.object_id())?;
+            if !super::is_ordinary(data) {
+                return Ok(None);
+            }
+            let shape = state.heap.shape(data.shape)?;
+            let Some(slot) = shape.find(key.atom()) else {
+                return Ok(Some(true));
+            };
+            if !shape.entries()[slot as usize].flags.configurable
+                || !matches!(
+                    data.slots[slot as usize],
+                    crate::engine::heap::PropertySlot::Data(_)
+                )
+            {
+                return Ok(None);
+            }
+        }
+        self.delete_property(object, key).map(Some)
+    }
+}
+
+impl Runtime {
+    pub(crate) fn try_dense_array_kept_read(&self, base: &Value, index: u32) -> Option<Value> {
+        let Value::Object(object) = base else {
+            return None;
+        };
+        if !object.belongs_to(self) {
+            return None;
+        }
+        let state = self.0.state.borrow();
+        let data = state.heap.object(object.object_id()).ok()?;
+        if data.kind != crate::engine::heap::ObjectKind::Array {
+            return None;
+        }
+        super::immediate_value(data.dense_array_value(index)?)
+    }
+}
+
+impl Runtime {
+    pub(crate) fn try_property_ic_write_scalar(
+        &self,
+        base: &Value,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key: u32,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        if !matches!(
+            value,
+            Value::Undefined | Value::Null | Value::Bool(_) | Value::Int(_) | Value::Float(_)
+        ) || self.slot_value_release_readiness(base)? != SlotReleaseReadiness::Ready
+        {
+            return Ok(false);
+        }
+        let Some(atom) = linked_field_atom(self, executable, key) else {
+            return Ok(false);
+        };
+        let Value::Object(object) = base else {
+            return Ok(false);
+        };
+        if !object.belongs_to(self) {
+            return Ok(false);
+        }
+        let Some(cache) = executable.property_read_ic.write_site(pc) else {
+            return Ok(false);
+        };
+        let mut state = self.0.state.borrow_mut();
+        let id = object.object_id();
+        let slot = match cache.slot(&state.heap, self.domain_id(), executable.realm, id) {
+            Some(slot) => slot,
+            None => {
+                cache.miss(
+                    &state.heap,
+                    &state.atoms,
+                    self.domain_id(),
+                    executable.realm,
+                    id,
+                    atom,
+                );
+                let Some(slot) = cache.slot(&state.heap, self.domain_id(), executable.realm, id)
+                else {
+                    return Ok(false);
+                };
+                slot
+            }
+        };
+        let crate::engine::heap::PropertySlot::Data(old) = &state.heap.object(id)?.slots[slot]
+        else {
+            return Ok(false);
+        };
+        if super::immediate_value(old).is_none() {
+            return Ok(false);
+        }
+        let raw = self.raw_property_value(value)?;
+        state.replace_property_slot(id, slot, crate::engine::heap::PropertySlot::Data(raw))?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("property_write_ic.hit");
+        Ok(true)
+    }
+}
+
+impl Runtime {
+    pub(crate) fn try_dense_array_write_scalar(
+        &self,
+        base: &Value,
+        index: u32,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        if !matches!(
+            value,
+            Value::Undefined | Value::Null | Value::Bool(_) | Value::Int(_) | Value::Float(_)
+        ) || self.slot_value_release_readiness(base)? != SlotReleaseReadiness::Ready
+        {
+            return Ok(false);
+        }
+        if self.try_dense_array_kept_read(base, index).is_none() {
+            return Ok(false);
+        }
+        self.try_dense_array_write_owned(base, index, value)
+    }
+}

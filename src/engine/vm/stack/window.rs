@@ -404,6 +404,23 @@ impl RunSlots<'_> {
             .typed_array_number_write_current(self.window, runtime)
     }
 
+    pub(in crate::engine::vm) fn array_kept_immediate_read(&mut self, runtime: &Runtime, keep_key: bool) -> Result<bool, Error> {
+        let index = match self.peek(0)? {
+            Value::Int(index) if *index >= 0 => *index as u32,
+            Value::String(key) if keep_key || key.release_keeps_storage_alive() => {
+                let Some(index)=crate::engine::atom::AtomTable::canonical_array_index(key) else {return Ok(false)};
+                index
+            }
+            _=>return Ok(false),
+        };
+        let Some(value)=runtime.try_dense_array_kept_read(self.peek(1)?,index) else {return Ok(false)};
+        if !keep_key { self.pop()?; }
+        self.push(value)?;
+        Ok(true)
+    }
+    pub(in crate::engine::vm) fn property_ic_write_scalar(&mut self, runtime: &Runtime, executable: &crate::engine::code::runtime::PublishedFunctionSnapshot, pc: usize, key: u32) -> Result<bool, Error> {
+        self.store.property_ic_write_scalar_current(self.window,runtime,executable,pc,key)
+    }
     #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn array_immediate_read(
         &mut self,
@@ -428,20 +445,7 @@ impl RunSlots<'_> {
         )
     }
 
-    #[cfg(feature = "stack-vm")]
-    pub(in crate::engine::vm) fn ordinary_field_immediate_write(
-        &mut self,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        key_index: u32,
-    ) -> Result<bool, Error> {
-        self.store.ordinary_field_immediate_write_current(
-            self.window,
-            runtime,
-            executable,
-            key_index,
-        )
-    }
+
 
     pub(in crate::engine::vm) fn binary_number(
         &mut self,

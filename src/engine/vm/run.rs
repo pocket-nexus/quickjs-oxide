@@ -189,6 +189,7 @@ impl RunExit {
 mod cold;
 mod fusion;
 mod numeric;
+mod property;
 mod program_counter;
 use program_counter::ProgramCounter;
 
@@ -280,6 +281,17 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             slots = transaction.slots();
         }};
     }
+    macro_rules! resident_property {
+        ($operation:expr) => {{
+            if !frame.active_frame.is_materialized() { return Ok(RunExit::Materialize); }
+            drop(slots);
+            pc.publish_fault();
+            runtime.update_active_bytecode_pc(frame.active_frame, super::BytecodePc::new(pc.fault)).map_err(runtime_error_to_vm_error)?;
+            let handled = property::complete(runtime, executable, pc.fault, &mut transaction, $operation)?;
+            slots = transaction.slots();
+            handled
+        }};
+    }
     loop {
         pc.fault = pc.resume;
         let instruction = executable
@@ -350,7 +362,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 };
-                if !slots.ordinary_field_immediate_write(runtime, &executable, *index)? {
+                if !slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)? && !resident_property!(property::Operation::Write(*index)) {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 }
                 frame.property_generation = identity;
@@ -360,7 +372,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(None));
                 };
-                if !slots.typed_array_number_write(runtime)? {
+                if !slots.typed_array_number_write(runtime)? && !resident_property!(property::Operation::ElementWrite) {
                     return Ok(RunExit::SetProperty(None));
                 }
                 frame.property_generation = identity;
@@ -442,10 +454,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::GetArrayEl2 | Instruction::GetArrayEl3 => {
-                return Ok(RunExit::GetElement {
-                    keep_receiver: !matches!(instruction, Instruction::GetArrayEl),
-                    keep_key: matches!(instruction, Instruction::GetArrayEl3),
-                });
+                if !slots.array_kept_immediate_read(runtime, matches!(instruction, Instruction::GetArrayEl3))? && !resident_property!(property::Operation::ElementRead(matches!(instruction, Instruction::GetArrayEl3))) {
+                    return Ok(RunExit::GetElement { keep_receiver: true, keep_key: matches!(instruction, Instruction::GetArrayEl3) });
+                }
+                true
             }
             Instruction::Construct(count) | Instruction::ConstructSuper(count) => {
                 return Ok(RunExit::Construct(*count));
@@ -480,7 +492,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::In => return Ok(RunExit::Predicate(super::predicate_driver::Kind::Has)),
             Instruction::Delete => {
-                return Ok(RunExit::Predicate(super::predicate_driver::Kind::Delete));
+                if !resident_property!(property::Operation::Delete) {
+                    return Ok(RunExit::Predicate(super::predicate_driver::Kind::Delete));
+                }
+                frame.property_generation = frame.property_generation.saturating_add(1);
+                true
             }
             Instruction::GetSuper => return Ok(RunExit::GetSuper),
             Instruction::PushHomeObject => return Ok(RunExit::HomeObject),
@@ -832,10 +848,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::DefineField(key) => {
-                return Ok(RunExit::DefineProperty {
-                    key: Some(*key),
-                    method: None,
-                });
+                if !resident_property!(property::Operation::Define(*key)) {
+                    return Ok(RunExit::DefineProperty { key: Some(*key), method: None });
+                }
+                frame.property_generation = frame.property_generation.saturating_add(1);
+                true
             }
             Instruction::DefineMethod {
                 key,
@@ -1865,7 +1882,7 @@ mod tests {
                     .unwrap_or(0)
                 >= 8
         );
-        for event in ["ordinary_field_immediate_write_in_run"] {
+        for event in ["property_write_ic.hit"] {
             assert!(
                 costs
                     .owned_execution_events

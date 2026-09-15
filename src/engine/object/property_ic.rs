@@ -215,36 +215,57 @@ fn locate(
     }
 }
 
+/// Own writable data locations use the same domain/revision/revival guards.
+#[derive(Debug, Default)]
+pub(crate) struct PropertyWriteCache(PropertyReadCache);
+impl PropertyWriteCache {
+    pub(crate) fn slot(&self, heap: &Heap, domain: u64, realm: ContextId, receiver: ObjectId) -> Option<usize> {
+        self.0.read(heap, domain, realm, receiver)?;
+        let location = match self.0.state.get() {
+            State::Monomorphic(location) => location,
+            State::Polymorphic([first, _]) => first,
+            _ => return None,
+        };
+        if location.depth != 0 { return None; }
+        if heap.object(receiver).ok()?.kind == ObjectKind::Array && location.slot == 0 { return None; }
+        let shape = heap.shape(location.shape).ok()?;
+        shape.entries().get(location.slot as usize)?.flags.writable.then_some(location.slot as usize)
+    }
+    pub(crate) fn miss(&self, heap: &Heap, atoms: &AtomTable, domain: u64, realm: ContextId, receiver: ObjectId, atom: Atom) {
+        self.0.miss(heap, atoms, domain, realm, Some(receiver), atom);
+    }
+}
+#[derive(Debug)]
+enum PropertyCache { Read(PropertyReadCache), Write(PropertyWriteCache) }
 #[derive(Debug)]
 pub(crate) struct PropertyReadCacheTable {
     indices: Box<[u32]>,
-    sites: Box<[PropertyReadCache]>,
+    sites: Box<[PropertyCache]>,
 }
 impl PropertyReadCacheTable {
     pub(crate) fn new(code: &[Instruction]) -> Self {
         let mut sites = Vec::new();
-        let indices = code
-            .iter()
-            .map(|instruction| {
-                if matches!(
-                    instruction,
-                    Instruction::GetField(_) | Instruction::GetField2(_)
-                ) {
-                    let index = u32::try_from(sites.len()).expect("bytecode site count fits u32");
-                    sites.push(PropertyReadCache::default());
-                    index
-                } else {
-                    u32::MAX
-                }
-            })
-            .collect();
-        Self {
-            indices,
-            sites: sites.into_boxed_slice(),
-        }
+        let indices = code.iter().map(|instruction| {
+            let cache = match instruction {
+                Instruction::GetField(_) | Instruction::GetField2(_) => PropertyCache::Read(PropertyReadCache::default()),
+                Instruction::PutField(_) => PropertyCache::Write(PropertyWriteCache::default()),
+                _ => return u32::MAX,
+            };
+            let index = u32::try_from(sites.len()).expect("bytecode site count fits u32");
+            sites.push(cache);
+            index
+        }).collect();
+        Self { indices, sites: sites.into_boxed_slice() }
     }
     pub(crate) fn site(&self, pc: usize) -> Option<&PropertyReadCache> {
-        self.sites.get(*self.indices.get(pc)? as usize)
+        match self.sites.get(*self.indices.get(pc)? as usize)? {
+            PropertyCache::Read(cache) => Some(cache), _ => None,
+        }
+    }
+    pub(crate) fn write_site(&self, pc: usize) -> Option<&PropertyWriteCache> {
+        match self.sites.get(*self.indices.get(pc)? as usize)? {
+            PropertyCache::Write(cache) => Some(cache), _ => None,
+        }
     }
 }
 
