@@ -239,33 +239,40 @@ impl PropertyWriteCache {
 enum PropertyCache { Read(PropertyReadCache), Write(PropertyWriteCache) }
 #[derive(Debug)]
 pub(crate) struct PropertyReadCacheTable {
-    indices: Box<[u32]>,
+    site_bits: Box<[u64]>,
+    block_ranks: Box<[u32]>,
     sites: Box<[PropertyCache]>,
 }
 impl PropertyReadCacheTable {
     pub(crate) fn new(code: &[Instruction]) -> Self {
-        let mut sites = Vec::new();
-        let indices = code.iter().map(|instruction| {
+        let count = code.iter().filter(|instruction| matches!(instruction,
+            Instruction::GetField(_) | Instruction::GetField2(_) | Instruction::PutField(_))).count();
+        let mut sites = Vec::with_capacity(count);
+        let mut bits = vec![0u64; code.len().div_ceil(64)];
+        let mut ranks = vec![0u32; bits.len()];
+        for (pc, instruction) in code.iter().enumerate() {
+            if pc % 64 == 0 { ranks[pc / 64] = u32::try_from(sites.len()).expect("bytecode site count fits u32"); }
             let cache = match instruction {
                 Instruction::GetField(_) | Instruction::GetField2(_) => PropertyCache::Read(PropertyReadCache::default()),
                 Instruction::PutField(_) => PropertyCache::Write(PropertyWriteCache::default()),
-                _ => return u32::MAX,
+                _ => continue,
             };
-            let index = u32::try_from(sites.len()).expect("bytecode site count fits u32");
+            bits[pc / 64] |= 1u64 << (pc % 64);
             sites.push(cache);
-            index
-        }).collect();
-        Self { indices, sites: sites.into_boxed_slice() }
+        }
+        Self { site_bits: bits.into_boxed_slice(), block_ranks: ranks.into_boxed_slice(), sites: sites.into_boxed_slice() }
+    }
+    fn site_index(&self, pc: usize) -> Option<usize> {
+        let bits = *self.site_bits.get(pc / 64)?;
+        let mask = 1u64 << (pc % 64);
+        if bits & mask == 0 { return None; }
+        Some(self.block_ranks[pc / 64] as usize + (bits & (mask - 1)).count_ones() as usize)
     }
     pub(crate) fn site(&self, pc: usize) -> Option<&PropertyReadCache> {
-        match self.sites.get(*self.indices.get(pc)? as usize)? {
-            PropertyCache::Read(cache) => Some(cache), _ => None,
-        }
+        match self.sites.get(self.site_index(pc)?)? { PropertyCache::Read(cache) => Some(cache), _ => None }
     }
     pub(crate) fn write_site(&self, pc: usize) -> Option<&PropertyWriteCache> {
-        match self.sites.get(*self.indices.get(pc)? as usize)? {
-            PropertyCache::Write(cache) => Some(cache), _ => None,
-        }
+        match self.sites.get(self.site_index(pc)?)? { PropertyCache::Write(cache) => Some(cache), _ => None }
     }
 }
 
@@ -321,6 +328,30 @@ mod tests {
                 _ => None,
             })
     }
+    #[test]
+    fn sparse_site_rank_crosses_words_and_distinguishes_writes() {
+        let mut code = vec![Instruction::Nop; 130];
+        code[0] = Instruction::GetField(0);
+        code[63] = Instruction::PutField(1);
+        code[64] = Instruction::GetField2(2);
+        code[65] = Instruction::PutField(3);
+        code[129] = Instruction::GetField(4);
+        let table = PropertyReadCacheTable::new(&code);
+        for (rank, pc) in [0, 63, 64, 65, 129].into_iter().enumerate() {
+            assert_eq!(table.site_index(pc), Some(rank));
+        }
+        for pc in [1, 62, 66, 128, 130, usize::MAX] {
+            assert_eq!(table.site_index(pc), None);
+        }
+        assert!(table.site(0).is_some());
+        assert!(table.site(63).is_none());
+        assert!(table.write_site(63).is_some());
+        assert!(table.write_site(64).is_none());
+        assert_eq!(table.site_bits.len(), 3);
+        assert_eq!(table.block_ranks.len(), 3);
+        assert!(PropertyReadCacheTable::new(&[]).site(0).is_none());
+    }
+
     #[test]
     fn two_shapes_alternate_and_third_shape_eventually_revives() {
         let runtime = Runtime::new();

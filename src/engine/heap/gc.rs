@@ -4,6 +4,7 @@
 //! Cleanup returns detached atom ownership to the runtime; it never mutates the
 //! runtime atom table or invokes JavaScript callbacks while borrowing the arena.
 
+use super::Edges;
 use super::{
     AsyncGeneratorRequestData, Atom, AutoInitProperty, BytecodeConstant, ContextData, ContextId,
     FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId, GeneratorActivationData,
@@ -1091,8 +1092,7 @@ impl Heap {
                     vacate_zombie = *strong == 0;
                 }
                 SlotState::Initializing { .. }
-                | SlotState::ZeroQueued(_)
-                | SlotState::Finalizing(_) => {
+                | SlotState::ZeroQueued(_) => {
                     return Err(HeapError::Underflow {
                         kind: id.kind(),
                         index: id.index(),
@@ -1133,14 +1133,6 @@ impl Heap {
                         "zero queue contained a nonzero reference count",
                     ));
                 }
-                slot.state = SlotState::Finalizing(node);
-
-                let state = std::mem::replace(&mut slot.state, SlotState::Vacant);
-                let SlotState::Finalizing(node) = state else {
-                    return Err(HeapError::Invariant(
-                        "node left Finalizing state without a callback boundary",
-                    ));
-                };
                 node
             };
 
@@ -1315,119 +1307,8 @@ pub(super) fn object_layout_edges(shape: ShapeId, slots: &[PropertySlot]) -> Vec
     edges
 }
 
-pub(super) fn object_edges(object: &ObjectData) -> Vec<RawId> {
-    let closure_count = match &object.payload {
-        ObjectPayload::Array { dense } => dense.as_ref().map_or(0, |dense| {
-            dense
-                .iter()
-                .filter(|value| matches!(value, RawValue::Object(_)))
-                .count()
-        }),
-        ObjectPayload::Ordinary
-        | ObjectPayload::RawJson
-        | ObjectPayload::Arguments { .. }
-        | ObjectPayload::ArrayIterator { .. }
-        | ObjectPayload::ForInIterator(_)
-        | ObjectPayload::Primitive(_)
-        | ObjectPayload::Date(_)
-        | ObjectPayload::RegExp(_)
-        | ObjectPayload::ArrayBuffer(_)
-        | ObjectPayload::SharedArrayBuffer(_)
-        | ObjectPayload::GlobalObject { .. }
-        | ObjectPayload::Error
-        | ObjectPayload::StringIterator { .. }
-        | ObjectPayload::WeakSet { .. }
-        | ObjectPayload::WeakRef { .. }
-        | ObjectPayload::Generator { .. } => 0,
-        ObjectPayload::DataView(_) | ObjectPayload::TypedArray(_) => 1,
-        ObjectPayload::Proxy(_) => 2,
-        ObjectPayload::AsyncGenerator(data) => data
-            .activation
-            .as_deref()
-            .map_or(0, |activation| generator_activation_edges(activation).len())
-            .saturating_add(
-                data.queue
-                    .iter()
-                    .map(async_generator_request_edges)
-                    .map(|edges| edges.len())
-                    .sum::<usize>(),
-            )
-            .saturating_add(usize::from(data.resume_realm.is_some())),
-        ObjectPayload::AsyncFunctionState(data) => 3usize.saturating_add(
-            data.activation
-                .as_deref()
-                .map_or(0, |activation| generator_activation_edges(activation).len()),
-        ),
-        ObjectPayload::IteratorHelper(data) => 1usize
-            .saturating_add(raw_value_edges(&data.next).len())
-            .saturating_add(raw_value_edges(&data.callback).len())
-            .saturating_add(usize::from(data.inner.is_some())),
-        ObjectPayload::IteratorWrap(data) => raw_value_edges(&data.source)
-            .len()
-            .saturating_add(raw_value_edges(&data.next).len()),
-        ObjectPayload::AsyncFromSyncIterator(data) => {
-            1usize.saturating_add(raw_value_edges(&data.next).len())
-        }
-        ObjectPayload::IteratorConcat(data) => data
-            .items
-            .iter()
-            .flatten()
-            .fold(0_usize, |count, item| {
-                count
-                    .saturating_add(1)
-                    .saturating_add(raw_value_edges(&item.method).len())
-            })
-            .saturating_add(usize::from(data.iterator.is_some()))
-            .saturating_add(raw_value_edges(&data.next).len()),
-        ObjectPayload::NativeFunction { internal, .. } => internal
-            .as_ref()
-            .map_or(0, |internal| internal_callable_edges(internal).len()),
-        ObjectPayload::RegExpStringIterator { .. } => 1,
-        ObjectPayload::Map { records, .. } => records
-            .iter()
-            .map(|record| {
-                raw_value_edges(&record.key)
-                    .len()
-                    .saturating_add(raw_value_edges(&record.value).len())
-            })
-            .sum(),
-        ObjectPayload::MapIterator { .. } => 1,
-        ObjectPayload::Set { records, .. } => records
-            .iter()
-            .map(|record| &record.key)
-            .map(|key| raw_value_edges(key).len())
-            .sum(),
-        ObjectPayload::SetIterator { .. } => 1,
-        ObjectPayload::WeakMap { records } => records
-            .values()
-            .map(|value| raw_value_edges(value).len())
-            .sum(),
-        ObjectPayload::FinalizationRegistry(data) => data
-            .entries
-            .iter()
-            .map(|entry| raw_value_edges(&entry.held_value).len())
-            .sum::<usize>()
-            .saturating_add(2),
-        ObjectPayload::BoundFunction { arguments, .. } => arguments.len().saturating_add(2),
-        ObjectPayload::BytecodeFunction { closure_slots, .. } => closure_slots.len(),
-        ObjectPayload::Promise(data) => raw_value_edges(&data.result).len().saturating_add(
-            data.fulfill_reactions
-                .iter()
-                .chain(&data.reject_reactions)
-                .map(|reaction| {
-                    usize::from(reaction.handler.is_some())
-                        .saturating_add(reaction.capability.map_or(0, |_| 2))
-                })
-                .sum(),
-        ),
-    };
-    let mut edges = Vec::with_capacity(
-        object
-            .slots
-            .len()
-            .saturating_add(closure_count)
-            .saturating_add(3),
-    );
+pub(super) fn object_edges(object: &ObjectData) -> Edges {
+    let mut edges = Edges::new();
     for slot in &object.slots {
         edges.extend(property_slot_edges(slot));
     }
@@ -1608,7 +1489,7 @@ fn promise_capability_edges(capability: &PromiseCapabilityData) -> [RawId; 2] {
     ]
 }
 
-pub(super) fn async_generator_request_edges(request: &AsyncGeneratorRequestData) -> Vec<RawId> {
+pub(super) fn async_generator_request_edges(request: &AsyncGeneratorRequestData) -> Edges {
     let mut edges = raw_value_edges(&request.result);
     edges.extend([
         RawId::Object(request.promise),
@@ -1661,7 +1542,7 @@ fn internal_callable_edges(internal: &InternalCallableData) -> Vec<RawId> {
             .into_iter()
             .chain(std::iter::once(RawId::Object(*on_finally)))
             .collect(),
-        InternalCallableData::PromiseFinallyThunk { value } => raw_value_edges(value),
+        InternalCallableData::PromiseFinallyThunk { value } => raw_value_edges(value).into_iter().collect(),
         InternalCallableData::PromiseAllResolveElement {
             values, resolve, ..
         } => vec![RawId::Object(*values), RawId::Object(*resolve)],
@@ -1737,20 +1618,16 @@ pub(super) fn shape_edges(shape: &Shape) -> Vec<RawId> {
         .unwrap_or_default()
 }
 
-pub(super) fn var_ref_edges(var_ref: &VarRefData) -> Vec<RawId> {
+pub(super) fn var_ref_edges(var_ref: &VarRefData) -> Edges {
     raw_value_edges(&var_ref.value)
 }
 
-pub(super) fn property_slot_edges(slot: &PropertySlot) -> Vec<RawId> {
+pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
+    let mut edges = Edges::new();
     match slot {
-        PropertySlot::Data(value) => raw_value_edges(value),
-        PropertySlot::VarRef(var_ref) => vec![RawId::VarRef(*var_ref)],
-        PropertySlot::Accessor { get, set } => get
-            .iter()
-            .chain(set.iter())
-            .copied()
-            .map(RawId::Object)
-            .collect(),
+        PropertySlot::Data(value) => edges.extend(raw_value_edges(value)),
+        PropertySlot::VarRef(var_ref) => edges.push(RawId::VarRef(*var_ref)),
+        PropertySlot::Accessor { get, set } => edges.extend(get.iter().chain(set.iter()).copied().map(RawId::Object)),
         PropertySlot::AutoInit(
             AutoInitProperty::FunctionPrototype { realm }
             | AutoInitProperty::NativeBuiltin { realm, .. }
@@ -1760,29 +1637,17 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Vec<RawId> {
             | AutoInitProperty::Reflect { realm }
             | AutoInitProperty::Json { realm }
             | AutoInitProperty::Atomics { realm },
-        ) => vec![RawId::Context(*realm)],
+        ) => edges.push(RawId::Context(*realm)),
         #[cfg(test)]
-        PropertySlot::AutoInit(AutoInitProperty::FailureProbe { realm }) => {
-            vec![RawId::Context(*realm)]
-        }
+        PropertySlot::AutoInit(AutoInitProperty::FailureProbe { realm }) => edges.push(RawId::Context(*realm)),
     }
+    edges
 }
 
-pub(super) fn raw_value_edges(value: &RawValue) -> Vec<RawId> {
-    match value {
-        RawValue::Object(object) => vec![RawId::Object(*object)],
-        RawValue::Undefined
-        | RawValue::Null
-        | RawValue::Bool(_)
-        | RawValue::Int(_)
-        | RawValue::Float(_)
-        | RawValue::BigInt(_)
-        | RawValue::String(_)
-        | RawValue::Symbol(_)
-        | RawValue::Private(_)
-        | RawValue::Uninitialized
-        | RawValue::Exception => Vec::new(),
-    }
+pub(super) fn raw_value_edges(value: &RawValue) -> Edges {
+    let mut edges = Edges::new();
+    if let RawValue::Object(object) = value { edges.push(RawId::Object(*object)); }
+    edges
 }
 
 pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {

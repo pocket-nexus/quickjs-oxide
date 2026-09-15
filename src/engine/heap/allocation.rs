@@ -151,7 +151,7 @@ impl Heap {
             return Err(error);
         }
 
-        self.publish(index, NodeData::Context(context))?;
+        self.publish(index, NodeData::Context(Box::new(context)))?;
         Ok(id)
     }
 

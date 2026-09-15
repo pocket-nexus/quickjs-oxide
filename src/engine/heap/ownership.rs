@@ -26,7 +26,7 @@ impl Runtime {
         let Some(_drain) = deferred.try_start_draining() else {
             return Ok(());
         };
-        while deferred.has_pending() {
+        loop {
             // Do not remove work until it can execute. In particular, blocked
             // drains must leave restoration operations at their original priority.
             let Ok(mut state) = self.0.state.try_borrow_mut() else {

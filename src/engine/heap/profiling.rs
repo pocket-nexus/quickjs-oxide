@@ -128,8 +128,7 @@ impl Heap {
         for slot in &self.slots {
             let node = match &slot.state {
                 SlotState::Live(node)
-                | SlotState::ZeroQueued(node)
-                | SlotState::Finalizing(node) => node,
+                | SlotState::ZeroQueued(node) => node,
                 _ => continue,
             };
             match &node.data {

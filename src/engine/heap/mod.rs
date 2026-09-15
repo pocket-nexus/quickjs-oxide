@@ -31,6 +31,8 @@ use crate::engine::code::function::metadata::{EvalBinding, EvalScope, ParameterA
 
 mod buffers;
 mod gc;
+mod edges;
+use edges::Edges;
 #[cfg(feature = "stack-vm")]
 mod slot_ownership;
 #[cfg(test)]
@@ -164,15 +166,12 @@ impl RawId {
     }
 }
 
-// Context nodes intentionally stay inline in the generational arena: boxing
-// only this variant would add a second allocator/failure boundary to realm
-// publication and collection without shrinking any live Context graph.
-#[allow(clippy::large_enum_variant)]
+// Realm payloads are cold and boxed so every arena slot stays compact.
 enum NodeData {
     Object(ObjectData),
     Shape(Shape),
     VarRef(VarRefData),
-    Context(ContextData),
+    Context(Box<ContextData>),
     FunctionBytecode(FunctionBytecodeData),
 }
 
@@ -187,13 +186,13 @@ impl NodeData {
         }
     }
 
-    fn edges(&self) -> Vec<RawId> {
+    fn edges(&self) -> Edges {
         match self {
             Self::Object(object) => object_edges(object),
-            Self::Shape(shape) => shape_edges(shape),
+            Self::Shape(shape) => shape_edges(shape).into(),
             Self::VarRef(var_ref) => var_ref_edges(var_ref),
-            Self::Context(context) => context_edges(context),
-            Self::FunctionBytecode(bytecode) => function_bytecode_edges(bytecode),
+            Self::Context(context) => context_edges(context).into(),
+            Self::FunctionBytecode(bytecode) => function_bytecode_edges(bytecode).into(),
         }
     }
 }
@@ -207,7 +206,6 @@ enum SlotState {
     Initializing { kind: HeapNodeKind, strong: u32 },
     Live(Node),
     ZeroQueued(Node),
-    Finalizing(Node),
     Zombie { kind: HeapNodeKind, strong: u32 },
     Vacant,
     Retired,
@@ -217,7 +215,7 @@ impl SlotState {
     const fn kind(&self) -> Option<HeapNodeKind> {
         match self {
             Self::Initializing { kind, .. } | Self::Zombie { kind, .. } => Some(*kind),
-            Self::Live(node) | Self::ZeroQueued(node) | Self::Finalizing(node) => {
+            Self::Live(node) | Self::ZeroQueued(node) => {
                 Some(node.data.kind())
             }
             Self::Vacant | Self::Retired => None,
@@ -227,7 +225,7 @@ impl SlotState {
     const fn strong(&self) -> Option<u32> {
         match self {
             Self::Initializing { strong, .. } | Self::Zombie { strong, .. } => Some(*strong),
-            Self::Live(node) | Self::ZeroQueued(node) | Self::Finalizing(node) => Some(node.strong),
+            Self::Live(node) | Self::ZeroQueued(node) => Some(node.strong),
             Self::Vacant | Self::Retired => None,
         }
     }

@@ -62,10 +62,6 @@ impl Heap {
                     counts.zero_queued = counts.zero_queued.saturating_add(1);
                     increment_kind_count(&mut counts, node.data.kind());
                 }
-                SlotState::Finalizing(node) => {
-                    counts.finalizing = counts.finalizing.saturating_add(1);
-                    increment_kind_count(&mut counts, node.data.kind());
-                }
                 SlotState::Zombie { kind, .. } => {
                     counts.zombies = counts.zombies.saturating_add(1);
                     increment_kind_count(&mut counts, *kind);

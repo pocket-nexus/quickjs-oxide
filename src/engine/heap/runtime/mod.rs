@@ -378,9 +378,8 @@ impl RuntimeState {
             .filter_map(|value| match value {
                 RawValue::Symbol(atom) | RawValue::Private(atom) => Some(*atom),
                 _ => None,
-            })
-            .collect::<Vec<_>>();
-        let mut retained = Vec::with_capacity(atoms.len());
+            });
+        let mut retained = Vec::new();
         for atom in atoms {
             if let Err(error) = self.atoms.retain(atom) {
                 self.release_atoms(retained)?;
