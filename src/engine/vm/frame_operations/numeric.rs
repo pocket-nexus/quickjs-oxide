@@ -260,6 +260,103 @@ mod tests {
     }
 
     #[test]
+    fn resident_numeric_preflight_preserves_canonical_missing_left_consumption() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) = fixture(&runtime, &mut context);
+        push(
+            &mut execution,
+            id,
+            Value::String(crate::engine::value::JsString::from_static("7")),
+        );
+        {
+            let frame = execution.frames.current_mut(id).unwrap();
+            let mut transaction = execution
+                .slots
+                .frame_transaction(&mut frame.window)
+                .unwrap();
+            let slots = transaction.slots();
+            assert!(!crate::engine::vm::run::test_supported_numeric(
+                &slots,
+                NumericKind::Mul
+            ));
+            assert!(slots.peek(0).is_ok(), "preflight must not consume RHS");
+            assert!(slots.peek(1).is_err());
+        }
+        // Rejection takes the unchanged canonical path, which consumes RHS
+        // before the missing LHS is diagnosed. No resident helper is entered.
+        assert!(complete(&runtime, &mut execution, id, NumericKind::Mul).is_err());
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 0);
+        assert!(execution.pending.is_none());
+    }
+
+    #[test]
+    fn resident_numeric_postfix_output_failure_keeps_previous_and_pc() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) = fixture(&runtime, &mut context);
+        let text = Value::String(crate::engine::value::JsString::from_static("41"));
+        loop {
+            let frame = execution.frames.current_mut(id).unwrap();
+            if execution
+                .slots
+                .push(&mut frame.window, Value::Int(0))
+                .is_err()
+            {
+                break;
+            }
+        }
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution.slots.pop(&mut frame.window).unwrap();
+        execution.slots.push(&mut frame.window, text).unwrap();
+        let depth = execution.slots.depth(&frame.window);
+        let before = (frame.fault_pc, frame.resume_pc);
+        runtime
+            .update_active_bytecode_pc(
+                frame.cold.active_frame,
+                crate::engine::vm::BytecodePc::new(frame.fault_pc),
+            )
+            .unwrap();
+        {
+            let mut transaction = execution
+                .slots
+                .frame_transaction(&mut frame.window)
+                .unwrap();
+            {
+                let slots = transaction.slots();
+                assert!(crate::engine::vm::run::test_supported_numeric(
+                    &slots,
+                    NumericKind::PostInc
+                ));
+            }
+            let result = crate::engine::vm::run::test_complete_numeric(
+                &runtime,
+                frame.executable.realm,
+                &mut transaction,
+                NumericKind::PostInc,
+                &mut execution.pending,
+            );
+            assert!(
+                result.is_err(),
+                "second postfix output has no remaining capacity"
+            );
+            let slots = transaction.slots();
+            assert_eq!(
+                slots.peek(0).unwrap(),
+                &Value::Int(41),
+                "previous commits before value fails"
+            );
+        }
+        assert_eq!(execution.slots.depth(&frame.window), depth);
+        assert_eq!((frame.fault_pc, frame.resume_pc), before);
+        assert!(
+            execution.pending.is_none(),
+            "capacity failure remains an engine error"
+        );
+    }
+
+    #[test]
     fn primitive_transaction_identity_domain_and_wait_order() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();

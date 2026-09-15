@@ -1,6 +1,6 @@
 # 栈 VM：一个 PR 内的 10 个 commit
 
-状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 保留。最新补齐 B4、A1、惰性 fault-PC 与 E2/E3，G 按用户要求排除；最终新核心一轮 358/358 样本有效。58 fixed 仍有 33 项高于已有 S0 三轮中位数，67 compile 有 12 项单次正差值。**S09 尚未完成**，S10 未开始。最新证据见[遗漏补齐最终报告](reports/primitive-vm-s09-followup.md)。
+状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 保留。N1–N3 非 Number 原语 run 驻留、单事务完成和共享 ASCII 解析已实现，N4 同源门禁通过，N5 最终一轮 358/358 有效；S0 使用旧三轮。58 fixed 仍有 31 项单次正差值，67 compile 有 57 项。**S09 尚未完成**，G 未处理，S10 未开始。最新证据见[原语数值驻留报告](reports/primitive-vm-s09-numeric-resident.md)。
 
 **用户最新执行约束（2026-09-15）：后续仅构建、测试、benchmark 和 Profile 新执行核心（当前 `--features stack-vm`）。不再构建或运行旧 default 执行路径，也不重跑 S0/S07/S08 等历史候选；旧数据只读取已有记录。本文以前要求 default/stack-vm 双配置或新旧对跑的流程不再适用。历史已执行记录保留，但不能据此再次启动旧路径。Test262/语义 oracle 仍用于核对新核心，不把它们误称为另一个性能候选。**
 
@@ -703,6 +703,22 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 完整门禁包含工作区 3551 通过、独立 oracle 压力、最新边界扫描、688 Rust 文件布局、完整 Test262 结果向量与既有一致、Web/Node/WASM。749 checker canary 的历史成功回执仅复用相同 checker 哈希，生产源码已重新扫描，不冒充本轮重跑全部 canary。
 
 最终 358/358 项有效，58 项三个 legacy bridge 均为零。固定执行 33 项、编译 12 项、可比探针 12 项仍为正差值；单轮不声称统计显著。[完整报告](reports/primitive-vm-s09-followup.md)逐项列出相对 S0、相对 ade0f559 及机械目标结果。代码遗漏补齐不等于全部性能目标达到；**S09 仍未完成，原退出条件继续生效**。
+
+##### 非 Number 原语数值运算驻留修复（2026-09-15，起点 7dc70fbe）
+
+用户提供的对照实验以 ade0f559 为被测源码/二进制：Number subtraction 快于 S0，而 bool（无解析）及 String subtraction 均慢，支持把缺失驻留路径列为修复对象。当前仓库已是干净的 7dc70fbe，包含此前 A1/B4/PC/regexp 补齐；“15 个未提交源码文件”是旧检查时点，不是当前状态。当前源码仍在 Number 快路径 miss 后通过 RunExit::Numeric 退出 run，再由 ready 的 try_complete_primitive 新建事务并重入，根因路径仍在。用户给出的绝对 cycles 分组和 stall 归因作为外部实验结论记录；本轮不重跑这些对照，不把 self/movups 单独当成 stall 的硬件证明。
+
+“ready 驻留”和“run 栈帧驻留”必须区分：ConvertAdd 的 ready loop 也调用了返回后的 run，不能用已有 ready 循环冒充本次完成。要消除的是非 Object 原语运算的 run 返回、第二次认证和大返回值跨 driver 搬运。
+
+实施条目（按序完成全部代码后统一测量）：
+
+1. **N1 同一 run 内的原语完成边界。** 保留 Number 原位运算；其余 NumericKind 的原语算术（Sub/Mul/Div/Mod/Pow、移位/位运算，以及 Neg/BitNot/Inc/Dec/PostInc/PostDec）在原 run 栈帧内完成。预检原操作数，Object、比较/抽象相等和坏槽仍走 canonical 路径；Add/Plus 的既有 conversion identity 协议不在此处重写。取出原语 owner 后结束短 RunSlots，保持原 FrameTransaction 和 run 栈帧；在借用外调用共享 primitive_output，提交后重开同一事务的 RunSlots 并继续分派。不得在 RunSlots 内解析、分配、释放最终 owner 或执行 JS；不复制另一套算术语义。
+2. **N2 窄调用与精确观察边界。** 共享 helper 在原事务中按 RHS→LHS 消费，保留 postfix previous/value 输出顺序。仅跨小 helper 调用，不返回 ready、重新认证或重新构造 run prologue。解析/BigInt 分配及 Symbol/混合数值抛错前物化 canonical PC；错误在正确 realm 物化并交还正常异常处理，不重放已消费输入。必要 PC 发布不冒充可删除开销，Object ToPrimitive、GC/释放、异常行号、容量/域错误与恢复需反例测试。
+3. **N3 共享 string_to_number ASCII 路径（额外收益）。** 对可证明 ASCII 的文本直接复用同一 Infinity/radix/decimal 语法解析器，避免 UTF16 collect 再 from_utf16 的双分配；Unicode 空白、非法 surrogate、非 ASCII 及所有 grammar 边界保留共享 fallback。不得缓存字符串解析结果，亦不得把这项 S0 也可获益的优化当成退出协议回退的根因修复。
+4. **N4 可证伪验证。** 小型语义/路径断言覆盖 Number/bool/String/BigInt/Symbol/Object、Sub/Mul/Div/Mod/Pow/位运算、负零/NaN/Infinity、Unicode/radix、postfix 输出顺序与异常恢复；bool/String subtraction、String BitOr 主体的 run_exit.Numeric 应归零，驻留命中次数与操作数一致，槽认证不再随这些迭代线性增长。正常错误/回调需要的退出不设零目标。完整新核心 workspace/oracle/boundary/Test262/Web/WASM 门禁后冻结源码。
+5. **N5 最终单轮。** 仅最终新核心跑一次既有 358 项矩阵（58 fixed、67 compile、9 原始 V8、33 probe、14 memory、58×3 诊断、3 RSS），S0 复用旧三轮，直接前版 7dc70fbe 复用上一轮。新增事件仅做诊断，正式计时无插桩。报告全部差值与机制命中/认证/PC/Query/hardware/self，不能以源码结构或计数下降结案剩余吞吐回退；不重跑 S0、不做中途 benchmark/Profile、不补跑挑结果。最后更新本节状态、提交并推送。
+
+当前状态：N1–N3 实现完成，N4 完整门禁通过（工作区 3558 通过、Test262 全向量不变及 Web/Node/WASM），N5 最终单轮 358/358 有效，58 项三种 legacy bridge 全零。string_to_float Numeric 退出 0、run 驻留完成 500,000、槽认证 445；相对 S0 耗时 -9.20%。所有剩余差值与硬件计数见[最终报告](reports/primitive-vm-s09-numeric-resident.md)。G 未纳入，未追加第二轮或独立版本；**S09 仍未达到原退出条件**。
 
 **执行与验收顺序：**先固定机制和可证伪指标，定向验证后合并候选，再对同一最终源码统一运行完整门禁；发现新失败才重新打开相关实现。阶段目标不是“所有计数归零”：必要的参数校验/初始化、实际创建捕获和最终释放仍按真实工作量计费；普通调用的额外记账必须与祖先数 D、整个环境宽度 C 无关。
 

@@ -109,7 +109,8 @@ impl NumericOutput {
 }
 
 /// Primitive arithmetic uses the same conversion and operator kernels as resumes.
-/// Parsing, allocation and final primitive-owner release require a driver boundary.
+/// Parsing, allocation and final primitive-owner release require an ended
+/// RunSlots borrow; the resident run helper is also such an owning boundary.
 pub(in crate::engine::vm) fn primitive_output(
     kind: NumericKind,
     left: Value,

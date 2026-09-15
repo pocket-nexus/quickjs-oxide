@@ -2147,6 +2147,24 @@ pub fn number_to_string(value: f64) -> String {
 }
 
 pub fn string_to_number(value: &JsString) -> f64 {
+    if let StringRepr::Latin1(bytes) = value.0.as_ref()
+        && bytes.is_ascii()
+    {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("number_parse.ascii_borrowed");
+        // ASCII Latin-1 is already the parser's byte representation. Borrow it
+        // rather than allocate UTF-16 and then a second UTF-8 buffer. Neither
+        // the representation nor the parsed result is cached or changed.
+        let text = std::str::from_utf8(bytes).expect("ASCII is valid UTF-8");
+        let text = text.trim_matches(|character: char| is_ecmascript_whitespace(character as u16));
+        return parse_number_text(text);
+    }
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("number_parse.utf16_fallback");
+    string_to_number_utf16(value)
+}
+
+fn string_to_number_utf16(value: &JsString) -> f64 {
     let units = value.utf16_units().collect::<Vec<_>>();
     let mut start = 0;
     let mut end = units.len();
@@ -2163,7 +2181,16 @@ pub fn string_to_number(value: &JsString) -> f64 {
     let Ok(text) = String::from_utf16(&units[start..end]) else {
         return f64::NAN;
     };
-    match text.as_str() {
+    parse_number_text(&text)
+}
+
+/// Both storage paths share the complete Number grammar and rounding kernels.
+/// The caller removes only ECMAScript whitespace; this is not prefix parsing.
+fn parse_number_text(text: &str) -> f64 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    match text {
         "Infinity" | "+Infinity" => return f64::INFINITY,
         "-Infinity" => return f64::NEG_INFINITY,
         _ => {}
@@ -2178,7 +2205,7 @@ pub fn string_to_number(value: &JsString) -> f64 {
     if let Some(digits) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
         return parse_radix_number(digits, 2);
     }
-    if is_decimal_number_text(&text) {
+    if is_decimal_number_text(text) {
         text.parse::<f64>().unwrap_or(f64::NAN)
     } else {
         f64::NAN
@@ -3287,3 +3314,6 @@ mod tests {
         assert_eq!(one.type_of(), "bigint");
     }
 }
+
+#[cfg(test)]
+mod number_conversion_tests;

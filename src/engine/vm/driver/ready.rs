@@ -46,6 +46,13 @@ pub(super) fn run(
         }
         let exit = result?;
         match exit {
+            RunExit::PrimitiveThrow => {
+                let thrown = execution
+                    .pending
+                    .take()
+                    .ok_or_else(|| Error::internal("resident arithmetic lost its exception"))?;
+                return Ok(Boundary::Complete(Completion::Throw(thrown)));
+            }
             RunExit::Call {
                 arguments,
                 method,

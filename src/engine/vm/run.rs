@@ -84,6 +84,8 @@ pub(super) enum RunExit {
     DropCatch,
     NipCatch,
     Throw,
+    /// Owned arithmetic error in execution.pending; operands already consumed.
+    PrimitiveThrow,
     BindingError {
         index: u32,
         redeclaration: bool,
@@ -161,6 +163,7 @@ impl RunExit {
             Self::DropCatch => "run_exit.DropCatch",
             Self::NipCatch => "run_exit.NipCatch",
             Self::Throw => "run_exit.Throw",
+            Self::PrimitiveThrow => "run_exit.PrimitiveThrow",
             Self::BindingError { .. } => "run_exit.BindingError",
             Self::PrivateInitialize { .. } => "run_exit.PrivateInitialize",
             Self::PrivateAccess { .. } => "run_exit.PrivateAccess",
@@ -179,8 +182,28 @@ impl RunExit {
 }
 
 mod fusion;
+mod numeric;
 mod program_counter;
 use program_counter::ProgramCounter;
+
+#[cfg(test)]
+pub(super) fn test_supported_numeric(
+    slots: &RunSlots<'_>,
+    kind: super::numeric::operation::NumericKind,
+) -> bool {
+    numeric::supported(slots, kind)
+}
+
+#[cfg(test)]
+pub(super) fn test_complete_numeric(
+    runtime: &crate::engine::api::runtime::Runtime,
+    realm: crate::engine::heap::ContextId,
+    transaction: &mut super::stack::FrameTransaction<'_>,
+    kind: super::numeric::operation::NumericKind,
+    thrown: &mut Option<Value>,
+) -> Result<bool, Error> {
+    numeric::complete(runtime, realm, transaction, kind, thrown)
+}
 
 fn number(value: &Value) -> Option<Number> {
     value.as_number_repr()
@@ -1611,9 +1634,33 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
         if !handled {
             if let Some(kind) = super::numeric::operation::NumericKind::for_instruction(instruction)
             {
-                return Ok(RunExit::Numeric(kind));
+                if numeric::supported(&slots, kind) {
+                    // Preserve active-PC admission before consuming operands,
+                    // then keep this transaction and run frame across parsing.
+                    drop(slots);
+                    pc.publish_fault();
+                    runtime
+                        .update_active_bytecode_pc(
+                            cold.active_frame,
+                            super::BytecodePc::new(pc.fault),
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                    if !numeric::complete(
+                        runtime,
+                        frame.executable.realm,
+                        &mut transaction,
+                        kind,
+                        &mut execution.pending,
+                    )? {
+                        return Ok(RunExit::PrimitiveThrow);
+                    }
+                    slots = transaction.slots();
+                } else {
+                    return Ok(RunExit::Numeric(kind));
+                }
+            } else {
+                return Ok(RunExit::Bridge);
             }
-            return Ok(RunExit::Bridge);
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(observed_depth);

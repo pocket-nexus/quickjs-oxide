@@ -92,6 +92,31 @@ to that same retained callee and runtime; it is not a reusable property cache.
 The call's existing realm, arity, budget, brand, error and cleanup rules remain
 authoritative.
 
+## Resident primitive arithmetic boundary
+
+Same-frame completion in `ready::run` is different from remaining in one `run`
+invocation: the former returns from run and rebuilds its transaction on reentry.
+ConvertAdd/ConvertPlus and LocalAdd keep their existing completion protocols;
+their ready-loop residency does not establish run residency.
+
+N1 defines a narrow boundary for eligible non-Object `NumericKind` arithmetic
+after existing Number fast paths. Comparisons, abstract equality, Object inputs
+and malformed slots keep canonical handling before any candidate consumption.
+The resident path retains the original FrameTransaction, ends RunSlots, publishes
+the arithmetic fault/active PC, takes owning operands in RHS-before-LHS order
+through a short borrow, and calls the shared `primitive_output` outside RunSlots.
+The same transaction reopens for pending output, previous before value for
+postfix operations, and continues the current run only after successful commit.
+It is a single opcode completion, not an additional fusion span.
+
+Parsing, BigInt allocation, Symbol root release and error materialization must
+remain outside RunSlots. A JS arithmetic error uses the executing frame realm
+and the ordinary throw/unwind protocol; consumed inputs are never replayed.
+Output errors retain canonical partial commits and fault/resume position.
+The [numeric boundary audit](../reports/primitive-vm-s09-numeric-boundary.md)
+records the ownership, domain, PC, callback, realm and error-channel constraints.
+Source residency alone does not prove final throughput recovery.
+
 ## Current run PC representation
 
 The completed PC candidate keeps fault and resume local during the exclusive

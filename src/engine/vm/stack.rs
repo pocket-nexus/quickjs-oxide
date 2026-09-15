@@ -82,7 +82,7 @@ pub(in crate::engine::vm) struct FrameStorage {
 
 mod number;
 mod window;
-pub(in crate::engine::vm) use window::{LinkedReadCompletion, RunSlots};
+pub(in crate::engine::vm) use window::{FrameTransaction, LinkedReadCompletion, RunSlots};
 
 impl SlotStore {
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
