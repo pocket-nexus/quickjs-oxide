@@ -1,5 +1,18 @@
 use super::*;
 
+/// Non-owning unresolved-global location. Every use checks realm, atom and the
+/// generational shape identity/revision; it never retains an old property value.
+#[cfg(feature = "stack-vm")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct GlobalLocation {
+    pub realm: ContextId,
+    pub atom: crate::engine::atom::Atom,
+    pub shape: ShapeId,
+    pub revision: u64,
+    pub index: u32,
+}
+
+
 /// Mutable storage shared by an active frame and all closures capturing one
 /// argument or local.
 ///
@@ -11,6 +24,8 @@ use super::*;
 #[derive(Clone, Debug, PartialEq)]
 pub struct VarRefData {
     pub value: RawValue,
+    #[cfg(feature = "stack-vm")]
+    pub(super) global_location: std::cell::Cell<Option<GlobalLocation>>,
     pub is_lexical: bool,
     pub is_const: bool,
     pub kind: ClosureVariableKind,
@@ -22,6 +37,8 @@ impl VarRefData {
     #[cfg(test)]
     pub const fn local(value: RawValue) -> Self {
         Self {
+            #[cfg(feature = "stack-vm")]
+            global_location: std::cell::Cell::new(None),
             value,
             is_lexical: false,
             is_const: false,
@@ -38,6 +55,8 @@ impl VarRefData {
         kind: ClosureVariableKind,
     ) -> Self {
         Self {
+            #[cfg(feature = "stack-vm")]
+            global_location: std::cell::Cell::new(None),
             value,
             is_lexical,
             is_const,

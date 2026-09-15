@@ -5,10 +5,10 @@ use std::cell::Cell;
 use crate::engine::atom::{Atom, AtomTable};
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::heap::{
-    ContextId, Heap, ObjectId, ObjectKind, ObjectPayload, PropertySlot, RawValue, ShapeId,
+    ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Location {
     domain: u64,
     realm: ContextId,
@@ -26,16 +26,15 @@ enum State {
     #[default]
     Cold,
     Monomorphic(Location),
-    Megamorphic,
+    Polymorphic([Location; 2]),
+    Megamorphic(u16),
 }
 
-/// One first miss may install a monomorphic fact. The next miss (including
-/// invalidation, a different runtime/realm, or an unsupported receiver) disables
-/// that site permanently. A cold unsupported miss also counts toward the two.
+/// Two guarded locations cover alternating shapes. Unsupported/overflow sites
+/// periodically retry specialization, without retaining object or value owners.
 #[derive(Debug, Default)]
 pub(crate) struct PropertyReadCache {
     state: Cell<State>,
-    misses: Cell<u8>,
 }
 
 impl PropertyReadCache {
@@ -48,9 +47,32 @@ impl PropertyReadCache {
         realm: ContextId,
         receiver: ObjectId,
     ) -> Option<&'a RawValue> {
-        let State::Monomorphic(location) = self.state.get() else {
-            return None;
-        };
+        match self.state.get() {
+            State::Cold => None,
+            State::Monomorphic(location) => Self::read_location(location, heap, domain, realm, receiver),
+            State::Polymorphic([first, second]) => {
+                if let Some(value) = Self::read_location(first, heap, domain, realm, receiver) {
+                    Some(value)
+                } else {
+                    let value = Self::read_location(second, heap, domain, realm, receiver)?;
+                    self.state.set(State::Polymorphic([second, first]));
+                    Some(value)
+                }
+            }
+            State::Megamorphic(left) => {
+                if left <= 1 {
+                    self.state.set(State::Cold);
+                    event("property_ic.revive");
+                } else {
+                    self.state.set(State::Megamorphic(left - 1));
+                }
+                None
+            }
+        }
+    }
+
+    fn read_location(location: Location, heap: &Heap, domain: u64, realm: ContextId,
+        receiver: ObjectId) -> Option<&RawValue> {
         if location.domain != domain || location.realm != realm {
             return None;
         }
@@ -99,29 +121,45 @@ impl PropertyReadCache {
         receiver: Option<ObjectId>,
         atom: Atom,
     ) {
-        if matches!(self.state.get(), State::Megamorphic) {
-            return;
-        }
-        let misses = self.misses.get() + 1;
-        self.misses.set(misses);
-        if misses >= 2 {
-            self.state.set(State::Megamorphic);
+        let state = self.state.get();
+        if matches!(state, State::Megamorphic(_)) { return; }
+        let Some(location) = receiver.and_then(|r| locate(heap, atoms, domain, realm, r, atom)) else {
+            self.state.set(State::Megamorphic(1024));
             event("property_ic.megamorphic");
             return;
-        }
-        let location =
-            receiver.and_then(|receiver| locate(heap, atoms, domain, realm, receiver, atom));
-        self.state
-            .set(location.map_or(State::Cold, State::Monomorphic));
+        };
+        // A revision change of the same shape replaces stale knowledge instead
+        // of spending another polymorphic slot on an unreachable old revision.
+        let same_key = |old: Location| old.domain == location.domain && old.realm == location.realm && old.shape == location.shape;
+        let next = match state {
+            State::Cold => State::Monomorphic(location),
+            State::Monomorphic(old) if same_key(old) => State::Monomorphic(location),
+            State::Monomorphic(old) => State::Polymorphic([location, old]),
+            State::Polymorphic([first, second]) if same_key(first) => State::Polymorphic([location, second]),
+            State::Polymorphic([first, second]) if same_key(second) => State::Polymorphic([location, first]),
+            _ => { event("property_ic.megamorphic"); State::Megamorphic(1024) }
+        };
+        self.state.set(next);
         event("property_ic.miss");
     }
 }
 
 fn ordinary_receiver(data: &crate::engine::heap::ObjectData, numeric: bool) -> bool {
-    match (data.kind, &data.payload) {
-        (ObjectKind::Ordinary, ObjectPayload::Ordinary) => true,
-        (ObjectKind::Array, ObjectPayload::Array { .. }) => !numeric,
-        _ => false,
+    match data.kind {
+        ObjectKind::Proxy | ObjectKind::ModuleNamespace => false,
+        // Indexed exotics may intercept keys before ordinary shape lookup.
+        ObjectKind::Array | ObjectKind::Arguments | ObjectKind::Primitive | ObjectKind::TypedArray => !numeric,
+        ObjectKind::Ordinary | ObjectKind::Iterator | ObjectKind::ArrayIterator
+        | ObjectKind::ForInIterator | ObjectKind::Date | ObjectKind::RegExp
+        | ObjectKind::RegExpStringIterator | ObjectKind::Map | ObjectKind::MapIterator
+        | ObjectKind::Set | ObjectKind::SetIterator | ObjectKind::WeakMap | ObjectKind::WeakSet
+        | ObjectKind::WeakRef | ObjectKind::FinalizationRegistry | ObjectKind::GlobalObject
+        | ObjectKind::Error | ObjectKind::StringIterator | ObjectKind::IteratorHelper
+        | ObjectKind::IteratorWrap | ObjectKind::AsyncFromSyncIterator | ObjectKind::IteratorConcat
+        | ObjectKind::ArrayBuffer | ObjectKind::SharedArrayBuffer | ObjectKind::DataView
+        | ObjectKind::NativeFunction | ObjectKind::BoundFunction | ObjectKind::BytecodeFunction
+        | ObjectKind::Generator | ObjectKind::AsyncGenerator | ObjectKind::AsyncFunctionState
+        | ObjectKind::Promise => true,
     }
 }
 
@@ -140,7 +178,16 @@ fn locate(
     if revision == u64::MAX || epoch == u64::MAX {
         return None;
     }
-    let numeric = atoms.array_index(atom).ok()?.is_some();
+    let numeric = atoms.array_index(atom).ok()?.is_some()
+        || (atoms.property_key_kind(atom).ok()? == crate::engine::atom::PropertyKeyKind::String && {
+            // Conservative, allocation-free superset of CanonicalNumericIndexString.
+            // TypedArray intercepts -0/NaN/Infinity and non-array-index numbers.
+            let spelling = atoms.to_js_string(atom).ok()?;
+            let first = spelling.utf16_units().next();
+            matches!(first, Some(43 | 45 | 46 | 48..=57))
+                || spelling.utf16_units().eq("NaN".encode_utf16())
+                || spelling.utf16_units().eq("Infinity".encode_utf16())
+        });
     let mut holder = receiver;
     let mut depth = 0u32;
     loop {
@@ -254,7 +301,52 @@ mod tests {
             })
     }
     #[test]
-    fn cached_location_reads_replaced_value_and_second_miss_is_permanent() {
+    fn two_shapes_alternate_and_third_shape_eventually_revives() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let first = object(context.eval("({x:1})").unwrap());
+        let second = object(context.eval("({y:0,x:2})").unwrap());
+        let third = object(context.eval("({z:0,y:0,x:3})").unwrap());
+        let key = runtime.intern_property_key("x").unwrap();
+        let realm = context.realm_id();
+        let cache = PropertyReadCache::default();
+        install(&cache, &runtime, realm, &first, key.atom());
+        install(&cache, &runtime, realm, &second, key.atom());
+        assert!(matches!(cache.state.get(), State::Polymorphic(_)));
+        for _ in 0..8 {
+            assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
+            assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
+        }
+        install(&cache, &runtime, realm, &third, key.atom());
+        assert!(matches!(cache.state.get(), State::Megamorphic(_)));
+        for _ in 0..1024 { assert_eq!(number(&cache, &runtime, realm, &first), None); }
+        assert!(matches!(cache.state.get(), State::Cold));
+        install(&cache, &runtime, realm, &third, key.atom());
+        assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
+    }
+
+    #[test]
+    fn exotic_named_storage_is_cached_but_typed_numeric_keys_are_not() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let key = runtime.intern_property_key("x").unwrap();
+        for expression in ["new Map()", "new Date()", "new Uint8Array(2)"] {
+            let receiver = object(context.eval(&format!("var exotic={expression}; exotic.x=7; exotic")).unwrap());
+            let cache = PropertyReadCache::default();
+            install(&cache, &runtime, context.realm_id(), &receiver, key.atom());
+            assert_eq!(number(&cache, &runtime, context.realm_id(), &receiver), Some(7.0));
+        }
+        let typed = object(context.eval("new Uint8Array(2)").unwrap());
+        for spelling in ["0", "-0", "NaN", "Infinity", "1.5"] {
+            let key = runtime.intern_property_key(spelling).unwrap();
+            let cache = PropertyReadCache::default();
+            install(&cache, &runtime, context.realm_id(), &typed, key.atom());
+            assert!(matches!(cache.state.get(), State::Megamorphic(_)));
+        }
+    }
+
+    #[test]
+    fn cached_location_reads_replaced_value_and_unsupported_miss_cools_down() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let obj = object(context.eval("var o = {x:1}; o").unwrap());
@@ -275,7 +367,7 @@ mod tests {
         install(&cache, &runtime, context.realm_id(), &obj, key.atom());
         context.eval("o.x=11").unwrap();
         install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert!(matches!(cache.state.get(), State::Megamorphic));
+        assert!(matches!(cache.state.get(), State::Megamorphic(_)));
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
     }
     #[test]

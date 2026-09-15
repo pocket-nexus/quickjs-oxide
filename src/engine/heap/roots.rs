@@ -211,8 +211,21 @@ impl Runtime {
             return Ok(None);
         }
         let shape = state.heap.shape(object.shape)?;
-        let Some(index) = shape.find(atom) else {
-            return Ok(None);
+        let revision = shape.layout_revision();
+        let cached = cell.global_location.get().filter(|entry|
+            entry.realm == realm && entry.atom == atom && entry.shape == object.shape
+                && entry.revision == revision && revision != u64::MAX);
+        let index = if let Some(entry) = cached {
+            entry.index
+        } else {
+            let Some(index) = shape.find(atom) else {
+                cell.global_location.set(None);
+                return Ok(None);
+            };
+            cell.global_location.set(Some(super::binding_records::GlobalLocation {
+                realm, atom, shape: object.shape, revision, index,
+            }));
+            index
         };
         let index = index as usize;
         if shape.entries()[index].flags.storage != PropertyStorageKind::Data {

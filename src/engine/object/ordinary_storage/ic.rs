@@ -24,13 +24,13 @@ impl Runtime {
         let Some(cache) = executable.property_read_ic.site(pc) else {
             return Ok(None);
         };
-        if self.0.deferred_references.has_pending() {
+        if !keep_receiver && self.0.deferred_references.has_pending() {
             return Ok(None);
         }
         let Ok(mut state) = self.0.state.try_borrow_mut() else {
             return Ok(None);
         };
-        if state.heap.has_pending_zero_cleanup() {
+        if !keep_receiver && state.heap.has_pending_zero_cleanup() {
             return Ok(None);
         }
         let receiver = match base {
@@ -229,12 +229,12 @@ mod tests {
             drop(released);
         }
         assert!(runtime.0.deferred_references.has_pending());
-        assert!(
-            runtime
-                .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
-                .unwrap()
-                .is_none()
-        );
+        // A kept receiver hit only retains under the exclusive heap borrow;
+        // pending unrelated releases cannot mutate its guarded layout.
+        let retained_hit = runtime
+            .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
+            .unwrap();
+        assert!(matches!(retained_hit, Some(Value::Object(_))));
         assert!(runtime.0.deferred_references.has_pending());
         runtime.drain_deferred_references().unwrap();
         assert!(matches!(
