@@ -2,13 +2,13 @@
 
 The optional `profiling` feature implements the memory snapshots, safe partial
 allocation trace, lifecycle timing and benchmark workflow proposed in
-[the original design report](reports/quickjs-profiling-plan.html). Diagnostics
+[the original design report](performance/README.md). Diagnostics
 are off by default. This is an observability baseline, not a CPU/call-stack
 sampler or a claim of feature/performance parity with QuickJS.
 
 Historical measurements and validation evidence:
-[PocketLab baseline](reports/profiler-baseline.md) and
-[CPU hotspot investigation](reports/cpu-hotspots.md). Each report applies to
+[PocketLab baseline](performance/README.md) and
+[CPU hotspot investigation](performance/README.md). Each report applies to
 its recorded source and build; its optimization ordering is not a current
 backlog. The [stack VM plan](primitive-vm-plan.md) selects this PR's goals
 from [issue #16's post-PR19 investigation](https://github.com/pocket-stack/quickjs-oxide/issues/16#issuecomment-5634660983).
@@ -211,7 +211,7 @@ is fixture-specific, not a universal relationship for failed dispatches. Earlier
 both-local PC experiments had different write counts and remain historical
 measurements. The local-resume choice came from ordinary paired candidate
 measurements, not from assuming fewer stores are faster. See the
-[S08 development evidence](reports/primitive-vm-s08-development.md).
+[S08 development evidence](performance/README.md).
 
 `owned_storage` records SlotStore/FrameStore capacity changes, frame-depth and
 slot peaks, logical owner moves, cleanup clears, value copies, and narrow hot

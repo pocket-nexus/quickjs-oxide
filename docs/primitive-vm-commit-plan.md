@@ -1,12 +1,12 @@
 # 栈 VM：分阶段 commit 计划
 
-状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](reports/primitive-vm-s10-s12-final.md)，[N1–N3 报告](reports/primitive-vm-s09-numeric-resident.md)保留为直接前版证据。
+状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](performance/latest/primitive-vm-s10-s12-final.md)，[N1–N3 报告](performance/README.md)保留为直接前版证据。
 
 **用户最新执行约束（2026-09-15）：后续仅构建、测试、benchmark 和 Profile 新执行核心（当前 `--features stack-vm`）。不再构建或运行旧 default 执行路径，也不重跑 S0/S07/S08 等历史候选；旧数据只读取已有记录。本文以前要求 default/stack-vm 双配置或新旧对跑的流程不再适用。历史已执行记录保留，但不能据此再次启动旧路径。Test262/语义 oracle 仍用于核对新核心，不把它们误称为另一个性能候选。**
 
 **本次明确例外（三轮公平复测，2026-09-15，已完成）：**用户随后明确要求重新运行 S0 与当前实现各三轮完整 benchmark/Profile。本次允许构建和运行精确 S0（`c52d4dc`，与历史 S0 普通二进制源码 `1cc51bb5` 的差异仅为 Markdown）和当前新核心两个候选；不加入当前旧 default 路径或 S07/S08 等中间版本。两边同工具链、release 参数、相同编译探针源码和冻结输入，逐用例交错，正式耗时与 Profile 分开；58 fixed、67 compile、原始八项/combined、33 探针及内存控制各三轮，CPU/成本 Profile 覆盖全部 58 fixed。原始单项上限 180 秒、combined 600 秒，两边相同，失败与超时原样保留，不补样替换。新报告以两边本次三轮中位数、配对差值及原始范围为准；旧单轮报告保留为历史，不混入新统计。此例外不恢复以后例行运行旧 default 的流程。
 
-S07 commit 后的完整 benchmark/profile 已完成：固定 58 项耗时均回退，为 PR19 的 1.17–5.28 倍；67 个新核心成本样本零旧分派、零桥接。[结果与源码归因](reports/primitive-vm-s07-performance.md)已用于重写第 4 节：S08 先压低执行与状态推进成本并完成融合/PC 优化，S09 收口调用存储、编译和布局，修复剩余回退。该报告用于确定优化顺序；当前 S08 实施状态见下方开发记录。
+S07 commit 后的完整 benchmark/profile 已完成：固定 58 项耗时均回退，为 PR19 的 1.17–5.28 倍；67 个新核心成本样本零旧分派、零桥接。[结果与源码归因](performance/README.md)已用于重写第 4 节：S08 先压低执行与状态推进成本并完成融合/PC 优化，S09 收口调用存储、编译和布局，修复剩余回退。该报告用于确定优化顺序；当前 S08 实施状态见下方开发记录。
 
 目标见[架构计划](primitive-vm-plan.md)，目录与算法见[实施设计](primitive-vm-implementation-plan.md)，能力和结构验收见[迁移清单](primitive-vm-migration.md)。
 
@@ -15,8 +15,8 @@ S07 commit 后的完整 benchmark/profile 已完成：固定 58 项耗时均回�
 开发中的定向构建/排错不作为阶段验收；S07 完成后再运行新旧 VM 完整
 benchmark/profile，并在 PR #21 comment 汇报。此要求优先于下文开发临时提交规则。
 
-S08 本轮开发中的候选、定向验证及剩余工作见[开发记录](reports/primitive-vm-s08-development.md)。
-该记录保留历史过程。最新状态见 [S08 收口记录](reports/primitive-vm-s08-closeout.md)：已结束 S08 迭代，逐项保留回退、未合入候选与验证缺口；不再以完全修复函数调用回退阻塞 S08。
+S08 本轮开发中的候选、定向验证及剩余工作见[开发记录](performance/README.md)。
+该记录保留历史过程。最新状态见 [S08 收口记录](performance/README.md)：已结束 S08 迭代，逐项保留回退、未合入候选与验证缺口；不再以完全修复函数调用回退阻塞 S08。
 
 历史实现账本（记录 S08 以 source-23 收口、S09 三项机制实施前的状态；其中 S09.1–S09.3 的“尚待完成”已由 `c9a2607c` 实现，不再作为当前待办。当前剩余范围见下文 S09 待办索引）：
 
@@ -36,7 +36,7 @@ S08 本轮开发中的候选、定向验证及剩余工作见[开发记录](repo
 最新同批固定 58 项四轮筛查 928/928 样本有效：当前组合 41 项中位数高于 S0，
 空循环 / S0 为 0.5927、TypedArray 写入 0.6816、普通函数调用 1.5145。
 这些是筛查结果，不是十轮正式验收；独立 S08-25 和组合 source-25 仍是未合入候选。
-完整逐项结果、profile 版本边界、未完成验证及证据身份见 [收口报告](reports/primitive-vm-s08-closeout.md)。
+完整逐项结果、profile 版本边界、未完成验证及证据身份见 [收口报告](performance/README.md)。
 
 ## 当前实施记录
 
@@ -328,7 +328,7 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 全部失败与修复、原始报告和最终 1163 个源码/构建/fixture 输入哈希保存在
 `target/primitive-vm-s07-acceptance/`，最终判定为 `stage-verdict.json`。
 本阶段只创建一次 commit；此后已在该干净 commit 上执行完整 benchmark/profile，
-结果及原始样本说明写入 PR #21 comment，见[回退分析](reports/primitive-vm-s07-performance.md)。S08/S09 优化、S10 默认切换和旧路径删除未实施。
+结果及原始样本说明写入 PR #21 comment，见[回退分析](performance/README.md)。S08/S09 优化、S10 默认切换和旧路径删除未实施。
 
 完成全部既有生产入口的可测新核心路径：
 
@@ -410,7 +410,7 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 
 **当前待办索引：**S09 剩余工作统一由下文“已提交后的全部 S0 回退修复计划”承接，包括 R1–R5、37 项逐项 S0 验收，以及最终候选的编译/语义/所有权/native/Web/WASM 等联合验证；后面的 S09 退出条件是同一次收口的验收要求，不是另一轮独立优化。S09.1–S09.3 的下列条目保留实施前问题、设计和验证契约，S09.4 的剩余工作由新计划具体化，不重复实施已完成机制。完成 S09 后，全文仍有 S10 的默认入口切换、旧路径删除、切换后验证和文档交付。
 
-**2026-09-14 修订依据：**当前 `b36ad884` 的重新诊断见 [调用成本复查与修复设计](reports/primitive-vm-s09-call-audit.md) 和 [数据记录](reports/primitive-vm-s09-call-audit.json)。三个冻结调用用例十轮均有效，普通/全局/闭包调用相对 PR19 分别为 **1.4952 / 1.4648 / 1.2931**。普通调用的参数/冷帧分配已经达到平台，继续以 S07 的约 160 万次分配解释当前回退是过时判断。
+**2026-09-14 修订依据：**当前 `b36ad884` 的重新诊断见 [调用成本复查与修复设计](performance/README.md) 和 [数据记录](performance/README.md)。三个冻结调用用例十轮均有效，普通/全局/闭包调用相对 PR19 分别为 **1.4952 / 1.4648 / 1.2931**。普通调用的参数/冷帧分配已经达到平台，继续以 S07 的约 160 万次分配解释当前回退是过时判断。
 
 **阶段目标：**重做普通调用的内部执行协议和所有权投影，消除闭包环境的逐调用复制与预算的祖先扫描，同时修复其余已确认回退。保留显式 JS 调用栈，不能返回 Rust 递归。既有参数窗口/容量复用是保留基础，不再作为足以结案的主要方案。
 
@@ -470,7 +470,7 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 
 本节中的调用次数、认证次数、Box 容量是机制证据；CPU self 百分比仅定位热点，不能当成可追回的耗时比例。已有 S0/当前硬件指令对比用于确认额外工作，不能从不同采样分母的 self 百分比相减得到回退贡献。小幅回退保留为待验收项，不擅自称为噪声；单份当前 profile 也不能证明其全部统计差异由某个热点造成。
 
-**修复前逐项账本。** 下表数值是 c9 的历史状态，不是本轮结果。R1–R5 是五组共用实现；每行仍独立验收，综合用例不能用微基准代替。[本轮 37 项新旧对照](reports/primitive-vm-s09-s0-recovery.md#原-37-项逐项结果)中，5 项单次不高于 S0、32 项继续未完成；5 项也不伪称统计置信通过。
+**修复前逐项账本。** 下表数值是 c9 的历史状态，不是本轮结果。R1–R5 是五组共用实现；每行仍独立验收，综合用例不能用微基准代替。[本轮 37 项新旧对照](performance/README.md)中，5 项单次不高于 S0、32 项继续未完成；5 项也不伪称统计置信通过。
 
 | 用例 | 修复前 c9 相对 S0 耗时 | 修复组 | 具体覆盖 |
 |---|---:|---|---|
@@ -514,7 +514,7 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 
 ##### 前轮执行结果（61e585a4，2026-09-15，历史记录）
 
-以下保留 61e585a4 的历史结果；当前状态见本节末尾“漏项补齐后的单轮验收”。[完整报告](reports/primitive-vm-s09-s0-recovery.md)和[可核对数据](reports/primitive-vm-s09-s0-recovery.json)绑定同一最终源码、普通/诊断二进制、冻结输入与输出。先冻结组合代码并完成正确性门禁，再执行一轮 benchmark/profile；S0/S07/S08/base23/c9 只读取历史记录，没有重跑。
+以下保留 61e585a4 的历史结果；当前状态见本节末尾“漏项补齐后的单轮验收”。[完整报告](performance/README.md)和[可核对数据](performance/README.md)绑定同一最终源码、普通/诊断二进制、冻结输入与输出。先冻结组合代码并完成正确性门禁，再执行一轮 benchmark/profile；S0/S07/S08/base23/c9 只读取历史记录，没有重跑。
 
 | 组 | 已确认达成 | 本轮仍未完成/残余 |
 |---|---|---|
@@ -612,7 +612,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 4. **逐项报告与机械证据绑定。** 最终候选一轮计数/CPU 诊断覆盖本账本；同时绑定源码、二进制、冻结 workload/output 哈希，分别列相对 S0、父提交、c9 的耗时和可用硬件事件。当前诊断不混入正式多轮历史中位数；单轮新值不伪称统计置信区间。窗口认证、状态分配/搬运、真实 Query 与必需内核工作分开计数，三个 legacy bridge 保持零。
 5. **S0 是最终目标。** 全部实际回退必须消除；低于 5% 不自动忽略，微基准改善不抵销综合项。删除重复认证、Box 或状态搬运只满足机制验收，尚有真实性能差距、证据不足或误差无法分辨的行继续标为未完成，记录残余原因并继续在本账本内处理。不能“只修新增两项后停止”，不能把剩余回退挪到 S10；也不未经证据扩展到编译器、全局 inline/LTO、帧布局、解析器重写或无关内置。新增残余修复须说明其对应哪一行和哪项当前证据，旧基线不重复测。
 
-本节是唯一的后续修复计划。原 37 项映射与前轮完整结果保留在[历史数据](reports/primitive-vm-s09-s0-recovery.json)；当前以[漏项补齐报告](reports/primitive-vm-s09-omission-completion.md)和[同源完整数据](reports/primitive-vm-s09-omission-completion.json)为准。未达标项继续属于同一个 S09 验收，不另立阶段。
+本节是唯一的后续修复计划。原 37 项映射与前轮完整结果保留在[历史数据](performance/README.md)；当前以[漏项补齐报告](performance/README.md)和[同源完整数据](performance/README.md)为准。未达标项继续属于同一个 S09 验收，不另立阶段。
 
 ##### 历史：漏项补齐后的单轮验收（3860cba3 后，2026-09-15）
 
@@ -639,7 +639,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 ##### 三轮公平复测（2026-09-15，最新性能证据）
 
-用户明确授权只对精确 S0 和当前实现重新各测三轮。2,148 项采样全部完成，无第四轮、无失败补样、无中途代码优化。详见[完整报告](reports/primitive-vm-s09-fair-three-rounds.md)和[CSV](reports/primitive-vm-s09-fair-three-rounds.csv)；完整 JSON（56 MB）不入 git，保留在本地 `docs/reports/primitive-vm-s09-fair-three-rounds.json` 与原始证据目录。
+用户明确授权只对精确 S0 和当前实现重新各测三轮。2,148 项采样全部完成，无第四轮、无失败补样、无中途代码优化。详见[完整报告](performance/README.md)和[CSV](performance/README.md)；完整 JSON（56 MB）不入 git，保留在本地 `docs/reports/primitive-vm-s09-fair-three-rounds.json` 与原始证据目录。
 
 58 fixed 中 32 项中位耗时高于 S0；28 项三次配对均更慢且范围分离，另外 string_to_int、string_build3、global_func_call、array_slice 四项方向不一致，保留待确认。之前排除的两项本次均更快，故排除前后均为 32。普通调用 -4.77%、闭包 -20.71%；主要残余包括 v8-regexp +41.28%、BigInt64 +37.31%、Math.min +29.72%、string_to_float +26.70%、固定 v8-earley-boyer +26.61%、replace +19.98%。arguments_strict_read 此次 -14.42%，此前单轮正差值未复现，不能说发生了新的优化。
 
@@ -685,9 +685,9 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 本轮新核心六项同源正确性门禁已通过（3,546 项工作区、独立 oracle 压力、749 canary、Test262 全向量一致及 Web/Node/WASM），代码已以 `ade0f559` 提交推送，随后唯一一轮 358 项性能/诊断采样全部有效。当前工作按用户新指令执行：先提交推送计划 `f27088a3`，补齐全部适用分簇实现，完成同源正确性门禁后提交推送代码，再仅测最终代码一轮。旧 S0 复用三轮记录，不重跑；本指令取代上文局部消融/中途复测安排。可选惰性 fault-PC 未混入组合，也不把它标为完成。
 
-[分簇实现与计划核对](reports/primitive-vm-s09-cluster-recovery.md)逐项记录实际改动、已有实现和不成立的假设。P1/A1/C1 共享一次认证事务，A3 局部加法 span，B1–B4 native 事实/同步完成/global own/字面量方法调用，C/F 受守卫 Set 与 dense 复合操作，D1–D3 owner/for-in/iterator 驻留均已接入。A2/C4、C3/E2/F3 的部分机制原本已有，未重复重做。G 的“大初始预分配”源码假设不成立，保留 RSS 成本而不进行无依据的容量修改。
+[分簇实现与计划核对](performance/README.md)逐项记录实际改动、已有实现和不成立的假设。P1/A1/C1 共享一次认证事务，A3 局部加法 span，B1–B4 native 事实/同步完成/global own/字面量方法调用，C/F 受守卫 Set 与 dense 复合操作，D1–D3 owner/for-in/iterator 驻留均已接入。A2/C4、C3/E2/F3 的部分机制原本已有，未重复重做。G 的“大初始预分配”源码假设不成立，保留 RSS 成本而不进行无依据的容量修改。
 
-上文旧计划的 push 1,072,014 和 length_decr 1,107,050 Query 数不是当前三轮候选计数；当前分别为 10 和 2,494。硬件计数和热点只能支持调查方向，不能独自证明全部因果。最新性能结果见[最终单轮报告](reports/primitive-vm-s09-cluster-recovery.md)：58 fixed 中 23 项单次高于 S0 三轮中位数，67 compile 中 30 项，另有 12 项可比探针及 3 项 RSS 成本未追回。九项原有 fixed 正差值本轮不高于 S0；没有新增 fixed 正差值。B4 仅覆盖字面量参数，实际 Math.min(i,500) 不命中，认证仍约 8/调用而非目标 ≤4；BigInt active-PC 发布增加，V8 RegExp Query 仅下降约 36.3%，相关机械目标未达。**S09 尚未完成，也不能声称全部计划实现/覆盖已经补齐。**用户要求只测最终一轮，本轮不追加修改或补跑；下文原退出条件仍属同一次验收。
+上文旧计划的 push 1,072,014 和 length_decr 1,107,050 Query 数不是当前三轮候选计数；当前分别为 10 和 2,494。硬件计数和热点只能支持调查方向，不能独自证明全部因果。最新性能结果见[最终单轮报告](performance/README.md)：58 fixed 中 23 项单次高于 S0 三轮中位数，67 compile 中 30 项，另有 12 项可比探针及 3 项 RSS 成本未追回。九项原有 fixed 正差值本轮不高于 S0；没有新增 fixed 正差值。B4 仅覆盖字面量参数，实际 Math.min(i,500) 不命中，认证仍约 8/调用而非目标 ≤4；BigInt active-PC 发布增加，V8 RegExp Query 仅下降约 36.3%，相关机械目标未达。**S09 尚未完成，也不能声称全部计划实现/覆盖已经补齐。**用户要求只测最终一轮，本轮不追加修改或补跑；下文原退出条件仍属同一次验收。
 
 ##### G 之外遗漏补齐的最终单轮验收（2026-09-15）
 
@@ -702,7 +702,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 完整门禁包含工作区 3551 通过、独立 oracle 压力、最新边界扫描、688 Rust 文件布局、完整 Test262 结果向量与既有一致、Web/Node/WASM。749 checker canary 的历史成功回执仅复用相同 checker 哈希，生产源码已重新扫描，不冒充本轮重跑全部 canary。
 
-最终 358/358 项有效，58 项三个 legacy bridge 均为零。固定执行 33 项、编译 12 项、可比探针 12 项仍为正差值；单轮不声称统计显著。[完整报告](reports/primitive-vm-s09-followup.md)逐项列出相对 S0、相对 ade0f559 及机械目标结果。代码遗漏补齐不等于全部性能目标达到；**S09 仍未完成，原退出条件继续生效**。
+最终 358/358 项有效，58 项三个 legacy bridge 均为零。固定执行 33 项、编译 12 项、可比探针 12 项仍为正差值；单轮不声称统计显著。[完整报告](performance/README.md)逐项列出相对 S0、相对 ade0f559 及机械目标结果。代码遗漏补齐不等于全部性能目标达到；**S09 仍未完成，原退出条件继续生效**。
 
 ##### 非 Number 原语数值运算驻留修复（2026-09-15，起点 7dc70fbe）
 
@@ -718,7 +718,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 4. **N4 可证伪验证。** 小型语义/路径断言覆盖 Number/bool/String/BigInt/Symbol/Object、Sub/Mul/Div/Mod/Pow/位运算、负零/NaN/Infinity、Unicode/radix、postfix 输出顺序与异常恢复；bool/String subtraction、String BitOr 主体的 run_exit.Numeric 应归零，驻留命中次数与操作数一致，槽认证不再随这些迭代线性增长。正常错误/回调需要的退出不设零目标。完整新核心 workspace/oracle/boundary/Test262/Web/WASM 门禁后冻结源码。
 5. **N5 最终单轮。** 仅最终新核心跑一次既有 358 项矩阵（58 fixed、67 compile、9 原始 V8、33 probe、14 memory、58×3 诊断、3 RSS），S0 复用旧三轮，直接前版 7dc70fbe 复用上一轮。新增事件仅做诊断，正式计时无插桩。报告全部差值与机制命中/认证/PC/Query/hardware/self，不能以源码结构或计数下降结案剩余吞吐回退；不重跑 S0、不做中途 benchmark/Profile、不补跑挑结果。最后更新本节状态、提交并推送。
 
-当前状态：N1–N3 实现完成，N4 完整门禁通过（工作区 3558 通过、Test262 全向量不变及 Web/Node/WASM），N5 最终单轮 358/358 有效，58 项三种 legacy bridge 全零。string_to_float Numeric 退出 0、run 驻留完成 500,000、槽认证 445；相对 S0 耗时 -9.20%。所有剩余差值与硬件计数见[最终报告](reports/primitive-vm-s09-numeric-resident.md)。G 未纳入，未追加第二轮或独立版本；**S09 仍未达到原退出条件**。
+当前状态：N1–N3 实现完成，N4 完整门禁通过（工作区 3558 通过、Test262 全向量不变及 Web/Node/WASM），N5 最终单轮 358/358 有效，58 项三种 legacy bridge 全零。string_to_float Numeric 退出 0、run 驻留完成 500,000、槽认证 445；相对 S0 耗时 -9.20%。所有剩余差值与硬件计数见[最终报告](performance/README.md)。G 未纳入，未追加第二轮或独立版本；**S09 仍未达到原退出条件**。
 
 **执行与验收顺序：**先固定机制和可证伪指标，定向验证后合并候选，再对同一最终源码统一运行完整门禁；发现新失败才重新打开相关实现。阶段目标不是“所有计数归零”：必要的参数校验/初始化、实际创建捕获和最终释放仍按真实工作量计费；普通调用的额外记账必须与祖先数 D、整个环境宽度 C 无关。
 
@@ -759,17 +759,17 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 | S11.2 / 尺寸与冷布局 | 已实现单层冷分派、驻留中央 Step、窄 Resume/Frame 与全部领域请求包、冷诊断外提；131 项生产 domain Step 尺寸约束通过 | 主 RunExit 选择的机器码为一次跳表；不等于每条冷路径只有一次条件分支。local_destruct 降至相对 S0 +16.59%，array_for_of 为 −3.47%；Map/WeakMap 仍 +15.92%～+24.69%，性能目标未全面达成 |
 | S12.2 / AU-5 | GetField/GetField2 定长位置侧表、own/prototype 失效守卫、两次 miss 退化、全 Value 保活与 B4 汇合均实现；不缓存属性值 | IC 命中路径实际驻留。Richards 为 −7.35%；Earley-Boyer / RayTrace 仍 +13.26% / +6.26%。读缓存实施完成不代表全部属性/V8 性能目标已满足 |
 | 联合正确性 | 最后源码变更后库测试 2503/2503；最终工作区 3598 通过，独立 oracle 压力通过，源码布局 697 文件通过 | Test262 全向量一致：79982/80032 可运行变体通过，原有 50 失败不变（102037 总变体）；Web/Node/WASM 15 示例通过 |
-| 额外覆盖 review | 找出并补齐“一次性交接宽包被误排除”“尺寸断言覆盖不全”两处遗漏；补齐后重新核对 | [逐项覆盖记录](reports/primitive-vm-s10-s12-coverage.md)：本次范围内没有已知实施遗漏；不以此代替性能验收 |
+| 额外覆盖 review | 找出并补齐“一次性交接宽包被误排除”“尺寸断言覆盖不全”两处遗漏；补齐后重新核对 | [逐项覆盖记录](performance/latest/primitive-vm-s10-s12-coverage.md)：本次范围内没有已知实施遗漏；不以此代替性能验收 |
 | 唯一最终性能轮 | 403/403 有效，包含全部 fixed/compile/original/probe/memory/RSS、58 fixed 与 15 getter/proxy/mixed 探针的 stat/record/cost | 不重跑旧 S0，不进行中途候选性能测试，不补样替换。25 fixed 正差值中 21 项超过 +5%；单次对历史三轮不提供统计显著性或单阶段因果结论 |
 
 直接前版 dce0b6ea 的 31 项 fixed 正差值，本轮有 7 项转为非正：array_for_in、array_for_of、func_call、global_func_call、regexp_replace、v8-deltablue、v8-richards；Math.min 从 −0.80% 变为 +9.70%，所以净减少至 25 项。Map 字符串/整数、WeakMap、int_to_string、BigInt64 等相对直接前版也有恶化，完整差值必须保留，不能只报改善项。JS 编译、原始 Score、调用探针与 RSS 各自使用对应表，不能与 fixed 同名行混用。
 
 边界验收记录：完整反例矩阵运行到末尾，唯一失败为 `stage3b-function-realm-fallback` 的旧字段锚点。仅修正测试脚本两个 `self`→`self.0` 路径，定向负例按预期规则拒绝，当前源码扫描通过。聚合回执保留完整工具原 exit 1 与修正复验，不冒称第二次完整工具 exit 0；逐文件证明所有 Rust、语义测试、检查器规则未变，故不重跑已通过的语义门禁。
 
-S10 证据：[认证/root 审计](reports/primitive-vm-s10-auth-audit.md)、[字段审计](reports/primitive-vm-s10-cold-audit.md)、[观察协议审计](reports/primitive-vm-s10-observation-audit.md)。发布代号复用不可变字节码 arena 的 index/generation；无可变重发布入口。无捕获事实来自同一发布快照，冷观察点按需物化。
+S10 证据：[认证/root 审计](performance/latest/primitive-vm-s10-auth-audit.md)、[字段审计](performance/latest/primitive-vm-s10-cold-audit.md)、[观察协议审计](performance/latest/primitive-vm-s10-observation-audit.md)。发布代号复用不可变字节码 arena 的 index/generation；无可变重发布入口。无捕获事实来自同一发布快照，冷观察点按需物化。
 
-S11 证据：[冷分派与转换审计](reports/primitive-vm-s11-dispatch-audit.md)、[协议布局与交接清单](reports/primitive-vm-s11-protocol-layout.md)、[领域循环审计](reports/primitive-vm-s11-domain-layout-audit.md)。Frame 56 B、Resume 32 B、ConversionTask 8 B、PendingIterator 8 B；中央 Step 168 B 驻留借用推进。无需等待的 Value 完成分支保留 inline，最低 40 B，不为凑 32 B 引入新的结果分配。
+S11 证据：[冷分派与转换审计](performance/latest/primitive-vm-s11-dispatch-audit.md)、[协议布局与交接清单](performance/latest/primitive-vm-s11-protocol-layout.md)、[领域循环审计](performance/latest/primitive-vm-s11-domain-layout-audit.md)。Frame 56 B、Resume 32 B、ConversionTask 8 B、PendingIterator 8 B；中央 Step 168 B 驻留借用推进。无需等待的 Value 完成分支保留 inline，最低 40 B，不为凑 32 B 引入新的结果分配。
 
-S12 证据：[布局失效审计](reports/primitive-vm-s12-layout-audit.md)。SetProperty own-data 写 IC 是原计划明确的二期，GetElement/Proxy 不进入本次 IC；G 与 S13 不在本轮范围。
+S12 证据：[布局失效审计](performance/latest/primitive-vm-s12-layout-audit.md)。SetProperty own-data 写 IC 是原计划明确的二期，GetElement/Proxy 不进入本次 IC；G 与 S13 不在本轮范围。
 
-最终数据与判断：[完整联合报告](reports/primitive-vm-s10-s12-final.md)、[完整 JSON](reports/primitive-vm-s10-s12-final.json)、[CSV](reports/primitive-vm-s10-s12-final.csv)。S10–S12 实施范围已交付，性能未达到的退出条件仍开放；不再追加本轮代码优化或第二轮性能测量。
+最终数据与判断：[完整联合报告](performance/latest/primitive-vm-s10-s12-final.md)、[完整 JSON](performance/latest/results.json)、[CSV](performance/latest/comparison.csv)。S10–S12 实施范围已交付，性能未达到的退出条件仍开放；不再追加本轮代码优化或第二轮性能测量。

@@ -7,15 +7,15 @@
 当前进展（2026-09-11）：
 
 - S01：22 类固定工作量生成器、独立输出校验、失败样本保留和 12 项工具测试已完成。
-- S02–S04：Map/Set 共用 SameValueZero 键索引；存活记录即时回收，暂停游标不保留历史墓碑。见[键查找](../reports/indexed-collections.md)和[记录回收](../reports/collection-records.md)。键定位平均 O(1)，顺序维护仍为 O(log n)，不宣称所有操作 O(1)。
-- S05/S06：同 flags 写入只替换单槽；dictionary 采用紧凑槽与独立插入顺序，避免逐次复制布局。见[槽更新](../reports/property-slot-update.md)和[dictionary](../reports/dictionary-objects.md)。
-- S07/S08：整数键直达、稀疏截断批处理、慢/带洞 Array 复用 dictionary，保留 QuickJS 的表示敏感语义。见[截断](../reports/sparse-array-truncation.md)和[带洞数组](../reports/holey-array-dictionary.md)。
-- S09–S11：模块名称/绑定槽、作用域名称和字符串常量建立专用索引，并共享只读模块槽。源码坐标索引作为实测后的补充步骤完成。见[模块](../reports/module-indexes.md)、[作用域](../reports/compiler-scope-index.md)、[常量](../reports/compiler-constant-index.md)及[源码坐标](../reports/source-coordinate-index.md)。
-- S12：平坦字符串操作避免反复构造表示；长键使用有界弱身份 hash memo，短键不分配缓存。见[平坦字符串](../reports/flat-strings.md)和[哈希缓存](../reports/string-hash-memo.md)。
-- S13–S16：TypedArray 数字索引、Arguments/RegExp 批量发布、0/1/2 条引用边事务完成。见[累计测量](../reports/integer-keys-builtin-batches.md)，不把该累计收益归给单个提交。
+- S02–S04：Map/Set 共用 SameValueZero 键索引；存活记录即时回收，暂停游标不保留历史墓碑。见[键查找](../performance/README.md)和[记录回收](../performance/README.md)。键定位平均 O(1)，顺序维护仍为 O(log n)，不宣称所有操作 O(1)。
+- S05/S06：同 flags 写入只替换单槽；dictionary 采用紧凑槽与独立插入顺序，避免逐次复制布局。见[槽更新](../performance/README.md)和[dictionary](../performance/README.md)。
+- S07/S08：整数键直达、稀疏截断批处理、慢/带洞 Array 复用 dictionary，保留 QuickJS 的表示敏感语义。见[截断](../performance/README.md)和[带洞数组](../performance/README.md)。
+- S09–S11：模块名称/绑定槽、作用域名称和字符串常量建立专用索引，并共享只读模块槽。源码坐标索引作为实测后的补充步骤完成。见[模块](../performance/README.md)、[作用域](../performance/README.md)、[常量](../performance/README.md)及[源码坐标](../performance/README.md)。
+- S12：平坦字符串操作避免反复构造表示；长键使用有界弱身份 hash memo，短键不分配缓存。见[平坦字符串](../performance/README.md)和[哈希缓存](../performance/README.md)。
+- S13–S16：TypedArray 数字索引、Arguments/RegExp 批量发布、0/1/2 条引用边事务完成。见[累计测量](../performance/README.md)，不把该累计收益归给单个提交。
 - S17：依据新 profile 实现 Number 栈原位更新，保留 locals/TDZ/字节码验证检查；局部 A/B 改善约 7%–9%。
-- S18：普通 Call/CallMethod 借用 caller 参数窗口，callee 仍拥有帧；未引入帧池。局部调用实测基本持平，只确认减少临时分配。S17/S18 的范围细化与证据见 [VM 报告](../reports/vm-stack-and-call.md)。
-- S19：正确性、构建和架构门禁已完成；[396 个规模样本](../reports/data-structure-scaling-final.md)及[522 个固定 microbench/V8 样本](../reports/data-structure-fixed-final.md)全部通过。[原始自校准 harness](../reports/data-structure-adaptive-final.md)、[36 个硬件计数样本和 6 份最终 profile](../reports/data-structure-hardware-final.md)已保留。原始合并 V8 的两版 Oxide 均触及 90 秒上限，不产生可比较分数；固定八项均通过。
+- S18：普通 Call/CallMethod 借用 caller 参数窗口，callee 仍拥有帧；未引入帧池。局部调用实测基本持平，只确认减少临时分配。S17/S18 的范围细化与证据见 [VM 报告](../performance/README.md)。
+- S19：正确性、构建和架构门禁已完成；[396 个规模样本](../performance/README.md)及[522 个固定 microbench/V8 样本](../performance/README.md)全部通过。[原始自校准 harness](../performance/README.md)、[36 个硬件计数样本和 6 份最终 profile](../performance/README.md)已保留。原始合并 V8 的两版 Oxide 均触及 90 秒上限，不产生可比较分数；固定八项均通过。
 
 最终源码验证覆盖上述所有引擎改动。各步骤报告保留当时的提交、局部验证和中间退化记录；其中的历史“待验证”状态不表示当前仍缺少对应兼容性验收。
 
@@ -26,7 +26,7 @@
 逐字节一致。没有新增结果差异，也没有修改或推广冻结 receipts。
 工作区测试、profiling/test262-host 组合、CI 固定 Rust 1.88 的全部 lint、原生 release
 及 Node/WASM 验收通过。完整架构反例门禁通过（694 个错误变体全部拒绝）；综合性能复测完成。
-详见[验证证据](../reports/data-structure-validation.json)。
+详见[验证证据](../performance/README.md)。
 
 最终处置：没有留下计划内未完成的实现项。没有加入帧池、没有移除 locals/TDZ/发布验证，
 也没有新增另一套带洞数组存储；这些是实测后的范围细化，不是已实现功能。

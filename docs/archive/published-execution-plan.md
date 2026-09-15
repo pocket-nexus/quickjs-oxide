@@ -180,9 +180,9 @@ CPU 2 是当前机器的绑定设置；更换机器须重新记录实际 CPU。�
 
 计划依据为 [Issue #16](https://github.com/pocket-stack/quickjs-oxide/issues/16)、[PR #17](https://github.com/pocket-stack/quickjs-oxide/pull/17)，以及本地 `b11f2be` 的源码与报告。实施时核对 PR 状态和基线提交；这里不假定 PR 已合入。上一轮范围见[数据结构计划](data-structure-plan.md)。
 
-- [最终硬件与采样报告](../reports/data-structure-hardware-final.md)：空循环 `read_frame_binding` 自身成本为 15.1–23.8%，hot/numeric dispatch 与执行循环也占明显比例；优化后的空循环约执行 110.47 亿条指令，QuickJS 约 5.62 亿条。
-- [最终固定工作量报告](../reports/data-structure-fixed-final.md)：保留全部 50 项 microbench 和 8 项 V8 子套件，作为控制组；不能只选此次优化收益最大的程序。
-- [数值栈与调用参数报告](../reports/vm-stack-and-call.md)：数值原地更新有收益，参数借用的调用结果基本持平；不能据此直接优先引入帧池。
+- [最终硬件与采样报告](../performance/README.md)：空循环 `read_frame_binding` 自身成本为 15.1–23.8%，hot/numeric dispatch 与执行循环也占明显比例；优化后的空循环约执行 110.47 亿条指令，QuickJS 约 5.62 亿条。
+- [最终固定工作量报告](../performance/README.md)：保留全部 50 项 microbench 和 8 项 V8 子套件，作为控制组；不能只选此次优化收益最大的程序。
+- [数值栈与调用参数报告](../performance/README.md)：数值原地更新有收益，参数借用的调用结果基本持平；不能据此直接优先引入帧池。
 
 上述数字属于历史测量，不是本计划的基线复测结果。Issue #16 与 PR #17 的固定源文件组织不同，绝对时间不能直接拼接。采样占比不能当作可取得的加速幅度。
 

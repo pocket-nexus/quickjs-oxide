@@ -199,7 +199,7 @@ S08/S09 当前 PC 选择（覆盖上述早期迁移记录的表示方式）：`r
 位置不变，异步 CPU 采样不承诺任意时刻的精确 JS PC。该选择来自普通 A/B 的逐项
 权衡，不以少写次数代替吞吐证据；完整阶段验收仍在进行，详见
 [有限融合与观察点](architecture/owned-fusion.md) 和
-[开发测量记录](reports/primitive-vm-s08-development.md)。
+[开发测量记录](performance/README.md)。
 
 S03 的 `heap/slot_ownership.rs` 提供受限引用预检和提交：Runtime 域、借用、
 deferred references、zero queue 与 primitive 共享存储共同决定是否能热释放。

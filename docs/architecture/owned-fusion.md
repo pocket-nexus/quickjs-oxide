@@ -113,7 +113,7 @@ Parsing, BigInt allocation, Symbol root release and error materialization must
 remain outside RunSlots. A JS arithmetic error uses the executing frame realm
 and the ordinary throw/unwind protocol; consumed inputs are never replayed.
 Output errors retain canonical partial commits and fault/resume position.
-The [numeric boundary audit](../reports/primitive-vm-s09-numeric-boundary.md)
+The [numeric boundary audit](../performance/README.md)
 records the ownership, domain, PC, callback, realm and error-channel constraints.
 Source residency alone does not prove final throughput recovery.
 
@@ -134,7 +134,7 @@ Method spans distinguish property lookup, fallible argument copy and call sites.
 Canonical source/debug tables are unchanged. Backtrace reads the Runtime active
 stack; cold drivers and suspension inspect Frame only after guard writeback.
 
-The [PC audit](../reports/primitive-vm-s09-pc-followup.md) enumerates all readers,
+The [PC audit](../performance/README.md) enumerates all readers,
 release boundaries, error materialization, overflow recovery, diagnostics and
 unwind behavior. The actual Frame-write profiling counter moves with its write
 sites; canonical logical-instruction counts do not change. Async CPU sampling
