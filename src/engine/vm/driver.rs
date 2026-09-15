@@ -191,13 +191,7 @@ pub(super) fn enter_call(
             let min_readable_args = selected.minimum();
             let depth = execution.slots.depth(window);
             execution.slots.reserve_native_argument_depth(
-                runtime
-                    .0
-                    .state
-                    .borrow()
-                    .active_frames
-                    .len()
-                    .saturating_add(1),
+                runtime.0.active_frame_depth.get().saturating_add(1),
             )?;
             let (arguments, receiver) = execution
                 .slots
@@ -292,18 +286,13 @@ pub(super) fn enter_call(
                 target,
                 realm: defining_realm,
                 min_readable_args,
-            } if crate::engine::builtins::continuation::NativeOperation::for_target(target)
+            } if super::frames::native_operation(runtime, &callable)
+                .map_err(runtime_error_to_vm_error)?
                 .is_some() =>
             {
                 let depth = execution.slots.depth(window);
                 execution.slots.reserve_native_argument_depth(
-                    runtime
-                        .0
-                        .state
-                        .borrow()
-                        .active_frames
-                        .len()
-                        .saturating_add(1),
+                    runtime.0.active_frame_depth.get().saturating_add(1),
                 )?;
                 let (arguments, receiver) = execution
                     .slots

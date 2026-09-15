@@ -115,7 +115,7 @@ pub(super) fn begin_synchronous(
     kind: crate::engine::builtins::continuation::SynchronousNative,
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<Completion, Error> {
-    slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
+    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
     let native_realm = if target.uses_calling_realm() {
         realm
     } else {
@@ -151,9 +151,8 @@ pub(super) fn begin_synchronous(
                 &call.activation.callable,
             )?,
         };
-        Ok(NativeInvokeOutcome::Completion(result))
-    })()
-    .map_err(runtime_error_to_vm_error);
+        Ok(result)
+    })();
     #[cfg(feature = "profiling")]
     {
         crate::engine::api::profiling::record_owned_execution_event(
@@ -161,7 +160,12 @@ pub(super) fn begin_synchronous(
         );
         crate::engine::api::profiling::record_owned_execution_event("native_synchronous_entry");
     }
-    identity_completion(finish_result(runtime, slots, call, result)?)
+    // This ABI can only produce a Completion. It has no raw iterator variant
+    // and therefore requires neither the generic outcome wrapper nor an
+    // identity resume adapter. Error capture and owner cleanup stay shared.
+    let (result, arguments) = call.activation.finish_completion_reusing(result);
+    slots.recycle_native_argument_buffer(arguments);
+    result.map_err(runtime_error_to_vm_error)
 }
 
 pub(super) struct NativeWaitRecord {
@@ -342,7 +346,7 @@ pub(super) fn begin_local(
     selected: Option<super::super::frames::NativeClassification>,
     nested_budget: bool,
 ) -> Result<LocalNativeResult, Error> {
-    slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
+    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
     let native_realm = if target.uses_calling_realm() {
         realm
     } else {
@@ -515,7 +519,8 @@ pub(super) fn start_selected_into(
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<(), Error> {
     let realm = query.realm;
-    let Some(kind) = crate::engine::builtins::continuation::NativeOperation::for_target(target)
+    let Some(kind) = super::super::frames::native_operation(runtime, &callable)
+        .map_err(runtime_error_to_vm_error)?
     else {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_sync_call_bridge();
@@ -639,7 +644,7 @@ pub(super) fn begin_selected_into(
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     debug_assert!(waiting_call.is_none());
-    slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
+    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
     let native_realm = if matches!(mode, super::super::call::NativeInvokeMode::IteratorNextRaw)
         || target.uses_calling_realm()
     {
@@ -747,7 +752,7 @@ pub(super) fn compact_array_next_into(
     waiting_call: &mut Option<PreparedNativeCall>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     debug_assert!(waiting_call.is_none());
-    slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
+    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
     let call = runtime
         .prepare_array_next_owned(callable, realm, min_readable_args, receiver)
         .map_err(runtime_error_to_vm_error)?;

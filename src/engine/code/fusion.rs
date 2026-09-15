@@ -27,6 +27,9 @@ impl FusionPlan {
         );
         // Allocate nothing for the common small leaf without a candidate.
         if !code.windows(2).enumerate().any(|(pc, pair)| {
+            if literal_method_count(&code[pc..]).is_some() {
+                return true;
+            }
             if matches!(
                 pair,
                 [
@@ -134,7 +137,37 @@ impl FusionPlan {
                 }
                 _ => None,
             };
-            let candidate = update.or_else(|| match rest {
+            let local_add = match rest {
+                [
+                    Instruction::GetLocal(left) | Instruction::GetLocalCheck(left),
+                    Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
+                    Instruction::Add,
+                    store,
+                    ..,
+                ] if [left, right].iter().all(|index| {
+                    locals
+                        .get(usize::from(**index))
+                        .is_some_and(|d| d.kind == ClosureVariableKind::Normal)
+                }) && locals.get(usize::from(*left)).is_some_and(|d| !d.is_const) =>
+                {
+                    match store {
+                        Instruction::PutLocal(index) | Instruction::PutLocalCheck(index)
+                            if index == left =>
+                        {
+                            Some((128, 4))
+                        }
+                        Instruction::SetLocal(index) | Instruction::SetLocalCheck(index)
+                            if index == left && matches!(rest.get(4), Some(Instruction::Drop)) =>
+                        {
+                            Some((129, 5))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let method = literal_method_count(rest).map(|count| (160 + count as u8, count + 2));
+            let candidate = method.or(local_add).or(update).or_else(|| match rest {
                 [
                     Instruction::Lt
                     | Instruction::Lte
@@ -206,9 +239,43 @@ impl FusionPlan {
     pub(crate) fn add_store(&self, pc: usize) -> bool {
         matches!(self.flag(pc), 64 | 65)
     }
+    /// Only no-owner literal arguments may be skipped after a completed own
+    /// read. Accessors and arbitrary argument evaluation retain canonical PCs.
+    pub(crate) fn literal_method(&self, pc: usize) -> Option<usize> {
+        let flag = self.flag(pc);
+        (160..=167).contains(&flag).then(|| usize::from(flag - 160))
+    }
+    /// Full borrowed-local addition begins before either operand copy.
+    pub(crate) fn local_add_span(&self, pc: usize) -> Option<usize> {
+        match self.flag(pc) {
+            128 => Some(4),
+            129 => Some(5),
+            _ => None,
+        }
+    }
     pub(crate) fn add_store_span(&self, pc: usize) -> usize {
         if self.flag(pc) == 65 { 3 } else { 2 }
     }
+}
+
+fn literal_method_count(rest: &[Instruction]) -> Option<usize> {
+    if !matches!(rest.first(), Some(Instruction::GetField2(_))) {
+        return None;
+    }
+    for count in 0..=7 {
+        match rest.get(count + 1)? {
+            Instruction::CallMethod(arguments) if usize::from(*arguments) == count => {
+                return Some(count);
+            }
+            Instruction::PushI32(_)
+            | Instruction::Undefined
+            | Instruction::Null
+            | Instruction::PushTrue
+            | Instruction::PushFalse => {}
+            _ => return None,
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -222,6 +289,66 @@ mod tests {
             is_parameter_initializer: false,
             kind: ClosureVariableKind::Normal,
         }
+    }
+    #[test]
+    fn local_add_span_rejects_intermediate_entries_and_other_targets() {
+        use Instruction::*;
+        let code = [
+            GetLocalCheck(0),
+            GetLocalCheck(1),
+            Add,
+            PutLocalCheck(0),
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false), local(false)]).local_add_span(0),
+            Some(4)
+        );
+        assert_eq!(
+            FusionPlan::build(&code, &[local(true), local(false)]).local_add_span(0),
+            None
+        );
+        let code = [
+            GetLocal(0),
+            GetLocal(1),
+            Add,
+            SetLocal(0),
+            Drop,
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false), local(false)]).local_add_span(0),
+            Some(5)
+        );
+        for target in 1..5 {
+            let mut code = code.to_vec();
+            code.push(Goto(target));
+            assert_eq!(
+                FusionPlan::build(&code, &[local(false), local(false)]).local_add_span(0),
+                None
+            );
+        }
+        let code = [GetLocal(0), GetLocal(1), Add, PutLocal(1), ReturnUndefined];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false), local(false)]).local_add_span(0),
+            None
+        );
+    }
+
+    #[test]
+    fn literal_method_spans_reject_effectful_arguments_and_interior_entry() {
+        use Instruction::*;
+        let code = [GetField2(0), PushI32(1), PushFalse, CallMethod(2), Return];
+        assert_eq!(FusionPlan::build(&code, &[]).literal_method(0), Some(2));
+        let code = [GetField2(0), GetLocal(0), CallMethod(1), Return];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false)]).literal_method(0),
+            None
+        );
+        let code = [GetField2(0), PushI32(1), CallMethod(1), Goto(1), Return];
+        assert_eq!(FusionPlan::build(&code, &[]).literal_method(0), None);
+        let code = [GetField2(0), PushI32(1), TailCallMethod(1)];
+        assert_eq!(FusionPlan::build(&code, &[]).literal_method(0), None);
     }
     #[test]
     fn add_store_requires_mutable_normal_target_and_no_interior_entry() {

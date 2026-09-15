@@ -171,6 +171,25 @@ impl MutationStep {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
+        #[cfg(feature = "stack-vm")]
+        {
+            let completed = match kind {
+                MutationKind::Push(ArrayPushKind::Push) => {
+                    let value = inline
+                        .as_ref()
+                        .or_else(|| (arguments.len() == 1).then(|| &arguments[0]));
+                    match value {
+                        Some(value) => runtime.try_dense_push(&object, value)?,
+                        None => None,
+                    }
+                }
+                MutationKind::Pop(ArrayPopKind::Pop) => runtime.try_dense_pop(&object)?,
+                _ => None,
+            };
+            if let Some(value) = completed {
+                return Ok(Self::Complete(Completion::Return(value)));
+            }
+        }
         let action = MutationAction::Read(runtime.intern_property_key("length")?);
         MutationResume {
             realm,

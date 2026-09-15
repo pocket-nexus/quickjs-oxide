@@ -28,13 +28,14 @@ pub(super) enum ReadKey {
 /// to return Entered after synchronous work.
 pub(super) enum PropertyProgress {
     Completed,
+    MethodCall(u16),
     Deferred(CallStep),
 }
 
 impl PropertyProgress {
     pub(super) fn into_call_step(self) -> CallStep {
         match self {
-            Self::Completed => CallStep::Entered,
+            Self::Completed | Self::MethodCall(_) => CallStep::Entered,
             Self::Deferred(step) => step,
         }
     }
@@ -84,6 +85,17 @@ pub(super) fn read_progress(
     key_kind: ReadKey,
     keep_receiver: bool,
 ) -> Result<PropertyProgress, Error> {
+    read_progress_selected(runtime, execution, id, key_kind, keep_receiver, &mut None)
+}
+
+pub(super) fn read_progress_selected(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    key_kind: ReadKey,
+    keep_receiver: bool,
+    native: &mut Option<crate::engine::object::LinkedNativeSelection>,
+) -> Result<PropertyProgress, Error> {
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
@@ -93,15 +105,24 @@ pub(super) fn read_progress(
         let depth = execution.slots.depth(&frame.window);
         let mut preserved_receiver = None;
         let mut retained_key = None;
-        let result = execution.slots.with_linked_own_read(
+        let mut method_call = None;
+        let candidate = keep_receiver
+            .then(|| frame.executable.fusion.literal_method(frame.fault_pc))
+            .flatten();
+        let result = execution.slots.with_linked_own_read_selected(
             &mut frame.window,
             runtime,
             &frame.executable,
             index,
+            candidate.map(|_| &mut *native),
             |slots, value| {
                 // Lookup has finished and retained the result. Move the base
                 // owner into the enclosing driver scope before publication.
                 preserved_receiver = Some(slots.pop()?);
+                // Base has moved outside the slot window. The result and
+                // receiver need two slots; decline fusion before any literal
+                // pushes if the verified capacity cannot hold the whole span.
+                let count = candidate.filter(|count| slots.has_operand_capacity(count + 2));
                 publish_read_result(
                     slots,
                     &mut frame.resume_pc,
@@ -110,7 +131,26 @@ pub(super) fn read_progress(
                     &mut retained_key,
                     keep_receiver,
                     value,
-                )
+                )?;
+                if let Some(count) = count {
+                    use crate::engine::code::bytecode::Instruction;
+                    for offset in 0..count {
+                        let literal = match &frame.executable.code[frame.fault_pc + offset + 1] {
+                            Instruction::PushI32(value) => Value::Int(*value),
+                            Instruction::Undefined => Value::Undefined,
+                            Instruction::Null => Value::Null,
+                            Instruction::PushTrue => Value::Bool(true),
+                            Instruction::PushFalse => Value::Bool(false),
+                            _ => unreachable!("published literal method span"),
+                        };
+                        slots.push(literal)?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_instruction(depth + offset + 1);
+                    }
+                    frame.resume_pc = frame.fault_pc + count + 1;
+                    method_call = Some(count as u16);
+                }
+                Ok(())
             },
         );
         match result {
@@ -124,7 +164,9 @@ pub(super) fn read_progress(
                         "linked_read_base_owner_drop",
                     );
                 }
-                return Ok(PropertyProgress::Completed);
+                return Ok(method_call
+                    .map(PropertyProgress::MethodCall)
+                    .unwrap_or(PropertyProgress::Completed));
             }
             Ok(LinkedReadCompletion::Pending(read)) => selected_read = Some(read),
             Ok(LinkedReadCompletion::Declined) => {}
@@ -423,8 +465,9 @@ fn complete_read(
     }
     let mut value = Some(value);
     let frame = execution.frames.current_mut(id)?;
+    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     let discarded = {
-        let mut slots = execution.slots.run_window(&mut frame.window)?;
+        let mut slots = transaction.slots();
         // Moving the base preserves its owner until after result publication.
         // The remaining removed key may be released inside this window only
         // when its tag proves that it cannot free storage or drain deferred GC.
@@ -464,7 +507,7 @@ fn complete_read(
     // Preserve original pop/release order outside RunSlots for owning keys
     // and externally prepared reads. The base and normalized key stay rooted.
     drop(discarded);
-    let mut slots = execution.slots.run_window(&mut frame.window)?;
+    let mut slots = transaction.slots();
     publish_read_result(
         &mut slots,
         &mut frame.resume_pc,
@@ -563,8 +606,8 @@ fn read_pending(
             let is_resumable =
                 matches!(classification, CallableExecution::Bytecode { .. }) && !normal;
             let is_proxy = matches!(classification, CallableExecution::Proxy);
-            let is_owned_native = matches!(&classification, CallableExecution::Native { target, .. }
-                if crate::engine::builtins::continuation::NativeOperation::for_target(*target).is_some());
+            let is_owned_native = matches!(&classification, CallableExecution::Native { .. }
+                if super::frames::native_operation(runtime, &callable).map_err(runtime_error_to_vm_error)?.is_some());
             if let CallableExecution::Bytecode {
                 bytecode,
                 closure_slots,

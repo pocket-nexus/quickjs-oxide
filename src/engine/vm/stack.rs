@@ -106,6 +106,9 @@ impl SlotStore {
         &mut self,
         depth: usize,
     ) -> Result<(), Error> {
+        if depth <= self.native_argument_buffers.capacity() {
+            return Ok(());
+        }
         let _before = self.native_argument_buffers.capacity();
         self.native_argument_buffers
             .try_reserve(depth.saturating_sub(self.native_argument_buffers.len()))

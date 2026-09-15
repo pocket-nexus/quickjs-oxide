@@ -76,7 +76,8 @@ pub(super) fn finish(
                             }
                         };
                     }
-                    Finish::Iterator(mut pending) => {
+                    Finish::Iterator(id) => {
+                        let mut pending = super::take_iterator_finish(execution, id)?;
                         let action = pending.advance_query(runtime, Some(completion))?;
                         match continue_iterator(runtime, execution, query, pending, action)? {
                             IteratorProgress::Step(next) => {

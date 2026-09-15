@@ -196,8 +196,8 @@ enum Finish {
     Numeric(usize),
     VmCall(ReturnValue),
     Discard(usize),
-    Iterator(Box<super::iterator_driver::PendingIterator>),
-    IteratorNext(Box<super::iterator_driver::PendingIterator>),
+    Iterator(FrameId),
+    IteratorNext(FrameId),
     Write {
         key: PropertyKey,
         strict: bool,
@@ -601,9 +601,12 @@ pub(super) fn start_native_with_classification(
     selected: Option<super::frames::NativeClassification>,
     operation: Option<crate::engine::builtins::continuation::NativeOperation>,
 ) -> Result<CallStep, Error> {
-    let kind = operation
-        .or_else(|| crate::engine::builtins::continuation::NativeOperation::for_target(target))
-        .ok_or_else(|| Error::internal("classified native lost owned operation"))?;
+    let kind = match operation {
+        Some(operation) => Some(operation),
+        None => super::frames::native_operation(runtime, &callable)
+            .map_err(runtime_error_to_vm_error)?,
+    }
+    .ok_or_else(|| Error::internal("classified native lost owned operation"))?;
     if let Some(synchronous) = kind.synchronous(&arguments) {
         let realm = execution.frames.current_mut(frame)?.executable.realm;
         let result = (|| {
@@ -1339,6 +1342,20 @@ fn reply_outcome(
 ) -> Result<Progress, Error> {
     let pending = take_pending(execution, target.owner)?;
     if target.operation != Some(OperationTarget::PropertyGet(pending.identity)) {
+        // The rejected query used to own its iterator box. Drop its native
+        // scopes first, then release the corresponding resident frame owner.
+        let iterator = match pending.query.finish.as_ref() {
+            Some(Finish::Iterator(id) | Finish::IteratorNext(id)) => Some(*id),
+            _ => None,
+        };
+        drop(pending);
+        if let Some(id) = iterator {
+            if let Ok(frame) = execution.frames.current_mut(id) {
+                if let Some(rare) = frame.cold.rare.get_mut() {
+                    rare.iterator_wait = None;
+                }
+            }
+        }
         return Err(Error::internal(
             "request reply belongs to another operation",
         ));
@@ -1479,6 +1496,26 @@ fn advance(
 }
 
 fn drive(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    identity: u64,
+    query: Query,
+    step: Result<Step, Error>,
+) -> Result<Progress, Error> {
+    let result = drive_inner(runtime, execution, owner, identity, query, step);
+    if result.is_err() {
+        if let Ok(id) = owner.frame() {
+            if let Ok(frame) = execution.frames.current_mut(id) {
+                if let Some(rare) = frame.cold.rare.get_mut() {
+                    rare.iterator_wait = None;
+                }
+            }
+        }
+    }
+    result
+}
+fn drive_inner(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
@@ -1787,7 +1824,9 @@ fn invoke(
         realm: defining_realm,
         min_readable_args,
     } = classification
-        && crate::engine::builtins::continuation::NativeOperation::for_target(target).is_some()
+        && super::frames::native_operation(runtime, &callable)
+            .map_err(runtime_error_to_vm_error)?
+            .is_some()
     {
         native_scope(
             runtime,
@@ -2328,7 +2367,7 @@ mod native_scope_tests {
 pub(super) fn start_iterator_read(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    pending: Box<super::iterator_driver::PendingIterator>,
+    pending: super::iterator_driver::PendingIterator,
     receiver: Value,
     key: PropertyKey,
 ) -> Result<CallStep, Error> {
@@ -2347,7 +2386,7 @@ pub(super) fn start_iterator_read(
 pub(super) fn start_iterator_call(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    pending: Box<super::iterator_driver::PendingIterator>,
+    pending: super::iterator_driver::PendingIterator,
     callable: crate::engine::object::CallableRef,
     receiver: Value,
 ) -> Result<CallStep, Error> {
@@ -2367,7 +2406,7 @@ pub(super) fn start_iterator_call(
 pub(super) fn start_iterator_invoke(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    pending: Box<super::iterator_driver::PendingIterator>,
+    pending: super::iterator_driver::PendingIterator,
     target: DirectCallTarget,
     receiver: Value,
     arguments: Vec<Value>,
@@ -2388,7 +2427,7 @@ pub(super) fn start_iterator_invoke(
 pub(super) fn start_iterator_next(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    pending: Box<super::iterator_driver::PendingIterator>,
+    pending: super::iterator_driver::PendingIterator,
     iterator: Value,
     method: crate::engine::object::CallableRef,
 ) -> Result<CallStep, Error> {
@@ -2469,21 +2508,17 @@ pub(super) fn start_array_next_without_pending(
             let Some(result) = result else {
                 let identity = iterator_query_identity(execution, frame)?;
                 let pending = super::iterator_driver::next_wait(execution, frame, record_base)?;
-                let mut query = execution.query_storage.acquire(
-                    realm,
-                    Vec::new(),
-                    Finish::IteratorNext(pending),
-                );
+                let mut query = execution
+                    .query_storage
+                    .acquire(realm, Vec::new(), Finish::Root);
                 storage::reserve(&mut query.natives, 1, "query.native_scopes")
                     .map_err(|_| Error::internal("native continuation allocation failed"))?;
                 storage::reserve(&mut query.spare_parents, 1, "query.spare_parents")
                     .map_err(|_| Error::internal("native parent storage allocation failed"))?;
-                native::install_waiting(
-                    &mut query,
-                    waiting_call
-                        .ok_or_else(|| Error::internal("Array-next wait lost activation"))?,
-                    Resume::IteratorNext(resume),
-                );
+                let waiting_call = waiting_call
+                    .ok_or_else(|| Error::internal("Array-next wait lost activation"))?;
+                query.finish = Some(install_iterator_finish(execution, pending, true)?);
+                native::install_waiting(&mut query, waiting_call, Resume::IteratorNext(resume));
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "iterator_native_direct_wait",
@@ -2524,7 +2559,7 @@ pub(super) fn start_array_next_without_pending(
 fn start_array_next_direct(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    mut pending: Box<super::iterator_driver::PendingIterator>,
+    mut pending: super::iterator_driver::PendingIterator,
     step: crate::engine::builtins::IteratorNextStep,
 ) -> Result<Progress, Error> {
     use crate::engine::builtins::{IteratorNextStep, ObjectIteratorStep};
@@ -2580,10 +2615,8 @@ fn start_array_next_direct(
         let Some(result) = result else {
             // The first native step may already have advanced the iterator.
             // Install exactly that activation and selected wait, never restart.
-            let mut query =
-                execution
-                    .query_storage
-                    .acquire(realm, Vec::new(), Finish::IteratorNext(pending));
+            let finish = install_iterator_finish(execution, pending, true)?;
+            let mut query = execution.query_storage.acquire(realm, Vec::new(), finish);
             native::install_waiting(
                 &mut query,
                 waiting_call.expect("native wait has an activation"),
@@ -2637,10 +2670,42 @@ fn iterator_query_identity(execution: &mut RunningExecution, frame: FrameId) -> 
     parent.cold.property_generation = identity;
     Ok(identity)
 }
+/// Query completion carries only identity. The frame's reusable cold record
+/// owns iterator state across both local steps and actual callback suspension.
+fn install_iterator_finish(
+    execution: &mut RunningExecution,
+    pending: super::iterator_driver::PendingIterator,
+    next: bool,
+) -> Result<Finish, Error> {
+    let id = pending.frame();
+    let frame = execution.frames.current_mut(id)?;
+    if frame.cold.iterator_wait.is_some() {
+        return Err(Error::internal("iterator resident record already occupied"));
+    }
+    frame.cold.iterator_wait = Some(pending);
+    Ok(if next {
+        Finish::IteratorNext(id)
+    } else {
+        Finish::Iterator(id)
+    })
+}
+fn take_iterator_finish(
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<super::iterator_driver::PendingIterator, Error> {
+    execution
+        .frames
+        .current_mut(id)?
+        .cold
+        .iterator_wait
+        .take()
+        .ok_or_else(|| Error::internal("iterator resident record missing"))
+}
+
 fn start_iterator_query(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    pending: Box<super::iterator_driver::PendingIterator>,
+    pending: super::iterator_driver::PendingIterator,
     step: Step,
     next: bool,
 ) -> Result<CallStep, Error> {
@@ -2648,9 +2713,9 @@ fn start_iterator_query(
     let realm = pending.realm();
     let identity = iterator_query_identity(execution, frame)?;
     let finish = if next {
-        Finish::IteratorNext(pending)
+        install_iterator_finish(execution, pending, true)?
     } else {
-        Finish::Iterator(pending)
+        install_iterator_finish(execution, pending, false)?
     };
     let result = advance(
         runtime,
@@ -2859,7 +2924,7 @@ fn continue_iterator(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     query: &mut Query,
-    pending: Box<super::iterator_driver::PendingIterator>,
+    pending: super::iterator_driver::PendingIterator,
     action: super::iterator_driver::IteratorAction,
 ) -> Result<IteratorProgress, Error> {
     use super::iterator_driver::IteratorAction;
@@ -2911,9 +2976,9 @@ fn continue_iterator(
         }
     };
     query.finish = Some(if next {
-        Finish::IteratorNext(pending)
+        install_iterator_finish(execution, pending, true)?
     } else {
-        Finish::Iterator(pending)
+        install_iterator_finish(execution, pending, false)?
     });
     Ok(IteratorProgress::Step(step))
 }
@@ -3217,5 +3282,25 @@ mod write_completion_tests {
             Value::Bool(true)
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod iterator_resident_layout_tests {
+    #[test]
+    fn iterator_finish_keeps_the_shared_query_small() {
+        // A resident iterator must not inflate every property's/native call's
+        // completion enum with its operation-specific state.
+        assert!(
+            size_of::<super::Finish>()
+                < size_of::<super::super::iterator_driver::PendingIterator>()
+        );
+        println!(
+            "Finish={} Query={} PendingIterator={} FrameRare={}",
+            size_of::<super::Finish>(),
+            size_of::<super::Query>(),
+            size_of::<super::super::iterator_driver::PendingIterator>(),
+            size_of::<super::super::frame::FrameRare>()
+        );
     }
 }

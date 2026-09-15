@@ -64,7 +64,7 @@ pub(super) enum ConstructorReturn {
 #[derive(Default)]
 pub(super) struct FrameRare {
     property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
-    pub iterator_wait: Option<Box<crate::engine::vm::iterator_driver::PendingIterator>>,
+    pub iterator_wait: Option<crate::engine::vm::iterator_driver::PendingIterator>,
     pub resume_throw: Option<Value>,
     pub regions: Vec<crate::engine::vm::VmUnwindRegion>,
     pub eval_arguments: Option<Vec<crate::engine::value::Value>>,

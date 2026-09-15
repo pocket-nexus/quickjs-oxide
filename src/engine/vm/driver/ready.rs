@@ -46,19 +46,13 @@ pub(super) fn run(
                 arguments,
                 method,
                 tail,
-            } => match super::ordinary::enter(runtime, execution, id, arguments, method, tail)? {
-                super::ordinary::Entry::Ordinary => {
-                    id = execution.frames.current_id().unwrap();
+            } => {
+                if let Some(boundary) =
+                    enter_call(runtime, execution, &mut id, arguments, method, tail, None)?
+                {
+                    return Ok(boundary);
                 }
-                super::ordinary::Entry::Native(CallStep::Entered) => return Ok(Boundary::Entered),
-                super::ordinary::Entry::Native(CallStep::Complete(completion)) => {
-                    return Ok(Boundary::Complete(completion));
-                }
-                super::ordinary::Entry::Native(CallStep::Bridge) => {
-                    return Ok(Boundary::Exit(RunExit::Bridge));
-                }
-                super::ordinary::Entry::General => return Ok(Boundary::Exit(exit)),
-            },
+            }
             RunExit::Complete => {
                 if !super::ordinary::finish(execution, id)? {
                     return Ok(Boundary::Exit(exit));
@@ -98,6 +92,21 @@ pub(super) fn run(
                     }
                 }
             }
+            RunExit::AddLocal => {
+                use crate::engine::vm::conversion_driver::PrimitiveCompletion;
+                match crate::engine::vm::conversion_driver::complete_local_add(
+                    runtime,
+                    execution,
+                    id,
+                    next_operation,
+                )? {
+                    PrimitiveCompletion::Completed => {}
+                    PrimitiveCompletion::Throw(value) => {
+                        return Ok(Boundary::Complete(Completion::Throw(value)));
+                    }
+                    _ => return Err(Error::internal("local addition lost its primitive guard")),
+                }
+            }
             RunExit::ConvertPlus | RunExit::ConvertAdd => {
                 let addition = exit == RunExit::ConvertAdd;
                 use crate::engine::vm::conversion_driver::PrimitiveCompletion;
@@ -123,14 +132,38 @@ pub(super) fn run(
                 index,
                 keep_receiver,
             } => {
-                let progress = crate::engine::vm::property_driver::read_progress(
+                let mut selected_native = None;
+                let progress = crate::engine::vm::property_driver::read_progress_selected(
                     runtime,
                     execution,
                     id,
                     crate::engine::vm::property_driver::ReadKey::Static(index),
                     keep_receiver,
+                    &mut selected_native,
                 )?;
-                if let Some(boundary) = property_boundary(progress) {
+                if let crate::engine::vm::property_driver::PropertyProgress::MethodCall(arguments) =
+                    progress
+                {
+                    let frame = execution.frames.current_mut(id)?;
+                    frame.fault_pc = frame.resume_pc;
+                    runtime
+                        .update_active_bytecode_pc(
+                            frame.cold.active_frame,
+                            BytecodePc::new(frame.fault_pc),
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                    if let Some(boundary) = enter_call(
+                        runtime,
+                        execution,
+                        &mut id,
+                        arguments,
+                        true,
+                        false,
+                        selected_native,
+                    )? {
+                        return Ok(boundary);
+                    }
+                } else if let Some(boundary) = property_boundary(progress) {
                     return Ok(boundary);
                 }
             }
@@ -186,11 +219,51 @@ fn property_boundary(
 ) -> Option<Boundary> {
     use crate::engine::vm::property_driver::PropertyProgress;
     match progress {
-        PropertyProgress::Completed => None,
+        PropertyProgress::Completed | PropertyProgress::MethodCall(_) => None,
         PropertyProgress::Deferred(CallStep::Entered) => Some(Boundary::Entered),
         PropertyProgress::Deferred(CallStep::Complete(completion)) => {
             Some(Boundary::Complete(completion))
         }
         PropertyProgress::Deferred(CallStep::Bridge) => Some(Boundary::Exit(RunExit::Bridge)),
     }
+}
+
+fn enter_call(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: &mut FrameId,
+    arguments: u16,
+    method: bool,
+    tail: bool,
+    selected_native: Option<crate::engine::object::LinkedNativeSelection>,
+) -> Result<Option<Boundary>, Error> {
+    Ok(
+        match super::ordinary::enter_selected(
+            runtime,
+            execution,
+            *id,
+            arguments,
+            method,
+            tail,
+            selected_native,
+        )? {
+            super::ordinary::Entry::Ordinary => {
+                *id = execution.frames.current_id().unwrap();
+                None
+            }
+            super::ordinary::Entry::NativeReady => None,
+            super::ordinary::Entry::Native(CallStep::Entered) => Some(Boundary::Entered),
+            super::ordinary::Entry::Native(CallStep::Complete(completion)) => {
+                Some(Boundary::Complete(completion))
+            }
+            super::ordinary::Entry::Native(CallStep::Bridge) => {
+                Some(Boundary::Exit(RunExit::Bridge))
+            }
+            super::ordinary::Entry::General => Some(Boundary::Exit(RunExit::Call {
+                arguments,
+                method,
+                tail,
+            })),
+        },
+    )
 }

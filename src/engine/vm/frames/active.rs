@@ -2,14 +2,33 @@
 use super::{ActiveFrameKind, ActiveFrameRecord, ActiveFrameToken};
 use crate::engine::vm::native_stack::{native_stack_family, native_stack_weight};
 use std::ops::{Deref, DerefMut};
+use std::{cell::Cell, rc::Rc};
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct ActiveFrames {
     records: Vec<ActiveFrameRecord>,
+    depth: Rc<Cell<usize>>,
     native_cost: usize,
     families: [usize; 14],
 }
+impl Clone for ActiveFrames {
+    fn clone(&self) -> Self {
+        Self {
+            records: self.records.clone(),
+            depth: Rc::new(Cell::new(self.records.len())),
+            native_cost: self.native_cost,
+            families: self.families,
+        }
+    }
+}
 impl ActiveFrames {
+    pub(crate) fn with_depth(depth: Rc<Cell<usize>>) -> Self {
+        debug_assert_eq!(depth.get(), 0);
+        Self {
+            depth,
+            ..Self::default()
+        }
+    }
     pub(crate) fn native_cost(&self) -> usize {
         self.native_cost
     }
@@ -40,10 +59,12 @@ impl ActiveFrames {
     pub(crate) fn push(&mut self, record: ActiveFrameRecord) {
         // Allocation precedes accounting so unwinding cannot leave a charge.
         self.records.push(record);
+        self.depth.set(self.records.len());
         self.charge(record, true);
     }
     pub(crate) fn pop(&mut self) -> Option<ActiveFrameRecord> {
         let record = self.records.pop()?;
+        self.depth.set(self.records.len());
         self.charge(record, false);
         Some(record)
     }
@@ -107,8 +128,10 @@ mod tests {
         let Value::Object(function) = context.eval("function f(){}; f").unwrap() else {
             panic!()
         };
-        let mut frames = ActiveFrames::default();
+        let shared_depth = Rc::new(Cell::new(0));
+        let mut frames = ActiveFrames::with_depth(shared_depth.clone());
         let verify = |frames: &ActiveFrames| {
+            assert_eq!(shared_depth.get(), frames.len());
             let mut cost = 0;
             let mut families = [0; 14];
             for frame in frames.iter().filter(|f| !f.native_continuation) {
@@ -147,6 +170,10 @@ mod tests {
             });
             verify(&frames);
         }
+        let mut independent = frames.clone();
+        independent.pop();
+        assert_eq!(shared_depth.get(), frames.len());
+        assert_eq!(independent.depth.get(), independent.len());
         frames.mark_native_continuation(2, ActiveFrameToken(3));
         verify(&frames);
         frames.pop();

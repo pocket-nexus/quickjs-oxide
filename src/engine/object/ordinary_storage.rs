@@ -9,6 +9,24 @@ use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::Value;
 
+/// Affine native payload fact selected together with an own property value.
+/// Its callee remains retained by the result/operand owner; consumption checks
+/// runtime and generational identity, never re-reads a property or payload.
+pub(crate) struct LinkedNativeSelection {
+    runtime: Runtime,
+    function: ObjectId,
+    data: crate::engine::builtins::native::NativeFunctionData,
+}
+impl LinkedNativeSelection {
+    pub(crate) fn into_parts(
+        self,
+        function: &ObjectRef,
+    ) -> Option<crate::engine::builtins::native::NativeFunctionData> {
+        (function.belongs_to(&self.runtime) && function.object_id() == self.function)
+            .then_some(self.data)
+    }
+}
+
 struct OwnSlot {
     index: usize,
     flags: PropertyFlags,
@@ -62,7 +80,24 @@ fn select_set_slot(
     atom: Atom,
 ) -> Result<BorrowedSet, RuntimeError> {
     let data = state.heap.object(id)?;
-    if !is_ordinary(data) {
+    let ordinary = is_ordinary(data);
+    #[cfg(feature = "stack-vm")]
+    let ordinary = ordinary
+        || match &data.payload {
+            // RegExp's lastIndex is an ordinary data property. The branded
+            // executor changes its value but adds no exotic [[Set]] semantics.
+            ObjectPayload::RegExp(_) => true,
+            ObjectPayload::Array { .. } => {
+                let shape = state.heap.shape(data.shape)?;
+                state.atoms.array_index(atom)?.is_none()
+                    && shape
+                        .entries()
+                        .first()
+                        .is_some_and(|entry| entry.atom != atom)
+            }
+            _ => false,
+        };
+    if !ordinary {
         return Ok(BorrowedSet::Special(special_kind(data)));
     }
     Ok(match locate(state, id, atom)? {
@@ -90,6 +125,33 @@ fn select_missing_prototypes(
     mut prototype: Option<ObjectId>,
 ) -> Result<MissingSelection, RuntimeError> {
     while let Some(id) = prototype {
+        let data = state.heap.object(id)?;
+        if let ObjectPayload::Array { dense } = &data.payload
+            && let Some(index) = state.atoms.array_index(atom)?
+        {
+            // Prototype lookup does not grow this Array. Dense elements are
+            // writable data properties; missing indices continue the chain.
+            if dense
+                .as_ref()
+                .is_some_and(|values| (index as usize) < values.len())
+            {
+                break;
+            }
+            if let Some(slot) = locate(state, id, atom)? {
+                match &data.slots[slot.index] {
+                    PropertySlot::Data(_) if slot.flags.writable => break,
+                    PropertySlot::Data(_) => {
+                        return Ok(MissingSelection::Complete(SetProbe::Stored(false)));
+                    }
+                    PropertySlot::Accessor { set, .. } => {
+                        return Ok(MissingSelection::Complete(SetProbe::Setter(*set)));
+                    }
+                    _ => return Ok(MissingSelection::Special(id, SpecialKind::Other)),
+                }
+            }
+            prototype = state.heap.shape(data.shape)?.prototype();
+            continue;
+        }
         match select_set_slot(state, id, atom)? {
             BorrowedSet::Missing(next) => prototype = next,
             BorrowedSet::Data(slot) if slot.flags.writable => break,
@@ -101,6 +163,19 @@ fn select_missing_prototypes(
         }
     }
     Ok(MissingSelection::Define)
+}
+
+/// Only a proof for the current uninterrupted borrow, never cached.
+#[cfg(feature = "stack-vm")]
+pub(super) fn prototypes_allow_dense_append(
+    state: &RuntimeState,
+    atom: Atom,
+    prototype: Option<ObjectId>,
+) -> Result<bool, RuntimeError> {
+    Ok(matches!(
+        select_missing_prototypes(state, atom, prototype)?,
+        MissingSelection::Define
+    ))
 }
 
 /// Continue an already-selected missing own property without releasing the
@@ -428,7 +503,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<ReadProbe, RuntimeError> {
-        self.ordinary_read_probe_atom(object, key.atom(), false)
+        self.ordinary_read_probe_atom(object, key.atom(), false, None)
     }
 
     fn ordinary_read_probe_atom(
@@ -436,6 +511,7 @@ impl Runtime {
         object: &ObjectRef,
         atom: Atom,
         own_only: bool,
+        mut native: Option<&mut Option<LinkedNativeSelection>>,
     ) -> Result<ReadProbe, RuntimeError> {
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event("property_storage_read_probe");
@@ -444,6 +520,7 @@ impl Runtime {
             Getter(Option<ObjectId>),
             Missing(Option<ObjectId>),
         }
+        let mut native_data = None;
         let selected = {
             let state = self.0.state.borrow();
             let id = object.object_id();
@@ -455,7 +532,7 @@ impl Runtime {
             // Dense elements are own data properties. Read the value under
             // this same classification borrow. Other own Array slots share
             // value/getter selection; exotic misses retain their fallback.
-            if let Some(index) = atom.immediate_integer()
+            let selected = if let Some(index) = atom.immediate_integer()
                 && let Some(value) = data.dense_array_value(index)
             {
                 Selected::Value(value.clone())
@@ -481,11 +558,36 @@ impl Runtime {
                         }
                     },
                 }
+            };
+            #[cfg(feature = "stack-vm")]
+            if native.is_some()
+                && let Selected::Value(crate::engine::heap::RawValue::Object(id)) = &selected
+            {
+                // Invalid native metadata must still fail at the original Call,
+                // not during this GetField. Such payloads simply get no hint.
+                native_data = state.heap.object(*id).ok().and_then(|object| {
+                    let ObjectPayload::NativeFunction { data, .. } = &object.payload else {
+                        return None;
+                    };
+                    let realm = data.realm?;
+                    (data.operation().is_some() && state.heap.context(realm).is_ok())
+                        .then_some(*data)
+                });
             }
+            selected
         };
         Ok(match selected {
             Selected::Value(value) => {
                 let value = self.root_raw_value(&value)?;
+                if let (Some(output), Some(data), Value::Object(function)) =
+                    (native.as_mut(), native_data, &value)
+                {
+                    **output = Some(LinkedNativeSelection {
+                        runtime: self.clone(),
+                        function: function.object_id(),
+                        data,
+                    });
+                }
                 #[cfg(all(feature = "profiling", feature = "stack-vm"))]
                 crate::engine::api::profiling::record_owned_execution_event(match &value {
                     Value::Object(_) => "property_read_root_materialized.Object",
@@ -844,6 +946,16 @@ impl Runtime {
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         index: u32,
     ) -> Result<Option<crate::engine::object::OrdinaryRead>, RuntimeError> {
+        self.prepare_linked_own_read_selected(base, executable, index, None)
+    }
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn prepare_linked_own_read_selected(
+        &self,
+        base: &Value,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        index: u32,
+        native: Option<&mut Option<LinkedNativeSelection>>,
+    ) -> Result<Option<crate::engine::object::OrdinaryRead>, RuntimeError> {
         let Some(atom) = linked_field_atom(self, executable, index) else {
             return Ok(None);
         };
@@ -852,23 +964,25 @@ impl Runtime {
         };
         let _operation = self.operation();
         self.validate_value_domain(base, "property receiver")?;
-        Ok(match self.ordinary_read_probe_atom(object, atom, true)? {
-            ReadProbe::Value(value) => {
-                Some(crate::engine::object::OrdinaryRead::Complete(Some(value)))
-            }
-            ReadProbe::Getter(None) => Some(crate::engine::object::OrdinaryRead::Complete(Some(
-                Value::Undefined,
-            ))),
-            ReadProbe::Getter(Some(getter)) => {
-                let receiver = base.clone();
-                #[cfg(all(feature = "profiling", feature = "stack-vm"))]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "linked_read_owner_clone.ReceiverObject",
-                );
-                Some(crate::engine::object::OrdinaryRead::Call { getter, receiver })
-            }
-            ReadProbe::Missing(_) | ReadProbe::Special(_) => None,
-        })
+        Ok(
+            match self.ordinary_read_probe_atom(object, atom, true, native)? {
+                ReadProbe::Value(value) => {
+                    Some(crate::engine::object::OrdinaryRead::Complete(Some(value)))
+                }
+                ReadProbe::Getter(None) => Some(crate::engine::object::OrdinaryRead::Complete(
+                    Some(Value::Undefined),
+                )),
+                ReadProbe::Getter(Some(getter)) => {
+                    let receiver = base.clone();
+                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "linked_read_owner_clone.ReceiverObject",
+                    );
+                    Some(crate::engine::object::OrdinaryRead::Call { getter, receiver })
+                }
+                ReadProbe::Missing(_) | ReadProbe::Special(_) => None,
+            },
+        )
     }
     /// Only an existing writable own scalar slot reaches the ordinary Set
     /// replacement transaction. There are no callback or owner-bearing edges.
@@ -1441,6 +1555,44 @@ mod ordinary_field_leaf_tests {
         assert_eq!(context.eval("args[0]").unwrap(), Value::Int(11));
         context.eval("delete args[0]").unwrap();
         assert!(runtime.try_array_immediate_read(&base, 0).is_none());
+    }
+
+    #[test]
+    fn linked_native_fact_is_bound_to_the_selected_callee_not_a_property_cache() {
+        use crate::engine::builtins::native::{MathMinMaxKind, NativeFunctionId};
+        use crate::engine::object::OrdinaryRead;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, index) = executable(&runtime, "x");
+        let base = context
+            .eval("globalThis.selectedNative={x:Math.min};selectedNative")
+            .unwrap();
+        let mut fact = None;
+        let Some(OrdinaryRead::Complete(Some(Value::Object(callee)))) = runtime
+            .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
+            .unwrap()
+        else {
+            panic!("own native")
+        };
+        context.eval("selectedNative.x=Math.max").unwrap();
+        let data = fact.take().unwrap().into_parts(&callee).unwrap();
+        assert_eq!(
+            data.target,
+            NativeFunctionId::MathMinMax(MathMinMaxKind::Min)
+        );
+        let _new_read = runtime
+            .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
+            .unwrap();
+        assert!(fact.take().unwrap().into_parts(&callee).is_none());
+        let _new_read = runtime
+            .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
+            .unwrap();
+        let foreign = Runtime::new();
+        let mut foreign_context = foreign.new_context();
+        let Value::Object(foreign_callee) = foreign_context.eval("Math.max").unwrap() else {
+            panic!("native")
+        };
+        assert!(fact.take().unwrap().into_parts(&foreign_callee).is_none());
     }
 
     #[test]

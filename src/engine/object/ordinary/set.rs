@@ -122,6 +122,36 @@ fn initial_set(
         return Ok(InitialSet::Action(stored_action(accepted)));
     }
     #[cfg(feature = "stack-vm")]
+    if same_receiver
+        && matches!(probe, SetProbe::Special(SpecialKind::Other))
+        && matches!(
+            value,
+            Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Null
+        )
+        && runtime.array_own_key(object, key)? == ArrayOwnKey::Length
+    {
+        // Primitive conversion cannot call JS. Keep the original conversion
+        // and truncation kernels, but never manufacture continuation roots.
+        let crate::engine::object::ArrayLengthStep::Complete(result) =
+            crate::engine::object::ArrayLengthStep::start(runtime, realm, value.clone())?
+        else {
+            return Err(RuntimeError::Invariant("numeric Array length suspended"));
+        };
+        let action = match result {
+            crate::engine::object::operations::ArrayLengthConversion::Length(length) => {
+                runtime.apply_set_array_length(object, key, length)?
+            }
+            crate::engine::object::operations::ArrayLengthConversion::Throw(value) => {
+                PropertySetAction::Throw(value)
+            }
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "set_array_length_completed_without_query",
+        );
+        return Ok(InitialSet::Action(action));
+    }
+    #[cfg(feature = "stack-vm")]
     if matches!(probe, SetProbe::Special(SpecialKind::TypedArray))
         && let Some(realm) = realm
         && !matches!(value, Value::Object(_))
@@ -656,9 +686,8 @@ impl State {
                 PropertySetRejection::NotObject,
             )));
         };
-        let receiver = clone_set_object(receiver);
         Ok(
-            match runtime.ordinary_set_receiver_probe(&receiver, &self.key, &self.value)? {
+            match runtime.ordinary_set_receiver_probe(receiver, &self.key, &self.value)? {
                 SetProbe::Stored(accepted) => SelectedSet::Complete(stored_action(accepted)),
                 #[cfg(feature = "stack-vm")]
                 SetProbe::Rejected(reason) => {
@@ -675,8 +704,8 @@ impl State {
                         PropertySetRejection::NoSetter
                     }))
                 }
-                SetProbe::Missing(_) => SelectedSet::Define(receiver, false),
-                SetProbe::Special(_) => SelectedSet::Descriptor(receiver),
+                SetProbe::Missing(_) => SelectedSet::Define(clone_set_object(receiver), false),
+                SetProbe::Special(_) => SelectedSet::Descriptor(clone_set_object(receiver)),
                 SetProbe::Writable => unreachable!("receiver probe commits a writable data slot"),
             },
         )
@@ -696,7 +725,6 @@ impl State {
         let Value::Object(receiver) = &self.receiver else {
             return Err(RuntimeError::Invariant("Set receiver lost its object"));
         };
-        let receiver = clone_set_object(receiver);
         Ok(match existing {
             Some(CompleteOrdinaryPropertyDescriptor::Data {
                 writable: false, ..
@@ -711,13 +739,13 @@ impl State {
                 }))
             }
             Some(CompleteOrdinaryPropertyDescriptor::Data { .. }) => {
-                if runtime.set_arguments_index_value(&receiver, &self.key, &self.value)? {
+                if runtime.set_arguments_index_value(receiver, &self.key, &self.value)? {
                     SelectedSet::Complete(PropertySetAction::Complete)
                 } else {
-                    SelectedSet::Define(receiver, true)
+                    SelectedSet::Define(clone_set_object(receiver), true)
                 }
             }
-            None => SelectedSet::Define(receiver, false),
+            None => SelectedSet::Define(clone_set_object(receiver), false),
         })
     }
 

@@ -173,6 +173,76 @@ impl Runtime {
         self.take_owned_raw_value(raw).map(Some)
     }
 
+    /// Guarded global own-data read for an unresolved, non-lexical binding.
+    /// No lookup fact escapes this borrow, and autoinit/accessor/prototype
+    /// cases retain the normal environment driver. As with owned cell reads,
+    /// pending cleanup declines before any retain or public owner is created.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn try_read_unresolved_global(
+        &self,
+        root: &impl VarRefHandle,
+        realm: crate::engine::heap::ContextId,
+        atom: crate::engine::atom::Atom,
+    ) -> Result<Option<Value>, RuntimeError> {
+        use crate::engine::heap::{ObjectKind, ObjectPayload, PropertySlot};
+        use crate::engine::object::shape::PropertyStorageKind;
+        if !root.belongs_to(self) || self.0.deferred_references.has_pending() {
+            return Ok(None);
+        }
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return Ok(None);
+        };
+        if !state.heap.zero_queue.is_empty() {
+            return Ok(None);
+        }
+        let cell = state.heap.var_ref(root.id())?;
+        if cell.is_lexical
+            || cell.kind.is_private()
+            || !matches!(cell.value, RawValue::Uninitialized)
+        {
+            return Ok(None);
+        }
+        let global = state.heap.context(realm)?.global_object;
+        let object = state.heap.object(global)?;
+        if !matches!(
+            (object.kind, &object.payload),
+            (ObjectKind::GlobalObject, ObjectPayload::GlobalObject { .. })
+        ) {
+            return Ok(None);
+        }
+        let shape = state.heap.shape(object.shape)?;
+        let Some(index) = shape.find(atom) else {
+            return Ok(None);
+        };
+        let index = index as usize;
+        if shape.entries()[index].flags.storage != PropertyStorageKind::Data {
+            return Ok(None);
+        }
+        let raw = match object.slots.get(index) {
+            Some(PropertySlot::Data(raw)) => raw,
+            Some(PropertySlot::VarRef(id)) => &state.heap.var_ref(*id)?.value,
+            _ => return Ok(None),
+        };
+        if !matches!(
+            raw,
+            RawValue::Undefined
+                | RawValue::Null
+                | RawValue::Bool(_)
+                | RawValue::Int(_)
+                | RawValue::Float(_)
+                | RawValue::String(_)
+                | RawValue::Object(_)
+                | RawValue::Symbol(_)
+                | RawValue::BigInt(_)
+        ) {
+            return Ok(None);
+        }
+        let raw = raw.clone();
+        state.retain_raw_root(&raw)?;
+        drop(state);
+        self.take_owned_raw_value(raw).map(Some)
+    }
+
     pub(crate) fn raw_var_ref_value(
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -353,6 +423,66 @@ impl Drop for VarRefRoot {
 mod owned_cell_tests {
     use super::*;
     use crate::engine::heap::RawId;
+
+    #[test]
+    fn unresolved_global_leaf_observes_replacement_and_declines_accessors_and_tdz() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval("globalThis.nativeLeaf = { value: 1 }")
+            .unwrap();
+        let atom = runtime
+            .0
+            .state
+            .borrow_mut()
+            .atoms
+            .intern("nativeLeaf")
+            .unwrap();
+        let root = runtime.new_uninitialized_var_ref().unwrap();
+        let first = runtime
+            .try_read_unresolved_global(&root, context.realm, atom)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(first, Value::Object(_)));
+        context.eval("nativeLeaf = 7").unwrap();
+        assert_eq!(
+            runtime
+                .try_read_unresolved_global(&root, context.realm, atom)
+                .unwrap(),
+            Some(Value::Int(7))
+        );
+        context.eval("Object.defineProperty(globalThis, 'nativeLeaf', { get() { throw 99; }, configurable: true })").unwrap();
+        assert!(
+            runtime
+                .try_read_unresolved_global(&root, context.realm, atom)
+                .unwrap()
+                .is_none()
+        );
+        context.eval("delete globalThis.nativeLeaf").unwrap();
+        assert!(
+            runtime
+                .try_read_unresolved_global(&root, context.realm, atom)
+                .unwrap()
+                .is_none()
+        );
+        let lexical = runtime
+            .new_uninitialized_captured_var_ref(true, false, ClosureVariableKind::Normal)
+            .unwrap();
+        assert!(
+            runtime
+                .try_read_unresolved_global(&lexical, context.realm, atom)
+                .unwrap()
+                .is_none()
+        );
+        let foreign = Runtime::new();
+        assert!(
+            foreign
+                .try_read_unresolved_global(&root, context.realm, atom)
+                .unwrap()
+                .is_none()
+        );
+        runtime.0.state.borrow_mut().atoms.release(atom).unwrap();
+    }
 
     #[test]
     fn owned_cell_read_retains_one_owner_and_survives_replacement() {

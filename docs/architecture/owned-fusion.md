@@ -19,6 +19,9 @@ Supported spans:
 | CompareBranch | Lt/Lte/Gt/Gte/Eq/Neq/StrictEq/StrictNeq, IfTrue/IfFalse | 2 |
 | Primitive AddStore | Add, PutLocal[/Check] | 2 |
 | Primitive AddStore with discarded result | Add, SetLocal[/Check], Drop | 3 |
+| Borrowed LocalAdd | GetLocal[/Check] L, GetLocal[/Check] R, Add, PutLocal[/Check] L | 4 |
+| Borrowed LocalAdd with discarded result | GetLocal[/Check] L, GetLocal[/Check] R, Add, SetLocal[/Check] L, Drop | 5 |
+| Literal method call | GetField2, 0–7 scalar literal pushes, matching CallMethod | 2–9 |
 
 Any branch, catch or gosub target inside a proposed span rejects it. The next PC
 after a control boundary is also an entry, covering structured gosub and
@@ -44,6 +47,40 @@ assignment-result copy; its local owner remains live. This is a cold completion
 optimization and does not move String/BigInt allocation into the continuous run
 borrow. Captured, TDZ and const stores are excluded.
 
+LocalAdd begins before either local is copied onto the operand stack. Publication
+requires normal local definitions, a mutable left destination, the same left
+index at the store, and no interior entry. At runtime both bindings must be
+initialized Direct primitives, at least one must be String or BigInt, and the
+window must have room for the two canonical pushes. Both value domains are
+checked in left-to-right order. Objects, captured bindings, TDZ, insufficient
+capacity and invalid domains decline without mutation. A malformed right index
+also declines: the canonical second GetLocal diagnoses it after the first copy,
+rather than reporting it prematurely at the span's entry PC.
+
+After run releases RunSlots, `FrameTransaction::with_local_add_inputs` lends the
+local values to the shared `numeric::add_primitives_ref` kernel. The immutable
+borrows keep their local owners alive while primitive storage is allocated; no
+callback can execute and borrowed references cannot escape the callback. This
+removes both temporary operand roots. The ordinary owning addition entry uses
+the same kernel. The Add PC is published before conversion/allocation, and the
+store PC before replacing and releasing the old left binding. A primitive throw
+keeps the old local and canonical Add fault site. On exhausted conversion
+identity, the cold error branch reconstructs the two canonical operand copies
+and reports the error at Add, matching the unfused stack and PC. Canonical
+GetLocal instruction counts are recorded even when addition throws; successful
+spans account for every remaining operation at its original logical depth.
+
+Literal method spans admit only PushI32, Undefined, Null, PushTrue and PushFalse
+arguments, with CallMethod's arity exactly matching their count. Effectful
+argument evaluation is never skipped or reordered. Property lookup remains a
+live lookup at GetField2; getter/Proxy and unsupported read paths retain the
+canonical fallback. An eligible own-data read can retain its receiver/callee,
+materialize the no-owner literals, publish CallMethod's canonical site, and enter
+the existing call driver directly. Any transient native classification belongs
+to that same retained callee and runtime; it is not a reusable property cache.
+The call's existing realm, arity, budget, brand, error and cleanup rules remain
+authoritative.
+
 ## Current run PC representation
 
 The current S08/S09 candidate keeps resume PC local and writes fault PC directly
@@ -54,8 +91,9 @@ existing observation boundaries; direct Frame fault writes do not imply an
 additional Runtime publication.
 
 UpdateLocal and CompareBranch retain their span-entry fault sites and existing
-resume targets. AddStore still publishes its separate addition/store sites in
-the surrounding completion path. Canonical source/debug tables are unchanged.
+resume targets. AddStore and LocalAdd publish separate addition/store sites in
+the surrounding completion path; literal method spans distinguish property
+lookup from the call site. Canonical source/debug tables are unchanged.
 Only one Frame PC is deferred, so documentation must not describe both Frame
 fields as written only at run exit. Async CPU sampling still has no arbitrary-
 instant exact JavaScript PC guarantee. This representation was selected from
@@ -66,10 +104,10 @@ throughput, and final full-matrix acceptance remains pending.
 
 | Observation | Span behavior |
 | --- | --- |
-| JS conversion, call or catchable throw | Number spans fall back before mutation. AddStore can throw during shared primitive addition at the published Add PC; object conversion falls back before consuming inputs. |
-| Host call, allocation, GC or release drain | Number spans cannot perform these operations. AddStore allocates only outside RunSlots and publishes the store PC before replacing/releasing the old binding. |
+| JS conversion, call or catchable throw | Number spans fall back before mutation. AddStore/LocalAdd can throw during shared primitive addition at the published Add PC; object conversion falls back. Literal method spans retain the canonical property and call observation sites. |
+| Host call, allocation, GC or release drain | Number spans cannot perform these operations. Addition allocates only outside RunSlots and publishes the store PC before replacing/releasing the old binding; LocalAdd borrows existing roots through its transaction callback. Method spans enter the existing call driver. |
 | Return, yield, await, handler entry or resume | Outside spans; canonical PCs and existing driver publication remain authoritative. |
-| Backtrace and source location | Canonical source tables are unchanged. Number spans cannot throw internally; AddStore distinguishes addition from binding-release PCs. |
+| Backtrace and source location | Canonical source tables are unchanged. Number spans cannot throw internally; addition distinguishes addition from binding-release PCs, and method spans distinguish property lookup from call PCs. |
 | Logical instruction profiling | Counts every canonical operation and its original intermediate stack depth. |
 | Fuel, interrupt and single-step hooks | The current owned engine exposes none. Introducing such a hook must disable spans or first prove its budget covers the full logical weight; it must fall back canonically when observation falls inside a span. |
 | Asynchronous CPU samples | Resume remains local during run; direct Frame fault writes and driver Runtime publication do not promise an exact JavaScript PC at arbitrary sampling instants. |
@@ -77,7 +115,8 @@ throughput, and final full-matrix acceptance remains pending.
 For isolated A/B exports, replace `FusionPlan::update` with `None` to disable only
 UpdateLocal, or `FusionPlan::compare_branch` with `false` to disable only
 CompareBranch; replace `FusionPlan::add_store` with `false` to disable only the
-cold AddStore completion. Preserve these changes only in immutable experiment trees, record
+cold AddStore completion. `FusionPlan::local_add_span` and `literal_method`
+returning `None` independently disable their spans. Preserve these changes only in immutable experiment trees, record
 source hashes and binary identity, and retain canonical correctness checks. No
 experimental feature flag belongs in production. Compile profiling measures
 plan construction as `Fusion`; there is no additional relocation pass.

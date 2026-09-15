@@ -1,5 +1,6 @@
 //! Scheduling for a pending addition or unary-plus conversion. Domain phases remain in
 //! value/conversion; only frame installation and reply routing live here.
+mod local_add;
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::object::{CallableRef, OrdinaryRead};
@@ -10,6 +11,7 @@ use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::{FrameId, ReturnTarget};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
+pub(super) use local_add::complete_local_add;
 
 enum Finish {
     Predicate(Box<super::predicate_driver::Input>),
@@ -95,8 +97,9 @@ pub(super) fn complete_primitives(
     let realm = frame.executable.realm;
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
+    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     let (left, right, store) = {
-        let mut slots = execution.slots.run_window(&mut frame.window)?;
+        let mut slots = transaction.slots();
         // Preserve left-to-right domain validation, including checking a later
         // malformed slot after an earlier invalid domain, before identity issue.
         let mut invalid = false;
@@ -195,7 +198,7 @@ pub(super) fn complete_primitives(
                     .map_err(runtime_error_to_vm_error)?;
                 let mut pending = Some(super::bindings::FrameBinding::Direct(value));
                 let old = {
-                    let mut slots = execution.slots.run_window(&mut frame.window)?;
+                    let mut slots = transaction.slots();
                     slots.replace_local_pending(index, &mut pending)?
                 };
                 drop(old);
@@ -223,7 +226,7 @@ pub(super) fn complete_primitives(
             } else {
                 let mut pending = Some(value);
                 {
-                    let mut slots = execution.slots.run_window(&mut frame.window)?;
+                    let mut slots = transaction.slots();
                     slots.push_pending(&mut pending)?;
                 }
                 frame.resume_pc = frame
@@ -636,8 +639,8 @@ fn invoke(
         }
     };
     let is_proxy = matches!(classification, CallableExecution::Proxy);
-    let is_owned_native = matches!(&classification, CallableExecution::Native { target, .. }
-        if crate::engine::builtins::continuation::NativeOperation::for_target(*target).is_some());
+    let is_owned_native = matches!(&classification, CallableExecution::Native { .. }
+        if super::frames::native_operation(runtime, &callable).map_err(runtime_error_to_vm_error)?.is_some());
     let is_resumable = if let CallableExecution::Bytecode { bytecode, .. } = &classification {
         runtime
             .0

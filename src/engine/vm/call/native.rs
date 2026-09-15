@@ -353,6 +353,24 @@ impl NativeActivation {
         self,
         result: Result<NativeInvokeOutcome, RuntimeError>,
     ) -> (Result<NativeInvokeOutcome, RuntimeError>, Vec<Value>) {
+        self.finish_reusing_with(result, |value| {
+            NativeInvokeOutcome::Completion(Completion::Throw(value))
+        })
+    }
+
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn finish_completion_reusing(
+        self,
+        result: Result<Completion, RuntimeError>,
+    ) -> (Result<Completion, RuntimeError>, Vec<Value>) {
+        self.finish_reusing_with(result, Completion::Throw)
+    }
+
+    fn finish_reusing_with<T>(
+        self,
+        result: Result<T, RuntimeError>,
+        throw: impl FnOnce(Value) -> T,
+    ) -> (Result<T, RuntimeError>, Vec<Value>) {
         let runtime = &self.active_frame.runtime;
         let result = (|| match result {
             Err(RuntimeError::Engine(error))
@@ -361,7 +379,7 @@ impl NativeActivation {
                 let kind = NativeErrorKind::from_javascript_error(error.kind())
                     .expect("guard proved this is a JavaScript-visible native error");
                 let value = runtime.new_native_error_from_error(self.realm, kind, &error)?;
-                Ok(NativeInvokeOutcome::Completion(Completion::Throw(value)))
+                Ok(throw(value))
             }
             result => result,
         })();

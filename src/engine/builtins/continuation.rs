@@ -59,6 +59,7 @@ impl SynchronousNative {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum NativeOperation {
     #[cfg(test)]
     ActiveFrameProbe,

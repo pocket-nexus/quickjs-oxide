@@ -321,7 +321,7 @@ fn close_unwind(
 
 pub(super) fn finish(
     execution: &mut RunningExecution,
-    mut pending: Box<PendingIterator>,
+    mut pending: PendingIterator,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(pending.frame)?;
     #[cfg(feature = "profiling")]
@@ -489,7 +489,7 @@ pub(super) fn next_wait(
     execution: &mut RunningExecution,
     id: FrameId,
     record_base: usize,
-) -> Result<Box<PendingIterator>, Error> {
+) -> Result<PendingIterator, Error> {
     let frame = execution.frames.current_mut(id)?;
     let mut pending = PendingIterator::new(frame, id, Mode::Next { record_base })?;
     pending.stage = Stage::Next;
@@ -535,7 +535,7 @@ fn materialize(runtime: &Runtime, realm: ContextId, error: Error) -> Result<Comp
 fn drive(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    mut pending: Box<PendingIterator>,
+    mut pending: PendingIterator,
     response: Option<Completion>,
 ) -> Result<CallStep, Error> {
     match pending.advance_query(runtime, response)? {
@@ -637,13 +637,13 @@ impl PendingIterator {
         self.realm
     }
 
-    fn new(frame: &mut super::frame::Frame, id: FrameId, mode: Mode) -> Result<Box<Self>, Error> {
+    fn new(frame: &mut super::frame::Frame, id: FrameId, mode: Mode) -> Result<Self, Error> {
         frame.cold.iterator_generation = frame
             .cold
             .iterator_generation
             .checked_add(1)
             .ok_or_else(|| Error::internal("iterator operation identity exhausted"))?;
-        let pending = Box::new(Self {
+        let pending = Self {
             mode,
             yielded: Value::Undefined,
             done: false,
@@ -663,14 +663,7 @@ impl PendingIterator {
             abrupt: None,
             argument: Value::Undefined,
             sync_fallback: false,
-        });
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
-            "iterator.pending_box",
-            0,
-            1,
-            size_of::<Self>(),
-        );
+        };
         Ok(pending)
     }
 
@@ -943,6 +936,38 @@ mod resident_next_tests {
             let brand=false;try{for(const x of bad){}}catch(e){brand=e instanceof TypeError;}
             return closes===1 && brand;
         })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn resident_non_array_iterator_preserves_getters_close_and_nested_calls() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let log='', n=0;
+            const it={
+                [Symbol.iterator](){return this;},
+                next(){const i=++n;return {
+                    get done(){log+='d'+i;return i>2;},
+                    get value(){log+='v'+i;return Array.from('x').length+i;}
+                };},
+                return(){log+='r';return {};}
+            };
+            let first;[first]=it;
+            if(first!==2 || log!=='d1v1r')return false;
+            log='';n=0;
+            const values=[...it];
+            if(values.join(',')!=='2,3' || log!=='d1v1d2v2d3')return false;
+            const marker={};it.next=()=>({get done(){throw marker;}});
+            try{[first]=it;}catch(e){return e===marker && log==='d1v1d2v2d3';}
+            return false;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
     }
 
     #[test]

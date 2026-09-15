@@ -301,9 +301,10 @@ fn complete_next(
             .map_err(runtime_error_to_vm_error)?;
         return Ok(None);
     }
-    let Some(Finish::IteratorNext(mut pending)) = query.finish.take() else {
+    let Some(Finish::IteratorNext(id)) = query.finish.take() else {
         return Err(Error::internal("iterator lost its continuation"));
     };
+    let mut pending = super::take_iterator_finish(execution, id)?;
     let action = pending.next_query(runtime, result)?;
     match continue_iterator(runtime, execution, query, pending, action)? {
         IteratorProgress::Step(next) => {

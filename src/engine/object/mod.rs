@@ -757,6 +757,8 @@ pub(crate) use storage::SelectedMissingAppend;
 pub(crate) mod operations;
 
 mod ordinary_storage;
+#[cfg(feature = "stack-vm")]
+pub(crate) use ordinary_storage::LinkedNativeSelection;
 
 mod ordinary;
 pub(crate) use ordinary::OrdinaryRead;
@@ -797,3 +799,6 @@ pub(crate) use internal_methods::{KeysResume, KeysStep};
 
 #[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{ProxyConstructResume, ProxyConstructStep};
+
+#[cfg(feature = "stack-vm")]
+mod dense_mutation;

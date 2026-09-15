@@ -107,24 +107,42 @@ pub(in crate::engine::vm) fn bigint_error(error: BigIntError) -> Error {
 
 /// Addition after both operands have completed ToPrimitive, in order.
 pub(in crate::engine::vm) fn add_primitives(left: Value, right: Value) -> Result<Value, Error> {
+    add_primitives_ref(&left, &right)
+}
+
+/// Same primitive kernel with owners retained by the caller. No user code can
+/// execute; callers may borrow frame locals without cloning temporary roots.
+pub(in crate::engine::vm) fn add_primitives_ref(
+    left: &Value,
+    right: &Value,
+) -> Result<Value, Error> {
     if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
+        use std::borrow::Cow;
         let left = match left {
-            Value::String(value) => value,
-            value => value.to_js_string()?,
+            Value::String(value) => Cow::Borrowed(value),
+            value => Cow::Owned(value.to_js_string()?),
         };
         let right = match right {
-            Value::String(value) => value,
-            value => value.to_js_string()?,
+            Value::String(value) => Cow::Borrowed(value),
+            value => Cow::Owned(value.to_js_string()?),
         };
         return Ok(Value::String(left.try_concat(&right).map_err(Error::from)?));
     }
-    match (to_numeric_primitive(left)?, to_numeric_primitive(right)?) {
-        (NumericValue::BigInt(left), NumericValue::BigInt(right)) => {
-            Ok(Value::BigInt(left.add(&right).map_err(bigint_error)?))
+    match (left, right) {
+        (Value::BigInt(left), Value::BigInt(right)) => {
+            Ok(Value::BigInt(left.add(right).map_err(bigint_error)?))
         }
-        (NumericValue::BigInt(_), NumericValue::Number(_))
-        | (NumericValue::Number(_), NumericValue::BigInt(_)) => Err(mixed_numeric_type_error()),
-        (NumericValue::Number(left), NumericValue::Number(right)) => {
+        (Value::BigInt(_), right) => {
+            right.to_number()?;
+            Err(mixed_numeric_type_error())
+        }
+        (left, Value::BigInt(_)) => {
+            left.to_number()?;
+            Err(mixed_numeric_type_error())
+        }
+        (left, right) => {
+            let left = left.to_number()?;
+            let right = right.to_number()?;
             Ok(Value::number(left + right))
         }
     }

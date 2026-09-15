@@ -40,7 +40,11 @@ FILES = (
 R5_STORAGE_PROTOCOLS = {
     "src/engine/object/ordinary_storage.rs": (
         "locate", "select_set_slot", "select_missing_prototypes", "set_missing_local",
+        "prototypes_allow_dense_append",
         "ordinary_set_probe", "ordinary_set_receiver_probe", "ordinary_set_probe_inner",
+    ),
+    "src/engine/object/dense_mutation.rs": (
+        "writable_dense_length", "try_dense_push", "try_dense_pop",
     ),
     "src/engine/object/storage.rs": ("store_property_slot", "store_selected_property_slot"),
     "src/engine/object/properties.rs": (

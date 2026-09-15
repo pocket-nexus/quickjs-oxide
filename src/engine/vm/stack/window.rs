@@ -8,7 +8,56 @@ pub(in crate::engine::vm) enum LinkedReadCompletion {
     Pending(crate::engine::object::OrdinaryRead),
 }
 
+/// Exclusive ownership of one authenticated frame window across short execution
+/// borrows. The store and window cannot be pushed, popped or replaced while this
+/// transaction exists. Allocation/release may happen between `slots()` borrows;
+/// ordinary completion carries no slot reference then. The dedicated primitive
+/// local callback may borrow immutable roots while allocating, but cannot expose
+/// those references, execute JS, mutate this execution or bypass domain checks.
+pub(in crate::engine::vm) struct FrameTransaction<'a> {
+    store: &'a mut SlotStore,
+    window: &'a mut FrameWindow,
+}
+impl FrameTransaction<'_> {
+    /// The callback may allocate primitive storage but cannot access this
+    /// transaction or execute JS. Borrowed inputs cannot escape its result.
+    pub(in crate::engine::vm) fn with_local_add_inputs<T>(
+        &self,
+        left: u16,
+        right: u16,
+        consume: impl FnOnce(&Value, &Value) -> T,
+    ) -> Result<Option<T>, Error> {
+        let FrameBinding::Direct(left) = self.store.local_current(self.window, left)? else {
+            return Ok(None);
+        };
+        let FrameBinding::Direct(right) = self.store.local_current(self.window, right)? else {
+            return Ok(None);
+        };
+        if !local_add_values(left, right) {
+            return Ok(None);
+        }
+        Ok(Some(consume(left, right)))
+    }
+    pub(in crate::engine::vm) fn slots(&mut self) -> RunSlots<'_> {
+        RunSlots {
+            store: self.store,
+            window: self.window,
+        }
+    }
+}
+
 impl SlotStore {
+    pub(in crate::engine::vm) fn frame_transaction<'a>(
+        &'a mut self,
+        window: &'a mut FrameWindow,
+    ) -> Result<FrameTransaction<'a>, Error> {
+        self.check_current(window)?;
+        Ok(FrameTransaction {
+            store: self,
+            window,
+        })
+    }
+
     /// A single-use owning-read transaction at a published driver boundary.
     /// The canonical lookup may retain roots/allocate, so no RunSlots exists
     /// during lookup. It can only select a getter, never execute one. Exclusive
@@ -20,6 +69,17 @@ impl SlotStore {
         runtime: &Runtime,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         index: u32,
+        complete: impl FnOnce(&mut RunSlots<'_>, &mut Option<Value>) -> Result<(), Error>,
+    ) -> Result<LinkedReadCompletion, Error> {
+        self.with_linked_own_read_selected(window, runtime, executable, index, None, complete)
+    }
+    pub(in crate::engine::vm) fn with_linked_own_read_selected(
+        &mut self,
+        window: &mut FrameWindow,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        index: u32,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
         complete: impl FnOnce(&mut RunSlots<'_>, &mut Option<Value>) -> Result<(), Error>,
     ) -> Result<LinkedReadCompletion, Error> {
         use crate::engine::object::OrdinaryRead;
@@ -35,14 +95,15 @@ impl SlotStore {
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("linked_read_lookup_attempt");
-        let selected = match runtime.prepare_linked_own_read(base, executable, index) {
-            Ok(selected) => selected,
-            Err(error) => {
-                return Ok(LinkedReadCompletion::LookupError(
-                    crate::engine::vm::exception::runtime_error_to_vm_error(error),
-                ));
-            }
-        };
+        let selected =
+            match runtime.prepare_linked_own_read_selected(base, executable, index, native) {
+                Ok(selected) => selected,
+                Err(error) => {
+                    return Ok(LinkedReadCompletion::LookupError(
+                        crate::engine::vm::exception::runtime_error_to_vm_error(error),
+                    ));
+                }
+            };
         match selected {
             Some(OrdinaryRead::Complete(value)) => {
                 // This owner stays outside the output window even on failure.
@@ -85,6 +146,13 @@ pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) window: &'a mut FrameWindow,
 }
 impl RunSlots<'_> {
+    pub(in crate::engine::vm) fn has_operand_capacity(&self, extra: usize) -> bool {
+        self.window
+            .depth
+            .checked_add(extra)
+            .is_some_and(|depth| depth <= self.window.end - self.window.locals_end)
+    }
+
     #[cfg(feature = "profiling")]
     pub(in crate::engine::vm) fn depth(&self) -> usize {
         self.window.depth
@@ -116,6 +184,37 @@ impl RunSlots<'_> {
 
     pub(in crate::engine::vm) fn pop(&mut self) -> Result<Value, Error> {
         self.store.pop_current(self.window)
+    }
+
+    pub(in crate::engine::vm) fn local_add_supported(
+        &self,
+        runtime: &Runtime,
+        left: u16,
+        right: u16,
+    ) -> Result<bool, Error> {
+        if self
+            .window
+            .depth
+            .checked_add(2)
+            .is_none_or(|depth| depth > self.window.end - self.window.locals_end)
+        {
+            return Ok(false);
+        }
+        let FrameBinding::Direct(left) = self.local(left)? else {
+            return Ok(false);
+        };
+        // This guard runs at the first GetLocal. A malformed later index must
+        // be diagnosed by its own instruction after the left copy is pushed.
+        let Ok(FrameBinding::Direct(right)) = self.local(right) else {
+            return Ok(false);
+        };
+        let left_valid = runtime
+            .validate_value_domain(left, "conversion operand")
+            .is_ok();
+        let right_valid = runtime
+            .validate_value_domain(right, "conversion operand")
+            .is_ok();
+        Ok(left_valid && right_valid && local_add_values(left, right))
     }
 
     pub(in crate::engine::vm) fn local(&self, index: u16) -> Result<&FrameBinding, Error> {
@@ -285,6 +384,98 @@ mod primitive_transaction_tests {
             })
             .unwrap();
         (executable, index)
+    }
+
+    #[test]
+    fn local_add_declines_bad_rhs_before_the_canonical_left_copy() {
+        use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let left = context.eval("'left'").unwrap();
+        let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        layout.metadata.local_count = 1;
+        layout.metadata.max_stack = 2;
+        layout.local_definitions = std::rc::Rc::from([VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        }]);
+        let mut store = SlotStore::new(8);
+        let mut window = store
+            .push_frame(
+                &layout.frame_layout(),
+                FrameStorage {
+                    original_arguments: vec![],
+                    parameters: vec![],
+                    locals: vec![FrameBinding::Direct(left.clone())],
+                    operands: vec![],
+                },
+            )
+            .unwrap();
+        {
+            let mut slots = store.run_window(&mut window).unwrap();
+            assert!(!slots.local_add_supported(&runtime, 0, u16::MAX).unwrap());
+            assert_eq!(slots.window.depth, 0);
+            let FrameBinding::Direct(value) = slots.local(0).unwrap() else {
+                panic!("left")
+            };
+            let value = value.clone();
+            slots.push(value).unwrap();
+            assert!(slots.local(u16::MAX).is_err());
+            assert_eq!(slots.window.depth, 1);
+            assert_eq!(slots.peek(0).unwrap(), &left);
+        }
+    }
+
+    #[test]
+    fn frame_transaction_keeps_owners_across_gc_and_partial_output_failure() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        layout.metadata.max_stack = 1;
+        let mut store = SlotStore::new(8);
+        let mut window = store
+            .push_frame(
+                &layout.frame_layout(),
+                FrameStorage {
+                    original_arguments: vec![],
+                    parameters: vec![],
+                    locals: vec![],
+                    operands: vec![],
+                },
+            )
+            .unwrap();
+        store
+            .push(&mut window, context.eval("({tag:42})").unwrap())
+            .unwrap();
+        let mut owner;
+        {
+            let mut transaction = store.frame_transaction(&mut window).unwrap();
+            owner = Some(transaction.slots().pop().unwrap());
+            // No RunSlots is live during collection. The moved owner roots
+            // the object independently of the exclusive frame transaction.
+            runtime.run_gc().unwrap();
+            transaction.slots().push(Value::Int(7)).unwrap();
+            assert!(transaction.slots().push_pending(&mut owner).is_err());
+            assert!(
+                owner.is_some(),
+                "failed output keeps its owner outside the borrow"
+            );
+            assert_eq!(transaction.slots().pop().unwrap(), Value::Int(7));
+            transaction.slots().push_pending(&mut owner).unwrap();
+        }
+        assert!(owner.is_none());
+        let Value::Object(object) = store.pop(&mut window).unwrap() else {
+            panic!("object")
+        };
+        assert_eq!(
+            context
+                .get_property(&object, &runtime.intern_property_key("tag").unwrap())
+                .unwrap(),
+            Value::Int(42)
+        );
     }
 
     #[test]
@@ -478,4 +669,11 @@ mod primitive_transaction_tests {
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(object_id).is_err());
     }
+}
+
+fn local_add_values(left: &Value, right: &Value) -> bool {
+    !matches!(left, Value::Object(_))
+        && !matches!(right, Value::Object(_))
+        && (matches!(left, Value::String(_) | Value::BigInt(_))
+            || matches!(right, Value::String(_) | Value::BigInt(_)))
 }

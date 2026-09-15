@@ -219,6 +219,25 @@ fn advance(
             }
             ForInCandidate::ArrayIndex { object, index } => {
                 let name = JsString::try_from_utf8(&index.to_string())?;
+                // The hidden enumeration object retains its source. Recheck
+                // the live dense prefix on every turn: deletion, shrinking,
+                // or descriptor conversion must reach the ordinary fallback.
+                // Presence needs neither a property atom nor a temporary owner.
+                let dense_present = runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object(object)?
+                    .dense_array_value(index)
+                    .is_some();
+                if dense_present {
+                    record_local_step();
+                    return Ok(ForInStep::Complete {
+                        value: Value::String(name),
+                        done: Some(false),
+                    });
+                }
                 let key = if crate::engine::atom::Atom::from_immediate_integer(index).is_some() {
                     runtime.property_key_for_index(u64::from(index))?
                 } else {
@@ -585,6 +604,33 @@ pub(in crate::engine::vm) fn finish(
 #[cfg(test)]
 mod resident_tests {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn dense_for_in_rechecks_descriptor_conversion_shrink_and_append() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let calls=0, names='';const a=[1,2,3];
+            for(const k in a){
+                names+=k;
+                if(k==='0'){
+                    Object.defineProperty(a,'1',{get(){calls++;throw 1;}});
+                    delete a[2];a.push(4);
+                }
+            }
+            if(names!=='01' || calls!==0)return false;
+            names='';const b=[1,2,3];
+            for(const k in b){names+=k;if(k==='0')b.length=1;}
+            return names==='0';
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
 
     #[test]
     fn resident_for_in_keeps_snapshot_shadowing_and_live_own_checks() {

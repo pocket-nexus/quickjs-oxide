@@ -70,6 +70,7 @@ pub(super) enum RunExit {
     InitDerivedConstructor,
     Construct(u16),
     ConvertAdd,
+    AddLocal,
     ConvertPlus,
     ConvertPropertyKey,
     NormalizeThis,
@@ -146,6 +147,7 @@ impl RunExit {
             Self::InitDerivedConstructor => "run_exit.InitDerivedConstructor",
             Self::Construct(..) => "run_exit.Construct",
             Self::ConvertAdd => "run_exit.ConvertAdd",
+            Self::AddLocal => "run_exit.AddLocal",
             Self::ConvertPlus => "run_exit.ConvertPlus",
             Self::ConvertPropertyKey => "run_exit.ConvertPropertyKey",
             Self::NormalizeThis => "run_exit.NormalizeThis",
@@ -223,10 +225,29 @@ fn release_displaced(
 
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let mut slots = execution.slots.run_window(&mut frame.window)?;
+    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
+    let mut slots = transaction.slots();
     let cold = &mut *frame.cold;
     let runtime = cold.function.runtime();
     let mut pc = ProgramCounter::new(&mut frame.resume_pc);
+    // Preserve the cold path's observation order, but keep this authenticated
+    // frame resident. No slot borrow crosses active-PC publication or Drop.
+    macro_rules! release_outside_slots {
+        ($operation:expr) => {{
+            drop(slots);
+            runtime
+                .update_active_bytecode_pc(
+                    cold.active_frame,
+                    super::BytecodePc::new(frame.fault_pc),
+                )
+                .map_err(runtime_error_to_vm_error)?;
+            slots = transaction.slots();
+            let released = $operation;
+            drop(slots);
+            drop(released);
+            slots = transaction.slots();
+        }};
+    }
     loop {
         frame.fault_pc = pc.resume;
         #[cfg(feature = "profiling")]
@@ -489,6 +510,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     } else {
                         "global_immediate_cell_read"
                     });
+                    true
+                } else if let Some(value) = super::environment_driver::try_global_own_read(
+                    runtime,
+                    &frame.executable,
+                    &cold.closure_slots,
+                    *index,
+                )? {
+                    slots.push(value)?;
                     true
                 } else {
                     return Ok(RunExit::Environment(
@@ -1061,6 +1090,20 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
+                if frame
+                    .executable
+                    .fusion
+                    .local_add_span(frame.fault_pc)
+                    .is_some()
+                {
+                    if let Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) =
+                        frame.executable.code.get(frame.fault_pc + 1)
+                    {
+                        if slots.local_add_supported(runtime, *index, *right)? {
+                            return Ok(RunExit::AddLocal);
+                        }
+                    }
+                }
                 if let Some(update) = frame.executable.fusion.update(frame.fault_pc) {
                     if fusion::update_local(&mut slots, *index, update)? {
                         #[cfg(feature = "profiling")]
@@ -1187,11 +1230,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                 }
                 if !ready {
-                    return Ok(RunExit::ReplaceBinding {
-                        source: BindingSource::Local,
-                        index: *index,
-                        keep: false,
-                        uninitialized: true,
+                    release_outside_slots!({
+                        let old = slots.replace_local(*index, FrameBinding::Uninitialized)?;
+                        cold.reusable_captured_locals[usize::from(*index)] = false;
+                        old
                     });
                 }
                 true
@@ -1231,14 +1273,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         == crate::engine::code::function::metadata::ClosureVariableKind::Normal
                     && matches!(slots.local(*index)?, FrameBinding::Direct(_))
                 {
-                    return Ok(RunExit::ReplaceBinding {
-                        source: BindingSource::Local,
-                        index: *index,
-                        keep: false,
-                        uninitialized: false,
+                    release_outside_slots!({
+                        let next = slots.pop()?;
+                        slots.replace_local(*index, FrameBinding::Direct(next))?
                     });
+                    true
+                } else {
+                    ready
                 }
-                ready
             }
             Instruction::PutLocalCheck(index) | Instruction::SetLocalCheck(index)
                 if matches!(slots.local(*index)?, FrameBinding::Uninitialized) =>
@@ -1263,15 +1305,18 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     release_displaced(runtime, old)?;
                     true
                 } else if matches!(slots.local(*index)?, FrameBinding::Direct(_)) {
-                    return Ok(RunExit::ReplaceBinding {
-                        source: BindingSource::Local,
-                        index: *index,
-                        keep: matches!(
+                    release_outside_slots!({
+                        let next = if matches!(
                             instruction,
                             Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                        ),
-                        uninitialized: false,
+                        ) {
+                            copy_value(slots.peek(0)?)?
+                        } else {
+                            slots.pop()?
+                        };
+                        slots.replace_local(*index, FrameBinding::Direct(next))?
                     });
+                    true
                 } else {
                     false
                 }
@@ -1297,12 +1342,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     release_displaced(runtime, old)?;
                     true
                 } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(_)) {
-                    return Ok(RunExit::ReplaceBinding {
-                        source: BindingSource::Argument,
-                        index: *index,
-                        keep: matches!(instruction, Instruction::SetArg(_)),
-                        uninitialized: false,
+                    release_outside_slots!({
+                        let next = if matches!(instruction, Instruction::SetArg(_)) {
+                            copy_value(slots.peek(0)?)?
+                        } else {
+                            slots.pop()?
+                        };
+                        slots.replace_parameter(*index, FrameBinding::Direct(next))?
                     });
+                    true
                 } else {
                     false
                 }
@@ -1347,7 +1395,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.pop()?;
                     true
                 } else {
-                    return Ok(RunExit::ReleaseOperand { keep_top: false });
+                    release_outside_slots!(slots.pop()?);
+                    true
                 }
             }
             Instruction::Swap => {
@@ -1361,7 +1410,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.push(right)?;
                     true
                 } else {
-                    return Ok(RunExit::ReleaseOperand { keep_top: true });
+                    release_outside_slots!({
+                        slots.peek(1)?;
+                        let kept = slots.pop()?;
+                        let released = slots.pop()?;
+                        slots.push(kept)?;
+                        released
+                    });
+                    true
                 }
             }
             Instruction::Add => {

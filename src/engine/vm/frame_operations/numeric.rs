@@ -58,8 +58,9 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     let depth = execution.slots.depth(&frame.window);
+    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     let (left, right) = {
-        let mut slots = execution.slots.run_window(&mut frame.window)?;
+        let mut slots = transaction.slots();
         // A malformed stack declines untouched: the canonical outer entry must
         // still pop RHS before reporting a missing LHS.
         for offset in 0..if kind.unary() { 1 } else { 2 } {
@@ -96,7 +97,21 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     };
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("numeric_completed_without_query");
-    commit_output(execution, id, output.value, output.previous, depth)?;
+    let mut value = Some(output.value);
+    let mut previous = output.previous;
+    {
+        let mut slots = transaction.slots();
+        if previous.is_some() {
+            slots.push_pending(&mut previous)?;
+        }
+        slots.push_pending(&mut value)?;
+    }
+    frame.resume_pc = frame
+        .fault_pc
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(Some(NumericProgress::Completed))
 }
 

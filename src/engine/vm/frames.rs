@@ -45,6 +45,28 @@ impl NativeClassification {
         )
     }
 
+    pub(in crate::engine::vm) fn promote_linked(
+        selection: crate::engine::object::LinkedNativeSelection,
+        value: &crate::engine::value::Value,
+    ) -> Option<(crate::engine::object::CallableRef, Self)> {
+        let crate::engine::value::Value::Object(function) = value else {
+            return None;
+        };
+        let data = selection.into_parts(function)?;
+        let function = function.clone();
+        let callable = crate::engine::object::CallableRef::from_validated_object(function.clone());
+        Some((
+            callable,
+            Self {
+                function,
+                target: data.target,
+                defining_realm: data.realm.expect("selected native realm"),
+                min_readable_args: data.min_readable_args,
+                operation: data.operation(),
+            },
+        ))
+    }
+
     pub(in crate::engine::vm) fn select(
         runtime: &Runtime,
         callable: &crate::engine::object::CallableRef,
@@ -64,13 +86,14 @@ impl NativeClassification {
         state.heap.context(defining_realm)?;
         let target = data.target;
         let min_readable_args = data.min_readable_args;
+        let operation = data.operation();
         drop(state);
         Ok(Some(Self {
             function: callable.as_object().clone(),
             target,
             defining_realm,
             min_readable_args,
-            operation: crate::engine::builtins::continuation::NativeOperation::for_target(target),
+            operation,
         }))
     }
     pub(in crate::engine::vm) fn take_operation(
@@ -87,6 +110,24 @@ impl NativeClassification {
     pub(in crate::engine::vm) fn minimum(&self) -> u8 {
         self.min_readable_args
     }
+}
+
+/// Read the sealed dispatch fact for a previously normalized callable. Native
+/// publication owns the derivation; callers do not classify its target again.
+#[cfg(feature = "stack-vm")]
+pub(in crate::engine::vm) fn native_operation(
+    runtime: &Runtime,
+    callable: &crate::engine::object::CallableRef,
+) -> Result<Option<crate::engine::builtins::continuation::NativeOperation>, RuntimeError> {
+    if !callable.belongs_to(runtime) {
+        return Err(RuntimeError::WrongRuntime("callable"));
+    }
+    let state = runtime.0.state.borrow();
+    let object = state.heap.object(callable.as_object().object_id())?;
+    Ok(match &object.payload {
+        ObjectPayload::NativeFunction { data, .. } => data.operation(),
+        _ => None,
+    })
 }
 
 /// Scoped proof for the no-callback interval between native argv preparation

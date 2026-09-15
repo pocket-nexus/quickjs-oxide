@@ -82,11 +82,7 @@ impl<'a> DirectSelection<'a> {
                 if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
                     // Unregistered native kinds retain the checked general
                     // entry, including its original preparation/error order.
-                    if let Some(operation) =
-                        crate::engine::builtins::continuation::NativeOperation::for_target(
-                            data.target,
-                        )
-                    {
+                    if let Some(operation) = data.operation() {
                         let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
                             "native function was called before its defining realm was attached",
                         ))?;

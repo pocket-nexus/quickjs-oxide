@@ -1225,7 +1225,7 @@ impl ObjectData {
 
     /// Construct a non-constructable runtime-provided function object.
     #[must_use]
-    pub(crate) const fn native_function(
+    pub(crate) fn native_function(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         target: NativeFunctionId,
@@ -1241,11 +1241,7 @@ impl ObjectData {
             is_constructor: target.descriptor().cproto.default_is_constructor(),
             kind: ObjectKind::NativeFunction,
             payload: ObjectPayload::NativeFunction {
-                data: NativeFunctionData {
-                    target,
-                    realm: None,
-                    min_readable_args,
-                },
+                data: NativeFunctionData::new(target, None, min_readable_args),
                 internal: None,
             },
         }
@@ -1253,7 +1249,7 @@ impl ObjectData {
 
     /// Construct a native callable whose defining realm is already live.
     #[must_use]
-    pub(crate) const fn bound_native_function(
+    pub(crate) fn bound_native_function(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         target: NativeFunctionId,
@@ -1270,11 +1266,7 @@ impl ObjectData {
             is_constructor: target.descriptor().cproto.default_is_constructor(),
             kind: ObjectKind::NativeFunction,
             payload: ObjectPayload::NativeFunction {
-                data: NativeFunctionData {
-                    target,
-                    realm: Some(realm),
-                    min_readable_args,
-                },
+                data: NativeFunctionData::new(target, Some(realm), min_readable_args),
                 internal: None,
             },
         }
@@ -1284,7 +1276,7 @@ impl ObjectData {
     /// capture data.  Allocation retains every raw edge in `internal`; the
     /// caller transfers no public runtime-owning wrapper into the heap.
     #[must_use]
-    pub(crate) const fn bound_internal_native_function(
+    pub(crate) fn bound_internal_native_function(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         target: NativeFunctionId,
@@ -1302,11 +1294,7 @@ impl ObjectData {
             is_constructor: false,
             kind: ObjectKind::NativeFunction,
             payload: ObjectPayload::NativeFunction {
-                data: NativeFunctionData {
-                    target,
-                    realm: Some(realm),
-                    min_readable_args,
-                },
+                data: NativeFunctionData::new(target, Some(realm), min_readable_args),
                 internal: Some(internal),
             },
         }
