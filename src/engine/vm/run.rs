@@ -102,7 +102,6 @@ pub(super) enum RunExit {
     StrictEquality(bool),
     Numeric(super::numeric::operation::NumericKind),
     ForIn(bool),
-    LogicalNot,
     CopyData {
         target: u8,
         source: u8,
@@ -122,8 +121,13 @@ pub(super) enum RunExit {
     Bridge,
 }
 
-#[cfg(feature = "profiling")]
 impl RunExit {
+    /// Whether this exit can expose the activation before the next run entry.
+    pub(super) fn observes_activation(&self) -> bool {
+        !matches!(self, Self::Call { .. } | Self::Complete)
+    }
+
+    #[cfg(feature = "profiling")]
     pub(super) fn diagnostic_name(self) -> &'static str {
         match self {
             Self::Import => "run_exit.Import",
@@ -172,7 +176,6 @@ impl RunExit {
             Self::StrictEquality(..) => "run_exit.StrictEquality",
             Self::Numeric(..) => "run_exit.Numeric",
             Self::ForIn(..) => "run_exit.ForIn",
-            Self::LogicalNot => "run_exit.LogicalNot",
             Self::CopyData { .. } => "run_exit.CopyData",
             Self::ReplaceBinding { .. } => "run_exit.ReplaceBinding",
             Self::ReleaseOperand { .. } => "run_exit.ReleaseOperand",
@@ -1493,13 +1496,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     true
                 }
             }
-            Instruction::Add => {
-                if binary(&mut slots, |a, b| value(a.add(b)))? {
-                    true
-                } else {
-                    return Ok(RunExit::ConvertAdd);
-                }
-            }
+            Instruction::Add => binary(&mut slots, |a, b| value(a.add(b)))?,
             Instruction::Sub => binary(&mut slots, |a, b| value(a.sub(b)))?,
             Instruction::Mul => binary(&mut slots, |a, b| value(a.mul(b)))?,
             Instruction::Div => binary(&mut slots, |a, b| value(a.div(b)))?,
@@ -1527,7 +1524,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::Neq
             | Instruction::StrictEq
             | Instruction::StrictNeq
-                if executable.fusion.compare_branch(pc.fault) =>
+                if executable.fusion.compare_branch(pc.fault)
+                    && (!matches!(instruction, Instruction::StrictEq | Instruction::StrictNeq)
+                        || (number(slots.peek(0)?).is_some() && number(slots.peek(1)?).is_some())) =>
             {
                 let branch_pc = pc.fault + 1;
                 let Some(target) =
@@ -1564,12 +1563,52 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 })? {
                     true
                 } else {
-                    return Ok(RunExit::StrictEquality(negate));
+                    if matches!((slots.peek(1)?, slots.peek(0)?),
+                        (Value::String(left), Value::String(right)) if !left.is_flat() || !right.is_flat())
+                    {
+                        return Ok(RunExit::StrictEquality(negate));
+                    }
+                    let equal = slots.peek(1)?.strict_equal(slots.peek(0)?) != negate;
+                    let observable = (0..2).any(|offset| matches!(slots.peek(offset), Ok(Value::Object(_) | Value::Symbol(_))));
+                    if observable {
+                        release_outside_slots!({
+                            let right = slots.pop()?;
+                            let left = slots.pop()?;
+                            slots.push(Value::Bool(equal))?;
+                            (left, right)
+                        });
+                    } else {
+                        let right = slots.pop()?;
+                        let left = slots.pop()?;
+                        slots.push(Value::Bool(equal))?;
+                        drop(slots);
+                        drop((left, right));
+                        slots = transaction.slots();
+                    }
+                    true
                 }
             }
             Instruction::Eq => binary(&mut slots, |a, b| Value::Bool(a.float() == b.float()))?,
             Instruction::Neq => binary(&mut slots, |a, b| Value::Bool(a.float() != b.float()))?,
-            Instruction::Not => return Ok(RunExit::LogicalNot),
+            Instruction::Not => {
+                // Includes Annex B HTMLDDA objects; metadata lookup cannot run JS.
+                let result = !runtime.value_to_boolean(slots.peek(0)?)
+                    .map_err(runtime_error_to_vm_error)?;
+                if matches!(slots.peek(0)?, Value::Object(_) | Value::Symbol(_)) {
+                    release_outside_slots!({
+                        let input = slots.pop()?;
+                        slots.push(Value::Bool(result))?;
+                        input
+                    });
+                } else {
+                    let input = slots.pop()?;
+                    slots.push(Value::Bool(result))?;
+                    drop(slots);
+                    drop(input);
+                    slots = transaction.slots();
+                }
+                true
+            }
             Instruction::Neg
             | Instruction::Plus
             | Instruction::BitNot
@@ -2109,7 +2148,8 @@ mod tests {
         let fault_writes = costs.owned_execution_events["run_frame_fault_pc_write"];
         assert_eq!(fault_writes, 1);
         assert_eq!(costs.owned_execution_events["run_frame_resume_pc_write"], 1);
-        assert_eq!(costs.owned_execution_events["runtime_pc_publication"], 1);
+        // Completion did not change an observable PC after the last publication.
+        assert_eq!(costs.owned_execution_events.get("runtime_pc_publication").copied().unwrap_or(0), 0);
         assert!(
             costs.owned_execution_events["slot_authentication"] < 20,
             "{costs:?}"
@@ -2336,4 +2376,43 @@ pub(super) fn strict_comparison(
     #[cfg(feature = "profiling")]
     cold::instruction(depth);
     Ok(())
+}
+
+#[cfg(test)]
+mod resident_semantics {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn resident_add_keeps_default_hint_order_and_errors() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"
+          let order=[];
+          let a={ [Symbol.toPrimitive](hint){order.push('a:'+hint);return 'x'} };
+          let b={ [Symbol.toPrimitive](hint){order.push('b:'+hint);return 2} };
+          let result=a+b;
+          let threw=false;try { 1n + 2; } catch(e){threw=e instanceof TypeError}
+          result==='x2' && order.join(',')==='a:default,b:default' && threw &&
+            ('x'+3==='x3') && (2n+3n===5n)
+        "#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn resident_equality_and_not_preserve_values_without_coercion() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"
+          let o={valueOf(){throw 1},toString(){throw 2}};
+          let s=Symbol('a');let rope='x';for(let i=0;i<12;i++)rope+=rope;
+          let values=[undefined,null,false,true,0,-0,NaN,1,'','x',1n,s,o,rope];
+          let ok=true;
+          for(let i=0;i<values.length;i++)for(let j=0;j<values.length;j++){
+             let a=values[i],b=values[j];
+             if ((a===b)!==(Object.is(a,b)||(a===0&&b===0)) && !(a!==a&&b!==b))ok=false;
+             if ((a!==b)===(a===b))ok=false;
+          }
+          ok && !undefined && !null && !false && !0 && !NaN && !'' && !0n &&
+            !!o && !!s && !!rope && (rope===rope.slice(0)) && (s!==Symbol('a'))
+        "#).unwrap(), Value::Bool(true));
+    }
 }

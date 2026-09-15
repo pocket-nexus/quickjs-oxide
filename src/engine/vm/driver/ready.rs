@@ -33,7 +33,7 @@ pub(super) fn run(
         record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations
         // may allocate an error, release an observable owner or invoke code.
-        if !matches!(&result, Ok(RunExit::Call { .. } | RunExit::Complete)) {
+        if result.as_ref().map_or(true, RunExit::observes_activation) {
             execution.frames.materialize(runtime)?;
         }
         let exit = result?;

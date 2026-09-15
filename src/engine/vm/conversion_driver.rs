@@ -856,8 +856,8 @@ mod primitive_store_tests {
             profile
                 .snapshot()
                 .owned_execution_events
-                .get("conversion_task_allocated"),
-            Some(&1)
+                .get("conversion_task_allocated").copied().unwrap_or(0),
+            0
         );
         drop(profile);
         let profile = CostProfile::start();
@@ -907,7 +907,7 @@ mod primitive_store_tests {
             profile
                 .snapshot()
                 .owned_execution_events
-                .get("primitive_add_store_fused")
+                .get("numeric_completed_in_run")
                 .copied()
                 .unwrap_or(0)
                 > 0

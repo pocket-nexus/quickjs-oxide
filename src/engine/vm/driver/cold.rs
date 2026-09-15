@@ -132,14 +132,6 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::LogicalNot => {
-            let step = super::super::frame_operations::logical_not(
-                context.runtime,
-                context.execution,
-                context.id,
-            )?;
-            context.step(step)
-        }
         RunExit::ForIn(next) => {
             let step = super::super::frame_operations::for_in(
                 context.runtime,

@@ -152,32 +152,6 @@ pub(super) fn private_access(
 }
 
 #[inline(never)]
-pub(super) fn logical_not(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-) -> Result<CallStep, Error> {
-    let frame = execution.frames.current_mut(id)?;
-    let result = !runtime
-        .value_to_boolean(execution.slots.peek(&frame.window, 0)?)
-        .map_err(runtime_error_to_vm_error)?;
-    #[cfg(feature = "profiling")]
-    let depth = execution.slots.depth(&frame.window);
-    let input = execution.slots.pop(&mut frame.window)?;
-    execution
-        .slots
-        .push(&mut frame.window, Value::Bool(result))?;
-    drop(input);
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("logical not resume PC overflow"))?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
-    return Ok(CallStep::Entered);
-}
-
-#[inline(never)]
 pub(super) fn for_in(
     runtime: &Runtime,
     execution: &mut RunningExecution,

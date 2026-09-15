@@ -1065,10 +1065,10 @@ mod tests {
         assert!(
             costs
                 .owned_execution_events
-                .get("conversion_completed_without_task")
+                .get("numeric_completed_in_run")
                 .copied()
                 .unwrap_or(0)
-                >= 4
+                > 0
         );
         assert_eq!(costs.legacy_dispatches, 0);
         assert_eq!(costs.owned_bridge_exits, 0);
@@ -1077,36 +1077,18 @@ mod tests {
     }
 
     #[test]
-    fn same_frame_conversion_identity_failure_keeps_operands_and_fault_pc() {
+    fn resident_primitive_add_does_not_consume_conversion_identity() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let entry = entry(
-            &runtime,
-            &mut context,
-            "(function(){return 'a'+'b'})",
-            Vec::new(),
-        );
+        let entry = entry(&runtime, &mut context,
+            "(function(){return 'a'+'b'})", Vec::new());
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         let id = push_frame(&mut execution, entry).unwrap();
         let mut identity = u64::MAX;
-        let result = super::ready::run(&runtime, &mut execution, id, &mut identity);
-        assert!(matches!(result, Err(error) if error.message() == "conversion identity exhausted"));
+        let result = super::ready::run(&runtime, &mut execution, id, &mut identity).unwrap();
+        assert!(matches!(result, super::ready::Boundary::Exit(RunExit::Complete)));
         assert_eq!(identity, u64::MAX);
-        let frame = execution.frames.current_mut(id).unwrap();
-        assert!(matches!(
-            frame.executable.code[frame.fault_pc],
-            crate::engine::code::bytecode::Instruction::Add
-        ));
-        assert_eq!(frame.resume_pc, frame.fault_pc);
-        assert_eq!(execution.slots.depth(&frame.window), 2);
-        assert_eq!(
-            execution.slots.peek(&frame.window, 0).unwrap(),
-            &Value::String(crate::engine::value::JsString::from_static("b"))
-        );
-        assert_eq!(
-            execution.slots.peek(&frame.window, 1).unwrap(),
-            &Value::String(crate::engine::value::JsString::from_static("a"))
-        );
+        assert_eq!(execution.pending, Some(Value::String(crate::engine::value::JsString::from_static("ab"))));
         drop(execution);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

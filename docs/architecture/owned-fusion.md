@@ -172,3 +172,20 @@ returning `None` independently disable their spans. Preserve these changes only 
 source hashes and binary identity, and retain canonical correctness checks. No
 experimental feature flag belongs in production. Compile profiling measures
 plan construction as `Fusion`; there is no additional relocation pass.
+
+## S15 resident operations
+
+Unfused Add now shares the existing primitive numeric completion boundary.
+Object operands retain left-to-right ToPrimitive with the default hint in the
+numeric driver. LocalAdd retains its separate fusion completion, including its
+canonical AddStore fallback. Other Add/store sequences can complete as successive
+resident instructions without allocating a conversion task.
+Strict equality stays resident for primitive and identity comparisons; rope
+string comparison retains its cold path. Logical Not uses the shared runtime
+ToBoolean (including HTMLDDA). Observable operand owners are released only after
+PC materialization and outside RunSlots.
+
+PC publication deduplicates against the actual active-frame record, rather than
+an independent cached PC in Frame. Direct run publication and driver publication
+therefore cannot invalidate each other's last-published knowledge. Call/Complete
+exemption selection is centralized in RunExit::observes_activation.

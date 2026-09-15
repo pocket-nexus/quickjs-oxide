@@ -81,7 +81,13 @@ pub(in crate::engine::vm) fn complete_local_add(
             match string.try_concat_in_place(&suffix) {
                 Ok(true) => return Ok(PreparedAdd::Appended),
                 Err(error) => return Ok(PreparedAdd::Result(Err(error.into()))),
-                Ok(false) => {}
+                Ok(false) => {
+                    // Reuse the conversion already completed above even when
+                    // a shared/rope lhs cannot append into its own buffer.
+                    return Ok(PreparedAdd::Result(
+                        string.try_concat(&suffix).map(Value::String).map_err(Error::from),
+                    ));
+                }
             }
         }
         Ok(PreparedAdd::Result(

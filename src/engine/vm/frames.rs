@@ -565,6 +565,9 @@ impl Runtime {
                 "materialized PC targets a native frame",
             ));
         };
+        if *stored == Some(pc) {
+            return Ok(());
+        }
         *stored = Some(pc);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
@@ -593,8 +596,11 @@ impl Runtime {
                 "bytecode PC update targeted a native active frame",
             ));
         };
+        if *frame_pc == Some(pc) {
+            return Ok(());
+        }
         *frame_pc = Some(pc);
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
         Ok(())
     }
