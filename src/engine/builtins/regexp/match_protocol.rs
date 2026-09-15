@@ -273,14 +273,15 @@ impl RegExpMatchResume {
                         )?,
                     )));
                 };
-                if let Some(value) = runtime.create_array_data_property(
-                    self.realm,
-                    &state.matches,
-                    state.count,
-                    Value::String(matched),
-                )? {
-                    return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
-                }
+                // This Array is private until terminal completion, including
+                // across custom exec/result callbacks. Its consecutive C/W/E
+                // elements use the same constructor effect as builtin exec
+                // results; inherited indexed setters must never be observed.
+                runtime.append_fresh_array_value(&state.matches, Value::String(matched))?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "regexp_result.match_append",
+                );
                 state.count = next;
                 if empty {
                     Ok(RegExpMatchStep::Read {

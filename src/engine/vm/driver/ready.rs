@@ -37,9 +37,13 @@ pub(super) fn run(
         // run has dropped RunSlots and materialized the exact frame PCs even
         // on error. Publish before any cold allocation, release or JS error.
         let frame = execution.frames.current_mut(id)?;
-        runtime
-            .update_active_bytecode_pc(frame.cold.active_frame, BytecodePc::new(frame.fault_pc))
-            .map_err(runtime_error_to_vm_error)?;
+        // LocalAdd owns its first publication at the canonical Add, before
+        // any allocation/error. Its already guarded GetLocal entry cannot observe PC.
+        if !matches!(&result, Ok(RunExit::AddLocal)) {
+            runtime
+                .update_active_bytecode_pc(frame.cold.active_frame, BytecodePc::new(frame.fault_pc))
+                .map_err(runtime_error_to_vm_error)?;
+        }
         let exit = result?;
         match exit {
             RunExit::Call {

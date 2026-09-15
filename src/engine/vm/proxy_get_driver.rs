@@ -30,6 +30,8 @@ mod dispatch_read;
 mod dispatch_write;
 
 mod native;
+#[cfg(feature = "profiling")]
+mod profiling;
 mod request;
 mod storage;
 use native::start_into as native_scope;
@@ -1708,7 +1710,7 @@ fn advance_inner(
             | Step::Descriptor { .. } => dispatch_read::get,
         };
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("query_dispatch");
+        profiling::record_dispatch(&step);
         let next = dispatch(runtime, execution, owner, identity, query, &mut step)?;
         let (target, receiver, arguments, resume) = match next {
             Next::Continue => {

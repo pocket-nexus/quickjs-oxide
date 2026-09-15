@@ -27,7 +27,7 @@ impl FusionPlan {
         );
         // Allocate nothing for the common small leaf without a candidate.
         if !code.windows(2).enumerate().any(|(pc, pair)| {
-            if literal_method_count(&code[pc..]).is_some() {
+            if method_call_count(&code[pc..]).is_some() {
                 return true;
             }
             if matches!(
@@ -166,7 +166,7 @@ impl FusionPlan {
                 }
                 _ => None,
             };
-            let method = literal_method_count(rest).map(|count| (160 + count as u8, count + 2));
+            let method = method_call_count(rest).map(|count| (160 + count as u8, count + 2));
             let candidate = method.or(local_add).or(update).or_else(|| match rest {
                 [
                     Instruction::Lt
@@ -239,9 +239,9 @@ impl FusionPlan {
     pub(crate) fn add_store(&self, pc: usize) -> bool {
         matches!(self.flag(pc), 64 | 65)
     }
-    /// Only no-owner literal arguments may be skipped after a completed own
-    /// read. Accessors and arbitrary argument evaluation retain canonical PCs.
-    pub(crate) fn literal_method(&self, pc: usize) -> Option<usize> {
+    /// Only literals and direct binding reads may join a completed own read.
+    /// Runtime guards retain canonical evaluation for TDZ/captured bindings.
+    pub(crate) fn method_call(&self, pc: usize) -> Option<usize> {
         let flag = self.flag(pc);
         (160..=167).contains(&flag).then(|| usize::from(flag - 160))
     }
@@ -258,7 +258,7 @@ impl FusionPlan {
     }
 }
 
-fn literal_method_count(rest: &[Instruction]) -> Option<usize> {
+fn method_call_count(rest: &[Instruction]) -> Option<usize> {
     if !matches!(rest.first(), Some(Instruction::GetField2(_))) {
         return None;
     }
@@ -267,7 +267,10 @@ fn literal_method_count(rest: &[Instruction]) -> Option<usize> {
             Instruction::CallMethod(arguments) if usize::from(*arguments) == count => {
                 return Some(count);
             }
-            Instruction::PushI32(_)
+            Instruction::GetLocal(_)
+            | Instruction::GetLocalCheck(_)
+            | Instruction::GetArg(_)
+            | Instruction::PushI32(_)
             | Instruction::Undefined
             | Instruction::Null
             | Instruction::PushTrue
@@ -336,19 +339,19 @@ mod tests {
     }
 
     #[test]
-    fn literal_method_spans_reject_effectful_arguments_and_interior_entry() {
+    fn method_call_spans_reject_effectful_arguments_and_interior_entry() {
         use Instruction::*;
         let code = [GetField2(0), PushI32(1), PushFalse, CallMethod(2), Return];
-        assert_eq!(FusionPlan::build(&code, &[]).literal_method(0), Some(2));
+        assert_eq!(FusionPlan::build(&code, &[]).method_call(0), Some(2));
         let code = [GetField2(0), GetLocal(0), CallMethod(1), Return];
         assert_eq!(
-            FusionPlan::build(&code, &[local(false)]).literal_method(0),
-            None
+            FusionPlan::build(&code, &[local(false)]).method_call(0),
+            Some(1)
         );
         let code = [GetField2(0), PushI32(1), CallMethod(1), Goto(1), Return];
-        assert_eq!(FusionPlan::build(&code, &[]).literal_method(0), None);
+        assert_eq!(FusionPlan::build(&code, &[]).method_call(0), None);
         let code = [GetField2(0), PushI32(1), TailCallMethod(1)];
-        assert_eq!(FusionPlan::build(&code, &[]).literal_method(0), None);
+        assert_eq!(FusionPlan::build(&code, &[]).method_call(0), None);
     }
     #[test]
     fn add_store_requires_mutable_normal_target_and_no_interior_entry() {

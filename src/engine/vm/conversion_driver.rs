@@ -130,6 +130,12 @@ pub(super) fn complete_primitives(
                     Some((
                         *index,
                         frame.executable.fusion.add_store_span(frame.fault_pc),
+                        matches!(
+                            slots.local(*index)?,
+                            super::bindings::FrameBinding::Direct(
+                                Value::Object(_) | Value::Symbol(_)
+                            )
+                        ),
                     ))
                 }
                 _ => None,
@@ -180,38 +186,50 @@ pub(super) fn complete_primitives(
     );
     Ok(match completion {
         Completion::Return(value) => {
-            if let Some((index, span)) = store {
-                // Addition is complete. Publish the canonical store PC before
-                // replacing the binding and releasing its last previous owner.
-                // No authenticated RunSlots borrow crosses either allocation
-                // above or the release below, and no operand read is reordered.
-                frame.resume_pc = frame
+            if let Some((index, span, observable_release)) = store {
+                // Scalar/String/BigInt release cannot observe the runtime PC.
+                // Object/Symbol release retains the canonical store publication
+                // before replacement. No RunSlots borrow crosses either release.
+                let store_pc = frame
                     .fault_pc
                     .checked_add(1)
                     .ok_or_else(|| Error::internal("conversion resume PC overflow"))?;
-                frame.fault_pc = frame.resume_pc;
-                runtime
-                    .update_active_bytecode_pc(
-                        frame.cold.active_frame,
-                        super::BytecodePc::new(frame.fault_pc),
-                    )
-                    .map_err(runtime_error_to_vm_error)?;
+                if observable_release {
+                    (frame.fault_pc, frame.resume_pc) = (store_pc, store_pc);
+                    runtime
+                        .update_active_bytecode_pc(
+                            frame.cold.active_frame,
+                            super::BytecodePc::new(frame.fault_pc),
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                }
                 let mut pending = Some(super::bindings::FrameBinding::Direct(value));
                 let old = {
                     let mut slots = transaction.slots();
-                    slots.replace_local_pending(index, &mut pending)?
+                    slots.replace_local_pending(index, &mut pending)
+                };
+                let old = match old {
+                    Ok(old) => old,
+                    Err(error) => {
+                        if !observable_release {
+                            (frame.fault_pc, frame.resume_pc) = (store_pc, store_pc);
+                            runtime
+                                .update_active_bytecode_pc(
+                                    frame.cold.active_frame,
+                                    super::BytecodePc::new(frame.fault_pc),
+                                )
+                                .map_err(runtime_error_to_vm_error)?;
+                        }
+                        return Err(error);
+                    }
                 };
                 drop(old);
-                if span == 3 {
-                    // The discarded assignment result would only add a second
-                    // owner and release it while the local keeps the value.
-                    // No callback, allocation or final-owner drain is skipped.
-                    frame.fault_pc += 1;
-                }
-                frame.resume_pc = frame
-                    .fault_pc
-                    .checked_add(1)
+                // The optional Drop only removes the assignment result while
+                // the local keeps the value; it has no observable owner drain.
+                let resume = store_pc
+                    .checked_add(span - 1)
                     .ok_or_else(|| Error::internal("binding release resume PC overflow"))?;
+                (frame.fault_pc, frame.resume_pc) = (resume - 1, resume);
                 #[cfg(feature = "profiling")]
                 {
                     crate::engine::api::profiling::record_owned_instruction(depth);

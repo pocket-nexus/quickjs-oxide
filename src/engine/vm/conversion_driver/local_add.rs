@@ -78,22 +78,32 @@ pub(in crate::engine::vm) fn complete_local_add(
             ));
         }
     };
-    frame.fault_pc = start + 3;
-    frame.resume_pc = frame.fault_pc;
-    runtime
-        .update_active_bytecode_pc(
-            frame.cold.active_frame,
-            super::super::BytecodePc::new(frame.fault_pc),
-        )
-        .map_err(runtime_error_to_vm_error)?;
+    // Successful primitive addition proves the old local is neither Object
+    // nor Symbol. Replacing it only releases scalar/Rc String/BigInt storage;
+    // it cannot drain runtime roots, call JS or observe the active frame. Keep
+    // the Add publication for the whole transaction and commit frame PCs once.
     let mut pending = Some(super::super::bindings::FrameBinding::Direct(value));
     let old = {
         let mut slots = transaction.slots();
-        slots.replace_local_pending(left, &mut pending)?
+        slots.replace_local_pending(left, &mut pending)
+    };
+    let old = match old {
+        Ok(old) => old,
+        Err(error) => {
+            (frame.fault_pc, frame.resume_pc) = (start + 3, start + 3);
+            // An invariant error still identifies the canonical store, and the
+            // pending output is released only after its active PC is published.
+            runtime
+                .update_active_bytecode_pc(
+                    frame.cold.active_frame,
+                    super::super::BytecodePc::new(frame.fault_pc),
+                )
+                .map_err(runtime_error_to_vm_error)?;
+            return Err(error);
+        }
     };
     drop(old);
-    frame.fault_pc = start + span - 1;
-    frame.resume_pc = start + span;
+    (frame.fault_pc, frame.resume_pc) = (start + span - 1, start + span);
     #[cfg(feature = "profiling")]
     {
         // Canonical virtual stack depths even though operand copies disappear.
@@ -201,6 +211,17 @@ mod tests {
         assert_eq!(execution.slots.depth(&frame.window), 2);
         assert_eq!(execution.slots.peek(&frame.window, 1).unwrap(), &a);
         assert_eq!(execution.slots.peek(&frame.window, 0).unwrap(), &b);
+    }
+
+    #[test]
+    fn local_add_throw_reports_add_line_before_error_allocation() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context.eval("(function pcProbe(){\nlet a=1n,b=2;\ntry { a=a+b; } catch(e) { return e.stack; }\n})()").unwrap();
+        let Value::String(stack) = result else {
+            panic!("expected stack");
+        };
+        assert!(stack.to_string().contains(":3:"), "{stack}");
     }
 
     #[test]

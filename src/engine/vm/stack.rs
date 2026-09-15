@@ -154,6 +154,15 @@ impl SlotStore {
         method: bool,
     ) -> Result<(Vec<Value>, Value), Error> {
         self.check_current(window)?;
+        self.take_native_call_operands_current(window, count, method)
+    }
+
+    fn take_native_call_operands_current(
+        &mut self,
+        window: &mut FrameWindow,
+        count: usize,
+        method: bool,
+    ) -> Result<(Vec<Value>, Value), Error> {
         let mut arguments = self.take_native_argument_buffer(count)?;
         for offset in 0..count + 1 + usize::from(method) {
             self.peek_current(window, offset)?;
@@ -560,6 +569,16 @@ impl SlotStore {
             return Ok(true);
         }
         self.check_current(window)?;
+        self.validate_call_value_domains_current(window, runtime, count, method)
+    }
+
+    fn validate_call_value_domains_current(
+        &self,
+        window: &FrameWindow,
+        runtime: &Runtime,
+        count: usize,
+        method: bool,
+    ) -> Result<bool, Error> {
         if method
             && runtime
                 .validate_value_domain(

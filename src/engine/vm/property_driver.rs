@@ -107,7 +107,7 @@ pub(super) fn read_progress_selected(
         let mut retained_key = None;
         let mut method_call = None;
         let candidate = keep_receiver
-            .then(|| frame.executable.fusion.literal_method(frame.fault_pc))
+            .then(|| frame.executable.fusion.method_call(frame.fault_pc))
             .flatten();
         let result = execution.slots.with_linked_own_read_selected(
             &mut frame.window,
@@ -122,7 +122,26 @@ pub(super) fn read_progress_selected(
                 // Base has moved outside the slot window. The result and
                 // receiver need two slots; decline fusion before any literal
                 // pushes if the verified capacity cannot hold the whole span.
-                let count = candidate.filter(|count| slots.has_operand_capacity(count + 2));
+                let count = candidate.filter(|count| {
+                    slots.has_operand_capacity(count + 2)
+                        && frame.executable.code[frame.fault_pc + 1..frame.fault_pc + count + 1]
+                            .iter()
+                            .all(|instruction| {
+                                use super::bindings::FrameBinding;
+                                use crate::engine::code::bytecode::Instruction;
+                                match instruction {
+                                    Instruction::GetLocal(index)
+                                    | Instruction::GetLocalCheck(index) => {
+                                        matches!(slots.local(*index), Ok(FrameBinding::Direct(_)))
+                                    }
+                                    Instruction::GetArg(index) => matches!(
+                                        slots.parameter(*index),
+                                        Ok(FrameBinding::Direct(_))
+                                    ),
+                                    _ => true,
+                                }
+                            })
+                });
                 publish_read_result(
                     slots,
                     &mut frame.resume_pc,
@@ -133,21 +152,48 @@ pub(super) fn read_progress_selected(
                     value,
                 )?;
                 if let Some(count) = count {
+                    // GetField2 completed even if a later fallible argument
+                    // retain fails at its own canonical PC.
+                    record_read_completion(depth);
                     use crate::engine::code::bytecode::Instruction;
+                    let start = frame.fault_pc;
                     for offset in 0..count {
-                        let literal = match &frame.executable.code[frame.fault_pc + offset + 1] {
+                        // Copy retains never drain references or call JS. On a
+                        // failed retain, publish this canonical argument PC once
+                        // the RunSlots borrow has ended below.
+                        frame.fault_pc = start + offset + 1;
+                        frame.resume_pc = frame.fault_pc;
+                        let literal = match &frame.executable.code[frame.fault_pc] {
+                            Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
+                                let super::bindings::FrameBinding::Direct(value) =
+                                    slots.local(*index)?
+                                else {
+                                    unreachable!("preflighted direct method argument")
+                                };
+                                super::stack::copy_value(value)?
+                            }
+                            Instruction::GetArg(index) => {
+                                let super::bindings::FrameBinding::Direct(value) =
+                                    slots.parameter(*index)?
+                                else {
+                                    unreachable!("preflighted direct method parameter")
+                                };
+                                super::stack::copy_value(value)?
+                            }
                             Instruction::PushI32(value) => Value::Int(*value),
                             Instruction::Undefined => Value::Undefined,
                             Instruction::Null => Value::Null,
                             Instruction::PushTrue => Value::Bool(true),
                             Instruction::PushFalse => Value::Bool(false),
-                            _ => unreachable!("published literal method span"),
+                            _ => unreachable!("published method call span"),
                         };
                         slots.push(literal)?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_instruction(depth + offset + 1);
                     }
-                    frame.resume_pc = frame.fault_pc + count + 1;
+                    frame.resume_pc = start + count + 1;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event("method_call_span");
                     method_call = Some(count as u16);
                 }
                 Ok(())
@@ -155,7 +201,9 @@ pub(super) fn read_progress_selected(
         );
         match result {
             Ok(LinkedReadCompletion::Completed) => {
-                record_read_completion(depth);
+                if method_call.is_none() {
+                    record_read_completion(depth);
+                }
                 #[cfg(feature = "profiling")]
                 if preserved_receiver.is_some() {
                     // One actual driver-scope owner drop, not a claim that
@@ -174,6 +222,12 @@ pub(super) fn read_progress_selected(
                 return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
             }
             Err(error) => {
+                runtime
+                    .update_active_bytecode_pc(
+                        frame.cold.active_frame,
+                        super::BytecodePc::new(frame.fault_pc),
+                    )
+                    .map_err(runtime_error_to_vm_error)?;
                 drop(retained_key);
                 drop(preserved_receiver);
                 return Err(error);

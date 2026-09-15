@@ -366,7 +366,17 @@ pub(super) fn define(
     let mut step = pending.take();
     loop {
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("dispatch_write.define.visit");
+        {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "dispatch_write.define.visit",
+            );
+            crate::engine::api::profiling::record_owned_execution_event(match &step {
+                Step::Define { .. } => "dispatch_write.define.stage.request",
+                Step::DefineOrdinary { .. } => "dispatch_write.define.stage.ordinary",
+                Step::Defined { .. } => "dispatch_write.define.stage.reply",
+                _ => "dispatch_write.define.stage.leave",
+            });
+        }
         let realm = query.realm;
         match step {
             Step::Defined(result) => {

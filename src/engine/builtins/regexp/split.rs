@@ -29,20 +29,23 @@ impl Runtime {
 
     fn append_regexp_split_value(
         &self,
-        realm: ContextId,
         result: &ObjectRef,
         length: &mut u32,
         value: Value,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<(), RuntimeError> {
         let index = *length;
         let next = index.checked_add(1).ok_or(RuntimeError::Invariant(
             "RegExp split output index exceeded Uint32",
         ))?;
-        if let Some(value) = self.create_array_data_property(realm, result, index, value)? {
-            return Ok(Some(value));
-        }
+        // The output is an intrinsic fresh Array, never the species-created
+        // splitter and never exposed to exec/capture callbacks. Preserve the
+        // original allocation and append timing using the shared constructor
+        // kernel, which defines own C/W/E data without inherited setters.
+        self.append_fresh_array_value(result, value)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("regexp_result.split_append");
         *length = next;
-        Ok(None)
+        Ok(())
     }
 }
 
@@ -151,13 +154,8 @@ impl SplitState {
     fn complete(self) -> RegExpSplitStep {
         RegExpSplitStep::Complete(Completion::Return(Value::Object(self.result)))
     }
-    fn append(
-        &mut self,
-        runtime: &Runtime,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<Option<Value>, RuntimeError> {
-        runtime.append_regexp_split_value(realm, &self.result, &mut self.length, value)
+    fn append(&mut self, runtime: &Runtime, value: Value) -> Result<(), RuntimeError> {
+        runtime.append_regexp_split_value(&self.result, &mut self.length, value)
     }
     fn advance(&mut self) -> Result<(), RuntimeError> {
         self.q = usize::try_from(advance_string_index(
@@ -178,9 +176,7 @@ impl SplitState {
                 self.input
                     .sub_string(self.p.min(self.input.len()), self.input.len()),
             );
-            if let Some(value) = self.append(runtime, realm, value)? {
-                return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
-            }
+            self.append(runtime, value)?;
             return Ok(self.complete());
         }
         let value = Value::Int(i32::try_from(self.q).map_err(|_| {
@@ -470,9 +466,7 @@ impl RegExpSplitResume {
                 match value {
                     Value::Null => {
                         let input = Value::String(state.input.clone());
-                        if let Some(value) = state.append(runtime, realm, input)? {
-                            return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
-                        }
+                        state.append(runtime, input)?;
                     }
                     Value::Object(_) => {}
                     _ => {
@@ -523,9 +517,7 @@ impl RegExpSplitResume {
                     return state.next(runtime, realm);
                 }
                 let part = Value::String(state.input.sub_string(state.p, state.q));
-                if let Some(value) = state.append(runtime, realm, part)? {
-                    return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
-                }
+                state.append(runtime, part)?;
                 if state.length == state.limit {
                     return Ok(state.complete());
                 }
@@ -562,9 +554,7 @@ impl RegExpSplitResume {
                 index,
                 count,
             } => {
-                if let Some(value) = state.append(runtime, realm, value)? {
-                    return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
-                }
+                state.append(runtime, value)?;
                 if state.length == state.limit {
                     return Ok(state.complete());
                 }

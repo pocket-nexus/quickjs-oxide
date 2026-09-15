@@ -38,9 +38,9 @@ pub(super) fn enter_selected(
 ) -> Result<Entry, Error> {
     let frame = execution.frames.current_mut(id)?;
     let count = usize::from(count);
-    execution
-        .slots
-        .peek(&frame.window, count + usize::from(method))?;
+    let depth = execution.slots.depth(&frame.window);
+    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
+    transaction.peek(count + usize::from(method))?;
     enum Prepared {
         Ordinary(crate::engine::vm::call::ordinary::OrdinaryCall),
         Native(
@@ -51,16 +51,13 @@ pub(super) fn enter_selected(
     // End every Result/selection container holding a slot borrow before any
     // frame installation or operand transfer. Only owning facts leave here.
     let prepared = if let Some(selected) = selected_native {
-        if !execution
-            .slots
-            .validate_call_value_domains(&frame.window, runtime, count, method)?
-        {
+        if !transaction.validate_call_value_domains(runtime, count, method)? {
             return Ok(Entry::General);
         }
         let Some((callable, selected)) =
             crate::engine::vm::frames::NativeClassification::promote_linked(
                 selected,
-                execution.slots.peek(&frame.window, count)?,
+                transaction.peek(count)?,
             )
         else {
             return Ok(Entry::General);
@@ -71,15 +68,11 @@ pub(super) fn enter_selected(
         );
         Prepared::Native(callable, selected)
     } else {
-        let selection_result =
-            DirectSelection::select(runtime, execution.slots.peek(&frame.window, count)?);
+        let selection_result = DirectSelection::select(runtime, transaction.peek(count)?);
         if matches!(selection_result, Ok(DirectSelection::General)) {
             return Ok(Entry::General);
         }
-        if !execution
-            .slots
-            .validate_call_value_domains(&frame.window, runtime, count, method)?
-        {
+        if !transaction.validate_call_value_domains(runtime, count, method)? {
             return Ok(Entry::General);
         }
         let selection = selection_result.map_err(runtime_error_to_vm_error)?;
@@ -99,8 +92,7 @@ pub(super) fn enter_selected(
     };
     match prepared {
         Prepared::Ordinary(call) => {
-            #[cfg(feature = "profiling")]
-            let depth = execution.slots.depth(&frame.window);
+            drop(transaction);
             if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
                 return Ok(Entry::General);
             }
@@ -114,14 +106,9 @@ pub(super) fn enter_selected(
             let realm = selected.defining_realm();
             let minimum = selected.minimum();
             let operation = selected.take_operation();
-            let depth = execution.slots.depth(&frame.window);
-            execution.slots.reserve_native_argument_depth(
-                runtime.0.active_frame_depth.get().saturating_add(1),
-            )?;
             let (arguments, receiver) =
-                execution
-                    .slots
-                    .take_native_call_operands(&mut frame.window, count, method)?;
+                transaction.take_native_call_operands(runtime, count, method)?;
+            drop(transaction);
             let result = super::super::proxy_get_driver::start_native_with_classification(
                 runtime,
                 execution,
@@ -185,6 +172,15 @@ mod layout_tests {
         let mut context = runtime.new_context();
         for source in [
             "Math.min(3, 2, 1) === 1 && Math.max() === -Infinity",
+            "(()=>{let i=7;let r=Math.min(i,500);return r===7})()",
+            "((i)=>{let r=Math.min(i,500);return r===7})(7)",
+            "(()=>{let key={},value='text',m=new Map();m.set(key,value);return m.get(key)===value})()",
+            "(()=>{let i=3;function capture(){return i}let r=Math.min(i,500);return r===capture()})()",
+            "(()=>{try{Math.min(i,500);let i=3}catch(e){return e instanceof ReferenceError}return false})()",
+            "(()=>{let i=2;let o={get m(){i=7;return Math.min}};let r=o.m(i,500);return r===7})()",
+            "(()=>{let i=2;let o=new Proxy({m:Math.min},{get(t,k){i=9;return t[k]}});let r=o.m(i,500);return r===9})()",
+            "(()=>{let n=0,a={valueOf(){n++;return 7}};let r=Math.min(a,500);return r===7&&n===1})()",
+            "(()=>{let x=Symbol();try{Math.min(x,500)}catch(e){return e instanceof TypeError}return false})()",
             "(()=>{try{Math.min(Symbol())}catch(e){return e instanceof TypeError}return false})()",
             "Object.defineProperty(Math.min,'length',{value:99}); Math.min(2,3)===2",
             "(()=>{let o={x:9,m(a,b){return this.x+a+b}};return o.m(1,2)===12})()",
@@ -198,6 +194,37 @@ mod layout_tests {
         }
         assert_eq!(runtime.0.active_frame_depth.get(), 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn variable_method_argument_consumes_linked_native_fact() {
+        use crate::engine::api::{Runtime, Value, profiling::CostProfile};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        // Resolve the lazy builtin once; the selected own-data path must be
+        // exercised, while first-access autoinit keeps its canonical fallback.
+        context.eval("Math.min").unwrap();
+        let profile = CostProfile::start();
+        assert_eq!(
+            context
+                .eval("(()=>{let i=7;let result=Math.min(i,500);return result})()")
+                .unwrap(),
+            Value::Int(7)
+        );
+        let costs = profile.snapshot();
+        assert_eq!(
+            costs.owned_execution_events.get("method_call_span"),
+            Some(&1)
+        );
+        assert_eq!(
+            costs
+                .owned_execution_events
+                .get("native_linked_classification_consumed"),
+            Some(&1)
+        );
+        assert_eq!(costs.legacy_dispatches, 0);
+        assert_eq!(costs.owned_bridge_exits, 0);
     }
 
     #[test]

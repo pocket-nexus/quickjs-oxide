@@ -229,17 +229,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     let mut slots = transaction.slots();
     let cold = &mut *frame.cold;
     let runtime = cold.function.runtime();
-    let mut pc = ProgramCounter::new(&mut frame.resume_pc);
+    let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
     // Preserve the cold path's observation order, but keep this authenticated
     // frame resident. No slot borrow crosses active-PC publication or Drop.
     macro_rules! release_outside_slots {
         ($operation:expr) => {{
             drop(slots);
+            pc.publish_fault();
             runtime
-                .update_active_bytecode_pc(
-                    cold.active_frame,
-                    super::BytecodePc::new(frame.fault_pc),
-                )
+                .update_active_bytecode_pc(cold.active_frame, super::BytecodePc::new(pc.fault))
                 .map_err(runtime_error_to_vm_error)?;
             slots = transaction.slots();
             let released = $operation;
@@ -249,18 +247,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
         }};
     }
     loop {
-        frame.fault_pc = pc.resume;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("run_frame_fault_pc_write");
+        pc.fault = pc.resume;
         let instruction = frame
             .executable
             .code
-            .get(frame.fault_pc)
+            .get(pc.fault)
             .ok_or_else(|| Error::internal("owned bytecode ended without return"))?;
         #[cfg(feature = "profiling")]
         let observed_depth = slots.depth();
-        let mut next_pc = frame
-            .fault_pc
+        let mut next_pc = pc
+            .fault
             .checked_add(1)
             .ok_or_else(|| Error::internal("owned program counter overflow"))?;
         let handled = match instruction {
@@ -1090,29 +1086,23 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                if frame
-                    .executable
-                    .fusion
-                    .local_add_span(frame.fault_pc)
-                    .is_some()
-                {
+                if frame.executable.fusion.local_add_span(pc.fault).is_some() {
                     if let Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) =
-                        frame.executable.code.get(frame.fault_pc + 1)
+                        frame.executable.code.get(pc.fault + 1)
                     {
                         if slots.local_add_supported(runtime, *index, *right)? {
                             return Ok(RunExit::AddLocal);
                         }
                     }
                 }
-                if let Some(update) = frame.executable.fusion.update(frame.fault_pc) {
+                if let Some(update) = frame.executable.fusion.update(pc.fault) {
                     if fusion::update_local(&mut slots, *index, update)? {
                         #[cfg(feature = "profiling")]
                         fusion::record_span(
-                            &frame.executable.code
-                                [frame.fault_pc..frame.fault_pc + update.instructions],
+                            &frame.executable.code[pc.fault..pc.fault + update.instructions],
                             observed_depth,
                         );
-                        pc.resume = frame.fault_pc + update.instructions;
+                        pc.resume = pc.fault + update.instructions;
                         continue;
                     }
                 }
@@ -1454,9 +1444,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::Neq
             | Instruction::StrictEq
             | Instruction::StrictNeq
-                if frame.executable.fusion.compare_branch(frame.fault_pc) =>
+                if frame.executable.fusion.compare_branch(pc.fault) =>
             {
-                let branch_pc = frame.fault_pc + 1;
+                let branch_pc = pc.fault + 1;
                 let Some(target) = fusion::compare_branch(
                     &mut slots,
                     instruction,
@@ -1478,11 +1468,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 };
                 #[cfg(feature = "profiling")]
                 fusion::record_span(
-                    &frame.executable.code[frame.fault_pc..frame.fault_pc + 2],
+                    &frame.executable.code[pc.fault..pc.fault + 2],
                     observed_depth,
                 );
                 pc.resume = if target == usize::MAX {
-                    frame.fault_pc + 2
+                    pc.fault + 2
                 } else {
                     target
                 };
@@ -1926,9 +1916,9 @@ mod tests {
         assert_eq!(result, Value::Int(4950));
         let costs = profile.snapshot();
         assert!(costs.owned_instructions > 1000, "{costs:?}");
-        // Fault stays observable in Frame at each dispatch; only resume is cached.
+        // Both frame PCs are materialized once when the owned loop exits.
         let fault_writes = costs.owned_execution_events["run_frame_fault_pc_write"];
-        assert!(fault_writes > 100 && fault_writes <= costs.owned_instructions);
+        assert_eq!(fault_writes, 1);
         assert_eq!(costs.owned_execution_events["run_frame_resume_pc_write"], 1);
         assert_eq!(costs.owned_execution_events["runtime_pc_publication"], 1);
         assert!(

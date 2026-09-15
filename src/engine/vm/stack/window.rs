@@ -19,6 +19,32 @@ pub(in crate::engine::vm) struct FrameTransaction<'a> {
     window: &'a mut FrameWindow,
 }
 impl FrameTransaction<'_> {
+    pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&Value, Error> {
+        self.store.peek_current(self.window, offset)
+    }
+    pub(in crate::engine::vm) fn validate_call_value_domains(
+        &self,
+        runtime: &Runtime,
+        count: usize,
+        method: bool,
+    ) -> Result<bool, Error> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
+        self.store
+            .validate_call_value_domains_current(self.window, runtime, count, method)
+    }
+    pub(in crate::engine::vm) fn take_native_call_operands(
+        &mut self,
+        runtime: &Runtime,
+        count: usize,
+        method: bool,
+    ) -> Result<(Vec<Value>, Value), Error> {
+        self.store
+            .reserve_native_argument_depth(runtime.0.active_frame_depth.get().saturating_add(1))?;
+        self.store
+            .take_native_call_operands_current(self.window, count, method)
+    }
+
     /// The callback may allocate primitive storage but cannot access this
     /// transaction or execute JS. Borrowed inputs cannot escape its result.
     pub(in crate::engine::vm) fn with_local_add_inputs<T>(
