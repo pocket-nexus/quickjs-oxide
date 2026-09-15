@@ -1,8 +1,10 @@
 # Primitive VM 新 S10–S12 计划：惰性帧协议、窄状态机与属性读内联缓存
 
+**阶段指引的适用范围：**以下缓存种类、IC 覆盖范围、退化策略和代码布局手段是 S10–S12 的阶段方案及实现记录，不构成后续优化的项目级限制。后续方案依据语义、有效性、所有权和性能证据选择。
+
 2026-09-15 用户决定：原 [S10（退役旧执行路径）](primitive-vm-commit-plan.md#s10--refactorvm-finish-validation-and-retire-the-previous-execution-path)顺延为 S13；在它之前插入三个结构性修复阶段，作为新的 S10、S11、S12。本阶段**先设计后实现，设计与实现期间不做 benchmark/Profile**；测量只发生在各阶段验收点，沿用 S09 的三轮公平复测与单变量归因纪律。S09 的未完成状态与退出条件不因本计划改变。
 
-**本次执行授权（覆盖下文旧测量顺序）：**用户已要求分别用三个 commit 完成新 S10、S11、S12，允许并行独立工作，不要求向后兼容。S12 带精确失效机制的属性位置缓存已授权，无需再次确认旧禁令例外。全部代码结束后额外逐项 review，仅核对 S10–S12 实现覆盖，发现遗漏必须补齐；之后只对最终新核心统一进行一轮 benchmark/Profile，复用旧 S0，包含 getter/proxy/mixed 探针级 Profile。期间不做 benchmark/Profile，不运行旧核心。阶段实现与语义检查按依赖推进，G 与 S13 不纳入。
+**本次执行授权（覆盖下文旧测量顺序）：**用户已要求分别用三个 commit 完成新 S10、S11、S12，允许并行独立工作，不要求向后兼容。S12 实施带精确失效机制的属性位置缓存。全部代码结束后额外逐项 review，仅核对 S10–S12 实现覆盖，发现遗漏必须补齐；之后只对最终新核心统一进行一轮 benchmark/Profile，复用旧 S0，包含 getter/proxy/mixed 探针级 Profile。期间不做 benchmark/Profile，不运行旧核心。阶段实现与语义检查按依赖推进，G 与 S13 不纳入。
 
 设计参照：CPython 3.11 的 [inlined Python function calls](https://docs.python.org/3/whatsnew/3.11.html#inlined-python-function-calls) 与 [cheaper lazy Python frames](https://docs.python.org/3/whatsnew/3.11.html#cheaper-lazy-python-frames) 是成对改动——先把帧做便宜（lazy frames 贡献 3–7%），内联调用（1–3%）才能兑现。本 PR 的 stack-vm 迁移等价于前者的 inlined calls（递归原生栈 → 扁平 run 循环 + 显式帧栈；S0 在 depth 512/2048 探针全部栈溢出、新核心全部通过即其证据），但帧仍是"急切且宽"的。新 S10 补齐 lazy frames 对应物；S11、S12 分别处理状态机结构与属性读驻留。
 
@@ -78,7 +80,7 @@
 - **失效机制（必须精确枚举后实现）**：heap 为 `FunctionBytecodeId` 的每次重发布/替换递增代号。审计条目 AU-1：枚举所有使 `snapshot_function_bytecode_owned` 结果变化的写入点（函数字节码重发布、realm 卸载、debug 信息剥离等），逐点接入代号递增；漏一处即缓存不健全，审计不通过则本条目降级为"仅 per-execution 最近调用点 memo"。
 - **root 问题**：`PublishedFunctionSnapshot.root: FunctionBytecodeRef` 持 Runtime 克隆，不能存进 heap 对象。设计为缓存只存 `Rc<PublishedFunctionData>` + `FunctionBytecodeId`；帧需要 root 的场景（`eval_environment`、活动帧物化时的 `root().unwrap()`，`frames.rs:945`）在 S10.3 的惰性物化点按需重建。审计条目 AU-2：枚举帧生命周期内所有 `root` 消费点，确认均可迁移到物化点或按需构造。
 
-**与账本禁令的关系。** commit-plan.md P2 的禁令针对"无失效机制缓存"与运行期 shape/属性值缓存。本缓存缓存的是**发布期事实**（P2 本身要求"发布期事实随代码走"），且带精确失效代号，属 P2 的运行时索引化，不触碰属性值/shape。在实现前把这一解释回填进 commit-plan 账本，避免与 S09.1/R5.4 行冲突。
+**缓存事实及有效性。**本阶段缓存发布期事实，以精确失效代号维护其运行时索引；属性位置和值缓存按各自依赖事实维护有效性。
 
 **安全模型不变。** `OrdinaryCall` 见证类型仍是唯一进入 `install` 的通道；缓存只加速见证的构造，不提供绕过域检查/closure 校验的路径。缓存命中路径必须保留 `belongs_to` 检查与操作数域检查的原有顺序（`enter_selected` 中 select→validate 的错误顺序契约）。
 
@@ -150,7 +152,7 @@
 1. **合并为单层穷尽 `match`**。两级 if 链重写为一个对 `RunExit` 的穷尽 `match`（rustc 对无守卫穷尽 match 生成跳表），每臂调用一个 `#[inline(never)]` 处理函数；`forwarded`/`exit` 重赋值贯穿逻辑改为处理函数返回统一的窄 `Disposition` 枚举（Entered/Complete/Bridge/Rethrow），消除臂间状态穿透。热臂（Call/GetField/Numeric/Complete）已在 `ready::run` 内层处理的保持不动——本条只重排**冷边界**，不改 ready 热循环语义。
 2. **宽状态 Box 化 + `&mut` 推进（P3 推广）**。定位所有 >64 B 按值搬运的协议结构（首要嫌疑：R2 残余行的 `Step`/`Resume`、`SliceResume`、`PendingIterator` 相邻家族、`Frame` 在 `prepare_push().install()`/`pop` 的整体 move）。逐个改为：驻留 + `&mut` 推进，或把宽 payload 装 Box 使枚举本体 ≤32 B。真实等待才构造宽结构的原则（P3）扩展为全家族规范。
 3. **尺寸回归断言**。仿 `driver/ordinary.rs:231` 的 ABI 断言测试，为 `RunExit`、`Disposition`、各驱动 `Step`/`Resume`、`Frame` 增加 `size_of` 上限断言，防止后续提交无声退化。
-4. **代码布局配套**（不做 PGO，纯源码手段）：冷错误构造、诊断、profiling 分支全部 `#[cold]`/`#[inline(never)]` 外提出 `run` 与 ready 循环，压 `.text` 热区。
+4. **代码布局配套**（本阶段采用源码布局优化）：冷错误构造、诊断、profiling 分支全部 `#[cold]`/`#[inline(never)]` 外提出 `run` 与 ready 循环，压 `.text` 热区。
 
 ### S11.3 验收
 
@@ -161,23 +163,23 @@
 
 目标用例：全部 6 个 v8-* 综合（earley-boyer/richards/raytrace/crypto/splay/deltablue）+ prop_* 族。对应 CPython 3.11 的另一半：PEP 659 自适应特化。依赖 S10.3（命中路径要求零 PC 发布）与 S11（驻留分派稳定）。
 
-### 5.1 前置：禁令处理
+### 5.1 阶段方案与有效性
 
-commit-plan.md P2 明文"不建立任何运行期 shape/属性值缓存"。S12 是对这条禁令的**有条件放开**，须用户在阶段开工前确认。条件：
+S12 采用属性位置缓存：
 
-- 只缓存**位置事实**（对象布局代号 + 槽偏移 + 原型链深度），永不缓存属性值；
+- 本阶段条目保存位置事实（对象布局代号 + 槽偏移 + 原型链深度），属性值在命中时读取；
 - 每条缓存带精确失效代号（heap 侧对象布局/原型链变更递增 generation；`FrameCold.property_generation` 与既有 collection-records generation 机制为先例）；
-- miss/失效一律原路进 `property_driver`，语义路径零分叉。
+- miss/失效沿用 `property_driver`，保持原有可观察语义。
 
-若用户不放开禁令，S12 退化为纯 P4 扩展（更多 run 内受守卫静态键直读叶子），预期收益显著缩水，v8-* 综合项可能无法收敛——该取舍在开工前明示。
+后续可扩展缓存内容与覆盖范围；属性值缓存需要同时处理值变更依赖和持有值的生命周期。
 
 ### 5.2 设计
 
 1. **调用点侧表**：`PublishedFunctionData` 已有 stack-vm 专属 `fusion` 侧表先例（`code/executable.rs:94`）。新增按 GetField 调用点索引的 IC 表（发布期分配定长槽，运行期可变内容与代码本体分离，保持快照数据不可变契约——IC 槽为 `Cell` 数组或独立 per-bytecode 运行态，设计时二选一并审计 GC/多 realm 语义）。
 2. **IC 条目**：`{layout_generation: u64, holder_kind: Own | Proto(depth), slot: u32}`。命中判定 = 一次代号比较；own-data 命中在 run 借用内直接读槽 push 结果，不退出 run、不发布 PC（S10.3 保证）、不进 `read_progress`。
 3. **失效**：heap 对象布局代号在属性增删/attribute 变更/原型替换/字典化时递增。审计条目 AU-5：枚举全部布局变更写入点；与 dictionary-objects/holey-array 既有机制对齐。
-4. **覆盖顺序**：GetField（静态键读）→ 方法取用（与既有 GetField2 fusion span/B4 方法 span 汇合）→ SetProperty own-data 写（二期，需要 setter/只读检查事实进 IC）。GetElement 与 Proxy 不进 IC（原路）。
-5. **每条目单态起步**：单槽 IC（monomorphic），miss 两次即永久标记 megamorphic 走原路，不做多态链——先取正确性与可预测分支，收益不够再议。
+4. **覆盖顺序**：GetField（静态键读）→ 方法取用（与既有 GetField2 fusion span/B4 方法 span 汇合）→ SetProperty own-data 写（二期，需要 setter/只读检查事实进 IC）。S12 已实现覆盖 GetField/GetField2；属性写、GetElement 与 Proxy 当前沿用通用路径，作为后续扩展项。
+5. **每条目单态起步**：S12 实现采用单槽 IC（monomorphic），两次 miss 后该条目退化至通用路径。这是当前策略的记录；后续可采用多态链、重新特化或其他有性能依据的策略。
 
 ### 5.3 验收
 
@@ -207,3 +209,7 @@ S10 `77153244`、S11 `e0494120` 已实施，S12 与最终报告为第三个 comm
 S11 机器码的主 RunExit 选择为一次跳表，但冷路径仍含领域子操作与返回值条件分支；IPC/branch-miss 改善只在部分目标行兑现。S12 缓存命中路径驻留并复用 B4，全部调用点/输入的 lookup 总量并未因此归零。三个阶段联合单轮不支持独立阶段的因果归因。
 
 结论：本次 S10–S12 计划内实施没有已知遗漏；性能退出条件未全部通过，S09 保持未完成。SetProperty 写 IC 仍是本节 5.2.4 明确的二期，G 与 S13 未实施。所有残余差值见[最终报告](performance/README.md)及其完整 JSON/CSV，不追加本轮测量或范围外优化。
+
+## 后继计划（2026-09-15）
+
+残余 25 项差值已全部下钻到实现层根因并立项修复，见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)。该计划推翻或收窄了本文的三个诊断假设：Map/WeakMap 簇的病 2 假设被最终 IPC 数据证伪，真实根因是 IC 接收者白名单（`property_ic.rs:118-125`）与 native 调用外围；splay/raytrace 的 GetField 残留不是多态失配，而是 IC 的 GC 门控（`ic.rs:27-35`）与 2-miss 永久 megamorphic；`0x18f413` 已确认为 glibc memcpy，主源是 904 字节 ArenaSlot 与 regexp 缓冲的 `try_reserve_exact`。§1.3 未归因清单中除 compile 单轮噪声外的条目均已在新计划中归因。本文其余内容保留为 S10–S12 的历史设计与验收记录。

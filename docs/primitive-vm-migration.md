@@ -1,8 +1,8 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-14。用户已确定使用栈 VM，**S01–S07 阶段验收通过，S08–S10 尚未开始，整体计划尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[S01–S10 逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
+状态：2026-09-15。用户已确定使用栈 VM，**S01–S08、S09（含 N1–N3）与新 S10–S12 已实施；性能退出条件未全部通过，S13（退役旧路径）未实施，整体计划尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
 
-S07 完整测量已完成，固定 58 项耗时均回退，67 个成本样本零旧分派/桥接。依据[回退分析](performance/README.md)，S08/S09 已合并原定优化与回退修复并细化计划；以下新增条目仍为待做，不改变 S01–S07 的阶段验收结论。
+S10–S12 最终单轮 403/403 有效，58 fixed 仍有 25 项高于 S0（见[联合报告](performance/README.md)）；残余差值的根因与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)。以下能力与结构条目的验收口径不变；历史 S07 回退分析保留为证据（[回退分析](performance/README.md)）。
 
 ## 1. 起点与范围
 

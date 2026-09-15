@@ -1,5 +1,9 @@
 # Owned execution spans
 
+The span coverage and completion placement below describe the implemented
+stages, not permanent restrictions on future optimizations. Extensions preserve
+observable semantics, owner lifetimes and the validity of borrowed views.
+
 S08's finite fusion is an immutable execution projection, not a new serialized
 opcode set. `FunctionBytecodeData` owns the plan, and rooted execution snapshots
 share it. The verified instruction array remains canonical, including all source
@@ -47,9 +51,8 @@ String and BigInt storage cannot observe the runtime PC, so these paths commit
 the final fault/resume pair without an extra store active publication. An
 internal replacement error still publishes the canonical store site. A trailing
 Drop only removes the redundant
-assignment-result copy; its local owner remains live. This is a cold completion
-optimization and does not move String/BigInt allocation into the continuous run
-borrow. Captured, TDZ and const stores are excluded.
+assignment-result copy; its local owner remains live. This stage uses cold completion. String/BigInt allocation occurs outside
+the RunSlots borrow; that boundary does not require leaving the run invocation. Captured, TDZ and const stores are excluded.
 
 LocalAdd begins before either local is copied onto the operand stack. Publication
 requires normal local definitions, a mutable left destination, the same left
@@ -88,7 +91,8 @@ live lookup at GetField2; getter/Proxy and unsupported read paths retain the
 canonical fallback. An eligible own-data read can retain its receiver/callee,
 materialize the literals/direct binding copies, publish CallMethod's canonical site, and enter
 the existing call driver directly. Any transient native classification belongs
-to that same retained callee and runtime; it is not a reusable property cache.
+to that same retained callee and runtime; the stage stores it as a transient fact. Reuse across later lookups requires
+validation of the corresponding property dependencies.
 The call's existing realm, arity, budget, brand, error and cleanup rules remain
 authoritative.
 
@@ -96,8 +100,14 @@ authoritative.
 
 Same-frame completion in `ready::run` is different from remaining in one `run`
 invocation: the former returns from run and rebuilds its transaction on reentry.
-ConvertAdd/ConvertPlus and LocalAdd keep their existing completion protocols;
-their ready-loop residency does not establish run residency.
+ConvertAdd/ConvertPlus and LocalAdd currently keep their existing completion
+protocols; their ready-loop residency does not establish run residency. This
+describes the implemented state, not a boundary constraint: the N1 pattern
+below (end RunSlots, allocate inside the live FrameTransaction, reopen slots)
+already satisfies the "allocation outside the RunSlots borrow" rule inside a
+single run invocation. The S14–S20 recovery plan (S15) extends run residency to
+Add's String/BigInt forms on this pattern; this section is rewritten when that
+stage lands.
 
 N1 defines a narrow boundary for eligible non-Object `NumericKind` arithmetic
 after existing Number fast paths. Comparisons, abstract equality, Object inputs

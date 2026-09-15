@@ -100,7 +100,7 @@ struct StackDraft {
 
 语义必需的验证不得因预算耗尽跳过。可选分析达到预算时使用未优化码或保守事实，丢弃依赖未收敛结果的改写；不能用不完整初始化或活跃信息删除检查/roots。
 
-本轮不引入全函数值版本、phi、去 SSA、寄存器分配、全堆 MemorySSA。未来若有明确跨块优化需求，可以重开编译表示议题；它不是本次调用和数值优化的阻塞条件。
+本轮采用局部分析方案。全函数值版本、phi、去 SSA、寄存器分配及全堆 MemorySSA 等方案按后续跨块优化需求评估，不作为本次调用和数值优化的前置工作。
 
 ## 3. 指令的唯一契约
 
@@ -283,7 +283,7 @@ enum OperationStep {
 
 示例类型表达数据契约，具体大 payload 由 OperationStore 拥有。每个请求关联 operation ID、恢复阶段和单次回复状态；拿到错误 owner、陈旧 ID 或第二次回复必须拒绝。同步纯计算不创建 operation。
 
-`value/conversion` 保存 ToPrimitive 的 hint、receiver、已获取 method、当前阶段；`object` 保存 Get/Set/Proxy 的进度；`builtins/array` 保存 sort/map 等跨 callback 状态。`vm/operation` 仅做有类型的登记和 step 分派，不复制这些算法。登记可先使用封闭 enum 的领域状态及冷存储，不引入插件框架、任意 closure 捕获或通用 async Future 执行器。
+`value/conversion` 保存 ToPrimitive 的 hint、receiver、已获取 method、当前阶段；`object` 保存 Get/Set/Proxy 的进度；`builtins/array` 保存 sort/map 等跨 callback 状态。`vm/operation` 仅做有类型的登记和 step 分派，不复制这些算法。本阶段登记采用封闭 enum 的领域状态及冷存储。
 
 Add 慢路的流程是：保留两输入 → 左 ToPrimitive → 右 ToPrimitive → String/Number/BigInt 决策 → 计算 → 提交。子操作需要 JS 时返回 driver；子帧返回后恢复下一阶段。getter 已取到、valueOf 已调用等事实只发生一次。
 
@@ -367,7 +367,7 @@ S07 后的测量顺序调整为：冻结 PR19/S07 → S08 小型状态传递与�
 
 目标结构中，mod.rs 仅组织入口与导出。model/ir、model/bindings、model/scope 按共同使用的数据分组；parser 中按语法职责组织函数，context/builder 集中管理解析游标和发射状态。已有 class、destructuring 等算法继续使用，不另写子集 parser，也不把所有类型搬成新的巨型 model.rs。
 
-FunctionIr 目前同时含 `last_member_reference`、`last_identifier_reference`、`break_controls`、`stack_depth` 等解析期状态，以及闭包、eval、参数布局等后续产物。需要区分“正在构造函数的状态”和“供解析后阶段消费的数据”。先以组合结构和消费式 finish/resolve 入口表达阶段完成；复用同一份 owned 存储，不复制完整 IR，也不建立泛化 typestate 框架。阶段标记只在责任明确后消除，不简单删除验证它们的检查。
+FunctionIr 目前同时含 `last_member_reference`、`last_identifier_reference`、`break_controls`、`stack_depth` 等解析期状态，以及闭包、eval、参数布局等后续产物。需要区分“正在构造函数的状态”和“供解析后阶段消费的数据”。先以组合结构和消费式 finish/resolve 入口表达阶段完成；复用同一份 owned 存储，以减少完整 IR 复制；本阶段采用具体的阶段类型表达责任。阶段标记只在责任明确后消除，不简单删除验证它们的检查。
 
 **提交：S01。验收：**新增融合规则定位到 optimize/指令契约，词法错误顺序变化定位到 parser，绑定规则变化定位到 resolution/model；不会三者都经由父模块共享任意可变状态。完整语法、捕获与 eval 回归继续通过。
 
@@ -412,7 +412,7 @@ FunctionIr 目前同时含 `last_member_reference`、`last_identifier_reference`
 
 VM 的 protocol、activation、frame_execution、dispatch、numeric 等文件通过 `use super::*` 获取父模块 namespace；vm/mod.rs 又汇集并通配导出多个子模块。compiler/class/fields 等使用 `super::super::*`。Rust 的父子可见性允许这种写法，但读者难以从一个文件的入口识别依赖。
 
-生产模块从实际所有者显式导入，相关共享类型放进小型 model/protocol；模块入口只显式导出消费者需要的名称。保留一个 crate 与当前公有 API 边界，不为整理目录引入 trait 注入层，也不以扩大 pub 可见性换取任意访问。单元测试中的 `use super::*` 和局部 enum variant 导入不做机械禁止。
+生产模块从实际所有者显式导入，相关共享类型放进小型 model/protocol；模块入口只显式导出消费者需要的名称。保留一个 crate 与当前公有 API 边界，本阶段按实际消费者组织接口与可见性。单元测试中的 `use super::*` 和局部 enum variant 导入不做机械禁止。
 
 [value/number](../src/engine/value/number/mod.rs) 的既有 pow、ToInt32、float16 与完整格式化算法已在 S03 按 operations/integer/format/float16 拆分，原入口和测试保留；vm/numeric 继续调用同一纯算法。普通槽和 Number 主循环已在非默认 `stack-vm` 配置接入，S03 已验收；显式调用和其余领域协议仍按 S04–S07 迁移。对象 ToPrimitive/ToNumeric 属于 value/conversion，栈 pop/push 属于 run/stack。源码中的 numeric、numeric_execution、dispatch 不再让调用者猜测同一操作究竟在哪层完成；必要的冷函数仍保留，最终机器码帧大小另行测量。
 

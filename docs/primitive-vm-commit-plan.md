@@ -1,6 +1,10 @@
 # 栈 VM：分阶段 commit 计划
 
-状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](performance/README.md)，[N1–N3 报告](performance/README.md)保留为直接前版证据。
+**本次执行指令（覆盖旧验收流程）：**分阶段提交全部实现，代码全部完成后额外逐项覆盖 review，遗漏补齐后仅对最终新核心执行一轮 benchmark/Profile；S0 与 QuickJS 复用本地已有数据。实现期间不运行 benchmark、cost profile 或 CPU Profile，不按阶段重复测量。测量结果仅保留在本地 `target/performance-retained/`，不提交 Git。阶段提交已获授权，无需再次等待提交指示。
+
+**阶段指引的适用范围：**本文中的技术选型、覆盖顺序和实现策略描述对应阶段的实施方案与历史结果，不构成项目级优化禁令。后续可以采用运行期 shape/位置/属性值缓存、解析结果缓存、多态 IC、PGO 及其他优化；按语义、失效、所有权和性能证据评估方案。用户明确的执行约束继续有效。
+
+状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](performance/README.md)，[N1–N3 报告](performance/README.md)保留为直接前版证据。全部残余差值（fixed/探针/Score/RSS/编译五类清单）的实现层根因（十类，含 Profile 计数、probe 事件计数与 file:line 证据；其中编译 5 项判定为单轮测量伪影、RSS 2 项判定为映像差归 S13）与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)，对应提交单元见文末[《S14–S20 修复阶段》](#s14s20-修复阶段2026-09-15-立项)。
 
 **用户最新执行约束（2026-09-15）：后续仅构建、测试、benchmark 和 Profile 新执行核心（当前 `--features stack-vm`）。不再构建或运行旧 default 执行路径，也不重跑 S0/S07/S08 等历史候选；旧数据只读取已有记录。本文以前要求 default/stack-vm 双配置或新旧对跑的流程不再适用。历史已执行记录保留，但不能据此再次启动旧路径。Test262/语义 oracle 仍用于核对新核心，不把它们误称为另一个性能候选。**
 
@@ -382,7 +386,7 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 
 #### S08.3 — 认证运行窗口，减少普通槽操作的重复工作
 
-- 在进入 run 时认证 FrameId、窗口、已验证布局和容量，建立只在本次连续执行内有效的窗口视图。简单局部和操作数使用已认证索引；在切帧、扩容、释放 drain、分配/GC、回调或挂起前结束借用，恢复后重新取得视图。继续禁止 unsafe。
+- 在进入 run 时认证 FrameId、窗口、已验证布局和容量，建立只在本次连续执行内有效的窗口视图。简单局部和操作数使用已认证索引；在切帧、扩容、释放 drain、分配/GC、回调或挂起前结束借用，恢复后重新取得视图。该阶段使用 safe Rust 实现；项目当前 lint 配置见 Cargo.toml。
 - immediate 的 copy 和 Number 运算保持短小，Object/Symbol 可失败 retain 使用独立 helper；已证明无分配/回收/回调的引用事务可继续留在热路，复杂释放才退出到冷边界。String/BigInt 共享存储和最后引用释放规则不变，不将 value copy 一概视为可删除的 RC。
 - 两个已认证的 Number 操作数就地消费/替换，省掉重复 peek/pop/push 认证与包装；按实际活跃区更新 sp，死槽立即失去 owner。先证明操作不会分配/回收/回调，才允许在连续运行区内完成。
 - 本步先使用规范内存栈，保留绑定的 Direct/Captured/Uninitialized 区分；不同时引入 S09 的栈顶缓存或紧凑编码。原始实参、checked/readonly 绑定仍走各自规则。
@@ -429,7 +433,7 @@ Infinity 委托验证相同的可捕获 InternalError 和后续执行，未改�
 - 在 code/heap 的发布与闭包构造边界确认 bytecode、realm、function kind、binding layout、closure count/IDs 的不变量；普通入口一次认证形成私有调用视图。合并 `direct_call_target_from_value`、`bytecode_for_callable`、kind 获取、snapshot 与 active-frame 发布中已证明重复的查询；保留外部输入、跨 Runtime、损坏输入和恢复入口的验证及错误顺序。
 - 以一个真实 callee owner 保活其 bytecode/closure 强边；提供只在该 owner 下使用的 immutable environment view，或发布时创建的共享索引数组。普通调用不再 clone `Vec<VarRefId>` 并 collect 全环境 `Vec<VarRefRoot>`。不能只做单捕获特例，也不能把同样的逐 cell 工作藏到另一层缓存。
 - 捕获值继续通过原 cell 读写内核动态访问，TDZ/const/private、重复 ID 强边计数和 eval 可见性不变。共享 ID 数组不是 GC root；不得在 heap 的缓存中存 Runtime-owning roots 造成环。独立挂起/外部生命周期通过显式 owner 转交保持存活。
-- 列出 function、bytecode、realm/global、closure、参数、结果的 owner 表和观察边界。运行帧持根时，登记只持 token/身份；移除与运行帧重复的 guard roots 必须先完成契约改造。单次借用不跨 GC、释放 drain、JS/host 回调或 arena 扩容；不使用 unsafe/self-referential 裸指针。
+- 列出 function、bytecode、realm/global、closure、参数、结果的 owner 表和观察边界。运行帧持根时，登记只持 token/身份；移除与运行帧重复的 guard roots 必须先完成契约改造。单次借用不跨 GC、释放 drain、JS/host 回调或 arena 扩容；该阶段采用 safe Rust 的 owner/token 方案。
 - 把不变的调用布局/原始实参观察需求放在已发布事实中，避免逐调用重新扫描代码。函数对象的可变属性和捕获值不作不失效的调用缓存。
 
 **验证：**固定调用数，环境宽度 0/1/8/64/256，包含本次完全不读取捕获的分支；分别测创建、稳态调用和最终回收。入口和退出的环境复制/逐 cell root 工作必须消失，调用成本不随 C 线性增长。覆盖外域/损坏 metadata、callee 最后引用、返回逃逸闭包、重复捕获、重入、挂起和释放。
@@ -576,7 +580,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 **覆盖不能只限字符串减法。** `string_to_float/int` 的 500,000 次 Numeric 已无 Query，但各有约 3,000,479 次槽认证；BigInt 的 3,200,000 次 Add/store、int_to_string 的 1,500,000 次、四项字符串构建的 1,600,000 次均**已经融合**。`conversion_driver::complete_primitives` 的当前 CPU self 在 BigInt/int_to_string/large1/large2 为 27.31%/28.76%/33.29%/28.72%；新补 small1/small3 为 35.02%/32.53%，两者各 9,603,679 次槽认证、仅启动阶段的 14 次 Query dispatch。主要新工作是压缩已有完成协议，不是新增 fusion 或改字符串算法。
 
 1. `driver/ready.rs` 不再提前对同一 Numeric/Add 输入各做独立 checked peek。共享 primitive 输入入口在一个短期 RunSlots 中按**该旧入口的错误/域检查次序**完成分类、现有 add_store 目的地认证和 owner 取出。输入是拥有式 Value 和小型 Operand/ExistingDirectLocal 目的地，不携带跨分配的槽引用。Object/不支持 kind 退回原路径；Numeric 的坏槽/缺左槽保留原 right-pop/left-pop 失败时的部分消费语义，不能擅自变成另一种原子性。
-2. 结束输入窗口后调用现有 `to_numeric_primitive` + `binary`、`add_primitives`/原有 unary-plus 内核，严格左到右转换；纯二元算术不再创建 Left/Right NumericResume，直接返回值或原错误。BigInt 必须覆盖 Mul **和**两次 Add。字符串 parsing/格式化/flat/rope 内核不变，不缓存常量结果，不创建第二套语义 match。
+2. 结束输入窗口后调用现有 `to_numeric_primitive` + `binary`、`add_primitives`/原有 unary-plus 内核，严格左到右转换；纯二元算术不再创建 Left/Right NumericResume，直接返回值或原错误。BigInt 必须覆盖 Mul **和**两次 Add。该阶段复用字符串 parsing/格式化/flat/rope 内核及共享语义实现。
 3. `string_to_number` 目前会分配 UTF16 Vec 和 String，BigInt/拼接也可分配和释放，所以运算保留在 RunSlots 之外。一个输出事务重新认证、写回 operand 或现有 direct-local fusion；若有 previous/value 两次 push，仍保留 previous→value 的原提交及失败顺序，不能借“事务”改为全有或全无；写 local 前发布原 store fault/resume PC，离开借用后才释放被替换的旧 owner，保留 span 2/3、discard、const/TDZ/captured fallback 和结果/异常物化顺序。
 4. 同步成功直接回到运行状态，通用 CallStep/Query 适配只保留在冷分支。`proxy_get_driver.rs::start_numeric` 的 generation checked_add/store 移到 Complete/Throw 之后的真实等待分支；同步数值不签发回调身份。Add 的 ConversionTask next_operation 属于另一协议，若统一入口需要移动它，必须显式覆盖其溢出和对象 fallback，不能悄悄混用两种身份。
 
@@ -589,7 +593,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 **读路径证据。** `property_driver::read_progress` 已借用 receiver，静态键也已有 `property_key_atoms`，但静态读取仍建立 PropertyKey owner、进入外围 driver 再提交。Array.length 有 3,054,277 次 GetField exit、9,163,312 次槽认证；String.length 为 1,946,213/5,839,115。`stack.rs::array_immediate_read_current` 只接受 Int key，for-in 的 String 索引全数退回。新补 Arguments profile 有 230,388 次 GetElement exit 和 2,304,363 次槽认证；`object/ordinary.rs` 对 Arguments 转到 special→完整 property descriptor→VarRef 值的路径，`arguments_test` 本身无形式参数、按三个 extra-argument cell 读取。这里的额外读取协议已定位，尚不能宣称它解释了全部 1.26% 总耗时差异。
 
 1. **单次读取事实和结果提交。** 扩展共享 property read probe 的短期借用键视图，静态 atom 的生命周期绑定已有 PublishedFunctionSnapshot owner；同步路径不再为该键复制独立 root，需要 pending 才提升。真正 owning Object/String 等结果仍在允许分配/清理的 driver 边界由原内核取得一次并一次提交；receiver 已有 borrowed 优化保留。不要把 Object root retain/最终 release 塞入无分配 RunSlots。
-2. **受守卫的即时读取。** 在现有 shared storage/RunSlots leaf 上补 genuine Array 的 linked `length`、primitive String 的 UTF16 `len`、canonical String 数组下标和 Arguments 即时 own-index 读取。String.length 使用已有 linked atom，不在每次读取中重新 `intern_property_key("length")`；不创建 boxed String。String key 与 base 必须分别通过 release preflight：当前 Int-key helper 直接 drop key，扩展后仅 Ready 的 String Rc 可以在窗口内释放，最后一个 key owner 必须走下述边界释放。for-in 的局部变量仍持有 key，故该守卫允许此 fixture 的索引读取命中。数组下标复用 canonical 规则，`'01'`、`'-0'`、`'4294967295'` 不能当普通数组索引。Arguments 在同一次 heap 借用中定位当前 own slot/VarRef 并读取原 cell，base owner 全程保活；仅即时值且 release preflight 成功才直接完成，Uninitialized、失效 cell、引用值回原错误或 lookup，不能把 VarRefId 跨释放边界保存；删除/重定义/断开映射/accessor/缺项走共享 lookup，不缓存调用时的值，不改变 arguments 创建/逃逸语义。Array holes、prototype、AutoInit、namespace/typed-array 等沿用精确 fallback。
+2. **受守卫的即时读取。** 在现有 shared storage/RunSlots leaf 上补 genuine Array 的 linked `length`、primitive String 的 UTF16 `len`、canonical String 数组下标和 Arguments 即时 own-index 读取。String.length 使用已有 linked atom，不在每次读取中重新 `intern_property_key("length")`；不创建 boxed String。String key 与 base 必须分别通过 release preflight：当前 Int-key helper 直接 drop key，扩展后仅 Ready 的 String Rc 可以在窗口内释放，最后一个 key owner 必须走下述边界释放。for-in 的局部变量仍持有 key，故该守卫允许此 fixture 的索引读取命中。数组下标复用 canonical 规则，`'01'`、`'-0'`、`'4294967295'` 不能当普通数组索引。Arguments 在同一次 heap 借用中定位当前 own slot/VarRef 并读取原 cell，base owner 全程保活；仅即时值且 release preflight 成功才直接完成，Uninitialized、失效 cell、引用值回原错误或 lookup，不能把 VarRefId 跨释放边界保存；删除/重定义/断开映射/accessor/缺项走共享 lookup，读取当前有效的映射值，保持 arguments 创建/逃逸语义。Array holes、prototype、AutoInit、namespace/typed-array 等沿用精确 fallback。
 3. **primitive 最后 owner 的紧凑释放。** `heap/slot_ownership.rs` 已区分 PrimitiveStorage 与可能触发 heap cleanup 的释放。for-in 的最后 String Rc 必须继续在 RunSlots 之外析构；为已选 ReplaceBinding/ReleaseOperand 提供同帧短完成入口：先发布准确 PC/槽状态，结束借用，再按原顺序释放、恢复运行。不能把所有 PrimitiveStorage 直接改为 Ready，不能推迟到循环结束或人工保留历史键。
 
 **写入/复制/删除证据。** prop_create/array_prop_create 各有 320,002/429,002 次 SetProperty exit，但 Query dispatch 均仅 14 次启动成本：普通 Set 已有本地推进。其余仍反复搬运 `SetStep/SetResume`，`start_write_adapted` 即使完成也提前更新 generation。prop_clone 的 CopyResume 经 OwnKeys/Read/Define 协议，48,037 次 Query；prop_delete 同时含 spread 和 Delete，共 592,359 次 Query。array_length_decr 同时含 slice 及反复 length Set，有 1,107,050 次 Query；`SetStep::advance_without_callback` 当前不本地处理 ArrayLength，而原 `ArrayLengthStep` 对非负 Int 早已能直接返回长度。
@@ -663,7 +667,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 **四条共同机制原则（均为既有模式的推广，不新设特例）：**
 
 - **P1 一次借用一个事务。** 一个逻辑操作 = 输入事务（域检查+分类+取 owner，1 次认证）→ 借用外风险区（分配/解析/错误物化）→ 输出事务（提交+一次打包 PC 发布，1 次认证）。`with_linked_own_read` 为范本；owning 值经 `&mut Option` pending 模式传出借用（`push_pending` 同款），消除第二次 `run_window`。
-- **P2 发布期事实随代码走。** sealed metadata / `PublishedFunctionSnapshot` 携带 native 的 `NativeOperation` kind、静态键 atom（`linked_field_atom` 已有）、fusion span；运行时零重推导。发布期事实不可变，不违反本节“无失效机制缓存”的禁令（S09.1、R5.4 行）；仍不建立任何运行期 shape/属性值缓存。
+- **P2 发布期事实随代码走。** sealed metadata / `PublishedFunctionSnapshot` 携带 native 的 `NativeOperation` kind、静态键 atom（`linked_field_atom` 已有）、fusion span；运行时零重推导。发布期事实不可变；运行期缓存另按其依赖事实维护有效性和所有权。
 - **P3 驻留状态 + 窄效果枚举。** `State` 驻留、`&mut` 推进，阶段间只传窄 action；宽 `Step`/`Resume`/`Next` 仅在真实等待发布时构造一次。`MutationAction`/`SelectedSet`/`IteratorAction` 三处已落地，推广为全家族规范。
 - **P4 run 内受守卫叶子。** 按 `array_immediate_read` 模式扩展 run 可原位完成的操作集（环境 Direct/immediate captured 读、Array/String length、for-in fast-array 推进、`ReplaceBinding`/`ReleaseOperand` 原地处理）；每叶子显式 guard，不命中原路退驱动器，语义路径不变。
 
@@ -671,8 +675,8 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 **分簇计划（编号供残余修复引用；验收计数一律用既有 profiling 事件）：**
 
-- **簇 A 转换完成协议**（BigInt64 +37.31%、string_to_float +26.70%、int_to_string +12.01%、string_build 系）。输入借用已是单事务，残余在输出与频次。A1：输出事务化，一次认证+一次打包 PC 发布（现融合分支发布 resume/fault/active 三处）。A2：`ready::run` 内驻留转换循环，ConvertAdd 完成后直接重入 run，不回 `run_frames_with_state`（普通 Call/Return resident 同款）。A3：为 BigInt/String 加法链补 fusion span，压 `slot_copy.BigIntImmediate`。约束：维持 owned-fusion.md 的“String/BigInt 分配不进 run 借用”，不做 run 内 BigInt 叶子。验收：每转换认证 ≤2、PC 发布 ≤1 组。
-- **簇 B native 同步调用**（Math.min +29.72%、Map/WeakMap +14~18%、depth-native +15~19%）。`begin_synchronous` 已零 Query/零 argv 分配，残余为逐项费用。B1：P2 落地，sealed metadata 携带 operation kind，运行时 `for_target` 调用数归零。B2：`reserve_native_argument_depth` 改增量记账（`installed_wait_depth` 先例）；`identity_completion` 与 generation 推进移入真实等待分支（同 R4.4 遗留）。B3：环境读叶子（P4），消除 `run_exit.Environment` 每调用一次的整程退出。B4：静态键方法取用+调用合并为一次借用内 probe+分类+安装；不缓存 lookup 结果。验收：math_min 认证 ≤4/调用、run 退出 ≤1/调用，depth-native 差 <5%。
+- **簇 A 转换完成协议**（BigInt64 +37.31%、string_to_float +26.70%、int_to_string +12.01%、string_build 系）。输入借用已是单事务，残余在输出与频次。A1：输出事务化，一次认证+一次打包 PC 发布（现融合分支发布 resume/fault/active 三处）。A2：`ready::run` 内驻留转换循环，ConvertAdd 完成后直接重入 run，不回 `run_frames_with_state`（普通 Call/Return resident 同款）。A3：为 BigInt/String 加法链补 fusion span，压 `slot_copy.BigIntImmediate`。借用边界：String/BigInt 分配在短 RunSlots 借用结束后进行；run 函数可以保持驻留，具体完成协议见 N1。验收：每转换认证 ≤2、PC 发布 ≤1 组。
+- **簇 B native 同步调用**（Math.min +29.72%、Map/WeakMap +14~18%、depth-native +15~19%）。`begin_synchronous` 已零 Query/零 argv 分配，残余为逐项费用。B1：P2 落地，sealed metadata 携带 operation kind，运行时 `for_target` 调用数归零。B2：`reserve_native_argument_depth` 改增量记账（`installed_wait_depth` 先例）；`identity_completion` 与 generation 推进移入真实等待分支（同 R4.4 遗留）。B3：环境读叶子（P4），消除 `run_exit.Environment` 每调用一次的整程退出。B4：静态键方法取用+调用合并为一次借用内 probe+分类+安装；复用查找事实时验证其有效性。验收：math_min 认证 ≤4/调用、run 退出 ≤1/调用，depth-native 差 <5%。
 - **簇 C 属性读写驱动**（richards +14.97%、raytrace +14.88%、deltablue +11.27%、splay +10.57%、固定 Earley +26.61%、crypto +9.79%）。C1：读输出单事务，owning 键 pending 传出，`complete_read` 合并为一次认证。C2：R5.4 落实，`SetResume` 驻留 `&mut` 推进，`publish_selected` 及 `clone_set_*` 仅在真实等待发生。C3：R5.5 落实，`advance_without_callback` 本地消费 `ArrayLengthStep::Complete`（`array_length_decr` 现付 1,107,050 次 Query）。C4：R5.2 落实，补 Array length/String length/Arguments own-index 即时读叶子。验收：`set_owner_clone.*` ≈ 真实等待数。
 - **簇 D 迭代协议**（local_destruct +18.65%、for-in +8.22%）。D1：R5.3 落实，`ReplaceBinding`/`ReleaseOperand` 在 run 内借用结束后原地处理再继续（`frame_operations/direct.rs` 逻辑前移；for-in 现付 1,352,500 次 String owner 退出）。D2：for-in fast-array 推进叶子化，`ForInResume::Phase` 驻留帧内（现 2,123,425 次本地 step + 1,379,550 次 ForIn 退出）。D3：非 Array 迭代器的 `PendingIterator` Box（312 B）延迟到真实等待（Array 路径 `iterator_driver.rs:226` 已做）。验收：for-in 每迭代 run 退出 ≤1，local_destruct IPC 回升。
 - **簇 E 正则外围**（v8-regexp +41.28%、replace +19.98%、regexp_ascii/utf16 +11%）。执行器两边相同，回退在外围：整用例 6,981,639 次 query_dispatch、7,284,996 + 3,634,260 次 set owner 克隆、2,531,208 次 dispatch_write.define。E1：直接受益于 C2/C3，先落 C 再复测。E2：match 结果对象/数组按发布期已知键序批量 define，复用 R5 prepared property effect。E3 归因先行：解析多用例 5~10% 的未解析地址 `0x18f413`（原始 perf.data 在本地证据目录）；核对 query_dispatch 的操作构成后再定 E2 覆盖面。`Utf16Units::next` 为两边共有成本，不属于本回退账本，另行提案。验收：query_dispatch 与 set_owner_clone 各降一个数量级。
@@ -693,7 +697,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 本次用户要求覆盖除 G 外的遗漏，实现完全部代码后只测最终代码一轮，再更新状态提交推送。该顺序取代旧节“先提交实现再测量”；既有 S0 三轮数据只读复用，既有 S09.1–S09.3 不重复实施。
 
-- B4：直接 GetLocal/GetLocalCheck/GetArg 参数与字面量进入受守卫方法 span，调用深度/分类/域检查/native argv 转移共享一次认证事务；实际 Math.min(i,500) 命中有语义断言。保留 TDZ/captured/getter/Proxy/effectful 参数与 tail-call 通用路径，不建立跨回调查找缓存。
+- B4：直接 GetLocal/GetLocalCheck/GetArg 参数与字面量进入受守卫方法 span，调用深度/分类/域检查/native argv 转移共享一次认证事务；实际 Math.min(i,500) 命中有语义断言。保留 TDZ/captured/getter/Proxy/effectful 参数与 tail-call 通用路径；复用跨回调的查找事实时重新验证相关依赖。
 - A1：融合转换输出在最终成功位置提交 fault/resume；原语旧值释放删除冗余 active-PC 发布，Object/Symbol 与错误边界保留 canonical PC。
 - 惰性 fault-PC：完成全部观察读取边界审计并实现局部 PC guard，run 退出/错误/unwind 物化，可观察 owner 释放前显式发布。仅本轮组合验证，不伪造独立消融收益。
 - E2：补齐 global @@match/@@split 私有输出数组逐项 generic Define 的实际遗漏，复用连续构造内核，保持创建/追加时机和 realm/回调语义。
@@ -714,7 +718,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 1. **N1 同一 run 内的原语完成边界。** 保留 Number 原位运算；其余 NumericKind 的原语算术（Sub/Mul/Div/Mod/Pow、移位/位运算，以及 Neg/BitNot/Inc/Dec/PostInc/PostDec）在原 run 栈帧内完成。预检原操作数，Object、比较/抽象相等和坏槽仍走 canonical 路径；Add/Plus 的既有 conversion identity 协议不在此处重写。取出原语 owner 后结束短 RunSlots，保持原 FrameTransaction 和 run 栈帧；在借用外调用共享 primitive_output，提交后重开同一事务的 RunSlots 并继续分派。不得在 RunSlots 内解析、分配、释放最终 owner 或执行 JS；不复制另一套算术语义。
 2. **N2 窄调用与精确观察边界。** 共享 helper 在原事务中按 RHS→LHS 消费，保留 postfix previous/value 输出顺序。仅跨小 helper 调用，不返回 ready、重新认证或重新构造 run prologue。解析/BigInt 分配及 Symbol/混合数值抛错前物化 canonical PC；错误在正确 realm 物化并交还正常异常处理，不重放已消费输入。必要 PC 发布不冒充可删除开销，Object ToPrimitive、GC/释放、异常行号、容量/域错误与恢复需反例测试。
-3. **N3 共享 string_to_number ASCII 路径（额外收益）。** 对可证明 ASCII 的文本直接复用同一 Infinity/radix/decimal 语法解析器，避免 UTF16 collect 再 from_utf16 的双分配；Unicode 空白、非法 surrogate、非 ASCII 及所有 grammar 边界保留共享 fallback。不得缓存字符串解析结果，亦不得把这项 S0 也可获益的优化当成退出协议回退的根因修复。
+3. **N3 共享 string_to_number ASCII 路径（额外收益）。** 对可证明 ASCII 的文本直接复用同一 Infinity/radix/decimal 语法解析器，避免 UTF16 collect 再 from_utf16 的双分配；Unicode 空白、非法 surrogate、非 ASCII 及所有 grammar 边界保留共享 fallback。这项 S0 也可获益的优化与退出协议回退的根因修复分别记录收益。
 4. **N4 可证伪验证。** 小型语义/路径断言覆盖 Number/bool/String/BigInt/Symbol/Object、Sub/Mul/Div/Mod/Pow/位运算、负零/NaN/Infinity、Unicode/radix、postfix 输出顺序与异常恢复；bool/String subtraction、String BitOr 主体的 run_exit.Numeric 应归零，驻留命中次数与操作数一致，槽认证不再随这些迭代线性增长。正常错误/回调需要的退出不设零目标。完整新核心 workspace/oracle/boundary/Test262/Web/WASM 门禁后冻结源码。
 5. **N5 最终单轮。** 仅最终新核心跑一次既有 358 项矩阵（58 fixed、67 compile、9 原始 V8、33 probe、14 memory、58×3 诊断、3 RSS），S0 复用旧三轮，直接前版 7dc70fbe 复用上一轮。新增事件仅做诊断，正式计时无插桩。报告全部差值与机制命中/认证/PC/Query/hardware/self，不能以源码结构或计数下降结案剩余吞吐回退；不重跑 S0、不做中途 benchmark/Profile、不补跑挑结果。最后更新本节状态、提交并推送。
 
@@ -749,7 +753,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 ## 新 S10–S12 执行账本（2026-09-15）
 
-按[惰性帧计划](primitive-vm-lazy-frames-plan.md)分别提交 S10 惰性帧、S11 窄状态机、S12 属性位置 IC。用户最新授权覆盖旧阶段退出顺序与三轮测量：三阶段代码全部完成、额外覆盖 review 补齐后，最终代码统一单轮 benchmark/Profile，S0 复用旧数据。S10 认证缓存仅保留带发布失效机制的不可变事实；S12 明确允许带布局/原型失效机制的位置事实缓存，不缓存属性值。这两项为旧无缓存规则的已授权例外。S09 未达到性能退出条件的记录保留，不冒充已通过；旧退役阶段顺延 S13。
+按[惰性帧计划](primitive-vm-lazy-frames-plan.md)分别提交 S10 惰性帧、S11 窄状态机、S12 属性位置 IC。用户最新授权覆盖旧阶段退出顺序与三轮测量：三阶段代码全部完成、额外覆盖 review 补齐后，最终代码统一单轮 benchmark/Profile，S0 复用旧数据。S10 认证缓存仅保留带发布失效机制的不可变事实；S12 已实现带布局/原型失效机制的位置事实缓存，当前实现读取实时属性值。S09 未达到性能退出条件的记录保留，不冒充已通过；旧退役阶段顺延 S13。
 
 实施提交：S10 `77153244`；S11 `e0494120`（已并入额外 review 补漏）；S12 与本轮最终报告为第三个 commit。最终被测对象是包含 S12 的冻结工作树，基底 `e0494120` 不代表被测源码；逐文件哈希见报告 JSON，提交时核对相同源码。
 
@@ -757,7 +761,7 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 | --- | --- | --- |
 | S10.1–S10.4 / AU-1–AU-4 | 已实现认证事实缓存、冷字段、惰性活动帧物化与可观察路径；普通 Call/Return 不做活动注册 | 普通调用计数与耗时明显改善；global_func_call / func_call / func_closure_call 相对 S0 分别 −16.38% / −21.59% / −33.05%。不能据此宣称所有 depth-native/getter/proxy/mixed 目标均达成 |
 | S11.2 / 尺寸与冷布局 | 已实现单层冷分派、驻留中央 Step、窄 Resume/Frame 与全部领域请求包、冷诊断外提；131 项生产 domain Step 尺寸约束通过 | 主 RunExit 选择的机器码为一次跳表；不等于每条冷路径只有一次条件分支。local_destruct 降至相对 S0 +16.59%，array_for_of 为 −3.47%；Map/WeakMap 仍 +15.92%～+24.69%，性能目标未全面达成 |
-| S12.2 / AU-5 | GetField/GetField2 定长位置侧表、own/prototype 失效守卫、两次 miss 退化、全 Value 保活与 B4 汇合均实现；不缓存属性值 | IC 命中路径实际驻留。Richards 为 −7.35%；Earley-Boyer / RayTrace 仍 +13.26% / +6.26%。读缓存实施完成不代表全部属性/V8 性能目标已满足 |
+| S12.2 / AU-5 | GetField/GetField2 定长位置侧表、own/prototype 失效守卫、两次 miss 退化、全 Value 保活与 B4 汇合均实现；当前缓存保存位置事实 | IC 命中路径实际驻留。Richards 为 −7.35%；Earley-Boyer / RayTrace 仍 +13.26% / +6.26%。读缓存实施完成不代表全部属性/V8 性能目标已满足 |
 | 联合正确性 | 最后源码变更后库测试 2503/2503；最终工作区 3598 通过，独立 oracle 压力通过，源码布局 697 文件通过 | Test262 全向量一致：79982/80032 可运行变体通过，原有 50 失败不变（102037 总变体）；Web/Node/WASM 15 示例通过 |
 | 额外覆盖 review | 找出并补齐“一次性交接宽包被误排除”“尺寸断言覆盖不全”两处遗漏；补齐后重新核对 | [逐项覆盖记录](performance/README.md)：本次范围内没有已知实施遗漏；不以此代替性能验收 |
 | 唯一最终性能轮 | 403/403 有效，包含全部 fixed/compile/original/probe/memory/RSS、58 fixed 与 15 getter/proxy/mixed 探针的 stat/record/cost | 不重跑旧 S0，不进行中途候选性能测试，不补样替换。25 fixed 正差值中 21 项超过 +5%；单次对历史三轮不提供统计显著性或单阶段因果结论 |
@@ -773,3 +777,19 @@ S11 证据：[冷分派与转换审计](performance/README.md)、[协议布局�
 S12 证据：[布局失效审计](performance/README.md)。SetProperty own-data 写 IC 是原计划明确的二期，GetElement/Proxy 不进入本次 IC；G 与 S13 不在本轮范围。
 
 最终数据与判断：[完整联合报告](performance/README.md)、[完整 JSON](performance/README.md)、[CSV](performance/README.md)。S10–S12 实施范围已交付，性能未达到的退出条件仍开放；不再追加本轮代码优化或第二轮性能测量。
+
+## S14–S20 修复阶段（2026-09-15 立项）
+
+针对最终报告全部超 5% 的正差值（fixed 21 项、调用探针 12 项、原始 Score 3 项、RSS 2 项、编译 5 项），按 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)追加七个提交单元。该计划已将全部残余差值下钻到实现层根因（R1 run 驻留谱系缺口、R2 字符串/转换内核、R3 属性 IC 覆盖缺口、R4 shape/atom/哈希 O(n²)、R5 native 调用外围、R6 heap/GC 结构、R7 regexp 外围、R8 属性驱动被调帧急切物化与 proxy get 陷阱外围、R9 RSS 映像差、R10 测量伪影），每条根因带 file:line 与机械计数或测量级证据。原 S13（退役旧路径）顺延到本序列之后执行，并**承接 RSS 2 项的验收**（R9：常数增量为旧/新 VM 双二进制 `.text` 映像差，非堆分配）；编译 5 项按 R10 判定为单轮测量伪影，不设提交单元，在 S14 验收轮以锁频三轮中位复测关闭。
+
+| 提交 | 建议信息 | 主治根因 | 关键验收计数 |
+| --- | --- | --- | --- |
+| S14 | `perf(value): eliminate redundant conversion copies and enable in-place string append` | R2 | int_to_string/string_build 的 `try_from_utf8`/`from_validated_utf16` self 归零 |
+| S15 | `perf(vm): complete run residency for add, equality and definition operations` | R1 | `run_exit.ConvertAdd`/`StrictEquality`/`LogicalNot` 降至启动量级；逐退出 `runtime_pc_publication` 消失 |
+| S16 | `perf(vm): extend property caches to exotic receivers, writes and globals` | R3 | splay GetField 退出 808k→<5 万；crypto GetElement 1.5M/SetProperty 869k→启动量级 |
+| S17 | `perf(object): add shape transition table, cheap hashing and pinned atoms` | R4 | prop_clone `copy_owner_clone.PropertyKey` 320k→0；SipHash self <3%；slice/解构 intern 归零 |
+| S18 | `perf(vm): extend lazy frames to native, getter and proxy trap calls` | R5+R8 | math_min `native.prepare` 179ms→<40ms；depth-getter-0 每迭代槽认证 12→≤4；depth-proxy-0 每读 Box 分配 4→0（稳态）；探针 12 项相对 S0 转负或 ≤+2% |
+| S19 | `perf(regexp): reuse input buffers and precompute result layout` | R7 | v8-regexp `Utf16Units::next` 28%→<5%；稳态 `validate_program` 归零 |
+| S20 | `perf(heap): box context payloads and reduce per-value bookkeeping` | R6 | ArenaSlot 904B→约 100B；memcpy/`release_raw_no_drain` self 收敛（RSS 不在本单元，见 S13/R9） |
+
+每个提交单元的逐工序步骤（文件/函数级改动、测试与验证命令、内部执行顺序）见[执行计划](primitive-vm-s14-s20-execution-plan.md)。每个提交单元沿用本文的验收纪律：机械计数先于耗时结论、三轮公平复测（S0 复用旧三轮）、单变量归因、全部语义门禁；实现期间不做中途 benchmark/Profile。新增测量口径约束（修复计划 §4）：对比一律三轮中位对三轮中位，正式轮要求 performance governor 且记录 loadavg/频率，超限样本作废——单轮对历史中位曾制造 v8-deltablue 编译 +95.89% 的假回退。设计文档先行修订项（owned-fusion 的 ConvertAdd 条款、写 IC 失效语义、shape 转移表字典化边界、S18 的属性驱动被调帧惰性观察边界）在对应阶段动代码前完成。第 5 节的"10 个完整提交单元"描述原 PR 组织，本序列作为后续提交单元延续同一审查规则。
