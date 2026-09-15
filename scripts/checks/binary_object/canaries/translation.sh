@@ -79,8 +79,8 @@ expect_full_rewrite_rejected stage3b-proxy-before-callable \
     '            if false && self.is_proxy_object(constructor.as_object())? {'
 expect_full_rewrite_rejected stage3b-function-realm-fallback \
     stage3b-constructor-prototype src/engine/vm/call/prototype.rs \
-    $'runtime.function_realm_from_value(self.realm, &self.new_target)?' \
-    $'NativeConversion::Value(self.realm)'
+    $'runtime.function_realm_from_value(self.0.realm, &self.0.new_target)?' \
+    $'NativeConversion::Value(self.0.realm)'
 expect_full_rewrite_rejected stage3b-native-prototype-helper-bypass \
     stage3b-native-prototype-family src/engine/builtins/array_buffer/constructor.rs \
     $'ProtoSourceStep::start(runtime, realm, new_target)?' \

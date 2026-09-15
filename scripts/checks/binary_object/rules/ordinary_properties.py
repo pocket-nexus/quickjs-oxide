@@ -184,7 +184,8 @@ S05_ROUTES = {
     "src/engine/vm/private_access.rs": ("private_bindings::branded_receiver(", "proxy_get_driver::start_vm_call("),
     "src/engine/vm/construct_driver.rs": ("runtime.validate_class_parent(", "proxy_get_driver::start_class_parent(", "proxy_get_driver::start_public_field("),
     "src/engine/vm/array_driver.rs": ("LiteralDefinitionStep::start(", "proxy_get_driver::start_literal_definition("),
-    "src/engine/vm/frame_operations.rs": ("modnumeric;", "numeric::{NumericProgress,commit_outputascommit_numeric_output,completeascomplete_numeric,try_complete_primitiveastry_complete_primitive_numeric}", "RunExit::Numeric(kind)", "complete_numeric(runtime,execution,id,kind)", "RunExit::ForIn(next)", "proxy_get_driver::start_for_in_query("),
+    "src/engine/vm/frame_operations.rs": ("modnumeric;", "numeric::{NumericProgress,commit_outputascommit_numeric_output,completeascomplete_numeric,try_complete_primitiveastry_complete_primitive_numeric}", "complete_numeric(runtime,execution,id,kind)", "proxy_get_driver::start_for_in_query("),
+    "src/engine/vm/driver/cold.rs": ("RunExit::Numeric(kind)", "frame_operations::numeric(context.runtime,context.execution,context.id,kind,)", "RunExit::ForIn(next)", "frame_operations::for_in(context.runtime,context.execution,context.id,next,)"),
     "src/engine/vm/frame_operations/numeric.rs": ("NumericStep::start(kind,left,right)", "proxy_get_driver::start_numeric(runtime,execution,id,step,depth)", "letright=execution.slots.pop(&mutframe.window)?;", "(execution.slots.pop(&mutframe.window)?,Some(right))"),
     "src/engine/vm/run.rs": ("RunExit::Numeric(kind)", "Instruction::ForInStart=>returnOk(RunExit::ForIn(false))", "Instruction::ForInNext=>returnOk(RunExit::ForIn(true))"),
     "src/engine/vm/proxy_get_driver.rs": ("fnstart_numeric(", "fnstart_for_in_query(", "fnstart_environment(", "fnstart_class_parent(", "fnstart_public_field(", "fnstart_literal_definition("),
@@ -192,7 +193,7 @@ S05_ROUTES = {
     "src/engine/vm/proxy_get_driver/request/array.rs": ("From<crate::engine::builtins::ArrayCallbackStep>", "From<crate::engine::builtins::ArraySortStep>", "Self::ArrayCopy", "Self::Call"),
     "src/engine/vm/proxy_get_driver/request/scalar.rs": ("From<crate::engine::builtins::MathStep>", "From<crate::engine::builtins::PrimitiveConstructorStep>", "From<crate::engine::builtins::DatePrototypeStep>"),
     "src/engine/vm/proxy_get_driver/request/object.rs": ("LiteralDefinitionStep>forStep", "Self::DefineOrdinary{", "Resume::LiteralDefinition(resume)"),
-    "src/engine/vm/proxy_get_driver/request/vm.rs": ("EnvironmentStep>forStep", "NumericStep>forStep", "ForInStep>forStep", "Self::NumericComplete{value,previous}", "Self::ForInComplete{value,done}"),
+    "src/engine/vm/proxy_get_driver/request/vm.rs": ("EnvironmentStep>forStep", "NumericStep>forStep", "ForInStep>forStep", "Self::NumericComplete{value:Some(value),previous:Some(previous)}", "Self::ForInComplete{value:Some(value),done:Some(done)}"),
 }
 S05_FILES = tuple(dict.fromkeys((*S05_PROTOCOLS, *S05_ROUTES, *DEPENDENCY_FILES)))
 SYNC_CALLBACK = re.compile(
@@ -264,7 +265,7 @@ def check_synchronous_domains(ctx):
         if SYNC_CALLBACK.search(sources.get(relative, "")):
             ctx.fail("synchronous-domain-route", f"{relative}: adapter must only translate typed requests")
     vm = re.sub(r"\s+", "", sources.get("src/engine/vm/proxy_get_driver/request/vm.rs", ""))
-    if not re.search(r"T::Enumerable\{object,key,resume,?\}=>Self::SnapshotEnumerable\{object,key,resume:Resume::ForIn\(resume\),?\}", vm):
+    if not re.search(r"T::Enumerable\{object,key,resume,?\}=>Self::SnapshotEnumerable\{object:Some\(object\),key:Some\(key\),resume:Some\(Resume::ForIn\(resume\)\),?\}", vm):
         ctx.fail("synchronous-domain-route", "for-in must preserve snapshot enumerable reads")
-    if not re.search(r"T::Read\{object,key,receiver,resume,?\}=>Self::Read\{receiver,object,key,resume:Resume::Environment\(resume\),?\}", vm):
+    if not re.search(r"T::Read\{mutresume\}=>\{letobject=resume.take_read_object\(\);letkey=resume.take_read_key\(\);letreceiver=resume.take_read_receiver\(\);Self::Read\{receiver:Some\(receiver\),object:Some\(object\),key:Some\(key\),resume:Some\(Resume::Environment\(resume\)\),?\}\}", vm):
         ctx.fail("synchronous-domain-route", "environment lookup must retain its selected receiver")

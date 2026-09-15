@@ -173,8 +173,8 @@ expect_rewrite_rejected frame-layout-actual-arguments-truncation published-frame
 
 expect_full_rewrite_rejected published-cache-drop-root published-executable-owner \
     src/engine/code/executable.rs \
-    "            root: Some($(if grep -q 'fn snapshot_function_bytecode_owned' "$repository_root/src/engine/code/executable.rs"; then printf function; else printf root; fi))," \
-    '            root: None,'
+    '            root: std::cell::OnceCell::from(function),' \
+    '            root: Default::default(),'
 expect_full_rewrite_rejected published-cache-wrong-node published-executable-owner \
     src/engine/code/executable.rs \
     'let bytecode = state.heap.function_bytecode(function.bytecode_id())?;' \

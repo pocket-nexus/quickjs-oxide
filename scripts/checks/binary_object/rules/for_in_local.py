@@ -72,7 +72,7 @@ def check_local_arms(ctx, code):
     # never exempt their containing function from the callback scan.
     guards = (
         ('advance', r'if\s+runtime\.is_proxy_object\(&object\)\?\s*\{',
-         'c8b8df35200cf5ad6f835903205cd6b115ae1c83b270ddc03d64d04a751f2489'),
+         'b479314a25f22afa1da9823791fa2a4580b0e51ba7ff0f64722c60a155ab19e6'),
         ('snapshot_next', r'if\s+!runtime\.is_proxy_object\(&pending\.object\)\?\s*\{',
          '1cf32f87c53f2b5400ecf89c23321aa63475462ff2d439da1baf9ff157e362c8'),
         ('probe_keys', r'if\s+!runtime\.is_proxy_object\(&prototype\)\?\s*\{',
@@ -106,8 +106,8 @@ def check_mutation_local_delete(ctx, code):
     body, start, end = ctx.unique_braced_item(code, re.compile(r'\bfn\s+drive\b[^{};]*\{'),
                                              'array-mutation-local-guard', 'resident mutation driver')
     compact = re.sub(r'\s+', '', body)
-    exact = ('MutationAction::Delete(key)if!runtime.is_proxy_object(&self.object)?=>{'
-             'letreply=runtime.internal_delete_property(self.realm,&self.object,&key)?;'
+    exact = ('MutationAction::Delete(key)if!runtime.is_proxy_object(&self.0.object)?=>{'
+             'letreply=runtime.internal_delete_property(self.0.realm,&self.0.object,&key)?;'
              'self.boolean_once(runtime,reply)?}')
     if compact.count(exact) != 1:
         ctx.fail('array-mutation-local-guard', 'Delete must query only the same guarded non-Proxy receiver and deliver its reply once')

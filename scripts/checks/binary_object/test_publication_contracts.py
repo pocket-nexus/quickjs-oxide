@@ -36,14 +36,14 @@ class PublicationContracts(unittest.TestCase):
         )
         mutations = [
             (EXECUTABLE, "published-executable-owner", "if !function.belongs_to(self)" + (" {\n            return Err(RuntimeError::WrongRuntime(\"function bytecode\"));\n        }\n        let state" if owned else ""), "if false"),
-            (EXECUTABLE, "published-executable-owner", f"data: {data_type},", f"pub(crate) data: {data_type},"),
-            (EXECUTABLE, "published-executable-owner", "root: Some(function)," if owned else "root: Some(root),", "root: None,"),
+            (EXECUTABLE, "published-executable-owner", f"\n    data: {data_type},", f"\n    pub(crate) data: {data_type},"),
+            (EXECUTABLE, "published-executable-owner", "root: std::cell::OnceCell::from(function),", "root: Default::default(),"),
             (EXECUTABLE, "published-executable-owner", "state.heap.context(bytecode.realm)?;", ""),
             (EXECUTABLE, "published-executable-owner", "function.bytecode_id())?;", "other.bytecode_id())?;"),
             (EXECUTABLE, "published-executable-owner", "code: bytecode.code.clone(),", "code: Rc::from([]),"),
             (EXECUTABLE, "published-executable-owner", "self.index == other.index && Rc::ptr_eq", "Rc::ptr_eq"),
             (EXECUTABLE, "published-executable-owner", "#[cfg(test)]\nimpl std::ops::DerefMut", "impl std::ops::DerefMut"),
-            (EXECUTABLE, "published-executable-owner", "self.root.is_none(),", "true,"),
+            (EXECUTABLE, "published-executable-owner", "self.bytecode.is_none(),", "true,"),
             (EXECUTABLE, "published-executable-owner", "pub(crate) constants: Rc<[BytecodeConstant]>,", "pub(crate) constants: std::cell::RefCell<Vec<BytecodeConstant>>,"),
             (VERIFIED, "published-function-verification", "verify_unlinked_ordinary_leaf(&function)?;", ""),
             (VERIFIED, "published-function-verification", "verify_unlinked_tree(&function)?;", "if false { verify_unlinked_tree(&function)?; }"),
@@ -70,68 +70,26 @@ class PublicationContracts(unittest.TestCase):
                 self.assertTrue(any(error.startswith(rule + ":") for error in result), result)
 
 
-    def test_direct_s08_representation_and_mutations(self):
-        from .rules.publication_contracts import (
-            SNAPSHOT_FUNCTION, DIRECT_SNAPSHOT_FUNCTION, BORROWED_SNAPSHOT_FUNCTION, OWNED_SNAPSHOT_FUNCTION, function,
-        )
-        # Derive the old representation from the same production facts. This
-        # fixture needs no ignored source export or git history to remain runnable.
-        sources = {name: (ROOT / name).read_text() for name in (EXECUTABLE, VERIFIED, INSTRUCTION, BYTECODE)}
-        source = sources[EXECUTABLE].split("#[cfg(test)]\nmod tests", 1)[0]
-        source = source.replace(OWNED_SNAPSHOT_FUNCTION, "")
-        source = source.replace(BORROWED_SNAPSHOT_FUNCTION, DIRECT_SNAPSHOT_FUNCTION)
-        source = source.replace(SNAPSHOT_FUNCTION, DIRECT_SNAPSHOT_FUNCTION)
-        source = source.replace("    pub(crate) observes_arguments: bool,\n", "")
-        source = source.replace("                observes_arguments: true,\n", "")
-        source = source.replace("data: Rc<PublishedFunctionData>,", "data: PublishedFunctionData,")
-        source = source.replace("data: Rc::new(PublishedFunctionData {", "data: PublishedFunctionData {")
-        source = source.replace("            }),\n        }\n    }", "            },\n        }\n    }")
-        source = source.replace('Rc::get_mut(&mut self.data).expect("synthetic executable remains uniquely owned")', "&mut self.data")
-        sources[EXECUTABLE] = source
-        sources[VERIFIED] = re.sub(
-            r'#\[cfg\(feature = "profiling"\)\]\s+let _phase_timer = crate::engine::api::profiling::PhaseTimer::start\(\s*crate::engine::api::profiling::CompilePhase::Verify,\s*\);',
-            "", sources[VERIFIED],
-        )
-        ctx = ScanContext(ROOT)
-        ctx.raw_string_prefix = re.compile(r'(?:br|rb|cr|rc|r)(?P<hashes>#{0,255})"')
-        source = sources[INSTRUCTION]
-        if "fn stack_contract" in source:
-            for name in ("stack_contract", "potential_effects"):
-                source = source.replace(function(ctx, source, name, "fixture"), "")
-            source = source.replace(function(ctx, source, "info", "fixture"), """pub(crate) const fn info(&self) -> InstructionInfo {
-                let (popped, pushed) = self.nominal_stack_effect();
-                InstructionInfo {
-                    stack: StackEffect { popped, pushed, state: self.stack_state_effect(), },
-                    effects: PotentialEffects { javascript_exception: self.javascript_exception_effect(),
-                        may_call_js: self.may_call_js(), may_allocate: self.may_allocate(), },
-                    control: self.control_effect(), operands: self.operand_contract(),
-                }
-            }""")
-            for name in ("nominal_stack_effect", "control_effect", "operand_contract"):
-                source = source.replace(f"pub(crate) const fn {name}", f"const fn {name}")
-        sources[INSTRUCTION] = source
-        sources[BYTECODE] = sources[BYTECODE].replace(
-            "pub const fn stack_effect(&self) -> (usize, usize) {\n        self.nominal_stack_effect()",
-            "pub const fn stack_effect(&self) -> (usize, usize) {\n        let effect = self.info().stack;\n        (effect.popped, effect.pushed)",
-        )
-        self.assertEqual(errors(sources), [])
+    def test_lazy_certificate_and_root_boundaries_reject_mutations(self):
+        ordinary = "src/engine/vm/call/ordinary.rs"
         mutations = [
-            (EXECUTABLE, "published-executable-owner", "if !function.belongs_to(self)", "if false"),
-            (EXECUTABLE, "published-executable-owner", "data: PublishedFunctionData,", "pub(crate) data: PublishedFunctionData,"),
-            (EXECUTABLE, "published-executable-owner", "root: Some(root),", "root: None,"),
-            (EXECUTABLE, "published-executable-owner", "state.heap.context(bytecode.realm)?;", ""),
-            (EXECUTABLE, "published-executable-owner", "self.root.is_none(),", "true,"),
-            (VERIFIED, "published-function-verification", "verify_unlinked_tree(&function)?;", "if false { verify_unlinked_tree(&function)?; }"),
-            (INSTRUCTION, "published-instruction-contract", "let (popped, pushed) = self.nominal_stack_effect();", "let (popped, pushed) = (0, 0);"),
-            (INSTRUCTION, "published-instruction-contract", "may_call_js: self.may_call_js(),", "may_call_js: false,"),
-            (BYTECODE, "published-instruction-stack-adapter", "(effect.popped, effect.pushed)", "(0, 0)"),
+            (EXECUTABLE, "if self.bytecode.is_some() && !self.belongs_to(runtime)", "if false"),
+            (EXECUTABLE, "FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), id)?", "FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), other)?"),
+            (EXECUTABLE, "self.runtime_identity == Rc::as_ptr(&runtime.0) as usize", "true"),
+            (EXECUTABLE, "bytecode: Some(id),", "bytecode: None,"),
+            (EXECUTABLE, "data: facts.data,", "data: arbitrary_data,"),
+            (EXECUTABLE, "self.bytecode.is_none(),", "self.root.get().is_none(),"),
+            (EXECUTABLE, "pub(crate) closure_count: usize,", "pub(crate) closure_count: usize, runtime: Runtime,"),
+            (EXECUTABLE, "has_captured_locals: !bytecode.local_definitions.is_empty()", "has_captured_locals: false && !bytecode.local_definitions.is_empty()"),
+            (ordinary, "if !function.belongs_to(runtime)", "if false"),
+            (ordinary, "facts.publish_generation == bytecode.publish_generation()", "true"),
+            (ordinary, "if closure_slots.len() != facts.closure_count", "if false"),
         ]
-        for path, rule, before, after in mutations:
-            with self.subTest(stage="S08", rule=rule, mutation=before):
-                self.assertEqual(sources[path].count(before), 1)
-                mutated = dict(sources)
-                mutated[path] = mutated[path].replace(before, after)
-                self.assertTrue(any(error.startswith(rule + ":") for error in errors(mutated)))
+        for path, before, after in mutations:
+            with self.subTest(path=path, mutation=before):
+                source = (ROOT / path).read_text()
+                self.assertEqual(source.count(before), 1)
+                self.assertTrue(any(error.startswith("published-executable-owner:") for error in errors({path: source.replace(before, after)})))
 
 
 if __name__ == "__main__":

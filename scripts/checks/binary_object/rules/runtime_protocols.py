@@ -810,7 +810,7 @@ def check(ctx):
         "published-frame-owner",
         "Activation code and metadata must come from the same sealed host snapshot",
         ctx.stage3b_function(runtime_vm_host_relative, "new_activation", "published-frame-owner"),
-        "ddee5efcf239cc57ac6bd59495e34703e02a9c5c1c1c23413755daf5d4e81551",
+        "6737f56d405850e99423107a5bd8098ddd2b08f9a7f183a21af6c930b64d42f1",
     )
 
 

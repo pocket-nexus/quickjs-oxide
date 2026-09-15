@@ -758,6 +758,8 @@ pub(crate) mod operations;
 
 mod ordinary_storage;
 #[cfg(feature = "stack-vm")]
+pub(crate) mod property_ic;
+#[cfg(feature = "stack-vm")]
 pub(crate) use ordinary_storage::LinkedNativeSelection;
 
 mod ordinary;

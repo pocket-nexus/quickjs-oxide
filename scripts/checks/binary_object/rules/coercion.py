@@ -360,7 +360,8 @@ def check(ctx):
             "ToPropKey host conversion must preserve Int/String and Symbol identity, runtime ownership, the defining-realm string hint, arbitrary Throw identity, and canonical primitive-to-String fallback",
         )
 
-    # S04: one owned domain state replaces the two recursive function bodies.
+    # S11: requests retain the same owned domain allocation across Get/Call.
+    # The reviewed source keeps one-use replies, drop order and literal hints.
     # Pin the entry route and every phase, literal, receiver and completion in
     # the raw state source; stage3i canaries mutate hints, realm and ordering.
     ctx.require_normalized_code_sha256(
@@ -381,7 +382,7 @@ def check(ctx):
             diagnostic,
             "owned ToPrimitive phases must preserve one-use replies, hint ordering, receiver and Throw identity, realm errors and the ordinary entry route",
             primitive_state_source,
-            "36d2288594eaaeee69f4e104e55782ba326777ddc0fb4a2f4ee11c4b2dca141d",
+            "1c3d0ff8a94307fe9c7995c41ce4066f345bbe98192068c6ed587631d222fcad",
         )
 
     stage3g_test_contracts = deepcopy(evidence.STAGE3G_TEST_CONTRACTS)

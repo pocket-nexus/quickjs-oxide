@@ -32,7 +32,7 @@ expect_full_rewrite_rejected stage3j-to-primitive-string-literal-drift \
     '                    ToPrimitiveHint::String => "default",'
 expect_full_rewrite_rejected stage3j-to-primitive-type-error-realm-drift \
     stage3j-to-propkey-primitive-semantics src/engine/value/conversion/primitive.rs \
-    '            runtime.new_native_error(self.realm, NativeErrorKind::Type, message)?,' \
+    '            runtime.new_native_error(self.0.realm, NativeErrorKind::Type, message)?,' \
     '            runtime.new_native_error(ContextId::ROOT, NativeErrorKind::Type, message)?,'
 expect_full_rewrite_rejected stage3j-ordinary-fallback-order-drift \
     stage3j-to-propkey-ordinary-fallback src/engine/value/conversion/primitive.rs \

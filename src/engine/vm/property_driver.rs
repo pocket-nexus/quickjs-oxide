@@ -126,23 +126,10 @@ pub(super) fn read_progress_selected(
                 // pushes if the verified capacity cannot hold the whole span.
                 let count = candidate.filter(|count| {
                     slots.has_operand_capacity(count + 2)
-                        && executable.code[frame.fault_pc + 1..frame.fault_pc + count + 1]
-                            .iter()
-                            .all(|instruction| {
-                                use super::bindings::FrameBinding;
-                                use crate::engine::code::bytecode::Instruction;
-                                match instruction {
-                                    Instruction::GetLocal(index)
-                                    | Instruction::GetLocalCheck(index) => {
-                                        matches!(slots.local(*index), Ok(FrameBinding::Direct(_)))
-                                    }
-                                    Instruction::GetArg(index) => matches!(
-                                        slots.parameter(*index),
-                                        Ok(FrameBinding::Direct(_))
-                                    ),
-                                    _ => true,
-                                }
-                            })
+                        && super::method_arguments::available(
+                            slots,
+                            &executable.code[frame.fault_pc + 1..frame.fault_pc + count + 1],
+                        )
                 });
                 publish_read_result(
                     slots,
@@ -157,7 +144,6 @@ pub(super) fn read_progress_selected(
                     // GetField2 completed even if a later fallible argument
                     // retain fails at its own canonical PC.
                     record_read_completion(depth);
-                    use crate::engine::code::bytecode::Instruction;
                     let start = frame.fault_pc;
                     for offset in 0..count {
                         // Copy retains never drain references or call JS. On a
@@ -165,30 +151,10 @@ pub(super) fn read_progress_selected(
                         // the RunSlots borrow has ended below.
                         frame.fault_pc = start + offset + 1;
                         frame.resume_pc = frame.fault_pc;
-                        let literal = match &executable.code[frame.fault_pc] {
-                            Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                                let super::bindings::FrameBinding::Direct(value) =
-                                    slots.local(*index)?
-                                else {
-                                    unreachable!("preflighted direct method argument")
-                                };
-                                super::stack::copy_value(value)?
-                            }
-                            Instruction::GetArg(index) => {
-                                let super::bindings::FrameBinding::Direct(value) =
-                                    slots.parameter(*index)?
-                                else {
-                                    unreachable!("preflighted direct method parameter")
-                                };
-                                super::stack::copy_value(value)?
-                            }
-                            Instruction::PushI32(value) => Value::Int(*value),
-                            Instruction::Undefined => Value::Undefined,
-                            Instruction::Null => Value::Null,
-                            Instruction::PushTrue => Value::Bool(true),
-                            Instruction::PushFalse => Value::Bool(false),
-                            _ => unreachable!("published method call span"),
-                        };
+                        let literal = super::method_arguments::argument(
+                            slots,
+                            &executable.code[frame.fault_pc],
+                        )?;
                         slots.push(literal)?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_instruction(depth + offset + 1);

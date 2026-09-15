@@ -51,9 +51,16 @@ pub(super) fn run(
                 method,
                 tail,
             } => {
-                if let Some(boundary) =
-                    enter_call(runtime, execution, &mut id, arguments, method, tail, None)?
-                {
+                let selected_native = execution.selected_native.take();
+                if let Some(boundary) = enter_call(
+                    runtime,
+                    execution,
+                    &mut id,
+                    arguments,
+                    method,
+                    tail,
+                    selected_native,
+                )? {
                     return Ok(boundary);
                 }
             }

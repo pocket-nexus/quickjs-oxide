@@ -214,6 +214,8 @@ pub(super) struct RunningExecution {
     pub call_storage: super::frame::CallStorage,
     /// Cold completion owns its payload before the active window is cleared.
     pub pending: Option<Value>,
+    /// Retained GetField2 result's classification, consumed by the immediate Call.
+    pub selected_native: Option<crate::engine::object::LinkedNativeSelection>,
     /// A typed root terminal result; never represented by a manufactured JS Value.
     pub root_descriptor: Option<super::entry::DescriptorReply>,
     pub root_query: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
@@ -249,6 +251,7 @@ impl RunningExecution {
             query_storage: super::proxy_get_driver::QueryStorage::default(),
             call_storage: super::frame::CallStorage::default(),
             pending: None,
+            selected_native: None,
             pending_call: None,
             root_query: None,
             root_descriptor: None,

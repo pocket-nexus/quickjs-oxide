@@ -245,6 +245,8 @@ struct ArenaSlot {
 /// A `Heap` is deliberately not internally synchronized.  The enclosing
 /// runtime chooses its single-threaded ownership boundary, as QuickJS does.
 pub struct Heap {
+    #[cfg(feature = "stack-vm")]
+    property_layout_epoch: u64,
     #[cfg(not(feature = "profiling"))]
     slots: Vec<ArenaSlot>,
     #[cfg(feature = "profiling")]

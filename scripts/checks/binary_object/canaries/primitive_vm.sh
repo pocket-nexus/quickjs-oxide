@@ -65,3 +65,22 @@ expect_full_rewrite_rejected primitive-numeric-child-callback \
     synchronous-domain-route src/engine/vm/frame_operations/numeric.rs \
     'let right = execution.slots.pop(&mut frame.window)?;' \
     'runtime.to_primitive(); let right = execution.slots.pop(&mut frame.window)?;'
+
+# S11 moved the selected effect fields into resident owners; the same guard,
+# exact receiver and driver routing remain mandatory.
+expect_full_rewrite_rejected primitive-mutation-resident-unguarded-delete \
+    array-mutation-local-guard src/engine/builtins/array/mutation.rs \
+    'MutationAction::Delete(key) if !runtime.is_proxy_object(&self.0.object)? =>' \
+    'MutationAction::Delete(key) =>'
+expect_full_rewrite_rejected primitive-mutation-resident-wrong-receiver \
+    array-mutation-local-guard src/engine/builtins/array/mutation.rs \
+    'runtime.internal_delete_property(self.0.realm, &self.0.object, &key)?' \
+    'runtime.internal_delete_property(self.0.realm, &other, &key)?'
+expect_full_rewrite_rejected primitive-cold-numeric-disconnected \
+    synchronous-domain-route src/engine/vm/driver/cold.rs \
+    'super::super::frame_operations::numeric(' \
+    'super::super::frame_operations::legacy_numeric('
+expect_full_rewrite_rejected primitive-environment-resident-wrong-receiver \
+    synchronous-domain-route src/engine/vm/proxy_get_driver/request/vm.rs \
+    'let receiver = resume.take_read_receiver();' \
+    'let receiver = Value::Undefined;'

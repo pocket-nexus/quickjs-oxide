@@ -16,6 +16,12 @@ impl Heap {
             return Err(error);
         }
 
+        #[cfg(feature = "stack-vm")]
+        if let Some(prototype) = shape.prototype() {
+            // The bit is monotonic for this generational object identity.
+            // It creates no GC edge and ignores mutations of ordinary newborns.
+            self.object_mut(prototype)?.used_as_prototype = true;
+        }
         self.publish(index, NodeData::Shape(shape))?;
         Ok(id)
     }

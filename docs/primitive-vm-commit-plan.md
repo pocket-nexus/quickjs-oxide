@@ -1,6 +1,6 @@
-# 栈 VM：一个 PR 内的 10 个 commit
+# 栈 VM：分阶段 commit 计划
 
-状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 保留。N1–N3 非 Number 原语 run 驻留、单事务完成和共享 ASCII 解析已实现，N4 同源门禁通过，N5 最终一轮 358/358 有效；S0 使用旧三轮。58 fixed 仍有 31 项单次正差值，67 compile 有 57 项。**S09 尚未完成**，G 未处理，S10 未开始。最新证据见[原语数值驻留报告](reports/primitive-vm-s09-numeric-resident.md)。
+状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](reports/primitive-vm-s10-s12-final.md)，[N1–N3 报告](reports/primitive-vm-s09-numeric-resident.md)保留为直接前版证据。
 
 **用户最新执行约束（2026-09-15）：后续仅构建、测试、benchmark 和 Profile 新执行核心（当前 `--features stack-vm`）。不再构建或运行旧 default 执行路径，也不重跑 S0/S07/S08 等历史候选；旧数据只读取已有记录。本文以前要求 default/stack-vm 双配置或新旧对跑的流程不再适用。历史已执行记录保留，但不能据此再次启动旧路径。Test262/语义 oracle 仍用于核对新核心，不把它们误称为另一个性能候选。**
 
@@ -751,8 +751,25 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 按[惰性帧计划](primitive-vm-lazy-frames-plan.md)分别提交 S10 惰性帧、S11 窄状态机、S12 属性位置 IC。用户最新授权覆盖旧阶段退出顺序与三轮测量：三阶段代码全部完成、额外覆盖 review 补齐后，最终代码统一单轮 benchmark/Profile，S0 复用旧数据。S10 认证缓存仅保留带发布失效机制的不可变事实；S12 明确允许带布局/原型失效机制的位置事实缓存，不缓存属性值。这两项为旧无缓存规则的已授权例外。S09 未达到性能退出条件的记录保留，不冒充已通过；旧退役阶段顺延 S13。
 
-状态：S10.1–S10.4 实现与 AU-1–AU-4 审计完成；独立 S10 库测试 2448 通过，另新增四项惰性观察反例通过（中段物化、Proxy 栈、挂起恢复 PC、host 重入和 panic 清理）。S10.5 性能验收待三阶段完成后统一单轮；S11 实现完成：单层冷分派、驻留中央 Step、宽 Resume/Frame/迭代转换状态及局部循环改造已落地，含尺寸断言的最终合并库测试 2486/2486 通过；S12 AU-5 与独立基础已准备，未开始性能测量。
+实施提交：S10 `77153244`；S11 `e0494120`（已并入额外 review 补漏）；S12 与本轮最终报告为第三个 commit。最终被测对象是包含 S12 的冻结工作树，基底 `e0494120` 不代表被测源码；逐文件哈希见报告 JSON，提交时核对相同源码。
 
-S10 证据：[认证/root 审计](reports/primitive-vm-s10-auth-audit.md)、[字段审计](reports/primitive-vm-s10-cold-audit.md)、[观察协议审计](reports/primitive-vm-s10-observation-audit.md)。发布代号复用不可变字节码 arena 的 index/generation；无可变重发布入口。无捕获事实从发布后的 opcode/local metadata 推导，属于同一不可变事实。冷观察点保守物化，普通 Call/Return 不注册。
+| 阶段 | 实施与覆盖状态 | 最终验收结果 |
+| --- | --- | --- |
+| S10.1–S10.4 / AU-1–AU-4 | 已实现认证事实缓存、冷字段、惰性活动帧物化与可观察路径；普通 Call/Return 不做活动注册 | 普通调用计数与耗时明显改善；global_func_call / func_call / func_closure_call 相对 S0 分别 −16.38% / −21.59% / −33.05%。不能据此宣称所有 depth-native/getter/proxy/mixed 目标均达成 |
+| S11.2 / 尺寸与冷布局 | 已实现单层冷分派、驻留中央 Step、窄 Resume/Frame 与全部领域请求包、冷诊断外提；131 项生产 domain Step 尺寸约束通过 | 主 RunExit 选择的机器码为一次跳表；不等于每条冷路径只有一次条件分支。local_destruct 降至相对 S0 +16.59%，array_for_of 为 −3.47%；Map/WeakMap 仍 +15.92%～+24.69%，性能目标未全面达成 |
+| S12.2 / AU-5 | GetField/GetField2 定长位置侧表、own/prototype 失效守卫、两次 miss 退化、全 Value 保活与 B4 汇合均实现；不缓存属性值 | IC 命中路径实际驻留。Richards 为 −7.35%；Earley-Boyer / RayTrace 仍 +13.26% / +6.26%。读缓存实施完成不代表全部属性/V8 性能目标已满足 |
+| 联合正确性 | 最后源码变更后库测试 2503/2503；最终工作区 3598 通过，独立 oracle 压力通过，源码布局 697 文件通过 | Test262 全向量一致：79982/80032 可运行变体通过，原有 50 失败不变（102037 总变体）；Web/Node/WASM 15 示例通过 |
+| 额外覆盖 review | 找出并补齐“一次性交接宽包被误排除”“尺寸断言覆盖不全”两处遗漏；补齐后重新核对 | [逐项覆盖记录](reports/primitive-vm-s10-s12-coverage.md)：本次范围内没有已知实施遗漏；不以此代替性能验收 |
+| 唯一最终性能轮 | 403/403 有效，包含全部 fixed/compile/original/probe/memory/RSS、58 fixed 与 15 getter/proxy/mixed 探针的 stat/record/cost | 不重跑旧 S0，不进行中途候选性能测试，不补样替换。25 fixed 正差值中 21 项超过 +5%；单次对历史三轮不提供统计显著性或单阶段因果结论 |
 
-S11 证据：[冷分派与转换审计](reports/primitive-vm-s11-dispatch-audit.md)、[协议布局与交接清单](reports/primitive-vm-s11-protocol-layout.md)、[领域循环审计](reports/primitive-vm-s11-domain-layout-audit.md)。Frame 56 B，Resume ≤32 B，中央 Step 原地借用推进；额外发现的 Slice/ArrayNext/Set 本地宽循环已补齐。性能结论仍待三阶段统一验收。
+直接前版 dce0b6ea 的 31 项 fixed 正差值，本轮有 7 项转为非正：array_for_in、array_for_of、func_call、global_func_call、regexp_replace、v8-deltablue、v8-richards；Math.min 从 −0.80% 变为 +9.70%，所以净减少至 25 项。Map 字符串/整数、WeakMap、int_to_string、BigInt64 等相对直接前版也有恶化，完整差值必须保留，不能只报改善项。JS 编译、原始 Score、调用探针与 RSS 各自使用对应表，不能与 fixed 同名行混用。
+
+边界验收记录：完整反例矩阵运行到末尾，唯一失败为 `stage3b-function-realm-fallback` 的旧字段锚点。仅修正测试脚本两个 `self`→`self.0` 路径，定向负例按预期规则拒绝，当前源码扫描通过。聚合回执保留完整工具原 exit 1 与修正复验，不冒称第二次完整工具 exit 0；逐文件证明所有 Rust、语义测试、检查器规则未变，故不重跑已通过的语义门禁。
+
+S10 证据：[认证/root 审计](reports/primitive-vm-s10-auth-audit.md)、[字段审计](reports/primitive-vm-s10-cold-audit.md)、[观察协议审计](reports/primitive-vm-s10-observation-audit.md)。发布代号复用不可变字节码 arena 的 index/generation；无可变重发布入口。无捕获事实来自同一发布快照，冷观察点按需物化。
+
+S11 证据：[冷分派与转换审计](reports/primitive-vm-s11-dispatch-audit.md)、[协议布局与交接清单](reports/primitive-vm-s11-protocol-layout.md)、[领域循环审计](reports/primitive-vm-s11-domain-layout-audit.md)。Frame 56 B、Resume 32 B、ConversionTask 8 B、PendingIterator 8 B；中央 Step 168 B 驻留借用推进。无需等待的 Value 完成分支保留 inline，最低 40 B，不为凑 32 B 引入新的结果分配。
+
+S12 证据：[布局失效审计](reports/primitive-vm-s12-layout-audit.md)。SetProperty own-data 写 IC 是原计划明确的二期，GetElement/Proxy 不进入本次 IC；G 与 S13 不在本轮范围。
+
+最终数据与判断：[完整联合报告](reports/primitive-vm-s10-s12-final.md)、[完整 JSON](reports/primitive-vm-s10-s12-final.json)、[CSV](reports/primitive-vm-s10-s12-final.csv)。S10–S12 实施范围已交付，性能未达到的退出条件仍开放；不再追加本轮代码优化或第二轮性能测量。

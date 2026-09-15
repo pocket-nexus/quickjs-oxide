@@ -32,6 +32,10 @@ for domain in roles parameters bindings modules eval children closures flow oper
         "$fixture/src/engine/code/verify/$domain.rs"
 done
 cp -- "$repository_root/src/engine/code/executable.rs" "$fixture/src/engine/code/executable.rs"
+# Lazy publication authenticates the rootless certificate together with its
+# sole OrdinaryCall witness producer; both are dependencies of the fixture.
+mkdir -p -- "$fixture/src/engine/vm/call"
+cp -- "$repository_root/src/engine/vm/call/ordinary.rs" "$fixture/src/engine/vm/call/ordinary.rs"
 printf '%s\n' \
     'mod atoms;' \
     'mod code;' \

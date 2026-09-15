@@ -96,6 +96,25 @@ def check_instruction(ctx):
 def check_executable(ctx):
     rule = "published-executable-owner"
     source = ctx.read_source("src/engine/code/executable.rs")
+    if "root: std::cell::OnceCell<FunctionBytecodeRef>" in source:
+        # S10 reviewed ownership model: the heap caches only immutable Rc data
+        # and a publication certificate; the owning callee keeps the bytecode
+        # alive. Root acquisition validates Runtime at the observation boundary.
+        # Authenticate BOTH the sealed projection and its sole witness producer:
+        # from_authentication is sound only with select's domain/generation/
+        # closure checks. No mutable IC/value exception is inferred by matching
+        # field names; the S12 position-table constructor is part of this hash.
+        production = source.split("#[cfg(test)]\nmod tests", 1)[0]
+        ctx.require_normalized_code_sha256(
+            rule, "lazy publication must retain sealed fields, checked root construction, immutable data and fixture-only mutation",
+            ctx.rust_code_only(production), "d6ba64b8a8cec7d1c766334ac9b59c8bd6dd2375b3b8e9c2466f0ff246846c47",
+        )
+        witness = ctx.read_source("src/engine/vm/call/ordinary.rs").split("#[cfg(test)]\nmod tests", 1)[0]
+        ctx.require_normalized_code_sha256(
+            rule, "rootless certificate construction requires same-runtime, exact publication and closure checks before witness installation",
+            ctx.rust_code_only(witness), "8aae056f3d2572ad39525e430e53cdabbcdd16a1e4ec36db807fa0cf3050ed18",
+        )
+        return
     # Item checks exclude the standalone tests module, but explicitly include
     # the two cfg(test) mutation/fixture escape hatches and authenticate their guards.
     production = source.split("#[cfg(test)]\nmod tests", 1)[0]

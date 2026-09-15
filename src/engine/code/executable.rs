@@ -163,6 +163,10 @@ impl PublishedFunctionSnapshot {
                 observes_arguments: true,
                 #[cfg(feature = "stack-vm")]
                 fusion: Default::default(),
+                #[cfg(feature = "stack-vm")]
+                property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
+                    &[],
+                ),
                 code: Rc::from([]),
                 constants: Rc::from([]),
                 property_key_atoms: None,
@@ -197,6 +201,8 @@ pub(crate) struct PublishedFunctionData {
     pub(crate) observes_arguments: bool,
     #[cfg(feature = "stack-vm")]
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
+    #[cfg(feature = "stack-vm")]
+    pub(crate) property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable,
     pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
     pub(crate) constants: Rc<[BytecodeConstant]>,
     pub(crate) property_key_atoms: Option<Rc<[Atom]>>,
@@ -257,6 +263,10 @@ impl Runtime {
                 }),
                 #[cfg(feature = "stack-vm")]
                 fusion: bytecode.fusion.clone(),
+                #[cfg(feature = "stack-vm")]
+                property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
+                    &bytecode.code,
+                ),
                 code: bytecode.code.clone(),
                 constants: bytecode.constants.clone(),
                 property_key_atoms: bytecode.property_key_atoms.clone(),

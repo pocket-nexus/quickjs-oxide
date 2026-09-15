@@ -143,3 +143,5 @@ mod super_property_driver;
 
 #[cfg(feature = "stack-vm")]
 mod predicate_driver;
+
+mod method_arguments;

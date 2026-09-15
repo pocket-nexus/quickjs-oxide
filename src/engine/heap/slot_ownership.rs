@@ -321,6 +321,14 @@ mod tests {
 }
 
 impl Heap {
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn slot_object_release_readiness(
+        &self,
+        object: super::ObjectId,
+    ) -> Result<SlotReleaseReadiness, HeapError> {
+        self.slot_release_readiness(RawId::Object(object))
+    }
+
     fn slot_release_readiness(&self, id: RawId) -> Result<SlotReleaseReadiness, HeapError> {
         let index = self.validate_slot_identity(id)?;
         if !self.zero_queue.is_empty() {

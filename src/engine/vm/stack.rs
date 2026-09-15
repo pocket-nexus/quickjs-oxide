@@ -85,6 +85,50 @@ mod window;
 pub(in crate::engine::vm) use window::{FrameTransaction, LinkedReadCompletion, RunSlots};
 
 impl SlotStore {
+    /// Commit a retained IC result only after output capacity and the receiver
+    /// release proof have succeeded. Failure leaves the canonical operands.
+    #[cfg(feature = "stack-vm")]
+    fn property_ic_read_current(
+        &mut self,
+        window: &mut FrameWindow,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<crate::engine::object::LinkedNativeSelection>,
+    ) -> Result<bool, Error> {
+        let output_index = if keep_receiver {
+            // Canonical get can have effects before an output-capacity error;
+            // declining here preserves that order without promoting a root.
+            let Ok(index) = self.operand_push_index(window) else {
+                return Ok(false);
+            };
+            Some(index)
+        } else {
+            None
+        };
+        let base = self.peek_current(window, 0)?;
+        let Some(value) = runtime
+            .try_property_ic_read_owned(base, executable, pc, key_index, keep_receiver, native)
+            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?
+        else {
+            return Ok(false);
+        };
+        if let Some(index) = output_index {
+            self.install_operand(window, index, value);
+        } else {
+            let index = window.operands().start + window.depth - 1;
+            let base = self.slots[index].replace(FrameBinding::Direct(value));
+            // No reentry or cleanup queue mutation intervenes between the
+            // runtime proof and this non-final receiver decrement.
+            drop(base);
+            #[cfg(feature = "profiling")]
+            record_owned_storage(Cost::Move(2));
+        }
+        Ok(true)
+    }
+
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
         Self {
             slots: Vec::new(),
@@ -1398,6 +1442,105 @@ impl Drop for SlotStore {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "stack-vm")]
+    #[test]
+    fn owned_property_ic_capacity_preflight_and_receiver_forms_preserve_owners() {
+        use crate::engine::code::bytecode::Instruction;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let callable = runtime
+            .callable_from_value(context.eval("(function(o){return o.x})").unwrap())
+            .unwrap();
+        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
+            runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("bytecode")
+        };
+        let code = runtime.snapshot_function_bytecode(&bytecode).unwrap();
+        let (pc, key) = code
+            .code
+            .iter()
+            .enumerate()
+            .find_map(|(pc, op)| match op {
+                Instruction::GetField(key) => Some((pc, *key)),
+                _ => None,
+            })
+            .unwrap();
+        let base = context
+            .eval("globalThis.icSlotValue={marker:1};({x:icSlotValue})")
+            .unwrap();
+        let value = context.eval("icSlotValue").unwrap();
+        let Value::Object(value_object) = &value else {
+            panic!("object")
+        };
+        let mut native = None;
+        assert!(
+            runtime
+                .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
+                .unwrap()
+                .is_none()
+        );
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 1;
+        let mut slots = SlotStore::new(2);
+        let mut window = slots
+            .push_frame(&owner.frame_layout(), empty_storage())
+            .unwrap();
+        slots.push(&mut window, base.clone()).unwrap();
+        let count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(value_object.object_id())
+            .unwrap();
+        assert!(
+            !slots
+                .run_window(&mut window)
+                .unwrap()
+                .property_ic_read(&runtime, &code, pc, key, true, &mut native)
+                .unwrap()
+        );
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(value_object.object_id())
+                .unwrap(),
+            count
+        );
+        assert_eq!(window.depth, 1);
+        assert_eq!(slots.peek(&window, 0).unwrap(), &base);
+        assert!(
+            slots
+                .run_window(&mut window)
+                .unwrap()
+                .property_ic_read(&runtime, &code, pc, key, false, &mut native)
+                .unwrap()
+        );
+        assert_eq!(window.depth, 1);
+        assert_eq!(slots.peek(&window, 0).unwrap(), &value);
+        slots.clear_frame(window).unwrap();
+        owner.metadata.max_stack = 2;
+        let mut window = slots
+            .push_frame(&owner.frame_layout(), empty_storage())
+            .unwrap();
+        slots.push(&mut window, base.clone()).unwrap();
+        assert!(
+            slots
+                .run_window(&mut window)
+                .unwrap()
+                .property_ic_read(&runtime, &code, pc, key, true, &mut native)
+                .unwrap()
+        );
+        assert_eq!(window.depth, 2);
+        assert_eq!(slots.peek(&window, 0).unwrap(), &value);
+        assert_eq!(slots.peek(&window, 1).unwrap(), &base);
+        slots.clear_frame(window).unwrap();
+    }
+
     use super::{FrameStorage, SlotStore};
     use crate::engine::api::Runtime;
     use crate::engine::code::runtime::PublishedFunctionSnapshot;

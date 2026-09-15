@@ -172,6 +172,27 @@ pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) window: &'a mut FrameWindow,
 }
 impl RunSlots<'_> {
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn property_ic_read(
+        &mut self,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<crate::engine::object::LinkedNativeSelection>,
+    ) -> Result<bool, Error> {
+        self.store.property_ic_read_current(
+            self.window,
+            runtime,
+            executable,
+            pc,
+            key_index,
+            keep_receiver,
+            native,
+        )
+    }
+
     pub(in crate::engine::vm) fn has_operand_capacity(&self, extra: usize) -> bool {
         self.window
             .depth

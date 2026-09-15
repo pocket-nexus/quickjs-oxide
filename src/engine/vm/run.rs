@@ -364,7 +364,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::GetField(index) => {
-                if !slots.ordinary_field_immediate_read(runtime, &executable, *index)? {
+                let mut native = None;
+                if !slots.property_ic_read(
+                    runtime,
+                    executable,
+                    pc.fault,
+                    *index,
+                    false,
+                    &mut native,
+                )? && !slots.ordinary_field_immediate_read(runtime, &executable, *index)?
+                {
                     return Ok(RunExit::GetField {
                         index: *index,
                         keep_receiver: false,
@@ -373,10 +382,52 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::GetField2(index) => {
-                return Ok(RunExit::GetField {
-                    index: *index,
-                    keep_receiver: matches!(instruction, Instruction::GetField2(_)),
+                let mut native = None;
+                if !slots.property_ic_read(
+                    runtime,
+                    executable,
+                    pc.fault,
+                    *index,
+                    true,
+                    &mut native,
+                )? {
+                    return Ok(RunExit::GetField {
+                        index: *index,
+                        keep_receiver: true,
+                    });
+                }
+                let candidate = executable.fusion.method_call(pc.fault).filter(|count| {
+                    slots.has_operand_capacity(*count)
+                        && super::method_arguments::available(
+                            &slots,
+                            &executable.code[pc.fault + 1..pc.fault + count + 1],
+                        )
                 });
+                if let Some(count) = candidate {
+                    #[cfg(feature = "profiling")]
+                    cold::instruction(observed_depth);
+                    let start = pc.fault;
+                    for offset in 0..count {
+                        pc.fault = start + offset + 1;
+                        pc.resume = pc.fault;
+                        let argument =
+                            super::method_arguments::argument(&slots, &executable.code[pc.fault])?;
+                        slots.push(argument)?;
+                        #[cfg(feature = "profiling")]
+                        cold::instruction(observed_depth + offset + 1);
+                    }
+                    pc.fault = start + count + 1;
+                    pc.resume = pc.fault;
+                    #[cfg(feature = "profiling")]
+                    cold::event("method_call_span");
+                    execution.selected_native = native;
+                    return Ok(RunExit::Call {
+                        arguments: count as u16,
+                        method: true,
+                        tail: matches!(executable.code[pc.fault], Instruction::TailCallMethod(_)),
+                    });
+                }
+                true
             }
             Instruction::GetArrayEl => {
                 if !slots.array_immediate_read(runtime)? {
@@ -1684,16 +1735,95 @@ mod tests {
     use crate::engine::heap::SlotReleaseReadiness;
 
     #[test]
+    fn property_ic_resides_for_own_prototype_and_method_reads() {
+        for holder in ["({x:{answer:42}})", "Object.create({x:{answer:42}})"] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            context.eval(&format!("var icHolder={holder}; function icRead(n){{var r;for(var i=0;i<n;i++)r=icHolder.x;return r;}} icRead(2)")).unwrap();
+            let expected = context.eval("icHolder.x").unwrap();
+            let profile = CostProfile::start();
+            assert_eq!(context.eval("icRead(20)").unwrap(), expected);
+            let costs = profile.snapshot();
+            assert_eq!(
+                costs.owned_execution_events.get("property_ic.hit"),
+                Some(&20)
+            );
+            assert_eq!(
+                costs
+                    .owned_execution_events
+                    .get("run_exit.GetField")
+                    .copied()
+                    .unwrap_or(0),
+                0
+            );
+            assert_eq!(costs.owned_bridge_exits, 0);
+        }
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context.eval("var icMethodHolder={min:Math.min};function icMethod(n){var r;for(var i=0;i<n;i++)r=icMethodHolder.min(42,43);return r;}icMethod(2)").unwrap();
+        let profile = CostProfile::start();
+        assert_eq!(context.eval("icMethod(20)").unwrap(), Value::Int(42));
+        let costs = profile.snapshot();
+        assert_eq!(
+            costs.owned_execution_events.get("property_ic.hit"),
+            Some(&20)
+        );
+        assert_eq!(
+            costs.owned_execution_events.get("method_call_span"),
+            Some(&20)
+        );
+        assert_eq!(
+            costs
+                .owned_execution_events
+                .get("run_exit.GetField")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+        drop(profile);
+        context.eval("icMethodHolder.min=Math.max").unwrap();
+        assert_eq!(context.eval("icMethod(3)").unwrap(), Value::Int(43));
+    }
+
+    #[test]
+    fn property_ic_invalidations_preserve_accessor_receiver_and_current_value() {
+        for source in [
+            "var o={x:1};function r(){return o.x;}r();r();o.x=42;r()",
+            "var p={x:1},o=Object.create(p);function r(){return o.x;}r();r();Object.defineProperty(p,'x',{get(){return this.y},configurable:true});o.y=42;r()",
+            "var p={x:1},m=Object.create(p),o=Object.create(m);function r(){return o.x;}r();r();Object.setPrototypeOf(m,{x:42});r()",
+            "var o={x:1};function r(){return o.x;}r();r();delete o.x;Object.setPrototypeOf(o,{x:42});r()",
+            "var o={x:1};function r(){return o.x;}r();r();Object.defineProperty(o,'x',{get(){return 42}});r()",
+            "var o={x:1};function r(){return o.x;}r();r();for(var i=0;i<40;i++)o['k'+i]=i;delete o.k0;o.x=42;r()",
+            "var o={v:42,f(){return this.v}};function r(){return o.f()}r();r();r()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
     fn resident_ordinary_fields_keep_scalar_updates_and_following_pc() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let profile = CostProfile::start();
         assert_eq!(context.eval("(function(){var o={x:0,u:undefined,n:null,b:true,f:1.5,z:-0};for(var i=0;i<8;i++){o.x=i;o.x+=1;if(o.x!==i+1)return 0;}if(o.u!==undefined||o.n!==null||o.b!==true||o.f!==1.5||!Object.is(o.z,-0))return 0;try{throw o.x}catch(e){return e+34}})()").unwrap(),Value::Int(42));
         let costs = profile.snapshot();
-        for event in [
-            "ordinary_field_immediate_read_in_run",
-            "ordinary_field_immediate_write_in_run",
-        ] {
+        assert!(
+            costs
+                .owned_execution_events
+                .get("ordinary_field_immediate_read_in_run")
+                .copied()
+                .unwrap_or(0)
+                + costs
+                    .owned_execution_events
+                    .get("property_ic.hit")
+                    .copied()
+                    .unwrap_or(0)
+                >= 8
+        );
+        for event in ["ordinary_field_immediate_write_in_run"] {
             assert!(
                 costs
                     .owned_execution_events

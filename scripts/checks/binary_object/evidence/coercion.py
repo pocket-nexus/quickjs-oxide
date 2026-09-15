@@ -9,7 +9,7 @@ STAGE3J_RUST_FILE_HASHES = {'src/engine/code/binary_object/function_translate/ca
  'src/engine/code/binary_object_publish.rs': 'd7dd67291f5a8e7535ff7e7fb6802aa8348f5186c32235a8411ec79d6c5a0ae7',
  'src/engine/heap/runtime/tests.rs': 'ed0224ceb892f946bbc5716a7b99294abf7f421ba4675951d7105ce2e7c9dfab',
  'src/engine/code/binary_object/ordinary_leaf/tests.rs': '8a659586b5dfd17d5b3f1863913ddc952fd46fbb080bbf422133939fedb86630',
- 'src/engine/heap/runtime/tests/accessors.rs': '7e7aadee6f2248192a6c1438029e26e1153f9412e148cf8c672f7e7d97ddc1d4',
+ 'src/engine/heap/runtime/tests/accessors.rs': '1438f65e08d63b648fd6ead066bb84e27b5da9287cfec836447dcc7961e2ec8a',
  'src/engine/heap/runtime/tests/active_frames.rs': '609cbd20f1c0499710c9494e365fabfa94f3e8c19be359d4a721aff39bfde0bd',
  'src/engine/heap/runtime/tests/arrays.rs': 'cecec3a2f5b8f2676a57c099ab23d1945146bd6a447843b6450ffe623fa7b9cc',
  'src/engine/heap/runtime/tests/atoms.rs': '2ead10d2f45a8924ccdded1ff505a554c09860ac6fae91a017c8fabfb96f8347',

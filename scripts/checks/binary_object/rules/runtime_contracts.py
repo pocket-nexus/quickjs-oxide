@@ -14,16 +14,20 @@ def check(ctx):
 
     def owned_function(relative, selector, diagnostic):
         # Scope repeated start/resume names to their concrete algorithm owner.
-        # Count both the impl and its function so a shadow owner cannot satisfy
-        # a stale declaration elsewhere in the same module.
+        # Count the reviewed function across its concrete owner impls so a shadow
+        # method cannot satisfy a stale declaration elsewhere in the module.
         if "::" not in selector:
             return ctx.stage3b_function(relative, selector, diagnostic)
         owner, name = selector.split("::", 1)
-        implementation = ctx.unique_braced_item(
-            ctx.stage3b_code(relative),
-            re.compile(rf"\bimpl[ \t\n]+{re.escape(owner)}[ \t\n]*\{{"),
-            diagnostic, f"{relative}::impl {owner}",
-        )[0]
+        code = ctx.stage3b_code(relative)
+        # S11 keeps constructor/take helpers in separate inherent impl blocks.
+        # Search the same concrete owner across those blocks, then still demand
+        # exactly one reviewed method; a shadow method cannot satisfy evidence.
+        implementations = [
+            ctx.braced_item_from_match(code, match, diagnostic, f"{relative}::impl {owner}")[0]
+            for match in re.finditer(rf"\bimpl[ \t\n]+{re.escape(owner)}[ \t\n]*\{{", code)
+        ]
+        implementation = "\n".join(implementations)
         return ctx.unique_braced_item(
             implementation,
             re.compile(rf"\bfn[ \t\n]+{re.escape(name)}\b[^{{}};]*\{{"),
@@ -53,6 +57,14 @@ def check(ctx):
             fragments,
         )
 
+    for diagnostic, relative, selector, digest in evidence.STAGE3B_RESIDENT_TRANSPORT_HASHES:
+        ctx.require_normalized_code_sha256(
+            diagnostic,
+            f"{relative}::{selector} must transport the reviewed resident request fields exactly once",
+            owned_function(relative, selector, diagnostic),
+            digest,
+        )
+
     construct_dispatch = ctx.stage3b_function(
         "src/engine/heap/runtime/mod.rs", "construct_internal_with_new_target", "stage3b-raw-construction"
     )
@@ -80,9 +92,10 @@ def check(ctx):
         ctx.fail("stage3b-function-realm", "bound and Proxy realm traversal must each advance to their target")
 
     for diagnostic, relative, name, payload in evidence.CONSTRUCTION_CAPABILITIES:
+        kind, name = name.split(":", 1) if ":" in name else ("enum", name)
         item = ctx.unique_braced_item(
             ctx.stage3b_code(relative),
-            re.compile(rf"\benum[ \t\n]+{re.escape(name)}[ \t\n]*\{{"),
+            re.compile(rf"\b{kind}[ \t\n]+{re.escape(name)}[ \t\n]*\{{"),
             diagnostic, f"{relative}::{name}",
         )[0]
         ctx.require_ordered_fragments(

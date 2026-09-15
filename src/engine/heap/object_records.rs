@@ -465,6 +465,8 @@ pub enum ObjectKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjectData {
     pub shape: ShapeId,
+    #[cfg(feature = "stack-vm")]
+    pub(crate) used_as_prototype: bool,
     pub slots: Vec<PropertySlot>,
     /// QuickJS's hidden `JS_CLASS_PRIVATE` brand stored on a private method's
     /// HomeObject. The object owns one atom reference independently from any
@@ -499,6 +501,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -517,6 +521,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -538,6 +544,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: false,
@@ -554,6 +562,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -571,6 +581,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -596,6 +608,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -620,6 +634,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -644,6 +660,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -665,6 +683,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -683,6 +703,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -701,6 +723,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -722,6 +746,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -747,6 +773,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -771,6 +799,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -794,6 +824,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -817,6 +849,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -837,6 +871,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -855,6 +891,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -878,6 +916,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -902,6 +942,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -927,6 +969,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -953,6 +997,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -971,6 +1017,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -991,6 +1039,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1018,6 +1068,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1039,6 +1091,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1061,6 +1115,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1084,6 +1140,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1117,6 +1175,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1145,6 +1205,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1171,6 +1233,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1195,6 +1259,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1215,6 +1281,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1236,6 +1304,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1261,6 +1331,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1289,6 +1361,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1317,6 +1391,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1344,6 +1420,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1376,6 +1454,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1404,6 +1484,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1427,6 +1509,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1456,6 +1540,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,
@@ -1480,6 +1566,8 @@ impl ObjectData {
         Self {
             shape,
             slots,
+            #[cfg(feature = "stack-vm")]
+            used_as_prototype: false,
             private_brand_home: None,
             is_html_dda: false,
             extensible: true,

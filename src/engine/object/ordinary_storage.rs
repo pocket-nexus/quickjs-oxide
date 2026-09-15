@@ -1,5 +1,7 @@
 //! Short, non-reentrant access to ordinary own slots. Slot positions never
 //! leave this module and a write locates and commits under one state borrow.
+#[cfg(feature = "stack-vm")]
+mod ic;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::Atom;
