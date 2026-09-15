@@ -8,21 +8,27 @@ use crate::engine::value::{Value, conversion::NativeConversion};
 use crate::engine::vm::Completion;
 
 pub(crate) enum DescriptorStep {
-    Complete(NativeConversion<OrdinaryPropertyDescriptor>),
-    Has {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: DescriptorResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: Value,
-        resume: DescriptorResume,
-    },
+    Complete(DescriptorResume),
+    Throw(Value),
+    Has { resume: DescriptorResume },
+    Read { resume: DescriptorResume },
 }
 
-pub(crate) struct DescriptorResume {
+pub(crate) struct DescriptorResume(Box<DescriptorResumeState>);
+impl std::ops::Deref for DescriptorResume {
+    type Target = DescriptorResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DescriptorResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<DescriptorResume>() <= 8);
+pub(crate) struct DescriptorResumeState {
+    pending_effect: DescriptorStepPending,
     state: State,
     phase: Phase,
 }
@@ -54,12 +60,16 @@ impl DescriptorStep {
         let Value::Object(object) = value else {
             return invalid(runtime, realm, "not an object");
         };
-        State {
-            realm,
-            object,
-            descriptor: OrdinaryPropertyDescriptor::new(),
-            field: 0,
-        }
+        DescriptorResume(Box::new(DescriptorResumeState {
+            pending_effect: DescriptorStepPending::default(),
+            state: State {
+                realm,
+                object,
+                descriptor: OrdinaryPropertyDescriptor::new(),
+                field: 0,
+            },
+            phase: Phase::Read,
+        }))
         .next(runtime)
     }
 }
@@ -69,77 +79,69 @@ fn invalid(
     realm: ContextId,
     message: &'static str,
 ) -> Result<DescriptorStep, RuntimeError> {
-    Ok(DescriptorStep::Complete(NativeConversion::Throw(
-        runtime.new_native_error(realm, NativeErrorKind::Type, message)?,
-    )))
+    Ok(DescriptorStep::Throw(runtime.new_native_error(
+        realm,
+        NativeErrorKind::Type,
+        message,
+    )?))
 }
 
-impl State {
-    fn next(self, runtime: &Runtime) -> Result<DescriptorStep, RuntimeError> {
-        let Some(name) = FIELDS.get(self.field) else {
-            if self.descriptor.is_mixed_descriptor() {
+impl DescriptorResume {
+    fn next(mut self, runtime: &Runtime) -> Result<DescriptorStep, RuntimeError> {
+        let Some(name) = FIELDS.get(self.state.field) else {
+            if self.state.descriptor.is_mixed_descriptor() {
                 return invalid(
                     runtime,
-                    self.realm,
+                    self.state.realm,
                     "cannot have setter/getter and value or writable",
                 );
             }
-            return Ok(DescriptorStep::Complete(NativeConversion::Value(
-                self.descriptor,
-            )));
+            return Ok(DescriptorStep::Complete(self));
         };
         let key = runtime.intern_property_key(name)?;
-        Ok(DescriptorStep::Has {
-            object: self.object.clone(),
-            key: key.clone(),
-            resume: DescriptorResume {
-                state: self,
-                phase: Phase::Has(key),
-            },
-        })
+        self.phase = Phase::Has(key.clone());
+        let object = self.state.object.clone();
+        Ok(DescriptorStep::request_has(object, key, self))
+    }
+    pub(crate) fn take_descriptor(self) -> OrdinaryPropertyDescriptor {
+        self.0.state.descriptor
     }
 }
 
 impl DescriptorResume {
     pub(crate) fn has(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<bool>,
     ) -> Result<DescriptorStep, RuntimeError> {
-        let Phase::Has(key) = self.phase else {
+        let Phase::Has(key) = std::mem::replace(&mut self.0.phase, Phase::Read) else {
             return Err(RuntimeError::Invariant(
                 "descriptor Get continuation received a Has reply",
             ));
         };
-        let mut state = self.state;
+        let state = &mut self.0.state;
         // Pinned C treats the -1 Has result as present. A subsequent Get can
         // replace the exception, including for getter/setter descriptor fields.
         if matches!(result, NativeConversion::Value(false)) {
             state.field += 1;
-            return state.next(runtime);
+            return self.next(runtime);
         }
-        Ok(DescriptorStep::Read {
-            object: state.object.clone(),
-            key,
-            receiver: Value::Object(state.object.clone()),
-            resume: Self {
-                state,
-                phase: Phase::Read,
-            },
-        })
+        let object = state.object.clone();
+        let receiver = Value::Object(state.object.clone());
+        Ok(DescriptorStep::request_read(object, key, receiver, self))
     }
 
     pub(crate) fn read(
-        self,
+        mut self,
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<DescriptorStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Read) {
+        if !matches!(self.0.phase, Phase::Read) {
             return Err(RuntimeError::Invariant(
                 "descriptor Has continuation received a Get reply",
             ));
         }
-        let mut state = self.state;
+        let state = &mut self.0.state;
         let value = match completion {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
@@ -154,7 +156,7 @@ impl DescriptorResume {
                         },
                     );
                 }
-                return Ok(DescriptorStep::Complete(NativeConversion::Throw(value)));
+                return Ok(DescriptorStep::Throw(value));
             }
         };
         match state.field {
@@ -200,7 +202,7 @@ impl DescriptorResume {
             }
         }
         state.field += 1;
-        state.next(runtime)
+        self.next(runtime)
     }
 }
 
@@ -209,17 +211,49 @@ mod tests {
     use super::*;
 
     fn take_has(step: DescriptorStep) -> DescriptorResume {
-        let DescriptorStep::Has { resume, .. } = step else {
+        let DescriptorStep::Has { mut resume } = step else {
             panic!("expected presence request");
         };
+        drop(resume.take_has_object());
+        drop(resume.take_has_key());
         resume
     }
 
     fn take_read(step: DescriptorStep) -> DescriptorResume {
-        let DescriptorStep::Read { resume, .. } = step else {
+        let DescriptorStep::Read { mut resume } = step else {
             panic!("expected value read");
         };
+        drop(resume.take_read_object());
+        drop(resume.take_read_key());
+        drop(resume.take_read_receiver());
         resume
+    }
+
+    #[test]
+    fn descriptor_completion_reuses_the_original_resume_allocation() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let object = runtime.new_object(None).unwrap();
+        let mut resume = take_has(
+            DescriptorStep::start(&runtime, context.realm, Value::Object(object)).unwrap(),
+        );
+        let address = &*resume.0 as *const DescriptorResumeState;
+        for _ in 0..5 {
+            resume = take_has(
+                resume
+                    .has(&runtime, NativeConversion::Value(false))
+                    .unwrap(),
+            );
+            assert_eq!(&*resume.0 as *const DescriptorResumeState, address);
+        }
+        let DescriptorStep::Complete(resume) = resume
+            .has(&runtime, NativeConversion::Value(false))
+            .unwrap()
+        else {
+            panic!("descriptor complete")
+        };
+        assert_eq!(&*resume.0 as *const DescriptorResumeState, address);
+        assert!(!resume.take_descriptor().is_mixed_descriptor());
     }
 
     #[test]
@@ -266,11 +300,13 @@ mod tests {
         let context = runtime.new_context();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
-        let DescriptorStep::Has { resume, .. } =
+        let DescriptorStep::Has { mut resume } =
             DescriptorStep::start(&runtime, context.realm, Value::Object(object)).unwrap()
         else {
             panic!("expected initial Has");
         };
+        drop(resume.take_has_object());
+        drop(resume.take_has_key());
         assert!(
             resume
                 .read(&runtime, Completion::Return(Value::Int(1)))
@@ -280,3 +316,75 @@ mod tests {
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
     }
 }
+
+#[derive(Default)]
+struct DescriptorStepPending {
+    has_object: Option<ObjectRef>,
+    has_key: Option<PropertyKey>,
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    read_receiver: Option<Value>,
+}
+impl DescriptorStep {
+    pub(crate) fn request_has(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: DescriptorResume,
+    ) -> Self {
+        resume.0.pending_effect.has_object = Some(object);
+        resume.0.pending_effect.has_key = Some(key);
+        Self::Has { resume }
+    }
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        receiver: Value,
+        mut resume: DescriptorResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        Self::Read { resume }
+    }
+}
+impl DescriptorResume {
+    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .has_object
+            .take()
+            .expect("DescriptorStep Has object")
+    }
+    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .has_key
+            .take()
+            .expect("DescriptorStep Has key")
+    }
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("DescriptorStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("DescriptorStep Read key")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("DescriptorStep Read receiver")
+    }
+}
+const _: () = assert!(std::mem::size_of::<DescriptorStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<DescriptorStep>() <= 64);

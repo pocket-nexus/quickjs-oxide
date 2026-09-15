@@ -41,7 +41,20 @@ enum Phase {
     NextMethod,
     Next,
 }
-pub(crate) struct AggregateResume {
+pub(crate) struct AggregateResume(Box<AggregateResumeState>);
+impl std::ops::Deref for AggregateResume {
+    type Target = AggregateResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for AggregateResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<AggregateResume>() <= 8);
+pub(crate) struct AggregateResumeState {
     realm: ContextId,
     phase: Phase,
     iterable: Value,
@@ -75,7 +88,7 @@ impl AggregateStep {
         Ok(Self::Read {
             receiver: iterable.clone(),
             key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
-            resume: AggregateResume {
+            resume: AggregateResume(Box::new(AggregateResumeState {
                 realm,
                 phase: Phase::Method,
                 iterable,
@@ -83,7 +96,7 @@ impl AggregateStep {
                 next: Value::Undefined,
                 result: None,
                 index: 0,
-            },
+            })),
         })
     }
 }
@@ -99,7 +112,7 @@ impl AggregateResume {
                 return Ok(AggregateStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Method => {
                 let callable = match value {
                     Value::Object(object) => runtime.as_callable(&object)?,
@@ -108,16 +121,16 @@ impl AggregateResume {
                 let Some(callable) = callable else {
                     return Ok(AggregateStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "value is not iterable",
                         )?,
                     )));
                 };
-                self.phase = Phase::Iterator;
+                self.0.phase = Phase::Iterator;
                 Ok(AggregateStep::Call {
                     callable,
-                    receiver: self.iterable.clone(),
+                    receiver: self.0.iterable.clone(),
                     resume: self,
                 })
             }
@@ -125,15 +138,15 @@ impl AggregateResume {
                 let Value::Object(iterator) = value else {
                     return Ok(AggregateStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "not an object",
                         )?,
                     )));
                 };
-                self.iterable = Value::Undefined;
-                self.iterator = Some(iterator.clone());
-                self.phase = Phase::NextMethod;
+                self.0.iterable = Value::Undefined;
+                self.0.iterator = Some(iterator.clone());
+                self.0.phase = Phase::NextMethod;
                 Ok(AggregateStep::Read {
                     receiver: Value::Object(iterator),
                     key: runtime.intern_property_key("next")?,
@@ -141,8 +154,8 @@ impl AggregateResume {
                 })
             }
             Phase::NextMethod => {
-                self.next = value;
-                self.result = Some(runtime.new_array(self.realm)?);
+                self.0.next = value;
+                self.0.result = Some(runtime.new_array(self.0.realm)?);
                 self.next()
             }
             _ => Err(RuntimeError::Invariant(
@@ -151,19 +164,21 @@ impl AggregateResume {
         }
     }
     fn next(mut self) -> Result<AggregateStep, RuntimeError> {
-        self.phase = Phase::Next;
+        self.0.phase = Phase::Next;
         Ok(AggregateStep::Next {
             iterator: self
+                .0
                 .iterator
                 .clone()
                 .ok_or(RuntimeError::Invariant("AggregateError iterator missing"))?,
-            next: self.next.clone(),
+            next: self.0.next.clone(),
             resume: self,
         })
     }
     fn close(self, value: Value) -> Result<AggregateStep, RuntimeError> {
         Ok(AggregateStep::Close {
             iterator: self
+                .0
                 .iterator
                 .ok_or(RuntimeError::Invariant("AggregateError iterator missing"))?,
             completion: Completion::Throw(value),
@@ -174,7 +189,7 @@ impl AggregateResume {
         runtime: &Runtime,
         result: ObjectIteratorStep,
     ) -> Result<AggregateStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Next) {
+        if !matches!(self.0.phase, Phase::Next) {
             return Err(RuntimeError::Invariant(
                 "AggregateError iterator phase mismatch",
             ));
@@ -183,17 +198,19 @@ impl AggregateResume {
             ObjectIteratorStep::Yield(value) => value,
             ObjectIteratorStep::Done => {
                 return Ok(AggregateStep::Complete(Completion::Return(Value::Object(
-                    self.result
+                    self.0
+                        .result
                         .ok_or(RuntimeError::Invariant("AggregateError result missing"))?,
                 ))));
             }
             ObjectIteratorStep::Throw(value) => return self.close(value),
         };
         let result = self
+            .0
             .result
             .as_ref()
             .ok_or(RuntimeError::Invariant("AggregateError result missing"))?;
-        let key = runtime.intern_property_key(&self.index.to_string())?;
+        let key = runtime.intern_property_key(&self.0.index.to_string())?;
         // The result has not been exposed to JavaScript: own data definition on this fresh Array is callback-free.
         match runtime.define_own_property(
             result,
@@ -213,7 +230,7 @@ impl AggregateResume {
                 ));
             }
         }
-        self.index = self.index.checked_add(1).ok_or(RuntimeError::Invariant(
+        self.0.index = self.0.index.checked_add(1).ok_or(RuntimeError::Invariant(
             "AggregateError iterable exceeded Uint64 indices",
         ))?;
         self.next()
@@ -268,3 +285,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<AggregateStep>() <= 64);

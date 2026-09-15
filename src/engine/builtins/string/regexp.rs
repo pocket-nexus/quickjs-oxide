@@ -111,28 +111,26 @@ impl StringProtocolKind {
 }
 pub(crate) enum StringProtocolStep {
     Complete(Completion),
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: StringProtocolResume,
-    },
-    Primitive {
-        value: Value,
-        resume: StringProtocolResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: StringProtocolResume,
-    },
-    Construct {
-        constructor: ConstructorRef,
-        arguments: Vec<Value>,
-        resume: StringProtocolResume,
-    },
+    Read { resume: StringProtocolResume },
+    Primitive { resume: StringProtocolResume },
+    Call { resume: StringProtocolResume },
+    Construct { resume: StringProtocolResume },
 }
-pub(crate) struct StringProtocolResume {
+pub(crate) struct StringProtocolResume(Box<StringProtocolResumeState>);
+impl std::ops::Deref for StringProtocolResume {
+    type Target = StringProtocolResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for StringProtocolResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<StringProtocolResume>() <= 8);
+pub(crate) struct StringProtocolResumeState {
+    step_pending: StringProtocolStepPending,
     realm: ContextId,
     kind: StringProtocolKind,
     receiver: Value,
@@ -175,33 +173,28 @@ impl StringProtocolStep {
             .ok_or(RuntimeError::Invariant(kind.argument_invariant()))?
             .clone();
         let key = PropertyKey::from(runtime.well_known_symbol(kind.symbol()));
-        let resume = StringProtocolResume {
+        let resume = StringProtocolResume(Box::new(StringProtocolResumeState {
+            step_pending: StringProtocolStepPending::default(),
             realm,
             kind,
             receiver: this_value.clone(),
             pattern,
             phase: ProtocolPhase::Method,
-        };
+        }));
         if let Value::Object(object) = &resume.pattern {
-            Ok(Self::Read {
-                object: object.clone(),
-                key,
-                resume,
-            })
+            Ok(Self::make_read(object.clone(), key, resume))
         } else {
             Ok(resume.source())
         }
     }
 }
 impl StringProtocolResume {
-    fn source(self) -> StringProtocolStep {
-        StringProtocolStep::Primitive {
-            value: self.receiver.clone(),
-            resume: Self {
-                phase: ProtocolPhase::Source,
-                ..self
-            },
-        }
+    fn source(mut self) -> StringProtocolStep {
+        StringProtocolStep::make_primitive(self.0.receiver.clone(), {
+            let updated_0 = ProtocolPhase::Source;
+            self.0.phase = updated_0;
+            self
+        })
     }
     fn selected(
         self,
@@ -211,12 +204,12 @@ impl StringProtocolResume {
         if matches!(method, Value::Undefined | Value::Null) {
             return Ok(self.source());
         }
-        let receiver = self.pattern.clone();
-        let argument = self.receiver.clone();
+        let receiver = self.0.pattern.clone();
+        let argument = self.0.receiver.clone();
         self.call(runtime, receiver, method, argument)
     }
     fn call(
-        self,
+        mut self,
         runtime: &Runtime,
         receiver: Value,
         method: Value,
@@ -228,26 +221,27 @@ impl StringProtocolResume {
         };
         let Some(callable) = callable else {
             return Ok(StringProtocolStep::Complete(Completion::Throw(
-                runtime.new_native_error(self.realm, NativeErrorKind::Type, "not a function")?,
+                runtime.new_native_error(self.0.realm, NativeErrorKind::Type, "not a function")?,
             )));
         };
         let mut arguments = Vec::new();
         if arguments.try_reserve_exact(1).is_err() {
-            return protocol_oom(runtime, self.realm);
+            return protocol_oom(runtime, self.0.realm);
         }
         arguments.push(argument);
-        Ok(StringProtocolStep::Call {
-            target: DirectCallTarget::Callable(callable),
+        Ok(StringProtocolStep::make_call(
+            DirectCallTarget::Callable(callable),
             receiver,
             arguments,
-            resume: Self {
-                phase: ProtocolPhase::Called,
-                ..self
+            {
+                let updated_0 = ProtocolPhase::Called;
+                self.0.phase = updated_0;
+                self
             },
-        })
+        ))
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<StringProtocolStep, RuntimeError> {
@@ -257,47 +251,50 @@ impl StringProtocolResume {
                 return Ok(StringProtocolStep::Complete(Completion::Throw(value)));
             }
         };
-        let realm = self.realm;
-        match self.phase {
+        let realm = self.0.realm;
+        match self.0.phase {
             ProtocolPhase::Method => {
-                if matches!(self.kind, StringProtocolKind::MatchAll) {
-                    let Value::Object(object) = &self.pattern else {
+                if matches!(self.0.kind, StringProtocolKind::MatchAll) {
+                    let Value::Object(object) = &self.0.pattern else {
                         return Err(RuntimeError::Invariant(
                             "String matchAll check lost its pattern object",
                         ));
                     };
-                    Ok(StringProtocolStep::Read {
-                        object: object.clone(),
-                        key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)),
-                        resume: Self {
-                            phase: ProtocolPhase::Match(value),
-                            ..self
+                    Ok(StringProtocolStep::make_read(
+                        object.clone(),
+                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)),
+                        {
+                            let updated_0 = ProtocolPhase::Match(value);
+                            self.0.phase = updated_0;
+                            self
                         },
-                    })
+                    ))
                 } else {
                     self.selected(runtime, value)
                 }
             }
             ProtocolPhase::Match(method) => {
-                let Value::Object(object) = &self.pattern else {
+                let Value::Object(object) = &self.0.pattern else {
                     return Err(RuntimeError::Invariant(
                         "String matchAll check lost its pattern object",
                     ));
                 };
                 let regexp = runtime.is_regexp_from_match(object, &value)?;
                 if regexp {
-                    Ok(StringProtocolStep::Read {
-                        object: object.clone(),
-                        key: runtime.intern_property_key("flags")?,
-                        resume: Self {
-                            phase: ProtocolPhase::Flags(method),
-                            ..self
+                    Ok(StringProtocolStep::make_read(
+                        object.clone(),
+                        runtime.intern_property_key("flags")?,
+                        {
+                            let updated_0 = ProtocolPhase::Flags(method);
+                            self.0.phase = updated_0;
+                            self
                         },
-                    })
+                    ))
                 } else {
-                    Self {
-                        phase: ProtocolPhase::Called,
-                        ..self
+                    {
+                        let updated_0 = ProtocolPhase::Called;
+                        self.0.phase = updated_0;
+                        self
                     }
                     .selected(runtime, method)
                 }
@@ -312,13 +309,11 @@ impl StringProtocolResume {
                         )?,
                     )));
                 }
-                Ok(StringProtocolStep::Primitive {
-                    value,
-                    resume: Self {
-                        phase: ProtocolPhase::FlagsString(method),
-                        ..self
-                    },
-                })
+                Ok(StringProtocolStep::make_primitive(value, {
+                    let updated_0 = ProtocolPhase::FlagsString(method);
+                    self.0.phase = updated_0;
+                    self
+                }))
             }
             ProtocolPhase::FlagsString(method) => {
                 let flags = match protocol_string(runtime, realm, value)? {
@@ -336,9 +331,10 @@ impl StringProtocolResume {
                         )?,
                     )));
                 }
-                Self {
-                    phase: ProtocolPhase::Called,
-                    ..self
+                {
+                    let updated_0 = ProtocolPhase::Called;
+                    self.0.phase = updated_0;
+                    self
                 }
                 .selected(runtime, method)
             }
@@ -359,25 +355,26 @@ impl StringProtocolResume {
                         "realm RegExp constructor root was not callable",
                     ))?;
                 let mut arguments = Vec::new();
-                let all = matches!(self.kind, StringProtocolKind::MatchAll);
+                let all = matches!(self.0.kind, StringProtocolKind::MatchAll);
                 if arguments
                     .try_reserve_exact(if all { 2 } else { 1 })
                     .is_err()
                 {
                     return protocol_oom(runtime, realm);
                 }
-                arguments.push(self.pattern.clone());
+                arguments.push(self.0.pattern.clone());
                 if all {
                     arguments.push(Value::String(JsString::from_static("g")));
                 }
-                Ok(StringProtocolStep::Construct {
-                    constructor: ConstructorRef::from_validated_object(constructor),
+                Ok(StringProtocolStep::make_construct(
+                    ConstructorRef::from_validated_object(constructor),
                     arguments,
-                    resume: Self {
-                        phase: ProtocolPhase::Constructed(source),
-                        ..self
+                    {
+                        let updated_0 = ProtocolPhase::Constructed(source);
+                        self.0.phase = updated_0;
+                        self
                     },
-                })
+                ))
             }
             ProtocolPhase::Constructed(source) => {
                 let Value::Object(regexp) = value else {
@@ -385,18 +382,20 @@ impl StringProtocolResume {
                         "intrinsic RegExp constructor returned a primitive",
                     ));
                 };
-                Ok(StringProtocolStep::Read {
-                    object: regexp.clone(),
-                    key: PropertyKey::from(runtime.well_known_symbol(self.kind.symbol())),
-                    resume: Self {
-                        phase: ProtocolPhase::ConstructMethod { regexp, source },
-                        ..self
+                Ok(StringProtocolStep::make_read(
+                    regexp.clone(),
+                    PropertyKey::from(runtime.well_known_symbol(self.0.kind.symbol())),
+                    {
+                        let updated_0 = ProtocolPhase::ConstructMethod { regexp, source };
+                        self.0.phase = updated_0;
+                        self
                     },
-                })
+                ))
             }
-            ProtocolPhase::ConstructMethod { regexp, source } => Self {
-                phase: ProtocolPhase::Called,
-                ..self
+            ProtocolPhase::ConstructMethod { regexp, source } => {
+                let updated_0 = ProtocolPhase::Called;
+                self.0.phase = updated_0;
+                self
             }
             .call(runtime, Value::Object(regexp), value, Value::String(source)),
             ProtocolPhase::Called => Ok(StringProtocolStep::Complete(Completion::Return(value))),
@@ -428,51 +427,166 @@ fn finish(
     loop {
         step = match step {
             StringProtocolStep::Complete(result) => return Ok(result),
-            StringProtocolStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            StringProtocolStep::Primitive { value, resume } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::String)?
-                } else {
-                    Completion::Return(value)
-                };
-                resume.resume(runtime, result)?
-            }
-            StringProtocolStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => {
-                let DirectCallTarget::Callable(callable) = target else {
-                    return Err(RuntimeError::Invariant(
-                        "String protocol requested an invalid call target",
-                    ));
-                };
+            StringProtocolStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
                 )?
             }
-            StringProtocolStep::Construct {
-                constructor,
-                arguments,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.construct_constructor_internal(
-                    realm,
-                    &constructor,
-                    &constructor,
-                    &arguments,
-                )?,
-            )?,
+            StringProtocolStep::Primitive { mut resume } => {
+                let value = resume.take_primitive_value();
+                {
+                    let result = if matches!(value, Value::Object(_)) {
+                        runtime.to_primitive(realm, value, ToPrimitiveHint::String)?
+                    } else {
+                        Completion::Return(value)
+                    };
+                    resume.resume(runtime, result)?
+                }
+            }
+            StringProtocolStep::Call { mut resume } => {
+                let target = resume.take_call_target();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                {
+                    let DirectCallTarget::Callable(callable) = target else {
+                        return Err(RuntimeError::Invariant(
+                            "String protocol requested an invalid call target",
+                        ));
+                    };
+                    resume.resume(
+                        runtime,
+                        runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    )?
+                }
+            }
+            StringProtocolStep::Construct { mut resume } => {
+                let constructor = resume.take_construct_constructor();
+                let arguments = resume.take_construct_arguments();
+                resume.resume(
+                    runtime,
+                    runtime.construct_constructor_internal(
+                        realm,
+                        &constructor,
+                        &constructor,
+                        &arguments,
+                    )?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+pub(crate) struct StringProtocolStepPending {
+    object: Option<ObjectRef>,
+    key: Option<PropertyKey>,
+    value: Option<Value>,
+    target: Option<DirectCallTarget>,
+    receiver: Option<Value>,
+    arguments: Option<Vec<Value>>,
+    constructor: Option<ConstructorRef>,
+}
+impl StringProtocolStep {
+    pub(crate) fn make_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: StringProtocolResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn make_primitive(value: Value, mut resume: StringProtocolResume) -> Self {
+        resume.0.step_pending.value = Some(value);
+        Self::Primitive { resume }
+    }
+    pub(crate) fn make_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: StringProtocolResume,
+    ) -> Self {
+        resume.0.step_pending.target = Some(target);
+        resume.0.step_pending.receiver = Some(receiver);
+        resume.0.step_pending.arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn make_construct(
+        constructor: ConstructorRef,
+        arguments: Vec<Value>,
+        mut resume: StringProtocolResume,
+    ) -> Self {
+        resume.0.step_pending.constructor = Some(constructor);
+        resume.0.step_pending.arguments = Some(arguments);
+        Self::Construct { resume }
+    }
+}
+impl StringProtocolResume {
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("StringProtocolStep::Read lost object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("StringProtocolStep::Read lost key")
+    }
+
+    pub(crate) fn take_primitive_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("StringProtocolStep::Primitive lost value")
+    }
+
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .step_pending
+            .target
+            .take()
+            .expect("StringProtocolStep::Call lost target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .step_pending
+            .receiver
+            .take()
+            .expect("StringProtocolStep::Call lost receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .step_pending
+            .arguments
+            .take()
+            .expect("StringProtocolStep::Call lost arguments")
+    }
+
+    pub(crate) fn take_construct_constructor(&mut self) -> ConstructorRef {
+        self.0
+            .step_pending
+            .constructor
+            .take()
+            .expect("StringProtocolStep::Construct lost constructor")
+    }
+    pub(crate) fn take_construct_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .step_pending
+            .arguments
+            .take()
+            .expect("StringProtocolStep::Construct lost arguments")
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<StringProtocolStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<StringProtocolStep>() <= 64);

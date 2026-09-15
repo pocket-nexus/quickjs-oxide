@@ -9,30 +9,26 @@ use crate::engine::{
 
 pub(in crate::engine::vm) enum EnvironmentStep {
     Complete(Completion),
-    Has {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: EnvironmentResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: Value,
-        resume: EnvironmentResume,
-    },
-    Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        resume: EnvironmentResume,
-    },
-    Delete {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: EnvironmentResume,
-    },
+    Has { resume: EnvironmentResume },
+    Read { resume: EnvironmentResume },
+    Set { resume: EnvironmentResume },
+    Delete { resume: EnvironmentResume },
 }
-pub(in crate::engine::vm) struct EnvironmentResume {
+pub(in crate::engine::vm) struct EnvironmentResume(Box<EnvironmentResumeState>);
+impl std::ops::Deref for EnvironmentResume {
+    type Target = EnvironmentResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for EnvironmentResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<EnvironmentResume>() <= 8);
+pub(in crate::engine::vm) struct EnvironmentResumeState {
+    pending_effect: EnvironmentStepPending,
     realm: ContextId,
     phase: Phase,
 }
@@ -79,15 +75,16 @@ impl EnvironmentStep {
         key: PropertyKey,
         receiver: Value,
     ) -> Self {
-        Self::Read {
+        Self::request_read(
+            receiver,
             object,
             key,
-            receiver,
-            resume: EnvironmentResume {
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Value,
-            },
-        }
+            })),
+        )
     }
     pub(in crate::engine::vm) fn has_binding(
         realm: ContextId,
@@ -95,14 +92,15 @@ impl EnvironmentStep {
         key: PropertyKey,
         with: bool,
     ) -> Self {
-        Self::Has {
-            object: object.clone(),
-            key: key.clone(),
-            resume: EnvironmentResume {
+        Self::request_has(
+            object.clone(),
+            key.clone(),
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Binding { object, key, with },
-            },
-        }
+            })),
+        )
     }
     pub(in crate::engine::vm) fn get(
         realm: ContextId,
@@ -110,18 +108,19 @@ impl EnvironmentStep {
         key: PropertyKey,
         strict: bool,
     ) -> Self {
-        Self::Has {
-            object: object.clone(),
-            key: key.clone(),
-            resume: EnvironmentResume {
+        Self::request_has(
+            object.clone(),
+            key.clone(),
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Get {
                     object,
                     key,
                     strict,
                 },
-            },
-        }
+            })),
+        )
     }
     pub(in crate::engine::vm) fn put(
         realm: ContextId,
@@ -131,10 +130,11 @@ impl EnvironmentStep {
         strict: bool,
         reference: bool,
     ) -> Self {
-        Self::Has {
-            object: object.clone(),
-            key: key.clone(),
-            resume: EnvironmentResume {
+        Self::request_has(
+            object.clone(),
+            key.clone(),
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Put {
                     object,
@@ -143,8 +143,8 @@ impl EnvironmentStep {
                     strict,
                     reference,
                 },
-            },
-        }
+            })),
+        )
     }
     pub(in crate::engine::vm) fn set(
         realm: ContextId,
@@ -153,57 +153,61 @@ impl EnvironmentStep {
         value: Value,
         strict: bool,
     ) -> Self {
-        Self::Set {
+        Self::request_set(
             object,
-            key: key.clone(),
+            key.clone(),
             value,
-            resume: EnvironmentResume {
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Set { key, strict },
-            },
-        }
+            })),
+        )
     }
     pub(in crate::engine::vm) fn reference(
         realm: ContextId,
         object: ObjectRef,
         key: PropertyKey,
     ) -> Self {
-        Self::Has {
-            object: object.clone(),
+        Self::request_has(
+            object.clone(),
             key,
-            resume: EnvironmentResume {
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Reference { object },
-            },
-        }
+            })),
+        )
     }
     pub(in crate::engine::vm) fn delete_global(
         realm: ContextId,
         object: ObjectRef,
         key: PropertyKey,
     ) -> Self {
-        Self::Has {
-            object: object.clone(),
-            key: key.clone(),
-            resume: EnvironmentResume {
+        Self::request_has(
+            object.clone(),
+            key.clone(),
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::DeleteGlobal { object, key },
-            },
-        }
+            })),
+        )
     }
     pub(in crate::engine::vm) fn delete(
         realm: ContextId,
         object: ObjectRef,
         key: PropertyKey,
     ) -> Self {
-        Self::Delete {
+        Self::request_delete(
             object,
             key,
-            resume: EnvironmentResume {
+            EnvironmentResume(Box::new(EnvironmentResumeState {
+                pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Boolean,
-            },
-        }
+            })),
+        )
     }
 }
 impl EnvironmentResume {
@@ -218,23 +222,24 @@ impl EnvironmentResume {
                 return Ok(EnvironmentStep::Complete(Completion::Throw(value)));
             }
         };
-        let realm = self.realm;
-        match self.phase {
+        let realm = self.0.realm;
+        match self.0.phase {
             Phase::Binding { object, key, with } => {
                 if !present || !with {
                     return Ok(EnvironmentStep::Complete(Completion::Return(Value::Bool(
                         present,
                     ))));
                 }
-                Ok(EnvironmentStep::Read {
-                    receiver: Value::Object(object.clone()),
+                Ok(EnvironmentStep::request_read(
+                    Value::Object(object.clone()),
                     object,
-                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables)),
-                    resume: EnvironmentResume {
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables)),
+                    EnvironmentResume(Box::new(EnvironmentResumeState {
+                        pending_effect: EnvironmentStepPending::default(),
                         realm,
                         phase: Phase::Unscopables { key },
-                    },
-                })
+                    })),
+                ))
             }
             Phase::Get {
                 object,
@@ -251,15 +256,16 @@ impl EnvironmentResume {
                         Value::Undefined,
                     )));
                 }
-                Ok(EnvironmentStep::Read {
-                    receiver: Value::Object(object.clone()),
+                Ok(EnvironmentStep::request_read(
+                    Value::Object(object.clone()),
                     object,
                     key,
-                    resume: EnvironmentResume {
+                    EnvironmentResume(Box::new(EnvironmentResumeState {
+                        pending_effect: EnvironmentStepPending::default(),
                         realm,
                         phase: Phase::Value,
-                    },
-                })
+                    })),
+                ))
             }
             Phase::Put {
                 object,
@@ -330,17 +336,18 @@ impl EnvironmentResume {
                 return Ok(EnvironmentStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Unscopables { key } => Ok(match value {
-                Value::Object(object) => EnvironmentStep::Read {
-                    receiver: Value::Object(object.clone()),
+                Value::Object(object) => EnvironmentStep::request_read(
+                    Value::Object(object.clone()),
                     object,
                     key,
-                    resume: EnvironmentResume {
-                        realm: self.realm,
+                    EnvironmentResume(Box::new(EnvironmentResumeState {
+                        pending_effect: EnvironmentStepPending::default(),
+                        realm: self.0.realm,
                         phase: Phase::Excluded,
-                    },
-                },
+                    })),
+                ),
                 _ => EnvironmentStep::Complete(Completion::Return(Value::Bool(true))),
             }),
             Phase::Excluded => Ok(EnvironmentStep::Complete(Completion::Return(Value::Bool(
@@ -357,7 +364,7 @@ impl EnvironmentResume {
         runtime: &Runtime,
         reply: NativeConversion<InternalSetResult>,
     ) -> Result<EnvironmentStep, RuntimeError> {
-        let Phase::Set { key, strict } = self.phase else {
+        let Phase::Set { key, strict } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "environment Set reply has wrong phase",
             ));
@@ -375,40 +382,178 @@ pub(in crate::engine::vm) fn finish(
     loop {
         step = match step {
             EnvironmentStep::Complete(result) => return Ok(result),
-            EnvironmentStep::Has {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_has_property(realm, &object, &key)?,
-            )?,
-            EnvironmentStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.internal_get(realm, &object, &key, receiver)?,
-            )?,
-            EnvironmentStep::Set {
-                object,
-                key,
-                value,
-                resume,
-            } => resume.set(
-                runtime,
-                runtime.internal_set(realm, &object, &key, value, Value::Object(object.clone()))?,
-            )?,
-            EnvironmentStep::Delete {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_delete_property(realm, &object, &key)?,
-            )?,
+            EnvironmentStep::Has { mut resume } => {
+                let object = resume.take_has_object();
+                let key = resume.take_has_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_has_property(realm, &object, &key)?,
+                )?
+            }
+            EnvironmentStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                let receiver = resume.take_read_receiver();
+                resume.resume(
+                    runtime,
+                    runtime.internal_get(realm, &object, &key, receiver)?,
+                )?
+            }
+            EnvironmentStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                resume.set(
+                    runtime,
+                    runtime.internal_set(
+                        realm,
+                        &object,
+                        &key,
+                        value,
+                        Value::Object(object.clone()),
+                    )?,
+                )?
+            }
+            EnvironmentStep::Delete { mut resume } => {
+                let object = resume.take_delete_object();
+                let key = resume.take_delete_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_delete_property(realm, &object, &key)?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct EnvironmentStepPending {
+    has_object: Option<ObjectRef>,
+    has_key: Option<PropertyKey>,
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    read_receiver: Option<Value>,
+    set_object: Option<ObjectRef>,
+    set_key: Option<PropertyKey>,
+    set_value: Option<Value>,
+    delete_object: Option<ObjectRef>,
+    delete_key: Option<PropertyKey>,
+}
+impl EnvironmentStep {
+    pub(crate) fn request_has(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: EnvironmentResume,
+    ) -> Self {
+        resume.0.pending_effect.has_object = Some(object);
+        resume.0.pending_effect.has_key = Some(key);
+        Self::Has { resume }
+    }
+    pub(crate) fn request_read(
+        receiver: Value,
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: EnvironmentResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: EnvironmentResume,
+    ) -> Self {
+        resume.0.pending_effect.set_object = Some(object);
+        resume.0.pending_effect.set_key = Some(key);
+        resume.0.pending_effect.set_value = Some(value);
+        Self::Set { resume }
+    }
+    pub(crate) fn request_delete(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: EnvironmentResume,
+    ) -> Self {
+        resume.0.pending_effect.delete_object = Some(object);
+        resume.0.pending_effect.delete_key = Some(key);
+        Self::Delete { resume }
+    }
+}
+impl EnvironmentResume {
+    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .has_object
+            .take()
+            .expect("EnvironmentStep Has object")
+    }
+    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .has_key
+            .take()
+            .expect("EnvironmentStep Has key")
+    }
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("EnvironmentStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("EnvironmentStep Read key")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("EnvironmentStep Read receiver")
+    }
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .set_object
+            .take()
+            .expect("EnvironmentStep Set object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .set_key
+            .take()
+            .expect("EnvironmentStep Set key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .set_value
+            .take()
+            .expect("EnvironmentStep Set value")
+    }
+    pub(crate) fn take_delete_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .delete_object
+            .take()
+            .expect("EnvironmentStep Delete object")
+    }
+    pub(crate) fn take_delete_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .delete_key
+            .take()
+            .expect("EnvironmentStep Delete key")
+    }
+}
+const _: () = assert!(std::mem::size_of::<EnvironmentStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<EnvironmentStep>() <= 64);

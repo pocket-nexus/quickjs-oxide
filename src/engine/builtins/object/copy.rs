@@ -49,7 +49,20 @@ pub(crate) struct PreparedCopyRead {
     pub(crate) key: PropertyKey,
     pub(crate) resume: CopyResume,
 }
-pub(crate) struct CopyResume {
+pub(crate) struct CopyResume(Box<CopyResumeState>);
+impl std::ops::Deref for CopyResume {
+    type Target = CopyResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for CopyResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<CopyResume>() <= 8);
+pub(crate) struct CopyResumeState {
     target: ObjectRef,
     source: ObjectRef,
     excluded: Option<ObjectRef>,
@@ -87,7 +100,7 @@ impl CopyStep {
         } else {
             "fresh Object literal rejected a spread data property"
         };
-        let resume = CopyResume {
+        let resume = CopyResume(Box::new(CopyResumeState {
             target,
             source,
             excluded,
@@ -95,7 +108,7 @@ impl CopyStep {
             remaining: Vec::new().into_iter(),
             key: None,
             rejection,
-        };
+        }));
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event("copy_cursor_created");
         Ok(Self::Keys {
@@ -143,43 +156,44 @@ impl CopyResume {
             }
             // This optimization is only selected for non-Proxy sources. It
             // observes every descriptor before the first value getter runs.
-            if self.snapshot {
+            if self.0.snapshot {
                 #[cfg(all(feature = "profiling", feature = "stack-vm"))]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "copy_snapshot_descriptor_read",
                 );
-                if !runtime.own_property_is_enumerable(&self.source, &key)? {
+                if !runtime.own_property_is_enumerable(&self.0.source, &key)? {
                     continue;
                 }
             }
             selected.push(key);
         }
-        self.remaining = selected.into_iter();
+        self.0.remaining = selected.into_iter();
         self.next(runtime)
     }
     fn next(mut self, runtime: &Runtime) -> Result<CopyStep, RuntimeError> {
         #[cfg(feature = "stack-vm")]
-        let receiver = Value::Object(clone_copy_object(&self.source));
-        while let Some(key) = self.remaining.next() {
+        let receiver = Value::Object(clone_copy_object(&self.0.source));
+        while let Some(key) = self.0.remaining.next() {
             // Own membership never walks prototypes or calls getters.
-            if let Some(excluded) = &self.excluded
+            if let Some(excluded) = &self.0.excluded
                 && runtime.has_own_property(excluded, &key)?
             {
                 continue;
             }
             let key_copy = clone_copy_key(&key);
             #[cfg(all(feature = "profiling", feature = "stack-vm"))]
-            if self.key.is_some() {
+            if self.0.key.is_some() {
                 crate::engine::api::profiling::record_owned_execution_event(
                     "copy_cursor_key_owner_replaced",
                 );
             }
-            self.key = Some(key_copy);
+            self.0.key = Some(key_copy);
             #[cfg(feature = "stack-vm")]
-            if self.snapshot {
+            if self.0.snapshot {
                 #[cfg(all(feature = "profiling", feature = "stack-vm"))]
                 crate::engine::api::profiling::record_owned_execution_event("copy_local_live_read");
-                let read = runtime.prepare_ordinary_read_borrowed(&self.source, &key, &receiver)?;
+                let read =
+                    runtime.prepare_ordinary_read_borrowed(&self.0.source, &key, &receiver)?;
                 match read {
                     crate::engine::object::OrdinaryRead::Complete(value) => {
                         self.define_value(runtime, value.unwrap_or(Value::Undefined))?;
@@ -202,15 +216,15 @@ impl CopyResume {
                     }
                 }
             }
-            return Ok(if self.snapshot {
+            return Ok(if self.0.snapshot {
                 CopyStep::Read {
-                    object: clone_copy_object(&self.source),
+                    object: clone_copy_object(&self.0.source),
                     key,
                     resume: self,
                 }
             } else {
                 CopyStep::Enumerable {
-                    object: clone_copy_object(&self.source),
+                    object: clone_copy_object(&self.0.source),
                     key,
                     resume: self,
                 }
@@ -221,12 +235,18 @@ impl CopyResume {
 
     fn define_value(&self, runtime: &Runtime, value: Value) -> Result<(), RuntimeError> {
         let key = self
+            .0
             .key
             .as_ref()
             .ok_or(RuntimeError::Invariant("Object copy key missing"))?;
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event("copy_define_attempt");
-        runtime.define_fresh_object_descriptor_property(&self.target, key, value, self.rejection)
+        runtime.define_fresh_object_descriptor_property(
+            &self.0.target,
+            key,
+            value,
+            self.0.rejection,
+        )
     }
     pub(crate) fn boolean(
         self,
@@ -237,9 +257,10 @@ impl CopyResume {
             NativeConversion::Throw(value) => Ok(CopyStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(false) => self.next(runtime),
             NativeConversion::Value(true) => Ok(CopyStep::Read {
-                object: clone_copy_object(&self.source),
+                object: clone_copy_object(&self.0.source),
                 key: clone_copy_key(
-                    self.key
+                    self.0
+                        .key
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("Object copy key missing"))?,
                 ),
@@ -396,3 +417,6 @@ mod recovery_tests {
         );
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CopyStep>() <= 64);

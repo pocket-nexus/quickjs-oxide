@@ -14,27 +14,41 @@ pub(crate) enum ArrayNextStep {
     Complete(NativeInvokeOutcome),
     #[cfg(feature = "stack-vm")]
     PreparedRead {
-        read: crate::engine::object::OrdinaryRead,
-        key: PropertyKey,
         resume: ArrayNextResume,
     },
     Read {
-        object: ObjectRef,
-        key: PropertyKey,
         resume: ArrayNextResume,
     },
     Number {
-        value: Value,
         resume: ArrayNextResume,
     },
 }
-pub(crate) struct ArrayNextResume {
+const _: () = assert!(std::mem::size_of::<ArrayNextStep>() <= 64);
+pub(crate) struct ArrayNextResume(Box<ArrayNextResumeState>);
+impl std::ops::Deref for ArrayNextResume {
+    type Target = ArrayNextResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ArrayNextResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ArrayNextResume>() <= 8);
+pub(crate) struct ArrayNextResumeState {
     realm: ContextId,
     iterator: ObjectRef,
     source: ObjectRef,
     index: u32,
     kind: ArrayIteratorKind,
     phase: Phase,
+    requested_object: Option<ObjectRef>,
+    requested_key: Option<PropertyKey>,
+    requested_value: Option<Value>,
+    #[cfg(feature = "stack-vm")]
+    requested_read: Option<crate::engine::object::OrdinaryRead>,
 }
 enum Phase {
     Length,
@@ -84,14 +98,19 @@ impl ArrayNextStep {
             }));
         }
         let source = ObjectRef::from_borrowed_handle(runtime.clone(), source)?;
-        let mut resume = ArrayNextResume {
+        let mut resume = ArrayNextResume(Box::new(ArrayNextResumeState {
             realm,
             iterator: iterator.clone(),
             source,
             index,
             kind,
             phase: Phase::Length,
-        };
+            requested_object: None,
+            requested_key: None,
+            requested_value: None,
+            #[cfg(feature = "stack-vm")]
+            requested_read: None,
+        }));
         if runtime.typed_array_is_object(&resume.source)? {
             let action = match runtime.typed_array_validated_length(realm, &resume.source)? {
                 NativeConversion::Value(length) => resume.length(runtime, length)?,
@@ -134,16 +153,16 @@ impl ArrayNextResume {
                 )));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Length => {
-                self.phase = Phase::Number;
+                self.0.phase = Phase::Number;
                 Ok(NextAction::Number(value))
             }
             Phase::Value => {
-                let value = if self.kind == ArrayIteratorKind::KeyAndValue {
+                let value = if self.0.kind == ArrayIteratorKind::KeyAndValue {
                     Value::Object(runtime.new_array_from_values(
-                        self.realm,
-                        vec![Runtime::array_length_value(self.index), value],
+                        self.0.realm,
+                        vec![Runtime::array_length_value(self.0.index), value],
                     )?)
                 } else {
                     value
@@ -163,7 +182,7 @@ impl ArrayNextResume {
         runtime: &Runtime,
         reply: NativeConversion<f64>,
     ) -> Result<NextAction, RuntimeError> {
-        if !matches!(self.phase, Phase::Number) {
+        if !matches!(self.0.phase, Phase::Number) {
             return Err(RuntimeError::Invariant(
                 "Array Iterator numeric reply has wrong phase",
             ));
@@ -178,11 +197,11 @@ impl ArrayNextResume {
         }
     }
     fn length(&mut self, runtime: &Runtime, length: u32) -> Result<NextAction, RuntimeError> {
-        let Some(next_index) = live_next_index(self.index, length) else {
+        let Some(next_index) = live_next_index(self.0.index, length) else {
             let mut state = runtime.0.state.borrow_mut();
             let cleanup = state
                 .heap
-                .finish_array_iterator(self.iterator.object_id())?;
+                .finish_array_iterator(self.0.iterator.object_id())?;
             state.apply_cleanup(cleanup)?;
             return Ok(NextAction::Complete(NativeInvokeOutcome::IteratorNextRaw {
                 value: Value::Undefined,
@@ -194,16 +213,16 @@ impl ArrayNextResume {
             .state
             .borrow_mut()
             .heap
-            .set_array_iterator_index(self.iterator.object_id(), next_index)?;
-        if self.kind == ArrayIteratorKind::Key {
+            .set_array_iterator_index(self.0.iterator.object_id(), next_index)?;
+        if self.0.kind == ArrayIteratorKind::Key {
             return Ok(NextAction::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value: Runtime::array_length_value(self.index),
+                value: Runtime::array_length_value(self.0.index),
                 done: false,
             }));
         }
-        self.phase = Phase::Value;
+        self.0.phase = Phase::Value;
         Ok(NextAction::Read(
-            runtime.property_key_for_index(self.index as u64)?,
+            runtime.property_key_for_index(self.0.index as u64)?,
         ))
     }
 }
@@ -236,9 +255,9 @@ impl ArrayNextResume {
                 use crate::engine::value::conversion::number::NumberStep;
                 action = match action {
                     NextAction::Read(key) => {
-                        let receiver = Value::Object(self.source.clone());
+                        let receiver = Value::Object(self.0.source.clone());
                         match runtime.prepare_ordinary_read_borrowed(
-                            &self.source,
+                            &self.0.source,
                             &key,
                             &receiver,
                         )? {
@@ -247,17 +266,13 @@ impl ArrayNextResume {
                                 Completion::Return(value.unwrap_or(Value::Undefined)),
                             )?,
                             read => {
-                                return Ok(ArrayNextStep::PreparedRead {
-                                    read,
-                                    key,
-                                    resume: self,
-                                });
+                                return Ok(self.prepared(read, key));
                             }
                         }
                     }
                     NextAction::Number(value) if !matches!(value, Value::Object(_)) => {
                         let NumberStep::Complete(reply) =
-                            NumberStep::start(runtime, self.realm, value)?
+                            NumberStep::start(runtime, self.0.realm, value)?
                         else {
                             return Err(RuntimeError::Invariant(
                                 "primitive iterator number suspended",
@@ -276,18 +291,47 @@ impl ArrayNextResume {
             return Ok(self.wait(action));
         }
     }
-    fn wait(self, action: NextAction) -> ArrayNextStep {
+    #[cfg(feature = "stack-vm")]
+    fn prepared(
+        mut self,
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+    ) -> ArrayNextStep {
+        self.requested_read = Some(read);
+        self.requested_key = Some(key);
+        ArrayNextStep::PreparedRead { resume: self }
+    }
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn take_prepared(&mut self) -> crate::engine::object::OrdinaryRead {
+        self.requested_read
+            .take()
+            .expect("array next prepared read")
+    }
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn take_key(&mut self) -> PropertyKey {
+        self.requested_key.take().expect("array next key")
+    }
+    pub(crate) fn take_read(&mut self) -> (ObjectRef, PropertyKey) {
+        (
+            self.requested_object.take().expect("array next object"),
+            self.requested_key.take().expect("array next key"),
+        )
+    }
+    pub(crate) fn take_number(&mut self) -> Value {
+        self.requested_value.take().expect("array next number")
+    }
+    fn wait(mut self, action: NextAction) -> ArrayNextStep {
         match action {
             NextAction::Complete(result) => ArrayNextStep::Complete(result),
-            NextAction::Read(key) => ArrayNextStep::Read {
-                object: self.source.clone(),
-                key,
-                resume: self,
-            },
-            NextAction::Number(value) => ArrayNextStep::Number {
-                value,
-                resume: self,
-            },
+            NextAction::Read(key) => {
+                self.requested_object = Some(self.source.clone());
+                self.requested_key = Some(key);
+                ArrayNextStep::Read { resume: self }
+            }
+            NextAction::Number(value) => {
+                self.requested_value = Some(value);
+                ArrayNextStep::Number { resume: self }
+            }
         }
     }
 }
@@ -307,7 +351,9 @@ pub(crate) fn finish(
         step = match step {
             ArrayNextStep::Complete(result) => return Ok(result),
             #[cfg(feature = "stack-vm")]
-            ArrayNextStep::PreparedRead { read, key, resume } => {
+            ArrayNextStep::PreparedRead { mut resume } => {
+                let read = resume.take_prepared();
+                let key = resume.take_key();
                 let completion = match runtime.finish_prepared_read(realm, &key, read)? {
                     NativeConversion::Value(value) => {
                         Completion::Return(value.unwrap_or(Value::Undefined))
@@ -316,15 +362,15 @@ pub(crate) fn finish(
                 };
                 resume.resume(runtime, completion)?
             }
-            ArrayNextStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            ArrayNextStep::Number { value, resume } => {
+            ArrayNextStep::Read { mut resume } => {
+                let (object, key) = resume.take_read();
+                resume.resume(
+                    runtime,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
+                )?
+            }
+            ArrayNextStep::Number { mut resume } => {
+                let value = resume.take_number();
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
         };
@@ -336,3 +382,6 @@ mod local;
 
 #[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
 mod tests;
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ArrayNextStep>() <= 64);

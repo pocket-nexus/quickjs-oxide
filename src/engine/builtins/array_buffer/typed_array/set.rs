@@ -27,7 +27,20 @@ pub(crate) enum TypedSetStep {
         resume: TypedSetResume,
     },
 }
-pub(crate) struct TypedSetResume {
+pub(crate) struct TypedSetResume(Box<TypedSetResumeState>);
+impl std::ops::Deref for TypedSetResume {
+    type Target = TypedSetResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedSetResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedSetResume>() <= 8);
+pub(crate) struct TypedSetResumeState {
     realm: ContextId,
     phase: SetPhase,
 }
@@ -78,10 +91,10 @@ impl TypedSetStep {
             .clone();
         Ok(Self::Primitive {
             value,
-            resume: TypedSetResume {
+            resume: TypedSetResume(Box::new(TypedSetResumeState {
                 realm,
                 phase: SetPhase::Offset { target, source },
-            },
+            })),
         })
     }
 }
@@ -97,10 +110,10 @@ impl TypedSetResume {
         Ok(TypedSetStep::Read {
             object: state.source.clone(),
             key: runtime.property_key_for_index(state.index)?,
-            resume: Self {
+            resume: Self(Box::new(TypedSetResumeState {
                 realm,
                 phase: SetPhase::Read(state),
-            },
+            })),
         })
     }
     pub(crate) fn resume(
@@ -114,8 +127,8 @@ impl TypedSetResume {
                 return Ok(TypedSetStep::Complete(Completion::Throw(value)));
             }
         };
-        let realm = self.realm;
-        match self.phase {
+        let realm = self.0.realm;
+        match self.0.phase {
             SetPhase::Offset { target, source } => {
                 if matches!(value, Value::Object(_)) {
                     return Err(RuntimeError::Invariant(
@@ -171,7 +184,7 @@ impl TypedSetResume {
                 Ok(TypedSetStep::Read {
                     object: source.clone(),
                     key,
-                    resume: Self {
+                    resume: Self(Box::new(TypedSetResumeState {
                         realm,
                         phase: SetPhase::Length(SetState {
                             target,
@@ -181,15 +194,15 @@ impl TypedSetResume {
                             length: 0,
                             index: 0,
                         }),
-                    },
+                    })),
                 })
             }
             SetPhase::Length(state) => Ok(TypedSetStep::Primitive {
                 value,
-                resume: Self {
+                resume: Self(Box::new(TypedSetResumeState {
                     realm,
                     phase: SetPhase::LengthNumber(state),
-                },
+                })),
             }),
             SetPhase::LengthNumber(mut state) => {
                 if matches!(value, Value::Object(_)) {
@@ -217,10 +230,10 @@ impl TypedSetResume {
             SetPhase::Read(state) => Ok(TypedSetStep::Element {
                 element: runtime.typed_array_snapshot(&state.target)?.element,
                 value,
-                resume: Self {
+                resume: Self(Box::new(TypedSetResumeState {
                     realm,
                     phase: SetPhase::Write(state),
-                },
+                })),
             }),
             SetPhase::Write(_) => Err(RuntimeError::Invariant(
                 "TypedArray.set element write received an untyped reply",
@@ -238,7 +251,7 @@ impl TypedSetResume {
                 return Ok(TypedSetStep::Complete(Completion::Throw(value)));
             }
         };
-        let SetPhase::Write(mut state) = self.phase else {
+        let SetPhase::Write(mut state) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "TypedArray.set received an unexpected element reply",
             ));
@@ -249,7 +262,7 @@ impl TypedSetResume {
             &bytes,
         )?;
         state.index += 1;
-        Self::next(runtime, self.realm, state)
+        Self::next(runtime, self.0.realm, state)
     }
 }
 pub(super) fn finish(
@@ -288,3 +301,6 @@ pub(super) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedSetStep>() <= 64);

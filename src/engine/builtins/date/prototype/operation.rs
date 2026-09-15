@@ -51,7 +51,20 @@ enum Phase {
     JsonPrimitive,
     JsonMethod,
 }
-pub(crate) struct DatePrototypeResume {
+pub(crate) struct DatePrototypeResume(Box<DatePrototypeResumeState>);
+impl std::ops::Deref for DatePrototypeResume {
+    type Target = DatePrototypeResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DatePrototypeResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<DatePrototypeResume>() <= 8);
+pub(crate) struct DatePrototypeResumeState {
     realm: ContextId,
     object: ObjectRef,
     phase: Phase,
@@ -112,14 +125,14 @@ impl DatePrototypeStep {
             return Ok(Self::Primitive {
                 value: Value::Object(object.clone()),
                 hint: ToPrimitiveHint::Number,
-                resume: DatePrototypeResume {
+                resume: DatePrototypeResume(Box::new(DatePrototypeResumeState {
                     realm,
                     object,
                     phase: Phase::JsonPrimitive,
                     arguments: Vec::new().into_iter(),
                     converted: 0,
                     actual: 0,
-                },
+                })),
             });
         }
         let (object, value) = match runtime.date_this_time_value(realm, this_value)? {
@@ -153,7 +166,7 @@ impl DatePrototypeStep {
                 ));
             }
         };
-        DatePrototypeResume {
+        DatePrototypeResume(Box::new(DatePrototypeResumeState {
             realm,
             object,
             phase,
@@ -165,13 +178,13 @@ impl DatePrototypeStep {
                 .into_iter(),
             converted: 0,
             actual: arguments.actual_arg_count,
-        }
+        }))
         .next(runtime)
     }
 }
 impl DatePrototypeResume {
     fn next(mut self, runtime: &Runtime) -> Result<DatePrototypeStep, RuntimeError> {
-        if let Some(value) = self.arguments.next() {
+        if let Some(value) = self.0.arguments.next() {
             return Ok(DatePrototypeStep::Number {
                 value,
                 resume: self,
@@ -182,7 +195,7 @@ impl DatePrototypeResume {
             fields,
             had_fields,
             all_finite,
-        } = self.phase
+        } = self.0.phase
         else {
             return Err(RuntimeError::Invariant(
                 "Date setter numeric result missing",
@@ -193,7 +206,7 @@ impl DatePrototypeResume {
                 Value::number(f64::NAN),
             )));
         }
-        let value = if all_finite && self.actual > 0 {
+        let value = if all_finite && self.0.actual > 0 {
             set_date_fields(
                 &date_input_fields(&fields),
                 field.uses_local_time(),
@@ -203,7 +216,7 @@ impl DatePrototypeResume {
             f64::NAN
         };
         Ok(DatePrototypeStep::Complete(
-            runtime.set_date_this_time_value(&self.object, value)?,
+            runtime.set_date_this_time_value(&self.0.object, value)?,
         ))
     }
     pub(crate) fn number(
@@ -217,12 +230,12 @@ impl DatePrototypeResume {
                 return Ok(DatePrototypeStep::Complete(Completion::Throw(value)));
             }
         };
-        match &mut self.phase {
+        match &mut self.0.phase {
             Phase::Time => Ok(DatePrototypeStep::Complete(
-                runtime.set_date_this_time_value(&self.object, time_clip(value))?,
+                runtime.set_date_this_time_value(&self.0.object, time_clip(value))?,
             )),
             Phase::Year => Ok(DatePrototypeStep::Complete(
-                runtime.finish_date_set_year(&self.object, value)?,
+                runtime.finish_date_set_year(&self.0.object, value)?,
             )),
             Phase::Field {
                 field,
@@ -233,8 +246,8 @@ impl DatePrototypeResume {
                 if !value.is_finite() {
                     *all_finite = false;
                 }
-                fields[usize::from(field.first_field()) + self.converted] = value.trunc();
-                self.converted += 1;
+                fields[usize::from(field.first_field()) + self.0.converted] = value.trunc();
+                self.0.converted += 1;
                 self.next(runtime)
             }
             _ => Err(RuntimeError::Invariant("Date setter number phase mismatch")),
@@ -251,14 +264,14 @@ impl DatePrototypeResume {
                 return Ok(DatePrototypeStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::JsonPrimitive => {
                 if value.as_number().is_some_and(|value| !value.is_finite()) {
                     return Ok(DatePrototypeStep::Complete(Completion::Return(Value::Null)));
                 }
-                self.phase = Phase::JsonMethod;
+                self.0.phase = Phase::JsonMethod;
                 Ok(DatePrototypeStep::Read {
-                    object: self.object.clone(),
+                    object: self.0.object.clone(),
                     key: runtime.intern_property_key("toISOString")?,
                     resume: self,
                 })
@@ -271,7 +284,7 @@ impl DatePrototypeResume {
                 let Some(callable) = callable else {
                     return Ok(DatePrototypeStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "object needs toISOString method",
                         )?,
@@ -279,7 +292,7 @@ impl DatePrototypeResume {
                 };
                 Ok(DatePrototypeStep::Call {
                     callable,
-                    receiver: Value::Object(self.object),
+                    receiver: Value::Object(self.0.object),
                 })
             }
             _ => Err(RuntimeError::Invariant(
@@ -321,3 +334,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<DatePrototypeStep>() <= 64);

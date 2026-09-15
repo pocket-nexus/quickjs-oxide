@@ -65,7 +65,7 @@ enum JsonWrapperKind {
 mod operation;
 pub(crate) use operation::{StringifyResume, StringifyStep};
 
-struct JsonStringifier {
+pub(crate) struct JsonStringifier {
     realm: ContextId,
     replacer: Option<CallableRef>,
     property_list: Option<Vec<JsString>>,

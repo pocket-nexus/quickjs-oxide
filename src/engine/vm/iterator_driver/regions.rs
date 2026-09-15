@@ -4,11 +4,12 @@ use crate::engine::value::Value;
 use crate::engine::vm::{VmUnwindRegion, frame::Frame, stack::SlotStore};
 
 pub(super) fn disable(frame: &mut Frame, slots: &mut SlotStore, base: usize) -> Result<(), Error> {
+    let body = &mut *frame.cold;
     let Some(VmUnwindRegion::Iterator {
         record_base,
         enabled,
         asynchronous: false,
-    }) = frame.cold.regions.last_mut()
+    }) = body.owners.regions.last_mut()
     else {
         return Err(Error::internal(
             "iterator operation has no innermost synchronous region",
@@ -18,10 +19,10 @@ pub(super) fn disable(frame: &mut Frame, slots: &mut SlotStore, base: usize) -> 
         return Err(Error::internal("iterator region changed during operation"));
     }
     let offset = slots
-        .depth(&frame.window)
+        .depth(&body.window)
         .checked_sub(base + 1)
         .ok_or_else(|| Error::internal("iterator record is truncated"))?;
-    slots.replace_operand(&frame.window, offset, Value::Undefined)?;
+    slots.replace_operand(&body.window, offset, Value::Undefined)?;
     *enabled = false;
     Ok(())
 }

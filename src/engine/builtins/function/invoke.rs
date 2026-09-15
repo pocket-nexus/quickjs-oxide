@@ -32,23 +32,26 @@ impl InvokeKind {
     }
 }
 pub(crate) enum InvokeStep {
-    Construct {
-        target: ConstructorRef,
-        new_target: ConstructNewTarget,
-        arguments: Vec<Value>,
-    },
+    Construct(Box<InvokeConstruct>),
     Complete(Completion),
-    Arguments {
-        value: Value,
-        resume: InvokeResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-    },
+    Arguments { resume: InvokeResume },
+    Call(Box<InvokeCall>),
 }
-pub(crate) struct InvokeResume {
+pub(crate) struct InvokeResume(Box<InvokeResumeState>);
+impl std::ops::Deref for InvokeResume {
+    type Target = InvokeResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for InvokeResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<InvokeResume>() <= 8);
+pub(crate) struct InvokeResumeState {
+    pending_effect: InvokeStepPending,
     realm: ContextId,
     target: ForwardTarget,
 }
@@ -98,15 +101,17 @@ impl InvokeStep {
             } else {
                 None
             };
-            return Ok(Self::Arguments {
-                value: arguments.readable[1].clone(),
-                resume: InvokeResume {
+            return Ok({
+                let __pending_field_value = arguments.readable[1].clone();
+                let __pending_field_resume = InvokeResume(Box::new(InvokeResumeState {
+                    pending_effect: InvokeStepPending::default(),
                     realm,
                     target: ForwardTarget::Construct {
                         target: arguments.readable[0].clone(),
                         new_target,
                     },
-                },
+                }));
+                Self::request_arguments(__pending_field_value, __pending_field_resume)
             });
         }
         let (target, receiver, list) = match kind {
@@ -137,11 +142,11 @@ impl InvokeStep {
                         &forwarded,
                     );
                 }
-                return Ok(Self::Call {
+                return Ok(Self::Call(Box::new(InvokeCall {
                     target,
                     receiver,
                     arguments: forwarded,
-                });
+                })));
             }
             InvokeKind::Apply => {
                 let target = match this_value {
@@ -168,18 +173,20 @@ impl InvokeStep {
             ),
         };
         if matches!(kind, InvokeKind::Apply) && matches!(list, Value::Null | Value::Undefined) {
-            return Ok(Self::Call {
+            return Ok(Self::Call(Box::new(InvokeCall {
                 target,
                 receiver,
                 arguments: Vec::new(),
-            });
+            })));
         }
-        Ok(Self::Arguments {
-            value: list,
-            resume: InvokeResume {
+        Ok({
+            let __pending_field_value = list;
+            let __pending_field_resume = InvokeResume(Box::new(InvokeResumeState {
+                pending_effect: InvokeStepPending::default(),
                 realm,
                 target: ForwardTarget::Call { target, receiver },
-            },
+            }));
+            Self::request_arguments(__pending_field_value, __pending_field_resume)
         })
     }
     #[cfg(feature = "stack-vm")]
@@ -194,11 +201,11 @@ impl InvokeStep {
         // OP_apply validates callability even for construct mode, before argsList.
         let callable = runtime.callable_from_value(target.clone())?;
         if matches!(value, Value::Null | Value::Undefined) {
-            return Ok(Self::Call {
+            return Ok(Self::Call(Box::new(InvokeCall {
                 target: DirectCallTarget::Callable(callable),
                 receiver,
                 arguments: Vec::new(),
-            });
+            })));
         }
         let target = match kind {
             crate::engine::code::bytecode::ApplyKind::Call => ForwardTarget::Call {
@@ -210,9 +217,14 @@ impl InvokeStep {
                 new_target: Some(ConstructNewTarget::Raw(receiver)),
             },
         };
-        Ok(Self::Arguments {
-            value,
-            resume: InvokeResume { realm, target },
+        Ok({
+            let __pending_field_value = value;
+            let __pending_field_resume = InvokeResume(Box::new(InvokeResumeState {
+                pending_effect: InvokeStepPending::default(),
+                realm,
+                target,
+            }));
+            Self::request_arguments(__pending_field_value, __pending_field_resume)
         })
     }
 }
@@ -234,14 +246,14 @@ impl InvokeResume {
             arguments.capacity(),
             size_of::<Value>(),
         );
-        Ok(match self.target {
-            ForwardTarget::Call { target, receiver } => InvokeStep::Call {
+        Ok(match self.0.target {
+            ForwardTarget::Call { target, receiver } => InvokeStep::Call(Box::new(InvokeCall {
                 target,
                 receiver,
                 arguments,
-            },
+            })),
             ForwardTarget::Construct { target, new_target } => {
-                let target = match runtime.constructor_from_value(self.realm, target)? {
+                let target = match runtime.constructor_from_value(self.0.realm, target)? {
                     NativeConversion::Value(target) => target,
                     NativeConversion::Throw(value) => {
                         return Ok(InvokeStep::Complete(Completion::Throw(value)));
@@ -249,11 +261,11 @@ impl InvokeResume {
                 };
                 let new_target =
                     new_target.unwrap_or_else(|| ConstructNewTarget::Validated(target.clone()));
-                InvokeStep::Construct {
+                InvokeStep::Construct(Box::new(InvokeConstruct {
                     target,
                     new_target,
                     arguments,
-                }
+                }))
             }
         })
     }
@@ -266,32 +278,74 @@ pub(crate) fn finish(
     loop {
         step = match step {
             InvokeStep::Complete(result) => return Ok(result),
-            InvokeStep::Construct {
-                target,
-                new_target,
-                arguments,
-            } => {
-                return runtime
-                    .construct_internal_with_new_target(realm, &target, new_target, &arguments);
+            InvokeStep::Construct(request) => {
+                let target = request.target;
+                let new_target = request.new_target;
+                let arguments = request.arguments;
+                {
+                    return runtime.construct_internal_with_new_target(
+                        realm, &target, new_target, &arguments,
+                    );
+                }
             }
-            InvokeStep::Arguments { value, resume } => resume.arguments(
-                runtime,
-                finish_arguments(runtime, realm, ArgumentsStep::start(runtime, realm, value)?)?,
-            )?,
-            InvokeStep::Call {
-                target,
-                receiver,
-                arguments,
-            } => {
-                return match target {
-                    DirectCallTarget::Callable(target) => {
-                        runtime.call_internal(realm, &target, receiver, &arguments)
-                    }
-                    DirectCallTarget::NonCallableProxy(proxy) => {
-                        runtime.call_proxy(realm, &proxy, receiver, &arguments)
-                    }
-                };
+            InvokeStep::Arguments { mut resume } => {
+                let value = resume.take_arguments_value();
+                resume.arguments(
+                    runtime,
+                    finish_arguments(runtime, realm, ArgumentsStep::start(runtime, realm, value)?)?,
+                )?
+            }
+            InvokeStep::Call(request) => {
+                let target = request.target;
+                let receiver = request.receiver;
+                let arguments = request.arguments;
+                {
+                    return match target {
+                        DirectCallTarget::Callable(target) => {
+                            runtime.call_internal(realm, &target, receiver, &arguments)
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            runtime.call_proxy(realm, &proxy, receiver, &arguments)
+                        }
+                    };
+                }
             }
         };
     }
 }
+
+#[derive(Default)]
+struct InvokeStepPending {
+    arguments_value: Option<Value>,
+}
+impl InvokeStep {
+    pub(crate) fn request_arguments(value: Value, mut resume: InvokeResume) -> Self {
+        resume.0.pending_effect.arguments_value = Some(value);
+        Self::Arguments { resume }
+    }
+}
+impl InvokeResume {
+    pub(crate) fn take_arguments_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .arguments_value
+            .take()
+            .expect("InvokeStep Arguments value")
+    }
+}
+const _: () = assert!(std::mem::size_of::<InvokeStep>() <= 64);
+
+pub(crate) struct InvokeCall {
+    pub(crate) target: DirectCallTarget,
+    pub(crate) receiver: Value,
+    pub(crate) arguments: Vec<Value>,
+}
+
+pub(crate) struct InvokeConstruct {
+    pub(crate) target: ConstructorRef,
+    pub(crate) new_target: ConstructNewTarget,
+    pub(crate) arguments: Vec<Value>,
+}
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<InvokeStep>() <= 64);

@@ -743,11 +743,13 @@ impl Runtime {
             Some(Value::Object(callback)) => {
                 let callback = self.callable_from_value(Value::Object(callback.clone()))?;
                 let active_function = self.active_function()?;
-                return Ok(InvokeStep::Call {
-                    target: crate::engine::vm::call::DirectCallTarget::Callable(callback),
-                    receiver: Value::Undefined,
-                    arguments: vec![Value::Object(active_function)],
-                });
+                return Ok(InvokeStep::Call(Box::new(
+                    super::function::invoke::InvokeCall {
+                        target: crate::engine::vm::call::DirectCallTarget::Callable(callback),
+                        receiver: Value::Undefined,
+                        arguments: vec![Value::Object(active_function)],
+                    },
+                )));
             }
             Some(Value::Bool(false)) => Ok(Completion::Throw(Value::String(
                 JsString::from_static("active frame probe throw"),

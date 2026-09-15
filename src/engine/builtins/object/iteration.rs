@@ -40,34 +40,21 @@ impl IterationKind {
 pub(crate) enum IterationStep {
     Complete(Completion),
     Read {
-        receiver: Value,
-        key: PropertyKey,
         resume: IterationResume,
     },
     Call {
-        callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
         resume: IterationResume,
     },
     Next {
-        iterator: ObjectRef,
-        method: Value,
         resume: IterationResume,
     },
     Key {
-        value: Value,
         resume: IterationResume,
     },
     Define {
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
         resume: IterationResume,
     },
     Push {
-        object: ObjectRef,
-        value: Value,
         resume: IterationResume,
     },
     Close {
@@ -75,7 +62,21 @@ pub(crate) enum IterationStep {
         completion: Completion,
     },
 }
-pub(crate) struct IterationResume {
+pub(crate) struct IterationResume(Box<IterationResumeState>);
+impl std::ops::Deref for IterationResume {
+    type Target = IterationResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for IterationResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<IterationResume>() <= 8);
+pub(crate) struct IterationResumeState {
+    pending_effect: IterationStepPending,
     realm: ContextId,
     kind: IterationKind,
     result: Option<ObjectRef>,
@@ -174,10 +175,11 @@ impl IterationStep {
                 )?,
             )));
         }
-        Ok(Self::Read {
-            receiver: iterable.clone(),
-            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
-            resume: IterationResume {
+        Ok(Self::request_read(
+            iterable.clone(),
+            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+            IterationResume(Box::new(IterationResumeState {
+                pending_effect: IterationStepPending::default(),
                 realm,
                 kind,
                 result,
@@ -187,25 +189,26 @@ impl IterationStep {
                 index: 0,
                 limit,
                 phase: Phase::IteratorMethod(iterable),
-            },
-        })
+            })),
+        ))
     }
 }
 impl IterationResume {
     fn iterator(&self) -> Result<ObjectRef, RuntimeError> {
-        self.iterator
+        self.0
+            .iterator
             .clone()
             .ok_or(RuntimeError::Invariant("Object iterator not acquired"))
     }
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
-        self.result.clone().ok_or(RuntimeError::Invariant(
+        self.0.result.clone().ok_or(RuntimeError::Invariant(
             "Object iterator result not allocated",
         ))
     }
     fn abrupt(self, value: Value) -> IterationStep {
-        let close = matches!(self.kind, IterationKind::Entries)
-            || matches!(self.phase, Phase::Callback(_) | Phase::Key(_));
-        if close && let Some(iterator) = self.iterator {
+        let close = matches!(self.0.kind, IterationKind::Entries)
+            || matches!(self.0.phase, Phase::Callback(_) | Phase::Key(_));
+        if close && let Some(iterator) = self.0.iterator {
             IterationStep::Close {
                 iterator,
                 completion: Completion::Throw(value),
@@ -215,29 +218,29 @@ impl IterationResume {
         }
     }
     fn next_step(mut self, runtime: &Runtime) -> Result<IterationStep, RuntimeError> {
-        if !matches!(self.kind, IterationKind::Entries) && self.index >= self.limit {
+        if !matches!(self.0.kind, IterationKind::Entries) && self.0.index >= self.0.limit {
             return Ok(IterationStep::Close {
                 iterator: self.iterator()?,
                 completion: Completion::Throw(runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Type,
                     "too many elements",
                 )?),
             });
         }
-        self.phase = Phase::Next;
-        Ok(IterationStep::Next {
-            iterator: self.iterator()?,
-            method: self.next.clone(),
-            resume: self,
-        })
+        self.0.phase = Phase::Next;
+        Ok(IterationStep::request_next(
+            self.iterator()?,
+            self.0.next.clone(),
+            self,
+        ))
     }
     pub(crate) fn next(
         mut self,
         runtime: &Runtime,
         reply: ObjectIteratorStep,
     ) -> Result<IterationStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Next) {
+        if !matches!(self.0.phase, Phase::Next) {
             return Err(RuntimeError::Invariant(
                 "Object iterator step has wrong reply phase",
             ));
@@ -251,36 +254,37 @@ impl IterationResume {
             }
             ObjectIteratorStep::Yield(value) => value,
         };
-        match self.kind {
+        match self.0.kind {
             IterationKind::Entries => {
                 let Value::Object(item) = value else {
                     let value = runtime.new_native_error(
-                        self.realm,
+                        self.0.realm,
                         NativeErrorKind::Type,
                         "not an object",
                     )?;
                     return Ok(self.abrupt(value));
                 };
-                self.phase = Phase::EntryKey(item.clone());
-                Ok(IterationStep::Read {
-                    receiver: Value::Object(item),
-                    key: runtime.intern_property_key("0")?,
-                    resume: self,
-                })
+                self.0.phase = Phase::EntryKey(item.clone());
+                Ok(IterationStep::request_read(
+                    Value::Object(item),
+                    runtime.intern_property_key("0")?,
+                    self,
+                ))
             }
             IterationKind::Group | IterationKind::MapGroup => {
                 let callable = self
+                    .0
                     .callback
                     .clone()
                     .ok_or(RuntimeError::Invariant("groupBy callback missing"))?;
-                let arguments = vec![value.clone(), Value::number(self.index as f64)];
-                self.phase = Phase::Callback(value);
-                Ok(IterationStep::Call {
+                let arguments = vec![value.clone(), Value::number(self.0.index as f64)];
+                self.0.phase = Phase::Callback(value);
+                Ok(IterationStep::request_call(
                     callable,
-                    receiver: Value::Object(runtime.global_object_for_realm(self.realm)?),
+                    Value::Object(runtime.global_object_for_realm(self.0.realm)?),
                     arguments,
-                    resume: self,
-                })
+                    self,
+                ))
             }
         }
     }
@@ -293,7 +297,7 @@ impl IterationResume {
             Completion::Throw(value) => return Ok(self.abrupt(value)),
             Completion::Return(value) => value,
         };
-        let phase = std::mem::replace(&mut self.phase, Phase::Next);
+        let phase = std::mem::replace(&mut self.0.phase, Phase::Next);
         match phase {
             Phase::IteratorMethod(iterable) => {
                 let callable = match value {
@@ -303,66 +307,63 @@ impl IterationResume {
                 let Some(callable) = callable else {
                     return Ok(IterationStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "value is not iterable",
                         )?,
                     )));
                 };
-                self.phase = Phase::Iterator;
-                Ok(IterationStep::Call {
+                self.0.phase = Phase::Iterator;
+                Ok(IterationStep::request_call(
                     callable,
-                    receiver: iterable,
-                    arguments: Vec::new(),
-                    resume: self,
-                })
+                    iterable,
+                    Vec::new(),
+                    self,
+                ))
             }
             Phase::Iterator => {
                 let Value::Object(iterator) = value else {
                     return Ok(IterationStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "not an object",
                         )?,
                     )));
                 };
-                self.iterator = Some(iterator.clone());
-                self.phase = Phase::NextMethod;
-                Ok(IterationStep::Read {
-                    receiver: Value::Object(iterator),
-                    key: runtime.intern_property_key("next")?,
-                    resume: self,
-                })
+                self.0.iterator = Some(iterator.clone());
+                self.0.phase = Phase::NextMethod;
+                Ok(IterationStep::request_read(
+                    Value::Object(iterator),
+                    runtime.intern_property_key("next")?,
+                    self,
+                ))
             }
             Phase::NextMethod => {
-                self.next = value;
-                match self.kind {
-                    IterationKind::Group => self.result = Some(runtime.new_object(None)?),
+                self.0.next = value;
+                match self.0.kind {
+                    IterationKind::Group => self.0.result = Some(runtime.new_object(None)?),
                     IterationKind::MapGroup => {
-                        self.result = Some(runtime.new_map_in_realm(self.realm)?)
+                        self.0.result = Some(runtime.new_map_in_realm(self.0.realm)?)
                     }
                     IterationKind::Entries => {}
                 }
                 self.next_step(runtime)
             }
             Phase::EntryKey(item) => {
-                self.phase = Phase::EntryValue(value);
-                Ok(IterationStep::Read {
-                    receiver: Value::Object(item),
-                    key: runtime.intern_property_key("1")?,
-                    resume: self,
-                })
+                self.0.phase = Phase::EntryValue(value);
+                Ok(IterationStep::request_read(
+                    Value::Object(item),
+                    runtime.intern_property_key("1")?,
+                    self,
+                ))
             }
             Phase::EntryValue(key) => {
-                self.phase = Phase::Key(value);
-                Ok(IterationStep::Key {
-                    value: key,
-                    resume: self,
-                })
+                self.0.phase = Phase::Key(value);
+                Ok(IterationStep::request_key(key, self))
             }
             Phase::Callback(item) => {
-                if matches!(self.kind, IterationKind::MapGroup) {
+                if matches!(self.0.kind, IterationKind::MapGroup) {
                     let key = Runtime::normalized_map_key(value);
                     let groups = self.result()?;
                     let group = match runtime.find_map_record(&groups, &key)? {
@@ -375,35 +376,28 @@ impl IterationResume {
                             }
                         },
                         None => {
-                            let group = runtime.new_array(self.realm)?;
+                            let group = runtime.new_array(self.0.realm)?;
                             runtime.set_map_record(&groups, key, Value::Object(group.clone()))?;
                             group
                         }
                     };
-                    self.phase = Phase::Push;
-                    return Ok(IterationStep::Push {
-                        object: group,
-                        value: item,
-                        resume: self,
-                    });
+                    self.0.phase = Phase::Push;
+                    return Ok(IterationStep::request_push(group, item, self));
                 }
-                self.phase = Phase::Key(item);
-                Ok(IterationStep::Key {
-                    value,
-                    resume: self,
-                })
+                self.0.phase = Phase::Key(item);
+                Ok(IterationStep::request_key(value, self))
             }
             Phase::Group(item, key) => {
                 let group = match value {
                     Value::Undefined => {
-                        let group = runtime.new_array(self.realm)?;
-                        self.phase = Phase::GroupDefined(item, group.clone());
-                        return Ok(IterationStep::Define {
-                            object: self.result()?,
+                        let group = runtime.new_array(self.0.realm)?;
+                        self.0.phase = Phase::GroupDefined(item, group.clone());
+                        return Ok(IterationStep::request_define(
+                            self.result()?,
                             key,
-                            descriptor: descriptor(Value::Object(group)),
-                            resume: self,
-                        });
+                            descriptor(Value::Object(group)),
+                            self,
+                        ));
                     }
                     Value::Object(group) => group,
                     _ => {
@@ -412,15 +406,11 @@ impl IterationResume {
                         ));
                     }
                 };
-                self.phase = Phase::Push;
-                Ok(IterationStep::Push {
-                    object: group,
-                    value: item,
-                    resume: self,
-                })
+                self.0.phase = Phase::Push;
+                Ok(IterationStep::request_push(group, item, self))
             }
             Phase::Push => {
-                self.index = self.index.checked_add(1).ok_or(RuntimeError::Invariant(
+                self.0.index = self.0.index.checked_add(1).ok_or(RuntimeError::Invariant(
                     "Object.groupBy index overflowed Uint64",
                 ))?;
                 self.next_step(runtime)
@@ -439,32 +429,32 @@ impl IterationResume {
             Completion::Throw(value) => return Ok(self.abrupt(value)),
             Completion::Return(value) => value,
         };
-        let key = match runtime.property_key_from_primitive(self.realm, value)? {
+        let key = match runtime.property_key_from_primitive(self.0.realm, value)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
         };
-        let Phase::Key(item) = std::mem::replace(&mut self.phase, Phase::Next) else {
+        let Phase::Key(item) = std::mem::replace(&mut self.0.phase, Phase::Next) else {
             return Err(RuntimeError::Invariant(
                 "Object iterator key has wrong phase",
             ));
         };
-        match self.kind {
+        match self.0.kind {
             IterationKind::Entries => {
-                self.phase = Phase::EntryDefined(key.clone());
-                Ok(IterationStep::Define {
-                    object: self.result()?,
+                self.0.phase = Phase::EntryDefined(key.clone());
+                Ok(IterationStep::request_define(
+                    self.result()?,
                     key,
-                    descriptor: descriptor(item),
-                    resume: self,
-                })
+                    descriptor(item),
+                    self,
+                ))
             }
             IterationKind::Group => {
-                self.phase = Phase::Group(item, key.clone());
-                Ok(IterationStep::Read {
-                    receiver: Value::Object(self.result()?),
+                self.0.phase = Phase::Group(item, key.clone());
+                Ok(IterationStep::request_read(
+                    Value::Object(self.result()?),
                     key,
-                    resume: self,
-                })
+                    self,
+                ))
             }
             IterationKind::MapGroup => Err(RuntimeError::Invariant(
                 "Map.groupBy received a property-key reply",
@@ -480,10 +470,10 @@ impl IterationResume {
             NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
             NativeConversion::Value(result) => result,
         };
-        match std::mem::replace(&mut self.phase, Phase::Next) {
+        match std::mem::replace(&mut self.0.phase, Phase::Next) {
             Phase::EntryDefined(key) => {
                 if let Some(value) = runtime.finish_define_property_or_throw(
-                    self.realm,
+                    self.0.realm,
                     &key,
                     NativeConversion::Value(result),
                 )? {
@@ -497,12 +487,8 @@ impl IterationResume {
                         "fresh Object.groupBy result rejected a group property",
                     ));
                 }
-                self.phase = Phase::Push;
-                Ok(IterationStep::Push {
-                    object: group,
-                    value,
-                    resume: self,
-                })
+                self.0.phase = Phase::Push;
+                Ok(IterationStep::request_push(group, value, self))
             }
             _ => Err(RuntimeError::Invariant(
                 "Object iterator definition has wrong phase",
@@ -537,70 +523,73 @@ pub(crate) fn finish(
                     CloseStep::start(runtime, realm, iterator, completion)?,
                 );
             }
-            IterationStep::Read {
-                receiver,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
-            )?,
-            IterationStep::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, receiver, &arguments)?,
-            )?,
-            IterationStep::Next {
-                iterator,
-                method,
-                resume,
-            } => resume.next(
-                runtime,
-                finish_next(
+            IterationStep::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                resume.resume(
                     runtime,
-                    realm,
-                    NextStep::start(runtime, realm, iterator, method)?,
-                )?,
-            )?,
-            IterationStep::Key { value, resume } => {
-                let result = runtime.to_primitive(
-                    realm,
-                    value,
-                    crate::engine::vm::ToPrimitiveHint::String,
-                )?;
-                resume.key(runtime, result)?
+                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                )?
             }
-            IterationStep::Define {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => resume.defined(
-                runtime,
-                runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
-            )?,
-            IterationStep::Push {
-                object,
-                value,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_array_prototype_push(
-                    realm,
-                    ArrayPushKind::Push,
-                    NativeInvocation::Call {
-                        this_value: Value::Object(object),
-                    },
-                    &NativeArguments {
-                        actual_arg_count: 1,
-                        readable: vec![value],
-                    },
-                )?,
-            )?,
+            IterationStep::Call { mut resume } => {
+                let callable = resume.take_call_callable();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                )?
+            }
+            IterationStep::Next { mut resume } => {
+                let iterator = resume.take_next_iterator();
+                let method = resume.take_next_method();
+                resume.next(
+                    runtime,
+                    finish_next(
+                        runtime,
+                        realm,
+                        NextStep::start(runtime, realm, iterator, method)?,
+                    )?,
+                )?
+            }
+            IterationStep::Key { mut resume } => {
+                let value = resume.take_key_value();
+                {
+                    let result = runtime.to_primitive(
+                        realm,
+                        value,
+                        crate::engine::vm::ToPrimitiveHint::String,
+                    )?;
+                    resume.key(runtime, result)?
+                }
+            }
+            IterationStep::Define { mut resume } => {
+                let object = resume.take_define_object();
+                let key = resume.take_define_key();
+                let descriptor = resume.take_define_descriptor();
+                resume.defined(
+                    runtime,
+                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                )?
+            }
+            IterationStep::Push { mut resume } => {
+                let object = resume.take_push_object();
+                let value = resume.take_push_value();
+                resume.resume(
+                    runtime,
+                    runtime.call_array_prototype_push(
+                        realm,
+                        ArrayPushKind::Push,
+                        NativeInvocation::Call {
+                            this_value: Value::Object(object),
+                        },
+                        &NativeArguments {
+                            actual_arg_count: 1,
+                            readable: vec![value],
+                        },
+                    )?,
+                )?
+            }
         };
     }
 }
@@ -618,7 +607,7 @@ mod tests {
             actual_arg_count: 1,
             readable: vec![Value::Object(iterable)],
         };
-        let IterationStep::Read { resume, .. } = IterationStep::start(
+        let IterationStep::Read { mut resume } = IterationStep::start(
             &runtime,
             context.realm,
             IterationKind::Entries,
@@ -630,6 +619,9 @@ mod tests {
         .unwrap() else {
             panic!("iterator method read expected")
         };
+        let _ = resume.take_read_receiver();
+        let _ = resume.take_read_key();
+
         let result_id = resume.result.as_ref().unwrap().object_id();
         drop(arguments);
         runtime.run_gc().unwrap();
@@ -643,3 +635,172 @@ mod tests {
         }
     }
 }
+
+#[derive(Default)]
+struct IterationStepPending {
+    read_receiver: Option<Value>,
+    read_key: Option<PropertyKey>,
+    call_callable: Option<CallableRef>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+    next_iterator: Option<ObjectRef>,
+    next_method: Option<Value>,
+    key_value: Option<Value>,
+    define_object: Option<ObjectRef>,
+    define_key: Option<PropertyKey>,
+    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    push_object: Option<ObjectRef>,
+    push_value: Option<Value>,
+}
+impl IterationStep {
+    pub(crate) fn request_read(
+        receiver: Value,
+        key: PropertyKey,
+        mut resume: IterationResume,
+    ) -> Self {
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_call(
+        callable: CallableRef,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: IterationResume,
+    ) -> Self {
+        resume.0.pending_effect.call_callable = Some(callable);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_next(
+        iterator: ObjectRef,
+        method: Value,
+        mut resume: IterationResume,
+    ) -> Self {
+        resume.0.pending_effect.next_iterator = Some(iterator);
+        resume.0.pending_effect.next_method = Some(method);
+        Self::Next { resume }
+    }
+    pub(crate) fn request_key(value: Value, mut resume: IterationResume) -> Self {
+        resume.0.pending_effect.key_value = Some(value);
+        Self::Key { resume }
+    }
+    pub(crate) fn request_define(
+        object: ObjectRef,
+        key: PropertyKey,
+        descriptor: OrdinaryPropertyDescriptor,
+        mut resume: IterationResume,
+    ) -> Self {
+        resume.0.pending_effect.define_object = Some(object);
+        resume.0.pending_effect.define_key = Some(key);
+        resume.0.pending_effect.define_descriptor = Some(descriptor);
+        Self::Define { resume }
+    }
+    pub(crate) fn request_push(
+        object: ObjectRef,
+        value: Value,
+        mut resume: IterationResume,
+    ) -> Self {
+        resume.0.pending_effect.push_object = Some(object);
+        resume.0.pending_effect.push_value = Some(value);
+        Self::Push { resume }
+    }
+}
+impl IterationResume {
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("IterationStep Read receiver")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("IterationStep Read key")
+    }
+    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
+        self.0
+            .pending_effect
+            .call_callable
+            .take()
+            .expect("IterationStep Call callable")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("IterationStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("IterationStep Call arguments")
+    }
+    pub(crate) fn take_next_iterator(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .next_iterator
+            .take()
+            .expect("IterationStep Next iterator")
+    }
+    pub(crate) fn take_next_method(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .next_method
+            .take()
+            .expect("IterationStep Next method")
+    }
+    pub(crate) fn take_key_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .key_value
+            .take()
+            .expect("IterationStep Key value")
+    }
+    pub(crate) fn take_define_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .define_object
+            .take()
+            .expect("IterationStep Define object")
+    }
+    pub(crate) fn take_define_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .define_key
+            .take()
+            .expect("IterationStep Define key")
+    }
+    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+        self.0
+            .pending_effect
+            .define_descriptor
+            .take()
+            .expect("IterationStep Define descriptor")
+    }
+    pub(crate) fn take_push_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .push_object
+            .take()
+            .expect("IterationStep Push object")
+    }
+    pub(crate) fn take_push_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .push_value
+            .take()
+            .expect("IterationStep Push value")
+    }
+}
+const _: () = assert!(std::mem::size_of::<IterationStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<IterationStep>() <= 64);

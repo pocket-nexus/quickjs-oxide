@@ -47,9 +47,9 @@ impl QueryStorage {
             })?;
             waiting.push(super::native::NativeWaitRecord {
                 call: None,
-                step: super::Step::Complete(crate::engine::vm::Completion::Return(
+                step: super::Step::Complete(Some(crate::engine::vm::Completion::Return(
                     crate::engine::value::Value::Undefined,
-                )),
+                ))),
                 parents: Vec::new(),
             });
         }

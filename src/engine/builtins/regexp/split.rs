@@ -51,38 +51,28 @@ impl Runtime {
 
 pub(crate) enum RegExpSplitStep {
     Complete(Completion),
-    Primitive {
-        value: Value,
-        hint: ToPrimitiveHint,
-        resume: RegExpSplitResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: RegExpSplitResume,
-    },
-    Species {
-        regexp: ObjectRef,
-        resume: RegExpSplitResume,
-    },
-    Construct {
-        constructor: ConstructorRef,
-        arguments: Vec<Value>,
-        resume: RegExpSplitResume,
-    },
-    Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        resume: RegExpSplitResume,
-    },
-    Exec {
-        regexp: Value,
-        input: Value,
-        resume: RegExpSplitResume,
-    },
+    Primitive { resume: RegExpSplitResume },
+    Read { resume: RegExpSplitResume },
+    Species { resume: RegExpSplitResume },
+    Construct { resume: RegExpSplitResume },
+    Set { resume: RegExpSplitResume },
+    Exec { resume: RegExpSplitResume },
 }
-pub(crate) struct RegExpSplitResume {
+pub(crate) struct RegExpSplitResume(Box<RegExpSplitResumeState>);
+impl std::ops::Deref for RegExpSplitResume {
+    type Target = RegExpSplitResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for RegExpSplitResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<RegExpSplitResume>() <= 8);
+pub(crate) struct RegExpSplitResumeState {
+    step_pending: RegExpSplitStepPending,
     realm: ContextId,
     phase: Phase,
 }
@@ -182,29 +172,31 @@ impl SplitState {
         let value = Value::Int(i32::try_from(self.q).map_err(|_| {
             RuntimeError::Invariant("RegExp split index exceeded signed String range")
         })?);
-        Ok(RegExpSplitStep::Set {
-            object: self.splitter.clone(),
-            key: runtime.intern_property_key("lastIndex")?,
+        Ok(RegExpSplitStep::make_set(
+            self.splitter.clone(),
+            runtime.intern_property_key("lastIndex")?,
             value,
-            resume: RegExpSplitResume {
+            RegExpSplitResume(Box::new(RegExpSplitResumeState {
+                step_pending: RegExpSplitStepPending::default(),
                 realm,
                 phase: Phase::Set(self),
-            },
-        })
+            })),
+        ))
     }
     fn execute(self, realm: ContextId, empty: bool) -> RegExpSplitStep {
-        RegExpSplitStep::Exec {
-            regexp: Value::Object(self.splitter.clone()),
-            input: Value::String(self.input.clone()),
-            resume: RegExpSplitResume {
+        RegExpSplitStep::make_exec(
+            Value::Object(self.splitter.clone()),
+            Value::String(self.input.clone()),
+            RegExpSplitResume(Box::new(RegExpSplitResumeState {
+                step_pending: RegExpSplitStepPending::default(),
                 realm,
                 phase: if empty {
                     Phase::Empty(self)
                 } else {
                     Phase::Exec(self)
                 },
-            },
-        }
+            })),
+        )
     }
     fn captures(
         mut self,
@@ -218,10 +210,11 @@ impl SplitState {
             self.q = self.p;
             return self.next(runtime, realm);
         }
-        Ok(RegExpSplitStep::Read {
-            object: matched.clone(),
-            key: runtime.intern_property_key(&index.to_string())?,
-            resume: RegExpSplitResume {
+        Ok(RegExpSplitStep::make_read(
+            matched.clone(),
+            runtime.intern_property_key(&index.to_string())?,
+            RegExpSplitResume(Box::new(RegExpSplitResumeState {
+                step_pending: RegExpSplitStepPending::default(),
                 realm,
                 phase: Phase::Capture {
                     state: self,
@@ -229,8 +222,8 @@ impl SplitState {
                     index,
                     count,
                 },
-            },
-        })
+            })),
+        ))
     }
 }
 impl RegExpSplitStep {
@@ -264,17 +257,18 @@ impl RegExpSplitStep {
                 "RegExp @@split limit argv was not padded",
             ))?
             .clone();
-        Ok(Self::Primitive {
-            value: input,
-            hint: ToPrimitiveHint::String,
-            resume: RegExpSplitResume {
+        Ok(Self::make_primitive(
+            input,
+            ToPrimitiveHint::String,
+            RegExpSplitResume(Box::new(RegExpSplitResumeState {
+                step_pending: RegExpSplitStepPending::default(),
                 realm,
                 phase: Phase::Input {
                     regexp: regexp.clone(),
                     limit,
                 },
-            },
-        })
+            })),
+        ))
     }
 }
 impl RegExpSplitResume {
@@ -293,25 +287,26 @@ impl RegExpSplitResume {
             regexp,
             input,
             limit,
-        } = self.phase
+        } = self.0.phase
         else {
             return Err(RuntimeError::Invariant(
                 "RegExp split species reply in wrong phase",
             ));
         };
-        Ok(RegExpSplitStep::Read {
-            object: regexp.clone(),
-            key: runtime.intern_property_key("flags")?,
-            resume: Self {
-                realm: self.realm,
+        Ok(RegExpSplitStep::make_read(
+            regexp.clone(),
+            runtime.intern_property_key("flags")?,
+            Self(Box::new(RegExpSplitResumeState {
+                step_pending: RegExpSplitStepPending::default(),
+                realm: self.0.realm,
                 phase: Phase::Flags {
                     regexp,
                     input,
                     limit,
                     constructor,
                 },
-            },
-        })
+            })),
+        ))
     }
     pub(crate) fn set(
         self,
@@ -319,7 +314,7 @@ impl RegExpSplitResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpSplitStep, RuntimeError> {
         let key = runtime.intern_property_key("lastIndex")?;
-        let result = match runtime.finish_set_property_or_throw(self.realm, &key, result)? {
+        let result = match runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             Some(value) => Completion::Throw(value),
             None => Completion::Return(Value::Undefined),
         };
@@ -336,8 +331,8 @@ impl RegExpSplitResume {
                 return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
             }
         };
-        let realm = self.realm;
-        match self.phase {
+        let realm = self.0.realm;
+        match self.0.phase {
             Phase::Input { regexp, limit } => {
                 let input = match runtime.native_to_js_string(realm, &value)? {
                     NativeConversion::Value(value) => value,
@@ -345,27 +340,29 @@ impl RegExpSplitResume {
                         return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
-                Ok(RegExpSplitStep::Species {
-                    regexp: regexp.clone(),
-                    resume: Self {
+                Ok(RegExpSplitStep::make_species(
+                    regexp.clone(),
+                    Self(Box::new(RegExpSplitResumeState {
+                        step_pending: RegExpSplitStepPending::default(),
                         realm,
                         phase: Phase::Species {
                             regexp,
                             input,
                             limit,
                         },
-                    },
-                })
+                    })),
+                ))
             }
             Phase::Flags {
                 regexp,
                 input,
                 limit,
                 constructor,
-            } => Ok(RegExpSplitStep::Primitive {
+            } => Ok(RegExpSplitStep::make_primitive(
                 value,
-                hint: ToPrimitiveHint::String,
-                resume: Self {
+                ToPrimitiveHint::String,
+                Self(Box::new(RegExpSplitResumeState {
+                    step_pending: RegExpSplitStepPending::default(),
                     realm,
                     phase: Phase::FlagsPrimitive {
                         regexp,
@@ -373,8 +370,8 @@ impl RegExpSplitResume {
                         limit,
                         constructor,
                     },
-                },
-            }),
+                })),
+            )),
             Phase::FlagsPrimitive {
                 regexp,
                 input,
@@ -407,18 +404,19 @@ impl RegExpSplitResume {
                 }
                 arguments.push(Value::Object(regexp));
                 arguments.push(Value::String(flags));
-                Ok(RegExpSplitStep::Construct {
+                Ok(RegExpSplitStep::make_construct(
                     constructor,
                     arguments,
-                    resume: Self {
+                    Self(Box::new(RegExpSplitResumeState {
+                        step_pending: RegExpSplitStepPending::default(),
                         realm,
                         phase: Phase::Construct {
                             input,
                             limit,
                             unicode,
                         },
-                    },
-                })
+                    })),
+                ))
             }
             Phase::Construct {
                 input,
@@ -443,14 +441,15 @@ impl RegExpSplitResume {
                 if matches!(limit, Value::Undefined) {
                     return Self::after_limit(state, runtime, realm);
                 }
-                Ok(RegExpSplitStep::Primitive {
-                    value: limit,
-                    hint: ToPrimitiveHint::Number,
-                    resume: Self {
+                Ok(RegExpSplitStep::make_primitive(
+                    limit,
+                    ToPrimitiveHint::Number,
+                    Self(Box::new(RegExpSplitResumeState {
+                        step_pending: RegExpSplitStepPending::default(),
                         realm,
                         phase: Phase::Limit(state),
-                    },
-                })
+                    })),
+                ))
             }
             Phase::Limit(mut state) => {
                 let number = match runtime.native_to_number(realm, &value)? {
@@ -483,26 +482,28 @@ impl RegExpSplitResume {
                     state.advance()?;
                     state.next(runtime, realm)
                 }
-                Value::Object(matched) => Ok(RegExpSplitStep::Read {
-                    object: state.splitter.clone(),
-                    key: runtime.intern_property_key("lastIndex")?,
-                    resume: Self {
+                Value::Object(matched) => Ok(RegExpSplitStep::make_read(
+                    state.splitter.clone(),
+                    runtime.intern_property_key("lastIndex")?,
+                    Self(Box::new(RegExpSplitResumeState {
+                        step_pending: RegExpSplitStepPending::default(),
                         realm,
                         phase: Phase::End { state, matched },
-                    },
-                }),
+                    })),
+                )),
                 _ => Err(RuntimeError::Invariant(
                     "RegExpExec returned neither an object nor null",
                 )),
             },
-            Phase::End { state, matched } => Ok(RegExpSplitStep::Primitive {
+            Phase::End { state, matched } => Ok(RegExpSplitStep::make_primitive(
                 value,
-                hint: ToPrimitiveHint::Number,
-                resume: Self {
+                ToPrimitiveHint::Number,
+                Self(Box::new(RegExpSplitResumeState {
+                    step_pending: RegExpSplitStepPending::default(),
                     realm,
                     phase: Phase::EndPrimitive { state, matched },
-                },
-            }),
+                })),
+            )),
             Phase::EndPrimitive { mut state, matched } => {
                 let end = match runtime.native_to_length(realm, &value)? {
                     NativeConversion::Value(value) => value,
@@ -522,23 +523,25 @@ impl RegExpSplitResume {
                     return Ok(state.complete());
                 }
                 state.p = end;
-                Ok(RegExpSplitStep::Read {
-                    object: matched.clone(),
-                    key: runtime.intern_property_key("length")?,
-                    resume: Self {
+                Ok(RegExpSplitStep::make_read(
+                    matched.clone(),
+                    runtime.intern_property_key("length")?,
+                    Self(Box::new(RegExpSplitResumeState {
+                        step_pending: RegExpSplitStepPending::default(),
                         realm,
                         phase: Phase::Count { state, matched },
-                    },
-                })
+                    })),
+                ))
             }
-            Phase::Count { state, matched } => Ok(RegExpSplitStep::Primitive {
+            Phase::Count { state, matched } => Ok(RegExpSplitStep::make_primitive(
                 value,
-                hint: ToPrimitiveHint::Number,
-                resume: Self {
+                ToPrimitiveHint::Number,
+                Self(Box::new(RegExpSplitResumeState {
+                    step_pending: RegExpSplitStepPending::default(),
                     realm,
                     phase: Phase::CountPrimitive { state, matched },
-                },
-            }),
+                })),
+            )),
             Phase::CountPrimitive { state, matched } => {
                 let count = match runtime.native_to_length(realm, &value)? {
                     NativeConversion::Value(value) => value,
@@ -590,56 +593,221 @@ fn finish(
     loop {
         step = match step {
             RegExpSplitStep::Complete(result) => return Ok(result),
-            RegExpSplitStep::Primitive {
-                value,
-                hint,
-                resume,
-            } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, hint)?
-                } else {
-                    Completion::Return(value)
-                };
-                resume.resume(runtime, result)?
+            RegExpSplitStep::Primitive { mut resume } => {
+                let value = resume.take_primitive_value();
+                let hint = resume.take_primitive_hint();
+                {
+                    let result = if matches!(value, Value::Object(_)) {
+                        runtime.to_primitive(realm, value, hint)?
+                    } else {
+                        Completion::Return(value)
+                    };
+                    resume.resume(runtime, result)?
+                }
             }
-            RegExpSplitStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            RegExpSplitStep::Species { regexp, resume } => {
+            RegExpSplitStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
+                )?
+            }
+            RegExpSplitStep::Species { mut resume } => {
+                let regexp = resume.take_species_regexp();
                 resume.species(runtime, runtime.regexp_species_constructor(realm, &regexp)?)?
             }
-            RegExpSplitStep::Construct {
-                constructor,
-                arguments,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.construct_constructor_internal(
-                    realm,
-                    &constructor,
-                    &constructor,
-                    &arguments,
-                )?,
-            )?,
-            RegExpSplitStep::Set {
-                object,
-                key,
-                value,
-                resume,
-            } => resume.set(
-                runtime,
-                runtime.internal_set(realm, &object, &key, value, Value::Object(object.clone()))?,
-            )?,
-            RegExpSplitStep::Exec {
-                regexp,
-                input,
-                resume,
-            } => resume.resume(runtime, runtime.regexp_exec_abstract(realm, regexp, input)?)?,
+            RegExpSplitStep::Construct { mut resume } => {
+                let constructor = resume.take_construct_constructor();
+                let arguments = resume.take_construct_arguments();
+                resume.resume(
+                    runtime,
+                    runtime.construct_constructor_internal(
+                        realm,
+                        &constructor,
+                        &constructor,
+                        &arguments,
+                    )?,
+                )?
+            }
+            RegExpSplitStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                resume.set(
+                    runtime,
+                    runtime.internal_set(
+                        realm,
+                        &object,
+                        &key,
+                        value,
+                        Value::Object(object.clone()),
+                    )?,
+                )?
+            }
+            RegExpSplitStep::Exec { mut resume } => {
+                let regexp = resume.take_exec_regexp();
+                let input = resume.take_exec_input();
+                resume.resume(runtime, runtime.regexp_exec_abstract(realm, regexp, input)?)?
+            }
         }
     }
 }
+
+#[derive(Default)]
+pub(crate) struct RegExpSplitStepPending {
+    value: Option<Value>,
+    hint: Option<ToPrimitiveHint>,
+    object: Option<ObjectRef>,
+    key: Option<PropertyKey>,
+    regexp: Option<ObjectRef>,
+    constructor: Option<ConstructorRef>,
+    arguments: Option<Vec<Value>>,
+    exec_regexp: Option<Value>,
+    input: Option<Value>,
+}
+impl RegExpSplitStep {
+    pub(crate) fn make_primitive(
+        value: Value,
+        hint: ToPrimitiveHint,
+        mut resume: RegExpSplitResume,
+    ) -> Self {
+        resume.0.step_pending.value = Some(value);
+        resume.0.step_pending.hint = Some(hint);
+        Self::Primitive { resume }
+    }
+    pub(crate) fn make_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: RegExpSplitResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn make_species(regexp: ObjectRef, mut resume: RegExpSplitResume) -> Self {
+        resume.0.step_pending.regexp = Some(regexp);
+        Self::Species { resume }
+    }
+    pub(crate) fn make_construct(
+        constructor: ConstructorRef,
+        arguments: Vec<Value>,
+        mut resume: RegExpSplitResume,
+    ) -> Self {
+        resume.0.step_pending.constructor = Some(constructor);
+        resume.0.step_pending.arguments = Some(arguments);
+        Self::Construct { resume }
+    }
+    pub(crate) fn make_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: RegExpSplitResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        resume.0.step_pending.value = Some(value);
+        Self::Set { resume }
+    }
+    pub(crate) fn make_exec(regexp: Value, input: Value, mut resume: RegExpSplitResume) -> Self {
+        resume.0.step_pending.exec_regexp = Some(regexp);
+        resume.0.step_pending.input = Some(input);
+        Self::Exec { resume }
+    }
+}
+impl RegExpSplitResume {
+    pub(crate) fn take_primitive_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("RegExpSplitStep::Primitive lost value")
+    }
+    pub(crate) fn take_primitive_hint(&mut self) -> ToPrimitiveHint {
+        self.0
+            .step_pending
+            .hint
+            .take()
+            .expect("RegExpSplitStep::Primitive lost hint")
+    }
+
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("RegExpSplitStep::Read lost object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("RegExpSplitStep::Read lost key")
+    }
+
+    pub(crate) fn take_species_regexp(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .regexp
+            .take()
+            .expect("RegExpSplitStep::Species lost regexp")
+    }
+
+    pub(crate) fn take_construct_constructor(&mut self) -> ConstructorRef {
+        self.0
+            .step_pending
+            .constructor
+            .take()
+            .expect("RegExpSplitStep::Construct lost constructor")
+    }
+    pub(crate) fn take_construct_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .step_pending
+            .arguments
+            .take()
+            .expect("RegExpSplitStep::Construct lost arguments")
+    }
+
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("RegExpSplitStep::Set lost object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("RegExpSplitStep::Set lost key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("RegExpSplitStep::Set lost value")
+    }
+
+    pub(crate) fn take_exec_regexp(&mut self) -> Value {
+        self.0
+            .step_pending
+            .exec_regexp
+            .take()
+            .expect("RegExpSplitStep::Exec lost regexp")
+    }
+    pub(crate) fn take_exec_input(&mut self) -> Value {
+        self.0
+            .step_pending
+            .input
+            .take()
+            .expect("RegExpSplitStep::Exec lost input")
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<RegExpSplitStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<RegExpSplitStep>() <= 64);

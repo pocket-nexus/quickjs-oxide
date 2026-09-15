@@ -19,30 +19,26 @@ mod transform_tests;
 
 pub(crate) enum TypedIterationStep {
     Complete(Completion),
-    Species {
-        source: ObjectRef,
-        element: TypedArrayElementKind,
-        length: u64,
-        resume: TypedIterationResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: TypedIterationResume,
-    },
-    Element {
-        element: TypedArrayElementKind,
-        value: Value,
-        resume: TypedIterationResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: TypedIterationResume,
-    },
+    Species { resume: TypedIterationResume },
+    Call { resume: TypedIterationResume },
+    Element { resume: TypedIterationResume },
+    Read { resume: TypedIterationResume },
 }
-pub(crate) struct TypedIterationResume {
+pub(crate) struct TypedIterationResume(Box<TypedIterationResumeState>);
+impl std::ops::Deref for TypedIterationResume {
+    type Target = TypedIterationResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedIterationResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedIterationResume>() <= 8);
+pub(crate) struct TypedIterationResumeState {
+    pending_effect: TypedIterationStepPending,
     realm: ContextId,
     phase: IterationPhase,
 }
@@ -137,15 +133,16 @@ impl TypedIterationStep {
             ArrayIterationKind::Some => IterationMode::Some,
             ArrayIterationKind::ForEach => IterationMode::ForEach,
             ArrayIterationKind::Map => {
-                return Ok(Self::Species {
-                    source: input.target.clone(),
+                return Ok(Self::request_species(
+                    input.target.clone(),
                     element,
                     length,
-                    resume: TypedIterationResume {
+                    TypedIterationResume(Box::new(TypedIterationResumeState {
+                        pending_effect: TypedIterationStepPending::default(),
                         realm,
                         phase: IterationPhase::MapSpecies(input),
-                    },
-                });
+                    })),
+                ));
             }
             ArrayIterationKind::Filter => IterationMode::Filter {
                 selected: runtime.new_array(realm)?,
@@ -177,15 +174,16 @@ impl TypedIterationResume {
                     IterationMode::ForEach => Value::Undefined,
                     IterationMode::Map(target) => Value::Object(target),
                     IterationMode::Filter { selected, length } => {
-                        return Ok(TypedIterationStep::Species {
-                            source: state.input.target,
-                            element: state.input.element,
+                        return Ok(TypedIterationStep::request_species(
+                            state.input.target,
+                            state.input.element,
                             length,
-                            resume: Self {
+                            Self(Box::new(TypedIterationResumeState {
+                                pending_effect: TypedIterationStepPending::default(),
                                 realm,
                                 phase: IterationPhase::FilterSpecies(selected),
-                            },
-                        });
+                            })),
+                        ));
                     }
                 },
             )));
@@ -202,19 +200,20 @@ impl TypedIterationResume {
         arguments.push(value.clone());
         arguments.push(Value::number(index as f64));
         arguments.push(Value::Object(state.input.target.clone()));
-        Ok(TypedIterationStep::Call {
-            target: DirectCallTarget::Callable(state.input.callback.clone()),
-            receiver: state.input.this_arg.clone(),
+        Ok(TypedIterationStep::request_call(
+            DirectCallTarget::Callable(state.input.callback.clone()),
+            state.input.this_arg.clone(),
             arguments,
-            resume: Self {
+            Self(Box::new(TypedIterationResumeState {
+                pending_effect: TypedIterationStepPending::default(),
                 realm,
                 phase: IterationPhase::Called {
                     state,
                     value,
                     index,
                 },
-            },
-        })
+            })),
+        ))
     }
     pub(crate) fn species(
         self,
@@ -227,24 +226,25 @@ impl TypedIterationResume {
                 return Ok(TypedIterationStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             IterationPhase::MapSpecies(input) => Self::next(
                 runtime,
-                self.realm,
+                self.0.realm,
                 IterationState {
                     input,
                     mode: IterationMode::Map(target),
                     index: 0,
                 },
             ),
-            IterationPhase::FilterSpecies(selected) => Ok(TypedIterationStep::Read {
-                object: target.clone(),
-                key: runtime.intern_property_key("set")?,
-                resume: Self {
-                    realm: self.realm,
+            IterationPhase::FilterSpecies(selected) => Ok(TypedIterationStep::request_read(
+                target.clone(),
+                runtime.intern_property_key("set")?,
+                Self(Box::new(TypedIterationResumeState {
+                    pending_effect: TypedIterationStepPending::default(),
+                    realm: self.0.realm,
                     phase: IterationPhase::FilterMethod { target, selected },
-                },
-            }),
+                })),
+            )),
             _ => Err(RuntimeError::Invariant(
                 "TypedArray iteration received an unexpected species reply",
             )),
@@ -261,7 +261,7 @@ impl TypedIterationResume {
                 return Ok(TypedIterationStep::Complete(Completion::Throw(value)));
             }
         };
-        let IterationPhase::Mapped { state, index } = self.phase else {
+        let IterationPhase::Mapped { state, index } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "TypedArray iteration received an unexpected element reply",
             ));
@@ -271,7 +271,7 @@ impl TypedIterationResume {
         };
         // Ignore an invalidated target index, exactly like the shared indexed Set.
         let _ = runtime.typed_array_write_converted_index(target, index, &bytes)?;
-        Self::next(runtime, self.realm, state)
+        Self::next(runtime, self.0.realm, state)
     }
     pub(crate) fn resume(
         self,
@@ -284,7 +284,7 @@ impl TypedIterationResume {
                 return Ok(TypedIterationStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             IterationPhase::Called {
                 mut state,
                 value,
@@ -303,14 +303,15 @@ impl TypedIterationResume {
                     }
                     IterationMode::Every | IterationMode::Some | IterationMode::ForEach => {}
                     IterationMode::Map(target) => {
-                        return Ok(TypedIterationStep::Element {
-                            element: runtime.typed_array_snapshot(target)?.element,
-                            value: result,
-                            resume: Self {
-                                realm: self.realm,
+                        return Ok(TypedIterationStep::request_element(
+                            runtime.typed_array_snapshot(target)?.element,
+                            result,
+                            Self(Box::new(TypedIterationResumeState {
+                                pending_effect: TypedIterationStepPending::default(),
+                                realm: self.0.realm,
                                 phase: IterationPhase::Mapped { state, index },
-                            },
-                        });
+                            })),
+                        ));
                     }
                     IterationMode::Filter { selected, length } => {
                         if runtime.value_to_boolean(&result)? {
@@ -336,24 +337,25 @@ impl TypedIterationResume {
                         }
                     }
                 }
-                Self::next(runtime, self.realm, state)
+                Self::next(runtime, self.0.realm, state)
             }
             IterationPhase::FilterMethod { target, selected } => {
                 let callable = runtime.callable_from_value(result)?;
                 let mut arguments = Vec::new();
                 if arguments.try_reserve_exact(1).is_err() {
-                    return iteration_oom(runtime, self.realm);
+                    return iteration_oom(runtime, self.0.realm);
                 }
                 arguments.push(Value::Object(selected));
-                Ok(TypedIterationStep::Call {
-                    target: DirectCallTarget::Callable(callable),
-                    receiver: Value::Object(target.clone()),
+                Ok(TypedIterationStep::request_call(
+                    DirectCallTarget::Callable(callable),
+                    Value::Object(target.clone()),
                     arguments,
-                    resume: Self {
-                        realm: self.realm,
+                    Self(Box::new(TypedIterationResumeState {
+                        pending_effect: TypedIterationStepPending::default(),
+                        realm: self.0.realm,
                         phase: IterationPhase::FilterCalled(target),
-                    },
-                })
+                    })),
+                ))
             }
             IterationPhase::FilterCalled(target) => Ok(TypedIterationStep::Complete(
                 Completion::Return(Value::Object(target)),
@@ -381,46 +383,178 @@ impl Runtime {
         loop {
             step = match step {
                 TypedIterationStep::Complete(result) => return Ok(result),
-                TypedIterationStep::Species {
-                    source,
-                    element,
-                    length,
-                    resume,
-                } => resume.species(
-                    self,
-                    self.typed_array_species_create(realm, &source, element, length)?,
-                )?,
-                TypedIterationStep::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } => {
-                    let DirectCallTarget::Callable(callable) = target else {
-                        return Err(RuntimeError::Invariant(
-                            "TypedArray iteration requested an invalid call target",
-                        ));
-                    };
-                    resume.resume(
+                TypedIterationStep::Species { mut resume } => {
+                    let source = resume.take_species_source();
+                    let element = resume.take_species_element();
+                    let length = resume.take_species_length();
+                    resume.species(
                         self,
-                        self.call_internal(realm, &callable, receiver, &arguments)?,
+                        self.typed_array_species_create(realm, &source, element, length)?,
                     )?
                 }
-                TypedIterationStep::Element {
-                    element,
-                    value,
-                    resume,
-                } => resume.element(
-                    self,
-                    super::element::ElementStep::start(self, realm, element, value)?
-                        .finish_sync(self, realm)?,
-                )?,
-                TypedIterationStep::Read {
-                    object,
-                    key,
-                    resume,
-                } => resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?,
+                TypedIterationStep::Call { mut resume } => {
+                    let target = resume.take_call_target();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    {
+                        let DirectCallTarget::Callable(callable) = target else {
+                            return Err(RuntimeError::Invariant(
+                                "TypedArray iteration requested an invalid call target",
+                            ));
+                        };
+                        resume.resume(
+                            self,
+                            self.call_internal(realm, &callable, receiver, &arguments)?,
+                        )?
+                    }
+                }
+                TypedIterationStep::Element { mut resume } => {
+                    let element = resume.take_element_element();
+                    let value = resume.take_element_value();
+                    resume.element(
+                        self,
+                        super::element::ElementStep::start(self, realm, element, value)?
+                            .finish_sync(self, realm)?,
+                    )?
+                }
+                TypedIterationStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
+                }
             };
         }
     }
 }
+
+#[derive(Default)]
+struct TypedIterationStepPending {
+    species_source: Option<ObjectRef>,
+    species_element: Option<TypedArrayElementKind>,
+    species_length: Option<u64>,
+    call_target: Option<DirectCallTarget>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+    element_element: Option<TypedArrayElementKind>,
+    element_value: Option<Value>,
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+}
+impl TypedIterationStep {
+    pub(crate) fn request_species(
+        source: ObjectRef,
+        element: TypedArrayElementKind,
+        length: u64,
+        mut resume: TypedIterationResume,
+    ) -> Self {
+        resume.0.pending_effect.species_source = Some(source);
+        resume.0.pending_effect.species_element = Some(element);
+        resume.0.pending_effect.species_length = Some(length);
+        Self::Species { resume }
+    }
+    pub(crate) fn request_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: TypedIterationResume,
+    ) -> Self {
+        resume.0.pending_effect.call_target = Some(target);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_element(
+        element: TypedArrayElementKind,
+        value: Value,
+        mut resume: TypedIterationResume,
+    ) -> Self {
+        resume.0.pending_effect.element_element = Some(element);
+        resume.0.pending_effect.element_value = Some(value);
+        Self::Element { resume }
+    }
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: TypedIterationResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+}
+impl TypedIterationResume {
+    pub(crate) fn take_species_source(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .species_source
+            .take()
+            .expect("TypedIterationStep Species source")
+    }
+    pub(crate) fn take_species_element(&mut self) -> TypedArrayElementKind {
+        self.0
+            .pending_effect
+            .species_element
+            .take()
+            .expect("TypedIterationStep Species element")
+    }
+    pub(crate) fn take_species_length(&mut self) -> u64 {
+        self.0
+            .pending_effect
+            .species_length
+            .take()
+            .expect("TypedIterationStep Species length")
+    }
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .pending_effect
+            .call_target
+            .take()
+            .expect("TypedIterationStep Call target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("TypedIterationStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("TypedIterationStep Call arguments")
+    }
+    pub(crate) fn take_element_element(&mut self) -> TypedArrayElementKind {
+        self.0
+            .pending_effect
+            .element_element
+            .take()
+            .expect("TypedIterationStep Element element")
+    }
+    pub(crate) fn take_element_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .element_value
+            .take()
+            .expect("TypedIterationStep Element value")
+    }
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("TypedIterationStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("TypedIterationStep Read key")
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedIterationStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedIterationStep>() <= 64);

@@ -17,7 +17,20 @@ pub(crate) enum BufferMutationStep {
         resume: BufferMutationResume,
     },
 }
-pub(crate) struct BufferMutationResume {
+pub(crate) struct BufferMutationResume(Box<BufferMutationResumeState>);
+impl std::ops::Deref for BufferMutationResume {
+    type Target = BufferMutationResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for BufferMutationResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<BufferMutationResume>() <= 8);
+pub(crate) struct BufferMutationResumeState {
     realm: ContextId,
     object: ObjectRef,
     kind: ArrayBufferNativeKind,
@@ -47,12 +60,12 @@ impl BufferMutationStep {
                     "SharedArrayBuffer grow argument was not padded",
                 ))?
                 .clone(),
-            resume: BufferMutationResume {
+            resume: BufferMutationResume(Box::new(BufferMutationResumeState {
                 realm,
                 object,
                 kind: ArrayBufferNativeKind::Resize,
                 shared: true,
-            },
+            })),
         })
     }
 
@@ -112,12 +125,12 @@ impl BufferMutationStep {
             .clone();
         Ok(Self::Primitive {
             value,
-            resume: BufferMutationResume {
+            resume: BufferMutationResume(Box::new(BufferMutationResumeState {
                 realm,
                 object,
                 kind,
                 shared: false,
-            },
+            })),
         })
     }
 }
@@ -138,24 +151,28 @@ impl BufferMutationResume {
                 "buffer length conversion returned an object",
             ));
         }
-        let result = if matches!(self.kind, ArrayBufferNativeKind::Resize) {
-            match runtime.native_to_int64(self.realm, &value)? {
+        let result = if matches!(self.0.kind, ArrayBufferNativeKind::Resize) {
+            match runtime.native_to_int64(self.0.realm, &value)? {
                 NativeConversion::Value(length) => {
-                    if self.shared {
-                        runtime.finish_shared_array_buffer_grow(self.realm, self.object, length)?
+                    if self.0.shared {
+                        runtime.finish_shared_array_buffer_grow(
+                            self.0.realm,
+                            self.0.object,
+                            length,
+                        )?
                     } else {
-                        runtime.finish_array_buffer_resize(self.realm, self.object, length)?
+                        runtime.finish_array_buffer_resize(self.0.realm, self.0.object, length)?
                     }
                 }
                 NativeConversion::Throw(value) => Completion::Throw(value),
             }
         } else {
-            match runtime.native_to_index(self.realm, &value)? {
+            match runtime.native_to_index(self.0.realm, &value)? {
                 NativeConversion::Value(length) => runtime.finish_array_buffer_transfer(
-                    self.realm,
-                    self.object,
+                    self.0.realm,
+                    self.0.object,
                     length,
-                    matches!(self.kind, ArrayBufferNativeKind::TransferToFixedLength),
+                    matches!(self.0.kind, ArrayBufferNativeKind::TransferToFixedLength),
                 )?,
                 NativeConversion::Throw(value) => Completion::Throw(value),
             }
@@ -182,3 +199,6 @@ pub(in crate::engine::builtins) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<BufferMutationStep>() <= 64);

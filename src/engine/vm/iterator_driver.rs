@@ -71,7 +71,20 @@ pub(super) enum Operation {
     DetachPreserve,
 }
 
-pub(super) struct PendingIterator {
+pub(super) struct PendingIterator(Box<PendingIteratorState>);
+impl std::ops::Deref for PendingIterator {
+    type Target = PendingIteratorState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for PendingIterator {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(size_of::<PendingIterator>() <= 8);
+pub(super) struct PendingIteratorState {
     mode: Mode,
     yielded: Value,
     done: bool,
@@ -144,11 +157,11 @@ pub(super) fn start(
     let array = array.clone();
     let position = *position as u32;
     let iterable = execution.slots.peek(&frame.window, 0)?.clone();
-    let mut pending = PendingIterator::new(frame, id, Mode::Append)?;
+    let mut pending = PendingIteratorState::new(frame, id, Mode::Append)?;
     pending.array = Some(array);
     pending.position = position;
     pending.iterable = iterable;
-    drive(runtime, execution, pending, None)
+    drive_local(runtime, execution, pending, None)
 }
 
 #[inline(never)]
@@ -164,7 +177,7 @@ pub(super) fn operation(
             return suspension::start(runtime, execution, id, operation);
         }
         Operation::Start => {
-            let mut pending = PendingIterator::new(
+            let mut pending = PendingIteratorState::new(
                 frame,
                 id,
                 Mode::Start {
@@ -173,7 +186,7 @@ pub(super) fn operation(
                 },
             )?;
             pending.iterable = execution.slots.pop(&mut frame.window)?;
-            return drive(runtime, execution, pending, None);
+            return drive_local(runtime, execution, pending, None);
         }
         Operation::Next(offset) => {
             let Some(super::VmUnwindRegion::Iterator {
@@ -241,7 +254,7 @@ pub(super) fn operation(
                     iterator,
                 );
             }
-            let mut pending = PendingIterator::new(frame, id, Mode::Next { record_base })?;
+            let mut pending = PendingIteratorState::new(frame, id, Mode::Next { record_base })?;
             pending.iterator = execution.slots.peek(&frame.window, offset + 1)?.clone();
             pending.next = execution.slots.peek(&frame.window, offset)?.clone();
             pending.stage = if enabled { Stage::Next } else { Stage::Finish };
@@ -258,7 +271,7 @@ pub(super) fn operation(
                     "synchronous cleanup targeted a pending async iterator",
                 ));
             }
-            let mut pending = PendingIterator::new(
+            let mut pending = PendingIteratorState::new(
                 frame,
                 id,
                 Mode::Close {
@@ -285,7 +298,7 @@ pub(super) fn operation(
         }
     };
     // These entries already have an iterator record; their first action has no prior JS reply.
-    drive(
+    drive_local(
         runtime,
         execution,
         pending,
@@ -301,7 +314,7 @@ fn close_unwind(
     value: Value,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let mut pending = PendingIterator::new(
+    let mut pending = PendingIteratorState::new(
         frame,
         id,
         Mode::Close {
@@ -311,7 +324,7 @@ fn close_unwind(
     pending.iterator = iterator;
     pending.abrupt = Some(value);
     pending.stage = Stage::Close;
-    drive(
+    drive_local(
         runtime,
         execution,
         pending,
@@ -322,6 +335,13 @@ fn close_unwind(
 pub(super) fn finish(
     execution: &mut RunningExecution,
     mut pending: PendingIterator,
+) -> Result<CallStep, Error> {
+    finish_local(execution, &mut pending.0)
+}
+
+fn finish_local(
+    execution: &mut RunningExecution,
+    pending: &mut PendingIteratorState,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(pending.frame)?;
     #[cfg(feature = "profiling")]
@@ -372,8 +392,14 @@ pub(super) fn finish(
                         size_of::<super::VmUnwindRegion>(),
                     );
                 }
-                execution.slots.push(&mut frame.window, pending.iterator)?;
-                execution.slots.push(&mut frame.window, pending.next)?;
+                execution.slots.push(
+                    &mut frame.window,
+                    std::mem::replace(&mut pending.iterator, Value::Undefined),
+                )?;
+                execution.slots.push(
+                    &mut frame.window,
+                    std::mem::replace(&mut pending.next, Value::Undefined),
+                )?;
                 if delegating {
                     execution.slots.push(&mut frame.window, Value::Undefined)?;
                 } else {
@@ -387,15 +413,20 @@ pub(super) fn finish(
         }
         Mode::Invoke => {
             if pending.abrupt.is_none() {
-                execution.slots.push(&mut frame.window, pending.yielded)?;
+                execution.slots.push(
+                    &mut frame.window,
+                    std::mem::replace(&mut pending.yielded, Value::Undefined),
+                )?;
             }
         }
         Mode::Delegate(_) => {
             if pending.abrupt.is_none() {
                 if !pending.done {
-                    execution
-                        .slots
-                        .replace_operand(&frame.window, 0, pending.yielded)?;
+                    execution.slots.replace_operand(
+                        &frame.window,
+                        0,
+                        std::mem::replace(&mut pending.yielded, Value::Undefined),
+                    )?;
                 }
                 execution
                     .slots
@@ -405,7 +436,10 @@ pub(super) fn finish(
         Mode::Parse { record_base } => {
             if pending.abrupt.is_none() {
                 suspension::enable(frame, record_base)?;
-                execution.slots.push(&mut frame.window, pending.yielded)?;
+                execution.slots.push(
+                    &mut frame.window,
+                    std::mem::replace(&mut pending.yielded, Value::Undefined),
+                )?;
                 execution
                     .slots
                     .push(&mut frame.window, Value::Bool(pending.done))?;
@@ -416,14 +450,14 @@ pub(super) fn finish(
                 frame,
                 &mut execution.slots,
                 record_base,
-                pending.yielded,
+                std::mem::replace(&mut pending.yielded, Value::Undefined),
                 pending.done,
                 pending.abrupt.is_some(),
             )?;
         }
         Mode::Close { .. } => {}
     }
-    if let Some(value) = pending.abrupt {
+    if let Some(value) = pending.abrupt.take() {
         return Ok(CallStep::Complete(Completion::Throw(value)));
     }
     frame.resume_pc = pending
@@ -491,11 +525,11 @@ pub(super) fn next_wait(
     record_base: usize,
 ) -> Result<PendingIterator, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let mut pending = PendingIterator::new(frame, id, Mode::Next { record_base })?;
+    let mut pending = PendingIteratorState::new(frame, id, Mode::Next { record_base })?;
     pending.stage = Stage::Next;
     // The live stack record and the native activation retain the receiver and
     // method. The suspended finish only consumes a raw value/done reply.
-    Ok(pending)
+    Ok(pending.into_resident())
 }
 
 #[inline(never)]
@@ -532,13 +566,34 @@ fn materialize(runtime: &Runtime, realm: ContextId, error: Error) -> Result<Comp
 }
 
 #[inline(never)]
+fn drive_local(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    mut state: PendingIteratorState,
+    response: Option<Completion>,
+) -> Result<CallStep, Error> {
+    let action = state.advance_query(runtime, response)?;
+    if matches!(action, IteratorAction::Finish) {
+        return finish_local(execution, &mut state);
+    }
+    dispatch_action(runtime, execution, state.into_resident(), action)
+}
 fn drive(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     mut pending: PendingIterator,
     response: Option<Completion>,
 ) -> Result<CallStep, Error> {
-    match pending.advance_query(runtime, response)? {
+    let action = pending.advance_query(runtime, response)?;
+    dispatch_action(runtime, execution, pending, action)
+}
+fn dispatch_action(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    pending: PendingIterator,
+    action: IteratorAction,
+) -> Result<CallStep, Error> {
+    match action {
         IteratorAction::Finish => finish(execution, pending),
         IteratorAction::Read(base, key) => {
             super::proxy_get_driver::start_iterator_read(runtime, execution, pending, base, key)
@@ -557,7 +612,13 @@ fn drive(
     }
 }
 
-impl PendingIterator {
+impl PendingIteratorState {
+    fn into_resident(self) -> PendingIterator {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("iterator_resident_allocated");
+        PendingIterator(Box::new(self))
+    }
+
     /// Fold pure iterator transitions and local errors without entering a query.
     pub(super) fn advance_query(
         &mut self,
@@ -889,6 +950,32 @@ fn callable(runtime: &Runtime, value: Value, message: &str) -> Result<CallableRe
         }
     }
     Err(Error::new(ErrorKind::Type, message))
+}
+
+#[cfg(all(test, feature = "profiling"))]
+#[test]
+fn one_resident_owner_per_iterator_operation_and_none_for_disabled_close() {
+    use crate::engine::api::profiling::CostProfile;
+    for count in [0, 4] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context.eval("function collect(n){let i=0;let it={ [Symbol.iterator](){return this},next(){return {get value(){return i},get done(){return i++>=n}}}}; let total=0;for(let x of it)total+=x;return total}").unwrap();
+        let profile = CostProfile::start();
+        assert_eq!(
+            context.eval(&format!("collect({count})")).unwrap(),
+            Value::Int(count * (count + 1) / 2)
+        );
+        let costs = profile.snapshot();
+        assert_eq!(
+            costs
+                .owned_execution_events
+                .get("iterator_resident_allocated")
+                .copied()
+                .unwrap_or(0),
+            (count + 2) as u64
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
 }
 
 #[cfg(test)]

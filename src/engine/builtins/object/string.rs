@@ -28,18 +28,24 @@ impl ObjectStringKind {
 }
 pub(crate) enum ObjectStringStep {
     Complete(Completion),
-    Read {
-        receiver: Value,
-        key: PropertyKey,
-        resume: ObjectStringResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        resume: ObjectStringResume,
-    },
+    Read { resume: ObjectStringResume },
+    Call { resume: ObjectStringResume },
 }
-pub(crate) struct ObjectStringResume {
+pub(crate) struct ObjectStringResume(Box<ObjectStringResumeState>);
+impl std::ops::Deref for ObjectStringResume {
+    type Target = ObjectStringResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ObjectStringResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ObjectStringResume>() <= 8);
+pub(crate) struct ObjectStringResumeState {
+    pending_effect: ObjectStringStepPending,
     realm: ContextId,
     receiver: Value,
     phase: Phase,
@@ -89,15 +95,16 @@ impl ObjectStringStep {
                     }
                 };
                 let receiver = Value::Object(object);
-                Ok(Self::Read {
-                    receiver: receiver.clone(),
-                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)),
-                    resume: ObjectStringResume {
+                Ok(Self::request_read(
+                    receiver.clone(),
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)),
+                    ObjectStringResume(Box::new(ObjectStringResumeState {
+                        pending_effect: ObjectStringStepPending::default(),
                         realm,
                         receiver,
                         phase: Phase::Tag(tag),
-                    },
-                })
+                    })),
+                ))
             }
             ObjectStringKind::Locale => {
                 if matches!(this_value, Value::Null | Value::Undefined) {
@@ -110,22 +117,23 @@ impl ObjectStringStep {
                         runtime.new_native_error(realm, NativeErrorKind::Type, message)?,
                     )));
                 }
-                Ok(Self::Read {
-                    receiver: this_value.clone(),
-                    key: runtime.intern_property_key("toString")?,
-                    resume: ObjectStringResume {
+                Ok(Self::request_read(
+                    this_value.clone(),
+                    runtime.intern_property_key("toString")?,
+                    ObjectStringResume(Box::new(ObjectStringResumeState {
+                        pending_effect: ObjectStringStepPending::default(),
                         realm,
                         receiver: this_value.clone(),
                         phase: Phase::LocaleMethod,
-                    },
-                })
+                    })),
+                ))
             }
         }
     }
 }
 impl ObjectStringResume {
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<ObjectStringStep, RuntimeError> {
@@ -135,7 +143,7 @@ impl ObjectStringResume {
                 return Ok(ObjectStringStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Tag(default_tag) => tag_string(match value {
                 Value::String(tag) => tag,
                 _ => default_tag,
@@ -149,20 +157,21 @@ impl ObjectStringResume {
                 let Some(callable) = callable else {
                     return Ok(ObjectStringStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "not a function",
                         )?,
                     )));
                 };
-                Ok(ObjectStringStep::Call {
-                    target: DirectCallTarget::Callable(callable),
-                    receiver: self.receiver.clone(),
-                    resume: Self {
-                        phase: Phase::LocaleResult,
-                        ..self
+                Ok(ObjectStringStep::request_call(
+                    DirectCallTarget::Callable(callable),
+                    self.0.receiver.clone(),
+                    {
+                        let updated_0 = Phase::LocaleResult;
+                        self.0.phase = updated_0;
+                        self
                     },
-                })
+                ))
             }
         }
     }
@@ -175,29 +184,91 @@ pub(super) fn finish(
     loop {
         step = match step {
             ObjectStringStep::Complete(result) => return Ok(result),
-            ObjectStringStep::Read {
-                receiver,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
-            )?,
-            ObjectStringStep::Call {
-                target,
-                receiver,
-                resume,
-            } => {
-                let result = match target {
-                    DirectCallTarget::Callable(callable) => {
-                        runtime.call_internal(realm, &callable, receiver, &[])?
-                    }
-                    DirectCallTarget::NonCallableProxy(proxy) => {
-                        runtime.call_proxy(realm, &proxy, receiver, &[])?
-                    }
-                };
-                resume.resume(runtime, result)?
+            ObjectStringStep::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                )?
+            }
+            ObjectStringStep::Call { mut resume } => {
+                let target = resume.take_call_target();
+                let receiver = resume.take_call_receiver();
+                {
+                    let result = match target {
+                        DirectCallTarget::Callable(callable) => {
+                            runtime.call_internal(realm, &callable, receiver, &[])?
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            runtime.call_proxy(realm, &proxy, receiver, &[])?
+                        }
+                    };
+                    resume.resume(runtime, result)?
+                }
             }
         };
     }
 }
+
+#[derive(Default)]
+struct ObjectStringStepPending {
+    read_receiver: Option<Value>,
+    read_key: Option<PropertyKey>,
+    call_target: Option<DirectCallTarget>,
+    call_receiver: Option<Value>,
+}
+impl ObjectStringStep {
+    pub(crate) fn request_read(
+        receiver: Value,
+        key: PropertyKey,
+        mut resume: ObjectStringResume,
+    ) -> Self {
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        mut resume: ObjectStringResume,
+    ) -> Self {
+        resume.0.pending_effect.call_target = Some(target);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        Self::Call { resume }
+    }
+}
+impl ObjectStringResume {
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("ObjectStringStep Read receiver")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("ObjectStringStep Read key")
+    }
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .pending_effect
+            .call_target
+            .take()
+            .expect("ObjectStringStep Call target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("ObjectStringStep Call receiver")
+    }
+}
+const _: () = assert!(std::mem::size_of::<ObjectStringStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ObjectStringStep>() <= 64);

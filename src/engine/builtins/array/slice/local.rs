@@ -11,11 +11,8 @@ impl SliceStep {
     ) -> Result<Self, RuntimeError> {
         loop {
             self = match self {
-                Self::Read {
-                    object,
-                    key,
-                    resume,
-                } => {
+                Self::Read { mut resume } => {
+                    let (object, key) = resume.take_read();
                     let receiver = Value::Object(object);
                     let Value::Object(object) = &receiver else {
                         unreachable!()
@@ -31,24 +28,26 @@ impl SliceStep {
                                 Completion::Return(value.unwrap_or(Value::Undefined)),
                             )?
                         }
-                        read => return Ok(Self::PreparedRead { read, key, resume }),
+                        read => return Ok(Self::make_preparedread(read, key, resume)),
                     }
                 }
-                Self::Has {
-                    object,
-                    key,
-                    resume,
-                } => match runtime.prepare_has_property(&object, &key)? {
-                    PreparedHas::Complete(value) => {
-                        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "array_slice_local_has",
-                        );
-                        resume.boolean_once(runtime, NativeConversion::Value(value))?
+                Self::Has { mut resume } => {
+                    let (object, key) = resume.take_has();
+                    match runtime.prepare_has_property(&object, &key)? {
+                        PreparedHas::Complete(value) => {
+                            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                            crate::engine::api::profiling::record_owned_execution_event(
+                                "array_slice_local_has",
+                            );
+                            resume.boolean_once(runtime, NativeConversion::Value(value))?
+                        }
+                        probe => return Ok(Self::make_preparedhas(probe, key, resume)),
                     }
-                    probe => return Ok(Self::PreparedHas { probe, key, resume }),
-                },
-                Self::Number { value, resume } if !matches!(value, Value::Object(_)) => {
+                }
+                Self::Number { mut resume }
+                    if !matches!(resume.0.pending.value.as_ref(), Some(Value::Object(_))) =>
+                {
+                    let (value,) = resume.take_number();
                     let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant(
@@ -57,14 +56,24 @@ impl SliceStep {
                     };
                     resume.number_once(runtime, result)?
                 }
-                Self::Define {
-                    object,
-                    key,
-                    descriptor,
-                    resume,
-                } if direct_indexed_target(runtime, &object, &key)? => {
-                    // An integer property on an ordinary object/Array cannot
-                    // perform length or typed-element conversion or invoke JS.
+                Self::Define { mut resume }
+                    if direct_indexed_target(
+                        runtime,
+                        resume
+                            .0
+                            .pending
+                            .object
+                            .as_ref()
+                            .expect("slice Define lost object"),
+                        resume
+                            .0
+                            .pending
+                            .key
+                            .as_ref()
+                            .expect("slice Define lost key"),
+                    )? =>
+                {
+                    let (object, key, descriptor) = resume.take_define();
                     let result = define_local(runtime, realm, &object, &key, &descriptor)?;
                     resume.defined_once(runtime, result)?
                 }

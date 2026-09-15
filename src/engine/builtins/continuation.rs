@@ -1297,3 +1297,103 @@ pub(crate) fn start_array_next_into(
         &mut waiting,
     ))
 }
+
+const _: () = assert!(std::mem::size_of::<NativeStep>() <= 64);
+
+// Inline domain payloads leave room for the NativeStep discriminant.
+const _: () = assert!(std::mem::size_of::<crate::engine::modules::callback::CallbackStep>() <= 56);
+const _: () =
+    assert!(std::mem::size_of::<crate::engine::vm::async_generator::AsyncGeneratorStep>() <= 56);
+const _: () =
+    assert!(std::mem::size_of::<crate::engine::vm::async_from_sync_iterator::FromSyncStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<crate::engine::vm::async_function::AsyncStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::promise::operation::PromiseStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<crate::engine::vm::generator::GeneratorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::AtomicsStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedCreateStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::BufferSliceStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedWithStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::Uint8CodecStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedSearchStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedStringStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedSliceStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedMutationStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::StringFactoryStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::WeakConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpMatchAllStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpSplitStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpIteratorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<crate::engine::value::Value>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ObjectConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::BindStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::FunctionTextStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::DynamicFunctionStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::JsonParseStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::JsonStringifyStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::BufferConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::DataViewConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedSetStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpSearchStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpMatchStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpCompileStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::StringProtocolStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedSortStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::MathStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::SumStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::PrimitiveConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::GlobalStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::NumericStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ScalarTextStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::DateConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::DatePrototypeStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ErrorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::MapCallbackStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::SetEachStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::SetOperationStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::CollectionStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::WeakComputedStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArraySliceStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorConstructorStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorTagStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedTraversalStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::TypedIterationStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayConcatStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayFlattenStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::StringTextStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::StringSearchStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::StringSplitStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::InstanceStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorFromStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorWrapStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorConcatStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayBuildStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArraySortStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayIndexedStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayReverseStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayStringStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpExecStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpPresentationStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::RegExpReplaceStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorConsumeStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorHelperStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::IteratorCreateStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayNextStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<crate::engine::vm::call::NativeInvokeOutcome>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayMutationStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ArrayCallbackStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::ObjectIterationStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::StringReplaceStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::DataViewAccessStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::BufferMutationStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::function::invoke::InvokeStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<BuiltinPrototypeStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<PropertyStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<ObjectStringStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<crate::engine::vm::Completion>() <= 56);
+const _: () = assert!(std::mem::size_of::<DefinitionsStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<PredicateStep>() <= 56);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<NativeStep>() <= 64);

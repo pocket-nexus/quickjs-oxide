@@ -53,7 +53,20 @@ enum Phase {
     #[cfg(feature = "test262-host")]
     RangeEnd(u32),
 }
-pub(crate) struct StringFactoryResume {
+pub(crate) struct StringFactoryResume(Box<StringFactoryResumeState>);
+impl std::ops::Deref for StringFactoryResume {
+    type Target = StringFactoryResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for StringFactoryResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<StringFactoryResume>() <= 8);
+pub(crate) struct StringFactoryResumeState {
     realm: ContextId,
     kind: StringFactoryKind,
     arguments: Vec<Value>,
@@ -84,7 +97,7 @@ impl StringFactoryStep {
         arguments: &NativeArguments,
         limit: usize,
     ) -> Result<Self, RuntimeError> {
-        let mut resume = StringFactoryResume {
+        let mut resume = StringFactoryResume(Box::new(StringFactoryResumeState {
             realm,
             kind,
             arguments: arguments.readable.clone(),
@@ -98,7 +111,7 @@ impl StringFactoryStep {
             builder: None,
             limit,
             phase: Phase::Characters,
-        };
+        }));
         match kind {
             StringFactoryKind::Static(StringStaticKind::Raw) => {
                 let template = resume.arguments.first().ok_or(RuntimeError::Invariant(
@@ -143,6 +156,7 @@ impl StringFactoryResume {
     }
     fn complete(mut self) -> Result<StringFactoryStep, RuntimeError> {
         let builder = self
+            .0
             .builder
             .take()
             .ok_or(RuntimeError::Invariant("String factory lost builder"))?;
@@ -151,48 +165,54 @@ impl StringFactoryResume {
         )))
     }
     fn builder(&mut self) -> Result<&mut JsStringBuilder, RuntimeError> {
-        self.builder
+        self.0
+            .builder
             .as_mut()
             .ok_or(RuntimeError::Invariant("String factory lost builder"))
     }
     fn next(mut self, runtime: &Runtime) -> Result<StringFactoryStep, RuntimeError> {
-        if matches!(self.kind, StringFactoryKind::Static(StringStaticKind::Raw)) {
-            self.chunk = Value::Undefined;
-            if self.index == self.length {
+        if matches!(
+            self.0.kind,
+            StringFactoryKind::Static(StringStaticKind::Raw)
+        ) {
+            self.0.chunk = Value::Undefined;
+            if self.0.index == self.0.length {
                 return self.complete();
             }
-            self.phase = Phase::Chunk;
+            self.0.phase = Phase::Chunk;
             return Ok(StringFactoryStep::Read {
                 object: self
+                    .0
                     .raw
                     .as_ref()
                     .ok_or(RuntimeError::Invariant("String.raw lost raw object"))?
                     .clone(),
-                key: runtime.intern_property_key(&self.index.to_string())?,
+                key: runtime.intern_property_key(&self.0.index.to_string())?,
                 resume: self,
             });
         }
-        while self.index < self.actual as u64 {
+        while self.0.index < self.0.actual as u64 {
             let value = self
+                .0
                 .arguments
-                .get(self.index as usize)
+                .get(self.0.index as usize)
                 .cloned()
                 .ok_or(RuntimeError::Invariant("String factory argument missing"))?;
             if matches!(
-                self.kind,
+                self.0.kind,
                 StringFactoryKind::Static(StringStaticKind::FromCodePoint)
             ) {
                 if let Value::Int(value) = value {
                     if !(0..=0x10_ffff).contains(&value) {
                         let error = runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Range,
                             "invalid code point",
                         )?;
                         return Ok(self.abrupt(error));
                     }
                     self.builder()?.push_code_point(value as u32)?;
-                    self.index += 1;
+                    self.0.index += 1;
                     continue;
                 }
             }
@@ -212,10 +232,10 @@ impl StringFactoryResume {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Characters => {
                 let code_point = if matches!(
-                    self.kind,
+                    self.0.kind,
                     StringFactoryKind::Static(StringStaticKind::FromCharCode)
                 ) {
                     (crate::engine::value::number::to_int32(number) as u32) & 0xffff
@@ -226,7 +246,7 @@ impl StringFactoryResume {
                         || number.fract() != 0.0
                     {
                         let error = runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Range,
                             "invalid code point",
                         )?;
@@ -235,21 +255,23 @@ impl StringFactoryResume {
                     number as u32
                 };
                 self.builder()?.push_code_point(code_point)?;
-                self.index += 1;
+                self.0.index += 1;
                 self.next(runtime)
             }
             Phase::Length => {
-                self.length = match runtime.native_to_length(self.realm, &Value::number(number))? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
-                };
-                self.builder = Some(JsStringBuilder::with_limit(0, self.limit));
+                self.0.length =
+                    match runtime.native_to_length(self.0.realm, &Value::number(number))? {
+                        NativeConversion::Value(value) => value,
+                        NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
+                    };
+                self.0.builder = Some(JsStringBuilder::with_limit(0, self.0.limit));
                 self.next(runtime)
             }
             #[cfg(feature = "test262-host")]
             Phase::RangeStart => {
-                self.phase = Phase::RangeEnd(Runtime::to_uint32_number(number));
+                self.0.phase = Phase::RangeEnd(Runtime::to_uint32_number(number));
                 let value = self
+                    .0
                     .arguments
                     .get(1)
                     .cloned()
@@ -291,14 +313,14 @@ impl StringFactoryResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(self.abrupt(value)),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Raw => {
-                let raw = match runtime.native_to_object(self.realm, value)? {
+                let raw = match runtime.native_to_object(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
                 };
-                self.raw = Some(raw.clone());
-                self.phase = Phase::Length;
+                self.0.raw = Some(raw.clone());
+                self.0.phase = Phase::Length;
                 Ok(StringFactoryStep::Read {
                     object: raw,
                     key: runtime.intern_property_key("length")?,
@@ -306,14 +328,14 @@ impl StringFactoryResume {
                 })
             }
             Phase::Length => {
-                self.length_value = value.clone();
+                self.0.length_value = value.clone();
                 Ok(StringFactoryStep::Number {
                     value,
                     resume: self,
                 })
             }
             Phase::Chunk => {
-                self.chunk = value.clone();
+                self.0.chunk = value.clone();
                 Ok(StringFactoryStep::String {
                     value,
                     resume: self,
@@ -333,23 +355,24 @@ impl StringFactoryResume {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Chunk => {
                 let append = self.builder()?.push_js_string(&value);
-                let next = self.index + 1;
+                let next = self.0.index + 1;
                 let substitution = usize::try_from(next)
                     .ok()
-                    .filter(|index| next < self.length && *index < self.actual);
+                    .filter(|index| next < self.0.length && *index < self.0.actual);
                 let Some(index) = substitution else {
                     // Raw append failure is latched; subsequent Get/ToString
                     // still run and a later user throw can replace that error.
                     let _ = append;
-                    self.index += 1;
+                    self.0.index += 1;
                     return self.next(runtime);
                 };
                 append?;
-                self.phase = Phase::Substitution;
+                self.0.phase = Phase::Substitution;
                 let value = self
+                    .0
                     .arguments
                     .get(index)
                     .cloned()
@@ -363,7 +386,7 @@ impl StringFactoryResume {
             }
             Phase::Substitution => {
                 self.builder()?.push_js_string(&value)?;
-                self.index += 1;
+                self.0.index += 1;
                 self.next(runtime)
             }
             _ => Err(RuntimeError::Invariant(
@@ -397,3 +420,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<StringFactoryStep>() <= 64);

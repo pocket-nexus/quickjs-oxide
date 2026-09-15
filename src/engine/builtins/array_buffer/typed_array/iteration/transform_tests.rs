@@ -642,7 +642,7 @@ fn pending_map_element_owns_source_target_callback_and_conversion_input() {
         readable: vec![callback],
     };
     let invocation = NativeInvocation::Call { this_value: source };
-    let TypedIterationStep::Species { resume, .. } = TypedIterationStep::start(
+    let TypedIterationStep::Species { mut resume } = TypedIterationStep::start(
         &runtime,
         context.realm,
         ArrayIterationKind::Map,
@@ -652,17 +652,23 @@ fn pending_map_element_owns_source_target_callback_and_conversion_input() {
     .unwrap() else {
         panic!("expected species request")
     };
+    drop(resume.take_species_source());
+    let _ = resume.take_species_element();
+    let _ = resume.take_species_length();
     drop(invocation);
     drop(arguments);
     let Value::Object(mapped) = mapped else {
         unreachable!()
     };
-    let TypedIterationStep::Call { resume, .. } = resume
+    let TypedIterationStep::Call { mut resume } = resume
         .species(&runtime, NativeConversion::Value(mapped))
         .unwrap()
     else {
         panic!("expected callback")
     };
+    drop(resume.take_call_target());
+    drop(resume.take_call_receiver());
+    drop(resume.take_call_arguments());
     let conversion = runtime.new_object(None).unwrap();
     let conversion_id = conversion.object_id();
     let step = resume

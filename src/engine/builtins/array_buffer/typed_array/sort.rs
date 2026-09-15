@@ -404,7 +404,20 @@ enum TypedSortPhase {
     Call,
     Number,
 }
-pub(crate) struct TypedSortResume {
+pub(crate) struct TypedSortResume(Box<TypedSortResumeState>);
+impl std::ops::Deref for TypedSortResume {
+    type Target = TypedSortResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedSortResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedSortResume>() <= 8);
+pub(crate) struct TypedSortResumeState {
     target: ObjectRef,
     comparator: CallableRef,
     raw_bytes: Vec<u8>,
@@ -489,7 +502,7 @@ impl TypedSortStep {
         }
         let (raw_bytes, indices) = runtime.snapshot_custom_typed_array_sort(initial, length)?;
         let width = usize::from(initial.snapshot.element.byte_length());
-        TypedSortResume {
+        TypedSortResume(Box::new(TypedSortResumeState {
             target,
             comparator,
             raw_bytes,
@@ -500,7 +513,7 @@ impl TypedSortStep {
             left_index: 0,
             right_index: 0,
             phase: TypedSortPhase::Call,
-        }
+        }))
         .next(runtime, None)
     }
 }
@@ -511,42 +524,46 @@ impl TypedSortResume {
         mut reply: Option<Ordering>,
     ) -> Result<TypedSortStep, RuntimeError> {
         loop {
-            match self.machine.advance(reply.take()) {
+            match self.0.machine.advance(reply.take()) {
                 SortAction::Complete => {
                     // Reacquire the final buffer token only after all callback-driven resize/detach mutations.
                     runtime.write_custom_typed_array_sort(
-                        &self.target,
-                        &self.raw_bytes,
-                        &self.indices,
-                        self.width,
+                        &self.0.target,
+                        &self.0.raw_bytes,
+                        &self.0.indices,
+                        self.0.width,
                     )?;
                     return Ok(TypedSortStep::Complete(Completion::Return(Value::Object(
-                        self.target,
+                        self.0.target,
                     ))));
                 }
-                SortAction::Swap(left, right) => self.indices.swap(left, right),
+                SortAction::Swap(left, right) => self.0.indices.swap(left, right),
                 SortAction::Compare(left, right) => {
-                    self.left_index = *self.indices.get(left).ok_or(RuntimeError::Invariant(
-                        "TypedArray sort left index out of bounds",
-                    ))?;
-                    self.right_index = *self.indices.get(right).ok_or(RuntimeError::Invariant(
-                        "TypedArray sort right index out of bounds",
-                    ))?;
+                    self.0.left_index = *self.0.indices.get(left).ok_or(
+                        RuntimeError::Invariant("TypedArray sort left index out of bounds"),
+                    )?;
+                    self.0.right_index = *self.0.indices.get(right).ok_or(
+                        RuntimeError::Invariant("TypedArray sort right index out of bounds"),
+                    )?;
                     let left_value = typed_array_decode(
-                        self.element,
-                        custom_typed_array_sort_word(&self.raw_bytes, self.width, self.left_index)?,
-                    );
-                    let right_value = typed_array_decode(
-                        self.element,
+                        self.0.element,
                         custom_typed_array_sort_word(
-                            &self.raw_bytes,
-                            self.width,
-                            self.right_index,
+                            &self.0.raw_bytes,
+                            self.0.width,
+                            self.0.left_index,
                         )?,
                     );
-                    self.phase = TypedSortPhase::Call;
+                    let right_value = typed_array_decode(
+                        self.0.element,
+                        custom_typed_array_sort_word(
+                            &self.0.raw_bytes,
+                            self.0.width,
+                            self.0.right_index,
+                        )?,
+                    );
+                    self.0.phase = TypedSortPhase::Call;
                     return Ok(TypedSortStep::Call {
-                        callable: self.comparator.clone(),
+                        callable: self.0.comparator.clone(),
                         arguments: vec![left_value, right_value],
                         resume: self,
                     });
@@ -559,7 +576,7 @@ impl TypedSortResume {
         runtime: &Runtime,
         result: Completion,
     ) -> Result<TypedSortStep, RuntimeError> {
-        if !matches!(self.phase, TypedSortPhase::Call) {
+        if !matches!(self.0.phase, TypedSortPhase::Call) {
             return Err(RuntimeError::Invariant(
                 "TypedArray sort call reply mismatch",
             ));
@@ -573,7 +590,7 @@ impl TypedSortResume {
         if let Value::Int(value) = value {
             return self.compared(runtime, f64::from(value));
         }
-        self.phase = TypedSortPhase::Number;
+        self.0.phase = TypedSortPhase::Number;
         Ok(TypedSortStep::Number {
             value,
             resume: self,
@@ -584,7 +601,7 @@ impl TypedSortResume {
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<TypedSortStep, RuntimeError> {
-        if !matches!(self.phase, TypedSortPhase::Number) {
+        if !matches!(self.0.phase, TypedSortPhase::Number) {
             return Err(RuntimeError::Invariant(
                 "TypedArray sort number reply mismatch",
             ));
@@ -603,7 +620,7 @@ impl TypedSortResume {
         } else if number < 0.0 {
             Ordering::Less
         } else {
-            self.left_index.cmp(&self.right_index)
+            self.0.left_index.cmp(&self.0.right_index)
         };
         self.next(runtime, Some(order))
     }
@@ -630,3 +647,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedSortStep>() <= 64);

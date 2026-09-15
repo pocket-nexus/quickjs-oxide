@@ -14,14 +14,16 @@ pub(super) fn finish(
     query: &mut Query,
     pending: &mut Step,
 ) -> Result<Next, Error> {
-    let mut step = pending.take();
+    let step = pending;
     loop {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "dispatch_execution.finish.visit",
         );
-        match step {
+        match &mut *step {
             Step::RootDescriptor(result) => {
+                let result = result.take().expect("selected Step field");
+
                 if !matches!(owner, ReturnOwner::Root)
                     || !query.parents.is_empty()
                     || !query.natives.is_empty()
@@ -37,14 +39,16 @@ pub(super) fn finish(
             }
 
             Step::Complete(completion) => {
+                let completion = completion.take().expect("selected Step field");
+
                 if let Some(parent) = query.parents.pop() {
-                    step = parent
+                    *step = parent
                         .resume(runtime, completion)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
                 if !query.natives.is_empty() {
-                    step = query.finish_native(runtime, &mut execution.slots, Ok(completion))?;
+                    *step = query.finish_native(runtime, &mut execution.slots, Ok(completion))?;
                     continue;
                 }
                 let (_depth, push) = match query
@@ -81,7 +85,7 @@ pub(super) fn finish(
                         let action = pending.advance_query(runtime, Some(completion))?;
                         match continue_iterator(runtime, execution, query, pending, action)? {
                             IteratorProgress::Step(next) => {
-                                step = next;
+                                *step = next;
                                 continue;
                             }
                             IteratorProgress::Done(result) => {
@@ -118,6 +122,9 @@ pub(super) fn finish(
                     .map(Next::Done);
             }
             Step::ForInComplete { value, done } => {
+                let value = value.take().expect("selected Step field");
+                let done = done.take().expect("selected Step field");
+
                 let Some(Finish::ForIn(_depth)) = query.finish.take() else {
                     return Err(Error::internal("for-in result lost its instruction"));
                 };
@@ -126,6 +133,9 @@ pub(super) fn finish(
                     .map(Next::Done);
             }
             Step::NumericComplete { value, previous } => {
+                let value = value.take().expect("selected Step field");
+                let previous = previous.take().expect("selected Step field");
+
                 let Some(Finish::Numeric(_depth)) = query.finish.take() else {
                     return Err(Error::internal("numeric result lost its instruction"));
                 };
@@ -134,18 +144,17 @@ pub(super) fn finish(
                     .map(Next::Done);
             }
             Step::NativeRawComplete(result) => {
+                let result = result.take().expect("selected Step field");
+
                 if !query.parents.is_empty() {
                     return Err(Error::internal(
                         "raw native result escaped a child operation",
                     ));
                 }
-                step = query.finish_native_outcome(runtime, &mut execution.slots, Ok(result))?;
+                *step = query.finish_native_outcome(runtime, &mut execution.slots, Ok(result))?;
                 continue;
             }
-            next => {
-                *pending = next;
-                return Ok(Next::Continue);
-            }
+            _ => return Ok(Next::Continue),
         }
     }
 }
@@ -159,25 +168,29 @@ pub(super) fn activation(
     query: &mut Query,
     pending: &mut Step,
 ) -> Result<Next, Error> {
-    let mut step = pending.take();
+    let step = pending;
     loop {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "dispatch_execution.activation.visit",
         );
         let realm = query.realm;
-        match step {
+        match &mut *step {
             Step::ResumeFrame {
                 activation,
                 input,
                 resume,
             } => {
+                let activation = activation.take().expect("selected Step field");
+                let input = input.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 if !execution
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                     || runtime.bytecode_call_would_overflow()
                 {
-                    step = resume
+                    *step = resume
                         .resume(runtime, overflow(runtime, realm)?)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -192,7 +205,7 @@ pub(super) fn activation(
                     operation: Some(OperationTarget::PropertyGet(identity)),
                 });
                 return Ok(Next::Call {
-                    entry: prepared.entry,
+                    entry: Box::new(prepared.entry),
                     pc: prepared.pc,
                     resume,
                 });
@@ -203,12 +216,17 @@ pub(super) fn activation(
                 derived,
                 resume,
             } => {
+                let request = request.take().expect("selected Step field");
+                let receiver = receiver.take().expect("selected Step field");
+                let derived = derived.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 match construct::ready(
                     runtime, execution, query, request, receiver, derived, resume,
                 )? {
                     Ok(next) => return Ok(next),
                     Err(next) => {
-                        step = next;
+                        *step = next;
                         continue;
                     }
                 }
@@ -223,7 +241,16 @@ pub(super) fn activation(
                 arguments,
                 resume,
             } => {
-                step = Step::Complete(Completion::Return(Value::Undefined));
+                let callable = callable.take().expect("selected Step field");
+                let target = target.take().expect("selected Step field");
+                let defining_realm = defining_realm.take().expect("selected Step field");
+                let min_readable_args = min_readable_args.take().expect("selected Step field");
+                let mode = mode.take().expect("selected Step field");
+                let invocation = invocation.take().expect("selected Step field");
+                let arguments = arguments.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
+                *step = Step::Complete(Some(Completion::Return(Value::Undefined)));
                 native_scope(
                     runtime,
                     execution,
@@ -236,15 +263,12 @@ pub(super) fn activation(
                     invocation,
                     arguments,
                     resume,
-                    &mut step,
+                    step,
                 )?;
                 continue;
             }
 
-            next => {
-                *pending = next;
-                return Ok(Next::Continue);
-            }
+            _ => return Ok(Next::Continue),
         }
     }
 }
@@ -258,32 +282,38 @@ pub(super) fn prepare(
     query: &mut Query,
     pending: &mut Step,
 ) -> Result<Next, Error> {
-    let mut step = pending.take();
+    let step = pending;
     loop {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "dispatch_execution.prepare.visit",
         );
         let realm = query.realm;
-        match step {
+        match &mut *step {
             Step::ModuleCallbackOperation {
                 step: callback,
                 resume,
             } => {
+                let callback = callback.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("module callback continuation allocation failed")
                 })?;
                 query.parents.push(resume);
-                step = (*callback).into();
+                *step = (*callback).into();
             }
 
             Step::ModuleBodyOperation { step: body, resume } => {
+                let body = body.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("module body continuation allocation failed"))?;
                 query.parents.push(resume);
-                step = (*body).into();
+                *step = (*body).into();
             }
 
             Step::ModuleLink {
@@ -291,6 +321,10 @@ pub(super) fn prepare(
                 callable,
                 resume,
             } => {
+                let realm = realm.take().expect("selected Step field");
+                let callable = callable.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 let super::CallableExecution::Bytecode {
                     bytecode,
                     closure_slots,
@@ -322,7 +356,7 @@ pub(super) fn prepare(
                     let completion = runtime
                         .bytecode_stack_overflow_completion(realm, &bytecode)
                         .map_err(runtime_error_to_vm_error)?;
-                    step = resume
+                    *step = resume
                         .resume(runtime, completion)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -344,7 +378,7 @@ pub(super) fn prepare(
                 }
                 .prepare(runtime, &mut execution.call_storage)?;
                 return Ok(Next::Call {
-                    entry,
+                    entry: Box::new(entry),
                     pc: 0,
                     resume,
                 });
@@ -354,12 +388,15 @@ pub(super) fn prepare(
                 step: operation,
                 resume,
             } => {
+                let operation = operation.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("Promise continuation allocation failed"))?;
                 query.parents.push(resume);
-                step = (*operation).into();
+                *step = (*operation).into();
                 continue;
             }
             Step::IntrinsicPromiseResolve {
@@ -367,11 +404,15 @@ pub(super) fn prepare(
                 realm: resolve_realm,
                 resume,
             } => {
+                let value = value.take().expect("selected Step field");
+                let resolve_realm = resolve_realm.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("await resolution continuation allocation failed")
                 })?;
                 query.parents.push(resume);
-                step = runtime
+                *step = runtime
                     .prepare_intrinsic_promise_resolve(resolve_realm, value)
                     .map_err(runtime_error_to_vm_error)?
                     .into();
@@ -383,7 +424,12 @@ pub(super) fn prepare(
                 arguments,
                 resume,
             } => {
-                step = construct::start(
+                let target = target.take().expect("selected Step field");
+                let new_target = new_target.take().expect("selected Step field");
+                let arguments = arguments.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
+                *step = construct::start(
                     runtime, owner, identity, realm, target, new_target, arguments, resume,
                 )?;
                 continue;
@@ -394,11 +440,16 @@ pub(super) fn prepare(
                 arguments,
                 resume,
             } => {
+                let target = target.take().expect("selected Step field");
+                let new_target = new_target.take().expect("selected Step field");
+                let arguments = arguments.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 if !execution
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                 {
-                    step = resume
+                    *step = resume
                         .resume(runtime, overflow(runtime, realm)?)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -408,7 +459,7 @@ pub(super) fn prepare(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("constructor continuation allocation failed"))?;
                 query.parents.push(resume);
-                step = crate::engine::object::ProxyConstructStep::start(
+                *step = crate::engine::object::ProxyConstructStep::start(
                     runtime, realm, target, new_target, arguments,
                 )
                 .map_err(runtime_error_to_vm_error)?
@@ -416,7 +467,10 @@ pub(super) fn prepare(
                 continue;
             }
             Step::IndirectEval { source, resume } => {
-                step = match runtime
+                let source = source.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
+                *step = match runtime
                     .prepare_indirect_string_eval(realm, &source)
                     .map_err(runtime_error_to_vm_error)?
                 {
@@ -427,16 +481,19 @@ pub(super) fn prepare(
                         callable,
                         this_value,
                     } => Step::Call {
-                        target: DirectCallTarget::Callable(callable),
-                        receiver: this_value,
-                        arguments: Vec::new(),
-                        resume,
+                        target: Some(DirectCallTarget::Callable(callable)),
+                        receiver: Some(this_value),
+                        arguments: Some(Vec::new()),
+                        resume: Some(resume),
                     },
                 };
                 continue;
             }
             Step::NumericHtmlDda { value, resume } => {
-                step = resume
+                let value = value.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
+                *step = resume
                     .html_dda(
                         runtime
                             .value_is_html_dda(&value)
@@ -445,10 +502,7 @@ pub(super) fn prepare(
                     .into();
                 continue;
             }
-            next => {
-                *pending = next;
-                return Ok(Next::Continue);
-            }
+            _ => return Ok(Next::Continue),
         }
     }
 }

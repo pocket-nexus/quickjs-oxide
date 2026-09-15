@@ -29,7 +29,20 @@ pub(crate) enum BufferConstructorStep {
         resume: BufferConstructorResume,
     },
 }
-pub(crate) struct BufferConstructorResume {
+pub(crate) struct BufferConstructorResume(Box<BufferConstructorResumeState>);
+impl std::ops::Deref for BufferConstructorResume {
+    type Target = BufferConstructorResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for BufferConstructorResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<BufferConstructorResume>() <= 8);
+pub(crate) struct BufferConstructorResumeState {
     realm: ContextId,
     shared: bool,
     new_target: Value,
@@ -89,28 +102,29 @@ impl BufferConstructorStep {
         let _ = runtime;
         Ok(Self::Primitive {
             value,
-            resume: BufferConstructorResume {
+            resume: BufferConstructorResume(Box::new(BufferConstructorResumeState {
                 realm,
                 shared: false,
                 new_target: new_target.clone(),
                 options,
                 phase: ConstructorPhase::Length,
-            },
+            })),
         })
     }
 }
 impl BufferConstructorResume {
-    fn lookup(self, length: u64, maximum: Option<u64>) -> BufferConstructorStep {
+    fn lookup(mut self, length: u64, maximum: Option<u64>) -> BufferConstructorStep {
         BufferConstructorStep::Prototype {
-            new_target: self.new_target.clone(),
-            resume: Self {
-                phase: ConstructorPhase::Prototype { length, maximum },
-                ..self
+            new_target: self.0.new_target.clone(),
+            resume: {
+                let updated_0 = ConstructorPhase::Prototype { length, maximum };
+                self.0.phase = updated_0;
+                self
             },
         }
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<BufferConstructorStep, RuntimeError> {
@@ -120,26 +134,27 @@ impl BufferConstructorResume {
                 return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             ConstructorPhase::Length => {
                 if matches!(value, Value::Object(_)) {
                     return Err(RuntimeError::Invariant(
                         "ArrayBuffer length conversion returned an object",
                     ));
                 }
-                let length = match runtime.native_to_index(self.realm, &value)? {
+                let length = match runtime.native_to_index(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
-                if let Some(options) = &self.options {
+                if let Some(options) = &self.0.options {
                     Ok(BufferConstructorStep::Read {
                         object: options.clone(),
                         key: runtime.intern_property_key("maxByteLength")?,
-                        resume: Self {
-                            phase: ConstructorPhase::Maximum(length),
-                            ..self
+                        resume: {
+                            let updated_0 = ConstructorPhase::Maximum(length);
+                            self.0.phase = updated_0;
+                            self
                         },
                     })
                 } else {
@@ -152,9 +167,10 @@ impl BufferConstructorResume {
                 } else {
                     Ok(BufferConstructorStep::Primitive {
                         value,
-                        resume: Self {
-                            phase: ConstructorPhase::MaximumNumber(length),
-                            ..self
+                        resume: {
+                            let updated_0 = ConstructorPhase::MaximumNumber(length);
+                            self.0.phase = updated_0;
+                            self
                         },
                     })
                 }
@@ -165,7 +181,7 @@ impl BufferConstructorResume {
                         "ArrayBuffer maximum conversion returned an object",
                     ));
                 }
-                let maximum = match runtime.native_to_int64(self.realm, &value)? {
+                let maximum = match runtime.native_to_int64(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
@@ -174,7 +190,7 @@ impl BufferConstructorResume {
                 if maximum > MAX_SAFE_INTEGER_I64 || length > maximum as u64 {
                     return Ok(BufferConstructorStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Range,
                             "invalid array buffer max length",
                         )?,
@@ -195,7 +211,7 @@ impl BufferConstructorResume {
         let prototype = match result {
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(value)) => value,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {
-                if self.shared {
+                if self.0.shared {
                     runtime.shared_array_buffer_default_prototype(realm)?
                 } else {
                     runtime.array_buffer_default_prototype(realm)?
@@ -205,16 +221,20 @@ impl BufferConstructorResume {
                 return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
             }
         };
-        let ConstructorPhase::Prototype { length, maximum } = self.phase else {
+        let ConstructorPhase::Prototype { length, maximum } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "ArrayBuffer constructor received an unexpected prototype reply",
             ));
         };
-        Ok(BufferConstructorStep::Complete(if self.shared {
-            runtime
-                .finish_shared_array_buffer_construction(self.realm, prototype, length, maximum)?
+        Ok(BufferConstructorStep::Complete(if self.0.shared {
+            runtime.finish_shared_array_buffer_construction(
+                self.0.realm,
+                prototype,
+                length,
+                maximum,
+            )?
         } else {
-            runtime.finish_array_buffer_construction(self.realm, prototype, length, maximum)?
+            runtime.finish_array_buffer_construction(self.0.realm, prototype, length, maximum)?
         }))
     }
 }
@@ -253,3 +273,6 @@ pub(in crate::engine::builtins) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<BufferConstructorStep>() <= 64);

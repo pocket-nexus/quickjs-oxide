@@ -468,13 +468,9 @@ pub(super) fn define_property(
         runtime,
         execution,
         id,
-        crate::engine::object::object_literal::element::LiteralDefinitionStep::Define {
-            object,
-            key,
-            descriptor,
-            resume:
-                crate::engine::object::object_literal::element::LiteralDefinitionResume::Defined,
-        },
+        crate::engine::object::object_literal::element::LiteralDefinitionStep::define(
+            object, key, descriptor,
+        ),
         depth,
     )
 }

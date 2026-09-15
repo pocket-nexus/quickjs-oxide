@@ -33,7 +33,20 @@ pub(crate) enum CreateStep {
         completion: Completion,
     },
 }
-pub(crate) struct CreateResume {
+pub(crate) struct CreateResume(Box<CreateResumeState>);
+impl std::ops::Deref for CreateResume {
+    type Target = CreateResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for CreateResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<CreateResume>() <= 8);
+pub(crate) struct CreateResumeState {
     realm: ContextId,
     source: ObjectRef,
     kind: IteratorHelperKind,
@@ -59,13 +72,13 @@ impl CreateStep {
             .ok_or(RuntimeError::Invariant(
                 "Iterator helper argument was not padded",
             ))?;
-        let mut resume = CreateResume {
+        let mut resume = CreateResume(Box::new(CreateResumeState {
             realm,
             source,
             kind,
             callback: Value::Undefined,
             count: 0,
-        };
+        }));
         if matches!(kind, IteratorHelperKind::Drop | IteratorHelperKind::Take) {
             return Ok(Self::Number {
                 value: argument,
@@ -84,13 +97,13 @@ impl CreateStep {
 impl CreateResume {
     fn close(self, value: Value) -> CreateStep {
         CreateStep::Close {
-            iterator: self.source,
+            iterator: self.0.source,
             completion: Completion::Throw(value),
         }
     }
     fn read(self, runtime: &Runtime) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Read {
-            object: self.source.clone(),
+            object: self.0.source.clone(),
             key: runtime.intern_property_key("next")?,
             resume: self,
         })
@@ -111,11 +124,11 @@ impl CreateResume {
         };
         if number.is_nan() || number == f64::NEG_INFINITY || count < 0 {
             return Ok(CreateStep::CloseInvalidCount {
-                iterator: self.source.clone(),
+                iterator: self.0.source.clone(),
                 resume: self,
             });
         }
-        self.count = count;
+        self.0.count = count;
         self.read(runtime)
     }
     pub(crate) fn invalid_count(
@@ -124,7 +137,7 @@ impl CreateResume {
         _reply: Completion,
     ) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Complete(Completion::Throw(
-            runtime.new_native_error(self.realm, NativeErrorKind::Range, "must be positive")?,
+            runtime.new_native_error(self.0.realm, NativeErrorKind::Range, "must be positive")?,
         )))
     }
     pub(crate) fn resume(
@@ -136,12 +149,12 @@ impl CreateResume {
             Completion::Throw(value) => Ok(self.close(value)),
             Completion::Return(next) => Ok(CreateStep::Complete(Completion::Return(
                 Value::Object(runtime.new_iterator_helper(
-                    self.realm,
-                    &self.source,
+                    self.0.realm,
+                    &self.0.source,
                     &next,
-                    &self.callback,
-                    self.count,
-                    self.kind,
+                    &self.0.callback,
+                    self.0.count,
+                    self.0.kind,
                 )?),
             ))),
         }
@@ -192,3 +205,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CreateStep>() <= 64);

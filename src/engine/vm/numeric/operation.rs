@@ -144,7 +144,20 @@ pub(in crate::engine::vm) enum NumericStep {
         resume: NumericResume,
     },
 }
-pub(in crate::engine::vm) struct NumericResume {
+pub(in crate::engine::vm) struct NumericResume(Box<NumericResumeState>);
+impl std::ops::Deref for NumericResume {
+    type Target = NumericResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for NumericResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<NumericResume>() <= 8);
+pub(in crate::engine::vm) struct NumericResumeState {
     kind: NumericKind,
     phase: Phase,
 }
@@ -167,10 +180,10 @@ impl NumericStep {
             return primitive(
                 left,
                 ToPrimitiveHint::Number,
-                NumericResume {
+                NumericResume(Box::new(NumericResumeState {
                     kind,
                     phase: Phase::Unary,
-                },
+                })),
             );
         }
         let right = right.ok_or_else(|| Error::internal("binary numeric operator lost RHS"))?;
@@ -184,10 +197,10 @@ impl NumericStep {
             } else {
                 ToPrimitiveHint::Number
             },
-            NumericResume {
+            NumericResume(Box::new(NumericResumeState {
                 kind,
                 phase: Phase::Left(right),
-            },
+            })),
         )
     }
 }
@@ -223,8 +236,8 @@ impl NumericResume {
                 "numeric ToPrimitive reply returned an object",
             ));
         }
-        let kind = self.kind;
-        match self.phase {
+        let kind = self.0.kind;
+        match self.0.phase {
             Phase::Unary => unary(kind, value),
             Phase::Left(right) => {
                 // Arithmetic converts the left primitive to Numeric before starting
@@ -241,7 +254,7 @@ impl NumericResume {
                     } else {
                         ToPrimitiveHint::Number
                     },
-                    NumericResume { kind, phase },
+                    NumericResume(Box::new(NumericResumeState { kind, phase })),
                 )
             }
             Phase::RightPrimitive(left) => Ok(complete(if kind == NumericKind::Add {
@@ -260,13 +273,13 @@ impl NumericResume {
         }
     }
     pub(in crate::engine::vm) fn html_dda(self, value: bool) -> Result<NumericStep, Error> {
-        let Phase::EqualityDda(left, right) = self.phase else {
+        let Phase::EqualityDda(left, right) = self.0.phase else {
             return Err(Error::internal("HTMLDDA reply lost equality owner"));
         };
         if value {
-            Ok(equal_result(self.kind, true))
+            Ok(equal_result(self.0.kind, true))
         } else {
-            equality(self.kind, left, right, true)
+            equality(self.0.kind, left, right, true)
         }
     }
 }
@@ -429,19 +442,19 @@ fn equality(
             if matches!(right, Value::Null | Value::Undefined) {
                 return Ok(NumericStep::HtmlDda {
                     value: left.clone(),
-                    resume: NumericResume {
+                    resume: NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityDda(left, right),
-                    },
+                    })),
                 });
             }
             if matches!(left, Value::Null | Value::Undefined) {
                 return Ok(NumericStep::HtmlDda {
                     value: right.clone(),
-                    resume: NumericResume {
+                    resume: NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityDda(left, right),
-                    },
+                    })),
                 });
             }
         }
@@ -493,10 +506,10 @@ fn equality(
                 return primitive(
                     left,
                     ToPrimitiveHint::Default,
-                    NumericResume {
+                    NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityLeft(right),
-                    },
+                    })),
                 );
             }
             (
@@ -510,10 +523,10 @@ fn equality(
                 return primitive(
                     right,
                     ToPrimitiveHint::Default,
-                    NumericResume {
+                    NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityRight(left),
-                    },
+                    })),
                 );
             }
             _ => return Ok(equal_result(kind, false)),
@@ -563,3 +576,6 @@ mod tests {
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<NumericStep>() <= 64);

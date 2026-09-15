@@ -57,6 +57,7 @@ struct Elements {
 }
 fn continuation(realm: ContextId, phase: Phase) -> Box<PromiseResume> {
     Box::new(PromiseResume {
+        pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: super::Phase::Aggregate(phase),
     })
@@ -109,6 +110,7 @@ impl PromiseStep {
                 "Promise aggregate iterable argv was not padded",
             ))?;
         Box::new(PromiseResume {
+            pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: super::Phase::AggregateCapability {
                 constructor: object.clone(),
@@ -127,10 +129,10 @@ pub(super) fn ready(
     kind: PromiseNativeKind,
     capability: RootedPromiseCapability,
 ) -> Result<PromiseStep, RuntimeError> {
-    Ok(PromiseStep::Read {
-        receiver: Value::Object(constructor.clone()),
-        key: runtime.intern_property_key("resolve")?,
-        resume: continuation(
+    Ok({
+        let __pending_field_receiver = Value::Object(constructor.clone());
+        let __pending_field_key = runtime.intern_property_key("resolve")?;
+        let __pending_field_resume = continuation(
             realm,
             Phase::Resolve(Acquire {
                 constructor,
@@ -138,7 +140,12 @@ pub(super) fn ready(
                 kind,
                 capability,
             }),
-        ),
+        );
+        PromiseStep::request_read(
+            __pending_field_receiver,
+            __pending_field_key,
+            __pending_field_resume,
+        )
     })
 }
 pub(super) fn resume(
@@ -169,10 +176,16 @@ pub(super) fn resume(
     match phase {
         Phase::Resolve(state) => match runtime.promise_callable(realm, value)? {
             NativeConversion::Throw(reason) => reject(realm, state.capability, reason),
-            NativeConversion::Value(resolve) => Ok(PromiseStep::Read {
-                receiver: state.iterable.clone(),
-                key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
-                resume: continuation(realm, Phase::Method { state, resolve }),
+            NativeConversion::Value(resolve) => Ok({
+                let __pending_field_receiver = state.iterable.clone();
+                let __pending_field_key =
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+                let __pending_field_resume = continuation(realm, Phase::Method { state, resolve });
+                PromiseStep::request_read(
+                    __pending_field_receiver,
+                    __pending_field_key,
+                    __pending_field_resume,
+                )
             }),
         },
         Phase::Method { state, resolve } => match runtime.promise_callable(realm, value)? {
@@ -184,11 +197,18 @@ pub(super) fn resume(
                 )?;
                 reject(realm, state.capability, reason)
             }
-            NativeConversion::Value(callable) => Ok(PromiseStep::Call {
-                callable,
-                receiver: state.iterable.clone(),
-                arguments: Vec::new(),
-                resume: continuation(realm, Phase::Iterator { state, resolve }),
+            NativeConversion::Value(callable) => Ok({
+                let __pending_field_callable = callable;
+                let __pending_field_receiver = state.iterable.clone();
+                let __pending_field_arguments = Vec::new();
+                let __pending_field_resume =
+                    continuation(realm, Phase::Iterator { state, resolve });
+                PromiseStep::request_call(
+                    __pending_field_callable,
+                    __pending_field_receiver,
+                    __pending_field_arguments,
+                    __pending_field_resume,
+                )
             }),
         },
         Phase::Iterator { state, resolve } => {
@@ -197,17 +217,22 @@ pub(super) fn resume(
                     runtime.new_native_error(realm, NativeErrorKind::Type, "not an object")?;
                 return reject(realm, state.capability, reason);
             };
-            Ok(PromiseStep::Read {
-                receiver: Value::Object(iterator.clone()),
-                key: runtime.intern_property_key("next")?,
-                resume: continuation(
+            Ok({
+                let __pending_field_receiver = Value::Object(iterator.clone());
+                let __pending_field_key = runtime.intern_property_key("next")?;
+                let __pending_field_resume = continuation(
                     realm,
                     Phase::NextMethod {
                         state,
                         resolve,
                         iterator,
                     },
-                ),
+                );
+                PromiseStep::request_read(
+                    __pending_field_receiver,
+                    __pending_field_key,
+                    __pending_field_resume,
+                )
             })
         }
         Phase::NextMethod {
@@ -259,9 +284,11 @@ pub(super) fn resume(
                     Value::Object(state.capability.reject.as_object().clone()),
                 ]
             };
-            Ok(PromiseStep::Nested {
-                step: Box::new(PromiseStep::invoke_then(runtime, realm, value, arguments)?),
-                resume: continuation(realm, Phase::Then(state)),
+            Ok({
+                let __pending_field_step =
+                    Box::new(PromiseStep::invoke_then(runtime, realm, value, arguments)?);
+                let __pending_field_resume = continuation(realm, Phase::Then(state));
+                PromiseStep::request_nested(__pending_field_step, __pending_field_resume)
             })
         }
         Phase::Then(mut state) => {
@@ -287,10 +314,15 @@ pub(super) fn resume(
 }
 impl Loop {
     fn advance(self: Box<Self>, realm: ContextId) -> PromiseStep {
-        PromiseStep::Next {
-            iterator: self.iterator.clone(),
-            method: self.method.clone(),
-            resume: continuation(realm, Phase::Next(self)),
+        {
+            let __pending_field_iterator = self.iterator.clone();
+            let __pending_field_method = self.method.clone();
+            let __pending_field_resume = continuation(realm, Phase::Next(self));
+            PromiseStep::request_next(
+                __pending_field_iterator,
+                __pending_field_method,
+                __pending_field_resume,
+            )
         }
     }
     fn close(
@@ -298,10 +330,15 @@ impl Loop {
         realm: ContextId,
         reason: Value,
     ) -> Result<PromiseStep, RuntimeError> {
-        Ok(PromiseStep::Close {
-            iterator: self.iterator,
-            completion: Completion::Throw(reason),
-            resume: continuation(realm, Phase::Closed(self.capability)),
+        Ok({
+            let __pending_field_iterator = self.iterator;
+            let __pending_field_completion = Completion::Throw(reason);
+            let __pending_field_resume = continuation(realm, Phase::Closed(self.capability));
+            PromiseStep::request_close(
+                __pending_field_iterator,
+                __pending_field_completion,
+                __pending_field_resume,
+            )
         })
     }
     fn overflow(
@@ -324,11 +361,17 @@ impl Loop {
     ) -> Result<PromiseStep, RuntimeError> {
         match result {
             ObjectIteratorStep::Throw(reason) => reject(realm, self.capability, reason),
-            ObjectIteratorStep::Yield(value) => Ok(PromiseStep::Call {
-                callable: self.resolve.clone(),
-                receiver: Value::Object(self.constructor.clone()),
-                arguments: vec![value],
-                resume: continuation(realm, Phase::Resolved(self)),
+            ObjectIteratorStep::Yield(value) => Ok({
+                let __pending_field_callable = self.resolve.clone();
+                let __pending_field_receiver = Value::Object(self.constructor.clone());
+                let __pending_field_arguments = vec![value];
+                let __pending_field_resume = continuation(realm, Phase::Resolved(self));
+                PromiseStep::request_call(
+                    __pending_field_callable,
+                    __pending_field_receiver,
+                    __pending_field_arguments,
+                    __pending_field_resume,
+                )
             }),
             ObjectIteratorStep::Done => {
                 if let Some(elements) = &self.aggregate {
@@ -356,11 +399,18 @@ impl Loop {
                                 Value::Object(elements.values.clone()),
                             )
                         };
-                        return Ok(PromiseStep::Call {
-                            callable,
-                            receiver: Value::Undefined,
-                            arguments: vec![value],
-                            resume: continuation(realm, Phase::Terminal(self.capability)),
+                        return Ok({
+                            let __pending_field_callable = callable;
+                            let __pending_field_receiver = Value::Undefined;
+                            let __pending_field_arguments = vec![value];
+                            let __pending_field_resume =
+                                continuation(realm, Phase::Terminal(self.capability));
+                            PromiseStep::request_call(
+                                __pending_field_callable,
+                                __pending_field_receiver,
+                                __pending_field_arguments,
+                                __pending_field_resume,
+                            )
                         });
                     }
                 }

@@ -21,7 +21,20 @@ pub(crate) enum NextStep {
         resume: NextResume,
     },
 }
-pub(crate) struct NextResume {
+pub(crate) struct NextResume(Box<NextResumeState>);
+impl std::ops::Deref for NextResume {
+    type Target = NextResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for NextResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<NextResume>() <= 8);
+pub(crate) struct NextResumeState {
     realm: ContextId,
     phase: NextPhase,
 }
@@ -36,10 +49,10 @@ impl NextStep {
         realm: ContextId,
         result: Completion,
     ) -> Result<Self, RuntimeError> {
-        NextResume {
+        NextResume(Box::new(NextResumeState {
             realm,
             phase: NextPhase::Result,
-        }
+        }))
         .resume(runtime, result)
     }
 
@@ -62,10 +75,10 @@ impl NextStep {
         Self::Call {
             callable,
             iterator,
-            resume: NextResume {
+            resume: NextResume(Box::new(NextResumeState {
                 realm,
                 phase: NextPhase::Result,
-            },
+            })),
         }
     }
 
@@ -90,10 +103,10 @@ impl NextStep {
 impl NextResume {
     #[cfg(feature = "stack-vm")]
     pub(crate) fn for_raw(realm: ContextId) -> Self {
-        Self {
+        Self(Box::new(NextResumeState {
             realm,
             phase: NextPhase::Result,
-        }
+        }))
     }
     pub(crate) fn raw(
         self,
@@ -112,7 +125,7 @@ impl NextResume {
         &self,
         result: NativeInvokeOutcome,
     ) -> Result<Result<ObjectIteratorStep, Completion>, RuntimeError> {
-        if !matches!(self.phase, NextPhase::Result) {
+        if !matches!(self.0.phase, NextPhase::Result) {
             return Err(RuntimeError::Invariant(
                 "raw iterator reply has the wrong phase",
             ));
@@ -140,8 +153,8 @@ impl NextResume {
                 return Ok(NextStep::Complete(ObjectIteratorStep::Throw(value)));
             }
         };
-        let realm = self.realm;
-        match self.phase {
+        let realm = self.0.realm;
+        match self.0.phase {
             NextPhase::Result => {
                 let Value::Object(object) = value else {
                     return Ok(NextStep::Complete(ObjectIteratorStep::Throw(
@@ -155,10 +168,10 @@ impl NextResume {
                 Ok(NextStep::Read {
                     object: object.clone(),
                     key: runtime.intern_property_key("done")?,
-                    resume: Self {
+                    resume: Self(Box::new(NextResumeState {
                         realm,
                         phase: NextPhase::Done(object),
-                    },
+                    })),
                 })
             }
             NextPhase::Done(object) => {
@@ -168,10 +181,10 @@ impl NextResume {
                 Ok(NextStep::Read {
                     object,
                     key: runtime.intern_property_key("value")?,
-                    resume: Self {
+                    resume: Self(Box::new(NextResumeState {
                         realm,
                         phase: NextPhase::Value,
-                    },
+                    })),
                 })
             }
             NextPhase::Value => Ok(NextStep::Complete(ObjectIteratorStep::Yield(value))),
@@ -229,7 +242,20 @@ pub(crate) enum CloseStep {
         resume: CloseResume,
     },
 }
-pub(crate) struct CloseResume {
+pub(crate) struct CloseResume(Box<CloseResumeState>);
+impl std::ops::Deref for CloseResume {
+    type Target = CloseResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for CloseResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<CloseResume>() <= 8);
+pub(crate) struct CloseResumeState {
     realm: ContextId,
     iterator: ObjectRef,
     completion: Completion,
@@ -247,12 +273,12 @@ impl CloseStep {
         Ok(Self::Read {
             object: iterator.clone(),
             key: runtime.intern_property_key("return")?,
-            resume: CloseResume {
+            resume: CloseResume(Box::new(CloseResumeState {
                 realm,
                 iterator,
                 completion,
                 called: false,
-            },
+            })),
         })
     }
 }
@@ -262,24 +288,24 @@ impl CloseResume {
         runtime: &Runtime,
         reply: Completion,
     ) -> Result<CloseStep, RuntimeError> {
-        let preserving = matches!(self.completion, Completion::Throw(_));
+        let preserving = matches!(self.0.completion, Completion::Throw(_));
         let value = match reply {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(CloseStep::Complete(if preserving {
-                    self.completion
+                    self.0.completion
                 } else {
                     Completion::Throw(value)
                 }));
             }
         };
-        if self.called {
+        if self.0.called {
             return Ok(CloseStep::Complete(
                 if preserving || matches!(value, Value::Object(_)) {
-                    self.completion
+                    self.0.completion
                 } else {
                     Completion::Throw(runtime.new_native_error(
-                        self.realm,
+                        self.0.realm,
                         NativeErrorKind::Type,
                         "not an object",
                     )?)
@@ -287,7 +313,7 @@ impl CloseResume {
             ));
         }
         if matches!(value, Value::Undefined | Value::Null) {
-            return Ok(CloseStep::Complete(self.completion));
+            return Ok(CloseStep::Complete(self.0.completion));
         }
         let callable = match value {
             Value::Object(ref object) => runtime.as_callable(object)?,
@@ -295,19 +321,19 @@ impl CloseResume {
         };
         let Some(callable) = callable else {
             return Ok(CloseStep::Complete(if preserving {
-                self.completion
+                self.0.completion
             } else {
                 Completion::Throw(runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Type,
                     "not a function",
                 )?)
             }));
         };
-        self.called = true;
+        self.0.called = true;
         Ok(CloseStep::Call {
             callable,
-            iterator: self.iterator.clone(),
+            iterator: self.0.iterator.clone(),
             resume: self,
         })
     }
@@ -348,10 +374,10 @@ mod raw_completion_tests {
     fn raw_completion_checks_phase_and_releases_ignored_done_value() {
         let runtime = Runtime::new();
         let context = runtime.new_context();
-        let resume = NextResume {
+        let resume = NextResume(Box::new(NextResumeState {
             realm: context.realm,
             phase: NextPhase::Result,
-        };
+        }));
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         assert!(matches!(
@@ -365,10 +391,10 @@ mod raw_completion_tests {
         ));
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
-        let wrong = NextResume {
+        let wrong = NextResume(Box::new(NextResumeState {
             realm: context.realm,
             phase: NextPhase::Value,
-        };
+        }));
         for reply in [
             NativeInvokeOutcome::IteratorNextRaw {
                 value: Value::Undefined,
@@ -391,10 +417,10 @@ mod raw_completion_tests {
         let context = runtime.new_context();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
-        let wrong = NextResume {
+        let wrong = NextResume(Box::new(NextResumeState {
             realm: context.realm,
             phase: NextPhase::Done(object),
-        };
+        }));
         assert!(
             wrong
                 .raw(
@@ -414,10 +440,10 @@ mod raw_completion_tests {
     fn raw_completion_preserves_yield_and_throw_identity() {
         let runtime = Runtime::new();
         let context = runtime.new_context();
-        let resume = NextResume {
+        let resume = NextResume(Box::new(NextResumeState {
             realm: context.realm,
             phase: NextPhase::Result,
-        };
+        }));
         let marker = Value::Object(runtime.new_object(None).unwrap());
         let Ok(ObjectIteratorStep::Yield(value)) = resume
             .raw_completion(NativeInvokeOutcome::IteratorNextRaw {
@@ -447,10 +473,10 @@ mod raw_completion_tests {
             let mut context = runtime.new_context();
             let result = context.eval("globalThis.trace='';globalThis.marker={};({get done(){trace+='d';return false},get value(){trace+='v';return marker}})").unwrap();
             let marker = context.eval("marker").unwrap();
-            let resume = NextResume {
+            let resume = NextResume(Box::new(NextResumeState {
                 realm: context.realm,
                 phase: NextPhase::Result,
-            };
+            }));
             let reply = NativeInvokeOutcome::Completion(Completion::Return(result));
             let step = if wrapper {
                 resume.raw(&runtime, reply).unwrap()
@@ -478,3 +504,9 @@ mod raw_completion_tests {
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CloseStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<NextStep>() <= 64);

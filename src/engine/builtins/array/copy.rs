@@ -8,34 +8,32 @@ use crate::engine::{
 };
 pub(crate) enum CopyStep {
     Complete(Completion),
-    Has {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: CopyResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: CopyResume,
-    },
-    Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        resume: CopyResume,
-    },
-    Delete {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: CopyResume,
-    },
+    Has { resume: CopyResume },
+    Read { resume: CopyResume },
+    Set { resume: CopyResume },
+    Delete { resume: CopyResume },
 }
 enum Phase {
     Has,
     Read,
     Write,
 }
-pub(crate) struct CopyResume {
+pub(crate) struct CopyResume(Box<CopyResumeState>);
+impl std::ops::Deref for CopyResume {
+    type Target = CopyResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for CopyResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<CopyResume>() <= 8);
+pub(crate) struct CopyResumeState {
+    pending_effect: CopyStepPending,
+    scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
     object: ObjectRef,
     to: u64,
@@ -55,7 +53,9 @@ impl CopyStep {
         count: u64,
         backwards: bool,
     ) -> Result<Self, RuntimeError> {
-        CopyResume {
+        CopyResume(Box::new(CopyResumeState {
+            pending_effect: CopyStepPending::default(),
+            scheduler_set_key: None,
             realm,
             object,
             to,
@@ -64,42 +64,50 @@ impl CopyStep {
             backwards,
             offset: 0,
             phase: Phase::Has,
-        }
+        }))
         .next(runtime)
     }
 }
 impl CopyResume {
+    pub(crate) fn with_scheduler_set_key(mut self, key: PropertyKey) -> Self {
+        self.0.scheduler_set_key = Some(key);
+        self
+    }
+    pub(crate) fn take_scheduler_set_key(&mut self) -> PropertyKey {
+        self.0.scheduler_set_key.take().expect("waiting Set key")
+    }
+
     fn relative(&self) -> u64 {
-        if self.backwards {
-            self.count - self.offset - 1
+        if self.0.backwards {
+            self.0.count - self.0.offset - 1
         } else {
-            self.offset
+            self.0.offset
         }
     }
     fn to_key(&self, runtime: &Runtime) -> Result<PropertyKey, RuntimeError> {
         Ok(
-            runtime.property_key_for_index(self.to.checked_add(self.relative()).ok_or(
+            runtime.property_key_for_index(self.0.to.checked_add(self.relative()).ok_or(
                 RuntimeError::Invariant("Array copy target index overflowed"),
             )?)?,
         )
     }
     fn from_key(&self, runtime: &Runtime) -> Result<PropertyKey, RuntimeError> {
         Ok(
-            runtime.property_key_for_index(self.from.checked_add(self.relative()).ok_or(
+            runtime.property_key_for_index(self.0.from.checked_add(self.relative()).ok_or(
                 RuntimeError::Invariant("Array copy source index overflowed"),
             )?)?,
         )
     }
     fn next(mut self, runtime: &Runtime) -> Result<CopyStep, RuntimeError> {
-        if self.offset == self.count {
+        if self.0.offset == self.0.count {
             return Ok(CopyStep::Complete(Completion::Return(Value::Undefined)));
         }
-        self.phase = Phase::Has;
-        Ok(CopyStep::Has {
-            object: self.object.clone(),
-            key: self.from_key(runtime)?,
-            resume: self,
-        })
+        self.0.phase = Phase::Has;
+        Ok(CopyStep::request_has(
+            self.0.object.clone(),
+            self.from_key(runtime)?,
+            self,
+        ))
     }
     pub(crate) fn boolean(
         mut self,
@@ -112,34 +120,34 @@ impl CopyResume {
                 return Ok(CopyStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Has if value => {
-                self.phase = Phase::Read;
-                Ok(CopyStep::Read {
-                    object: self.object.clone(),
-                    key: self.from_key(runtime)?,
-                    resume: self,
-                })
+                self.0.phase = Phase::Read;
+                Ok(CopyStep::request_read(
+                    self.0.object.clone(),
+                    self.from_key(runtime)?,
+                    self,
+                ))
             }
             Phase::Has => {
-                self.phase = Phase::Write;
-                Ok(CopyStep::Delete {
-                    object: self.object.clone(),
-                    key: self.to_key(runtime)?,
-                    resume: self,
-                })
+                self.0.phase = Phase::Write;
+                Ok(CopyStep::request_delete(
+                    self.0.object.clone(),
+                    self.to_key(runtime)?,
+                    self,
+                ))
             }
             Phase::Write => {
                 if !value {
                     return Ok(CopyStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "could not delete property",
                         )?,
                     )));
                 }
-                self.offset += 1;
+                self.0.offset += 1;
                 self.next(runtime)
             }
             _ => Err(RuntimeError::Invariant("Array copy boolean phase mismatch")),
@@ -150,20 +158,20 @@ impl CopyResume {
         runtime: &Runtime,
         result: Completion,
     ) -> Result<CopyStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Read) {
+        if !matches!(self.0.phase, Phase::Read) {
             return Err(RuntimeError::Invariant("Array copy value phase mismatch"));
         }
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(CopyStep::Complete(Completion::Throw(value))),
         };
-        self.phase = Phase::Write;
-        Ok(CopyStep::Set {
-            object: self.object.clone(),
-            key: self.to_key(runtime)?,
+        self.0.phase = Phase::Write;
+        Ok(CopyStep::request_set(
+            self.0.object.clone(),
+            self.to_key(runtime)?,
             value,
-            resume: self,
-        })
+            self,
+        ))
     }
     pub(crate) fn set(
         mut self,
@@ -171,13 +179,13 @@ impl CopyResume {
         key: PropertyKey,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<CopyStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Write) {
+        if !matches!(self.0.phase, Phase::Write) {
             return Err(RuntimeError::Invariant("Array copy set phase mismatch"));
         }
-        if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
+        if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(CopyStep::Complete(Completion::Throw(value)));
         }
-        self.offset += 1;
+        self.0.offset += 1;
         self.next(runtime)
     }
 }
@@ -189,45 +197,163 @@ pub(crate) fn finish(
     loop {
         step = match step {
             CopyStep::Complete(result) => return Ok(result),
-            CopyStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            CopyStep::Has {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_has_property(realm, &object, &key)?,
-            )?,
-            CopyStep::Set {
-                object,
-                key,
-                value,
-                resume,
-            } => {
-                let result = runtime.internal_set(
-                    realm,
-                    &object,
-                    &key,
-                    value,
-                    Value::Object(object.clone()),
-                )?;
-                resume.set(runtime, key, result)?
+            CopyStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
+                )?
             }
-            CopyStep::Delete {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_delete_property(realm, &object, &key)?,
-            )?,
+            CopyStep::Has { mut resume } => {
+                let object = resume.take_has_object();
+                let key = resume.take_has_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_has_property(realm, &object, &key)?,
+                )?
+            }
+            CopyStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                {
+                    let result = runtime.internal_set(
+                        realm,
+                        &object,
+                        &key,
+                        value,
+                        Value::Object(object.clone()),
+                    )?;
+                    resume.set(runtime, key, result)?
+                }
+            }
+            CopyStep::Delete { mut resume } => {
+                let object = resume.take_delete_object();
+                let key = resume.take_delete_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_delete_property(realm, &object, &key)?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct CopyStepPending {
+    has_object: Option<ObjectRef>,
+    has_key: Option<PropertyKey>,
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    set_object: Option<ObjectRef>,
+    set_key: Option<PropertyKey>,
+    set_value: Option<Value>,
+    delete_object: Option<ObjectRef>,
+    delete_key: Option<PropertyKey>,
+}
+impl CopyStep {
+    pub(crate) fn request_has(object: ObjectRef, key: PropertyKey, mut resume: CopyResume) -> Self {
+        resume.0.pending_effect.has_object = Some(object);
+        resume.0.pending_effect.has_key = Some(key);
+        Self::Has { resume }
+    }
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: CopyResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: CopyResume,
+    ) -> Self {
+        resume.0.pending_effect.set_object = Some(object);
+        resume.0.pending_effect.set_key = Some(key);
+        resume.0.pending_effect.set_value = Some(value);
+        Self::Set { resume }
+    }
+    pub(crate) fn request_delete(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: CopyResume,
+    ) -> Self {
+        resume.0.pending_effect.delete_object = Some(object);
+        resume.0.pending_effect.delete_key = Some(key);
+        Self::Delete { resume }
+    }
+}
+impl CopyResume {
+    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .has_object
+            .take()
+            .expect("CopyStep Has object")
+    }
+    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .has_key
+            .take()
+            .expect("CopyStep Has key")
+    }
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("CopyStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("CopyStep Read key")
+    }
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .set_object
+            .take()
+            .expect("CopyStep Set object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .set_key
+            .take()
+            .expect("CopyStep Set key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .set_value
+            .take()
+            .expect("CopyStep Set value")
+    }
+    pub(crate) fn take_delete_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .delete_object
+            .take()
+            .expect("CopyStep Delete object")
+    }
+    pub(crate) fn take_delete_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .delete_key
+            .take()
+            .expect("CopyStep Delete key")
+    }
+}
+const _: () = assert!(std::mem::size_of::<CopyStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CopyStep>() <= 64);

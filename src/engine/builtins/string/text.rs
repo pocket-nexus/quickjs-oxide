@@ -46,7 +46,20 @@ pub(crate) enum StringTextStep {
         resume: StringTextResume,
     },
 }
-pub(crate) struct StringTextResume {
+pub(crate) struct StringTextResume(Box<StringTextResumeState>);
+impl std::ops::Deref for StringTextResume {
+    type Target = StringTextResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for StringTextResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<StringTextResume>() <= 8);
+pub(crate) struct StringTextResumeState {
     realm: ContextId,
     kind: StringTextKind,
     first: Value,
@@ -114,7 +127,7 @@ impl StringTextStep {
         Ok(Self::Primitive {
             value: this_value.clone(),
             hint: ToPrimitiveHint::String,
-            resume: StringTextResume {
+            resume: StringTextResume(Box::new(StringTextResumeState {
                 realm,
                 kind,
                 first: arguments
@@ -128,20 +141,24 @@ impl StringTextStep {
                 actual: arguments.map_or(0, |args| args.actual_arg_count),
                 limit,
                 phase: TextPhase::Source,
-            },
+            })),
         })
     }
 }
 impl StringTextResume {
-    fn convert(self, value: Value, hint: ToPrimitiveHint, phase: TextPhase) -> StringTextStep {
+    fn convert(mut self, value: Value, hint: ToPrimitiveHint, phase: TextPhase) -> StringTextStep {
         StringTextStep::Primitive {
             value,
             hint,
-            resume: Self { phase, ..self },
+            resume: {
+                let updated_0 = phase;
+                self.0.phase = updated_0;
+                self
+            },
         }
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<StringTextStep, RuntimeError> {
@@ -156,8 +173,8 @@ impl StringTextResume {
                 "String text conversion returned an object",
             ));
         }
-        let realm = self.realm;
-        let result = match self.phase {
+        let realm = self.0.realm;
+        let result = match self.0.phase {
             TextPhase::Source => {
                 let source = match runtime.native_to_js_string(realm, &value)? {
                     NativeConversion::Value(value) => value,
@@ -165,15 +182,15 @@ impl StringTextResume {
                         return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
-                match self.kind {
+                match self.0.kind {
                     StringTextKind::Trim(kind) => {
                         runtime.finish_string_trim(realm, kind, source)?
                     }
                     StringTextKind::Case(kind) => {
-                        runtime.finish_string_case(realm, kind, source, self.limit)?
+                        runtime.finish_string_case(realm, kind, source, self.0.limit)?
                     }
                     StringTextKind::Repeat => {
-                        let argument = self.first.clone();
+                        let argument = self.0.first.clone();
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::Number,
@@ -181,7 +198,7 @@ impl StringTextResume {
                         ));
                     }
                     StringTextKind::Pad(_) => {
-                        let argument = self.first.clone();
+                        let argument = self.0.first.clone();
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::Number,
@@ -189,15 +206,15 @@ impl StringTextResume {
                         ));
                     }
                     StringTextKind::Normalize => {
-                        if self.actual == 0 || matches!(self.first, Value::Undefined) {
+                        if self.0.actual == 0 || matches!(self.0.first, Value::Undefined) {
                             runtime.finish_string_normalize(
                                 realm,
                                 source,
                                 NormalizationForm::Nfc,
-                                self.limit,
+                                self.0.limit,
                             )?
                         } else {
-                            let argument = self.first.clone();
+                            let argument = self.0.first.clone();
                             return Ok(self.convert(
                                 argument,
                                 ToPrimitiveHint::String,
@@ -206,7 +223,7 @@ impl StringTextResume {
                         }
                     }
                     StringTextKind::LocaleCompare => {
-                        let argument = self.first.clone();
+                        let argument = self.0.first.clone();
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::String,
@@ -216,9 +233,9 @@ impl StringTextResume {
                     StringTextKind::Html(kind) => {
                         let source = source.linearize();
                         let (tag, attribute) = create_html_definition(kind);
-                        let buffer = CreateHtmlStringBuffer::new(tag, attribute, self.limit);
+                        let buffer = CreateHtmlStringBuffer::new(tag, attribute, self.0.limit);
                         if attribute.is_some() {
-                            if matches!(self.first, Value::Undefined | Value::Null) {
+                            if matches!(self.0.first, Value::Undefined | Value::Null) {
                                 return Ok(StringTextStep::Complete(Completion::Throw(
                                     runtime.new_native_error(
                                         realm,
@@ -227,7 +244,7 @@ impl StringTextResume {
                                     )?,
                                 )));
                             }
-                            let argument = self.first.clone();
+                            let argument = self.0.first.clone();
                             return Ok(self.convert(
                                 argument,
                                 ToPrimitiveHint::String,
@@ -249,7 +266,7 @@ impl StringTextResume {
                         return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
-                runtime.finish_string_repeat(realm, source, count, self.limit)?
+                runtime.finish_string_repeat(realm, source, count, self.0.limit)?
             }
             TextPhase::Target(source) => {
                 let target = match runtime.native_to_number(realm, &value)? {
@@ -264,11 +281,12 @@ impl StringTextResume {
                     .map_err(|_| RuntimeError::Invariant("String length exceeded signed Int32"))?;
                 if source_len >= target {
                     Completion::Return(Value::String(source))
-                } else if self.actual > 1 && !matches!(self.second, Value::Undefined) {
-                    let argument = self.second.clone();
-                    return Ok(Self {
-                        phase: TextPhase::Source,
-                        ..self
+                } else if self.0.actual > 1 && !matches!(self.0.second, Value::Undefined) {
+                    let argument = self.0.second.clone();
+                    return Ok({
+                        let updated_0 = TextPhase::Source;
+                        self.0.phase = updated_0;
+                        self
                     }
                     .convert(
                         argument,
@@ -276,10 +294,10 @@ impl StringTextResume {
                         TextPhase::Filler { source, target },
                     ));
                 } else {
-                    let StringTextKind::Pad(kind) = self.kind else {
+                    let StringTextKind::Pad(kind) = self.0.kind else {
                         return Err(RuntimeError::Invariant("String pad lost its kind"));
                     };
-                    runtime.finish_string_pad(realm, kind, source, target, None, self.limit)?
+                    runtime.finish_string_pad(realm, kind, source, target, None, self.0.limit)?
                 }
             }
             TextPhase::Filler { source, target } => {
@@ -289,10 +307,17 @@ impl StringTextResume {
                         return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
-                let StringTextKind::Pad(kind) = self.kind else {
+                let StringTextKind::Pad(kind) = self.0.kind else {
                     return Err(RuntimeError::Invariant("String pad lost its kind"));
                 };
-                runtime.finish_string_pad(realm, kind, source, target, Some(filler), self.limit)?
+                runtime.finish_string_pad(
+                    realm,
+                    kind,
+                    source,
+                    target,
+                    Some(filler),
+                    self.0.limit,
+                )?
             }
             TextPhase::Form(source) => {
                 let form = match runtime.native_to_js_string(realm, &value)? {
@@ -318,7 +343,7 @@ impl StringTextResume {
                         )?,
                     )));
                 };
-                runtime.finish_string_normalize(realm, source, form, self.limit)?
+                runtime.finish_string_normalize(realm, source, form, self.0.limit)?
             }
             TextPhase::Compare(source) => {
                 let that = match runtime.native_to_js_string(realm, &value)? {
@@ -370,3 +395,6 @@ pub(super) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<StringTextStep>() <= 64);

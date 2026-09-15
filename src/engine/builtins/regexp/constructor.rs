@@ -257,7 +257,20 @@ pub(crate) enum RegExpConstructorStep {
         resume: RegExpConstructorResume,
     },
 }
-pub(crate) struct RegExpConstructorResume {
+pub(crate) struct RegExpConstructorResume(Box<RegExpConstructorResumeState>);
+impl std::ops::Deref for RegExpConstructorResume {
+    type Target = RegExpConstructorResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for RegExpConstructorResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<RegExpConstructorResume>() <= 8);
+pub(crate) struct RegExpConstructorResumeState {
     realm: ContextId,
     new_target: Value,
     pattern: Value,
@@ -307,14 +320,14 @@ impl RegExpConstructorStep {
                 "RegExp constructor flags argv was not padded",
             ))?
             .clone();
-        let resume = RegExpConstructorResume {
+        let resume = RegExpConstructorResume(Box::new(RegExpConstructorResumeState {
             realm,
             new_target: new_target.clone(),
             pattern,
             flags,
             is_regexp: false,
             phase: RegExpConstructorPhase::Match,
-        };
+        }));
         if let Value::Object(object) = &resume.pattern {
             Ok(Self::Read {
                 object: object.clone(),
@@ -332,12 +345,12 @@ impl RegExpConstructorResume {
         runtime: &Runtime,
         is_regexp: bool,
     ) -> Result<RegExpConstructorStep, RuntimeError> {
-        self.is_regexp = is_regexp;
-        if matches!(self.new_target, Value::Undefined) {
+        self.0.is_regexp = is_regexp;
+        if matches!(self.0.new_target, Value::Undefined) {
             let active = runtime.active_function()?;
-            self.new_target = Value::Object(active.clone());
-            if is_regexp && matches!(self.flags, Value::Undefined) {
-                let Value::Object(object) = &self.pattern else {
+            self.0.new_target = Value::Object(active.clone());
+            if is_regexp && matches!(self.0.flags, Value::Undefined) {
+                let Value::Object(object) = &self.0.pattern else {
                     return Err(RuntimeError::Invariant(
                         "IsRegExp accepted a primitive pattern",
                     ));
@@ -345,27 +358,28 @@ impl RegExpConstructorResume {
                 return Ok(RegExpConstructorStep::Read {
                     object: object.clone(),
                     key: runtime.intern_property_key("constructor")?,
-                    resume: Self {
-                        phase: RegExpConstructorPhase::Identity(active),
-                        ..self
+                    resume: {
+                        let updated_0 = RegExpConstructorPhase::Identity(active);
+                        self.0.phase = updated_0;
+                        self
                     },
                 });
             }
         }
         self.prepare(runtime)
     }
-    fn prepare(self, runtime: &Runtime) -> Result<RegExpConstructorStep, RuntimeError> {
-        let genuine = runtime.genuine_regexp(&self.pattern)?;
-        if matches!(self.flags, Value::Undefined)
+    fn prepare(mut self, runtime: &Runtime) -> Result<RegExpConstructorStep, RuntimeError> {
+        let genuine = runtime.genuine_regexp(&self.0.pattern)?;
+        if matches!(self.0.flags, Value::Undefined)
             && let Some(genuine) = genuine.as_ref()
         {
             return Ok(self.lookup(RegExpPublication::Copy(genuine.clone())));
         }
         if let Some(genuine) = genuine {
-            let flags = self.flags.clone();
+            let flags = self.0.flags.clone();
             self.pattern_value(Value::String(genuine.pattern), flags)
-        } else if self.is_regexp {
-            let Value::Object(object) = &self.pattern else {
+        } else if self.0.is_regexp {
+            let Value::Object(object) = &self.0.pattern else {
                 return Err(RuntimeError::Invariant(
                     "IsRegExp accepted a primitive pattern",
                 ));
@@ -373,19 +387,20 @@ impl RegExpConstructorResume {
             Ok(RegExpConstructorStep::Read {
                 object: object.clone(),
                 key: runtime.intern_property_key("source")?,
-                resume: Self {
-                    phase: RegExpConstructorPhase::Source,
-                    ..self
+                resume: {
+                    let updated_0 = RegExpConstructorPhase::Source;
+                    self.0.phase = updated_0;
+                    self
                 },
             })
         } else {
-            let pattern = self.pattern.clone();
-            let flags = self.flags.clone();
+            let pattern = self.0.pattern.clone();
+            let flags = self.0.flags.clone();
             self.pattern_value(pattern, flags)
         }
     }
     fn pattern_value(
-        self,
+        mut self,
         pattern: Value,
         flags: Value,
     ) -> Result<RegExpConstructorStep, RuntimeError> {
@@ -397,19 +412,21 @@ impl RegExpConstructorResume {
         } else {
             Ok(RegExpConstructorStep::Primitive {
                 value: pattern,
-                resume: Self {
-                    phase: RegExpConstructorPhase::Pattern(flags),
-                    ..self
+                resume: {
+                    let updated_0 = RegExpConstructorPhase::Pattern(flags);
+                    self.0.phase = updated_0;
+                    self
                 },
             })
         }
     }
-    fn lookup(self, publication: RegExpPublication) -> RegExpConstructorStep {
+    fn lookup(mut self, publication: RegExpPublication) -> RegExpConstructorStep {
         RegExpConstructorStep::Prototype {
-            new_target: self.new_target.clone(),
-            resume: Self {
-                phase: RegExpConstructorPhase::Prototype(publication),
-                ..self
+            new_target: self.0.new_target.clone(),
+            resume: {
+                let updated_0 = RegExpConstructorPhase::Prototype(publication);
+                self.0.phase = updated_0;
+                self
             },
         }
     }
@@ -426,7 +443,7 @@ impl RegExpConstructorResume {
         )))
     }
     pub(crate) fn prototype(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<ConstructorPrototypeSource>,
     ) -> Result<RegExpConstructorStep, RuntimeError> {
@@ -443,7 +460,7 @@ impl RegExpConstructorResume {
             }
         };
         let object = runtime.new_uninitialized_regexp(&prototype)?;
-        let RegExpConstructorPhase::Prototype(publication) = self.phase else {
+        let RegExpConstructorPhase::Prototype(publication) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "RegExp constructor received an unexpected prototype reply",
             ));
@@ -461,9 +478,10 @@ impl RegExpConstructorResume {
                 } else {
                     Ok(RegExpConstructorStep::Primitive {
                         value: flags,
-                        resume: Self {
-                            phase: RegExpConstructorPhase::Flags { object, pattern },
-                            ..self
+                        resume: {
+                            let updated_0 = RegExpConstructorPhase::Flags { object, pattern };
+                            self.0.phase = updated_0;
+                            self
                         },
                     })
                 }
@@ -471,7 +489,7 @@ impl RegExpConstructorResume {
         }
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<RegExpConstructorStep, RuntimeError> {
@@ -481,9 +499,9 @@ impl RegExpConstructorResume {
                 return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             RegExpConstructorPhase::Match => {
-                let Value::Object(object) = &self.pattern else {
+                let Value::Object(object) = &self.0.pattern else {
                     return Err(RuntimeError::Invariant(
                         "RegExp match check lost its object",
                     ));
@@ -494,19 +512,20 @@ impl RegExpConstructorResume {
             RegExpConstructorPhase::Identity(active) => {
                 if value.same_value(&Value::Object(active)) {
                     Ok(RegExpConstructorStep::Complete(Completion::Return(
-                        self.pattern,
+                        self.0.pattern,
                     )))
                 } else {
-                    Self {
-                        phase: RegExpConstructorPhase::Match,
-                        ..self
+                    {
+                        let updated_0 = RegExpConstructorPhase::Match;
+                        self.0.phase = updated_0;
+                        self
                     }
                     .prepare(runtime)
                 }
             }
             RegExpConstructorPhase::Source => {
-                if matches!(self.flags, Value::Undefined) {
-                    let Value::Object(object) = &self.pattern else {
+                if matches!(self.0.flags, Value::Undefined) {
+                    let Value::Object(object) = &self.0.pattern else {
                         return Err(RuntimeError::Invariant(
                             "RegExp source lookup lost its object",
                         ));
@@ -514,19 +533,21 @@ impl RegExpConstructorResume {
                     Ok(RegExpConstructorStep::Read {
                         object: object.clone(),
                         key: runtime.intern_property_key("flags")?,
-                        resume: Self {
-                            phase: RegExpConstructorPhase::SourceFlags(value),
-                            ..self
+                        resume: {
+                            let updated_0 = RegExpConstructorPhase::SourceFlags(value);
+                            self.0.phase = updated_0;
+                            self
                         },
                     })
                 } else {
-                    let flags = self.flags.clone();
+                    let flags = self.0.flags.clone();
                     self.pattern_value(value, flags)
                 }
             }
-            RegExpConstructorPhase::SourceFlags(pattern) => Self {
-                phase: RegExpConstructorPhase::Match,
-                ..self
+            RegExpConstructorPhase::SourceFlags(pattern) => {
+                let updated_0 = RegExpConstructorPhase::Match;
+                self.0.phase = updated_0;
+                self
             }
             .pattern_value(pattern, value),
             RegExpConstructorPhase::Pattern(flags) => {
@@ -535,15 +556,16 @@ impl RegExpConstructorResume {
                         "RegExp pattern conversion returned an object",
                     ));
                 }
-                let pattern = match runtime.native_to_js_string(self.realm, &value)? {
+                let pattern = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
-                Ok(Self {
-                    phase: RegExpConstructorPhase::Match,
-                    ..self
+                Ok({
+                    let updated_0 = RegExpConstructorPhase::Match;
+                    self.0.phase = updated_0;
+                    self
                 }
                 .lookup(RegExpPublication::Compile { pattern, flags }))
             }
@@ -553,7 +575,7 @@ impl RegExpConstructorResume {
                         "RegExp flags conversion returned an object",
                     ));
                 }
-                let flags = match runtime.native_to_js_string(self.realm, &value)? {
+                let flags = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
@@ -678,3 +700,6 @@ mod tests {
         assert!(weak.upgrade().is_none());
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<RegExpConstructorStep>() <= 64);

@@ -45,14 +45,14 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
             NativeStep::StringProtocol(step) => step.into(),
             NativeStep::GlobalEval(input) => match input {
                 Value::String(source) => Self::IndirectEval {
-                    source,
-                    resume: Resume::Identity,
+                    source: Some(source),
+                    resume: Some(Resume::Identity),
                 },
-                input => Self::Complete(Completion::Return(input)),
+                input => Self::Complete(Some(Completion::Return(input))),
             },
             NativeStep::JsonRaw { value, resume } => Self::String {
-                value,
-                resume: Resume::JsonRaw(resume),
+                value: Some(value),
+                resume: Some(Resume::JsonRaw(resume)),
             },
 
             NativeStep::TypedSort(step) => step.into(),
@@ -98,7 +98,7 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
             NativeStep::IteratorHelper(step) => step.into(),
             NativeStep::IteratorCreate(step) => step.into(),
             NativeStep::ArrayNext(step) => step.into(),
-            NativeStep::Raw(result) => Self::NativeRawComplete(result),
+            NativeStep::Raw(result) => Self::NativeRawComplete(Some(result)),
             NativeStep::ArrayMutation(step) => step.into(),
             NativeStep::ArrayCallback(step) => step.into(),
             NativeStep::ObjectIteration(step) => step.into(),
@@ -109,7 +109,7 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
             NativeStep::Prototype(step) => step.into(),
             NativeStep::Property(step) => step.into(),
             NativeStep::String(step) => step.into(),
-            NativeStep::Complete(result) => Self::Complete(result),
+            NativeStep::Complete(result) => Self::Complete(Some(result)),
             NativeStep::Definitions(step) => step.into(),
             NativeStep::Predicate(step) => step.into(),
         }
@@ -120,16 +120,16 @@ impl From<crate::engine::vm::generator::GeneratorStep> for Step {
     fn from(step: crate::engine::vm::generator::GeneratorStep) -> Self {
         match step {
             crate::engine::vm::generator::GeneratorStep::Complete(outcome) => {
-                Self::NativeRawComplete(outcome)
+                Self::NativeRawComplete(Some(outcome))
             }
             crate::engine::vm::generator::GeneratorStep::Run {
                 activation,
                 input,
                 resume,
             } => Self::ResumeFrame {
-                activation,
-                input,
-                resume: Resume::Generator(resume),
+                activation: Some(activation),
+                input: Some(input),
+                resume: Some(Resume::Generator(resume)),
             },
         }
     }
@@ -139,63 +139,71 @@ impl From<crate::engine::builtins::promise::operation::PromiseStep> for Step {
     fn from(step: crate::engine::builtins::promise::operation::PromiseStep) -> Self {
         use crate::engine::builtins::promise::operation::PromiseStep as P;
         match step {
-            P::Nested { step, resume } => Self::PromiseOperation {
-                step,
-                resume: Resume::Promise(resume),
-            },
-            P::Next {
-                iterator,
-                method,
-                resume,
-            } => Self::IteratorNext {
-                iterator,
-                method,
-                resume: Resume::Promise(resume),
-            },
-            P::Close {
-                iterator,
-                completion,
-                resume,
-            } => Self::IteratorCloseWithResume {
-                iterator,
-                completion,
-                resume: Resume::Promise(resume),
-            },
-            P::Complete(completion) => Self::Complete(completion),
-            P::Read {
-                receiver,
-                key,
-                resume,
-            } => Self::ReadValue {
-                receiver,
-                key,
-                resume: Resume::Promise(resume),
-            },
-            P::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target: super::DirectCallTarget::Callable(callable),
-                receiver,
-                arguments,
-                resume: Resume::Promise(resume),
-            },
-            P::Construct {
-                target,
-                arguments,
-                resume,
-            } => Self::Construct {
-                new_target: crate::engine::vm::call::ConstructNewTarget::Validated(target.clone()),
-                target,
-                arguments,
-                resume: Resume::Promise(resume),
-            },
-            P::Prototype { new_target, resume } => Self::ConstructorSource {
-                new_target,
-                resume: Resume::Promise(resume),
-            },
+            P::Nested { mut resume } => {
+                let step = resume.take_nested_step();
+                Self::PromiseOperation {
+                    step: Some(step),
+                    resume: Some(Resume::Promise(resume)),
+                }
+            }
+            P::Next { mut resume } => {
+                let iterator = resume.take_next_iterator();
+                let method = resume.take_next_method();
+                Self::IteratorNext {
+                    iterator: Some(iterator),
+                    method: Some(method),
+                    resume: Some(Resume::Promise(resume)),
+                }
+            }
+            P::Close { mut resume } => {
+                let iterator = resume.take_close_iterator();
+                let completion = resume.take_close_completion();
+                Self::IteratorCloseWithResume {
+                    iterator: Some(iterator),
+                    completion: Some(completion),
+                    resume: Some(Resume::Promise(resume)),
+                }
+            }
+            P::Complete(completion) => Self::Complete(Some(completion)),
+            P::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                Self::ReadValue {
+                    receiver: Some(receiver),
+                    key: Some(key),
+                    resume: Some(Resume::Promise(resume)),
+                }
+            }
+            P::Call { mut resume } => {
+                let callable = resume.take_call_callable();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                Self::Call {
+                    target: Some(super::DirectCallTarget::Callable(callable)),
+                    receiver: Some(receiver),
+                    arguments: Some(arguments),
+                    resume: Some(Resume::Promise(resume)),
+                }
+            }
+            P::Construct { mut resume } => {
+                let target = resume.take_construct_target();
+                let arguments = resume.take_construct_arguments();
+                Self::Construct {
+                    new_target: Some(crate::engine::vm::call::ConstructNewTarget::Validated(
+                        target.clone(),
+                    )),
+                    target: Some(target),
+                    arguments: Some(arguments),
+                    resume: Some(Resume::Promise(resume)),
+                }
+            }
+            P::Prototype { mut resume } => {
+                let new_target = resume.take_prototype_new_target();
+                Self::ConstructorSource {
+                    new_target: Some(new_target),
+                    resume: Some(Resume::Promise(resume)),
+                }
+            }
         }
     }
 }
@@ -204,45 +212,45 @@ impl From<crate::engine::vm::async_from_sync_iterator::FromSyncStep> for Step {
     fn from(step: crate::engine::vm::async_from_sync_iterator::FromSyncStep) -> Self {
         use crate::engine::vm::async_from_sync_iterator::FromSyncStep as S;
         match step {
-            S::Complete(completion) => Self::Complete(completion),
-            S::Read {
-                receiver,
-                key,
-                resume,
-            } => Self::ReadValue {
-                receiver,
-                key,
-                resume: Resume::FromSync(resume),
-            },
-            S::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => Self::Call {
-                target: super::DirectCallTarget::Callable(callable),
-                receiver,
-                arguments,
-                resume: Resume::FromSync(resume),
-            },
-            S::Resolve {
-                value,
-                realm,
-                resume,
-            } => Self::IntrinsicPromiseResolve {
-                value,
-                realm,
-                resume: Resume::FromSync(resume),
-            },
-            S::Close {
-                iterator,
-                completion,
-                resume,
-            } => Self::IteratorCloseWithResume {
-                iterator,
-                completion,
-                resume: Resume::FromSync(resume),
-            },
+            S::Complete(completion) => Self::Complete(Some(completion)),
+            S::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                Self::ReadValue {
+                    receiver: Some(receiver),
+                    key: Some(key),
+                    resume: Some(Resume::FromSync(resume)),
+                }
+            }
+            S::Call { mut resume } => {
+                let callable = resume.take_call_callable();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                Self::Call {
+                    target: Some(super::DirectCallTarget::Callable(callable)),
+                    receiver: Some(receiver),
+                    arguments: Some(arguments),
+                    resume: Some(Resume::FromSync(resume)),
+                }
+            }
+            S::Resolve { mut resume } => {
+                let value = resume.take_resolve_value();
+                let realm = resume.take_resolve_realm();
+                Self::IntrinsicPromiseResolve {
+                    value: Some(value),
+                    realm: Some(realm),
+                    resume: Some(Resume::FromSync(resume)),
+                }
+            }
+            S::Close { mut resume } => {
+                let iterator = resume.take_close_iterator();
+                let completion = resume.take_close_completion();
+                Self::IteratorCloseWithResume {
+                    iterator: Some(iterator),
+                    completion: Some(completion),
+                    resume: Some(Resume::FromSync(resume)),
+                }
+            }
         }
     }
 }
@@ -252,16 +260,18 @@ impl From<crate::engine::api::test262_host::operation::EvalScriptStep> for Step 
     fn from(step: crate::engine::api::test262_host::operation::EvalScriptStep) -> Self {
         use crate::engine::api::test262_host::operation::EvalScriptStep;
         match step {
-            EvalScriptStep::Complete(result) => Self::Complete(result),
+            EvalScriptStep::Complete(result) => Self::Complete(Some(result)),
             EvalScriptStep::String { value, resume } => Self::String {
-                value,
-                resume: Resume::EvalScript(resume),
+                value: Some(value),
+                resume: Some(Resume::EvalScript(resume)),
             },
             EvalScriptStep::Call { callable, receiver } => Self::Call {
-                target: crate::engine::vm::call::DirectCallTarget::Callable(callable),
-                receiver,
-                arguments: Vec::new(),
-                resume: Resume::Identity,
+                target: Some(crate::engine::vm::call::DirectCallTarget::Callable(
+                    callable,
+                )),
+                receiver: Some(receiver),
+                arguments: Some(Vec::new()),
+                resume: Some(Resume::Identity),
             },
         }
     }
@@ -272,14 +282,14 @@ impl From<crate::engine::api::test262_agent::operation::AgentStep> for Step {
     fn from(step: crate::engine::api::test262_agent::operation::AgentStep) -> Self {
         use crate::engine::api::test262_agent::operation::AgentStep;
         match step {
-            AgentStep::Complete(result) => Self::Complete(result),
+            AgentStep::Complete(result) => Self::Complete(Some(result)),
             AgentStep::String { value, resume } => Self::String {
-                value,
-                resume: Resume::Test262Agent(resume),
+                value: Some(value),
+                resume: Some(Resume::Test262Agent(resume)),
             },
             AgentStep::Number { value, resume } => Self::Number {
-                value,
-                resume: Resume::Test262Agent(resume),
+                value: Some(value),
+                resume: Some(Resume::Test262Agent(resume)),
             },
         }
     }

@@ -36,6 +36,23 @@ use crate::engine::builtins::{ElementResume, ElementStep, TypedWriteResume, Type
 
 use crate::engine::object::{ProxyPrototypeResume, ProxyPrototypeStep};
 
+pub(super) struct BooleanResultPayload {
+    pub(super) _object: ObjectRef,
+    pub(super) _key: Option<PropertyKey>,
+    pub(super) strict_delete: bool,
+}
+pub(super) struct DefineTypedPayload {
+    pub(super) object: ObjectRef,
+    pub(super) _descriptor: OrdinaryPropertyDescriptor,
+    pub(super) resume: Box<Resume>,
+}
+pub(super) struct DefineLengthPayload {
+    pub(super) object: ObjectRef,
+    pub(super) key: PropertyKey,
+    pub(super) descriptor: OrdinaryPropertyDescriptor,
+    pub(super) resume: Box<Resume>,
+}
+
 pub(super) enum Resume {
     RootDescriptor,
     RootDefine,
@@ -78,7 +95,6 @@ pub(super) enum Resume {
     WeakConstructor(crate::engine::builtins::WeakConstructorResume),
     Environment(crate::engine::vm::environment_bindings::operation::EnvironmentResume),
     RegExpIteratorSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::RegExpIteratorResume,
     },
     RegExpMatchAll(crate::engine::builtins::RegExpMatchAllResume),
@@ -133,11 +149,9 @@ pub(super) enum Resume {
 
     ConstructorSource(crate::engine::vm::call::prototype::ProtoSourceResume),
     ArrayConstructorSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArrayConstructorResume,
     },
     ArraySliceSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArraySliceResume,
     },
 
@@ -149,11 +163,9 @@ pub(super) enum Resume {
     StringSearch(crate::engine::builtins::StringSearchResume),
     StringSplit(crate::engine::builtins::StringSplitResume),
     ArrayCopySet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArrayCopyResume,
     },
     ArrayConcatSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArrayConcatResume,
     },
 
@@ -163,7 +175,6 @@ pub(super) enum Resume {
     IteratorConcat(crate::engine::builtins::IteratorConcatResume),
     ArrayBuild(crate::engine::builtins::ArrayBuildResume),
     ArrayBuildSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArrayBuildResume,
     },
 
@@ -183,22 +194,18 @@ pub(super) enum Resume {
         resume: Box<Resume>,
     },
     ArraySortSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArraySortResume,
     },
     ArrayIndexedSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArrayIndexedResume,
     },
     ArrayReverseSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArrayReverseResume,
     },
 
     ArrayNext(crate::engine::builtins::ArrayNextResume),
     ArrayMutation(crate::engine::builtins::ArrayMutationResume),
     ArrayMutationSet {
-        key: PropertyKey,
         resume: crate::engine::builtins::ArrayMutationResume,
     },
     ArrayCallback(crate::engine::builtins::ArrayCallbackResume),
@@ -236,27 +243,20 @@ pub(super) enum Resume {
     PrototypeGetReply(Box<Resume>),
     PrototypeSetReply(Box<Resume>),
     BooleanResult {
-        _object: ObjectRef,
-        _key: Option<PropertyKey>,
-        strict_delete: bool,
+        payload: Box<BooleanResultPayload>,
     },
     ReadOwner(ObjectRef),
     Element(ElementResume),
     TypedElement(TypedWriteResume),
     SetTyped(SetResume),
     DefineTyped {
-        object: ObjectRef,
-        _descriptor: OrdinaryPropertyDescriptor,
-        resume: Box<Resume>,
+        payload: Box<DefineTypedPayload>,
     },
     Number(NumberResume),
     LengthNumber(ArrayLengthResume),
     SetLength(SetResume),
     DefineLength {
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
-        resume: Box<Resume>,
+        payload: Box<DefineLengthPayload>,
     },
     OrdinarySet(SetResume),
     ProxySet(ProxySetResume),
@@ -270,344 +270,341 @@ pub(super) enum Resume {
 }
 
 pub(super) enum Step {
-    RootDescriptor(crate::engine::vm::entry::DescriptorReply),
+    RootDescriptor(Option<crate::engine::vm::entry::DescriptorReply>),
     ModuleCallbackOperation {
-        step: Box<crate::engine::modules::callback::CallbackStep>,
-        resume: Resume,
+        step: Option<Box<crate::engine::modules::callback::CallbackStep>>,
+        resume: Option<Resume>,
     },
     ModuleBodyOperation {
-        step: Box<crate::engine::modules::body::BodyStep>,
-        resume: Resume,
+        step: Option<Box<crate::engine::modules::body::BodyStep>>,
+        resume: Option<Resume>,
     },
     ModuleLink {
-        realm: crate::engine::heap::ContextId,
-        callable: crate::engine::object::CallableRef,
-        resume: Resume,
+        realm: Option<crate::engine::heap::ContextId>,
+        callable: Option<crate::engine::object::CallableRef>,
+        resume: Option<Resume>,
     },
     PromiseOperation {
-        step: Box<crate::engine::builtins::promise::operation::PromiseStep>,
-        resume: Resume,
+        step: Option<Box<crate::engine::builtins::promise::operation::PromiseStep>>,
+        resume: Option<Resume>,
     },
     IntrinsicPromiseResolve {
-        value: Value,
-        realm: crate::engine::heap::ContextId,
-        resume: Resume,
+        value: Option<Value>,
+        realm: Option<crate::engine::heap::ContextId>,
+        resume: Option<Resume>,
     },
     ResumeFrame {
-        activation: Box<crate::engine::vm::suspend::RootedVmActivation>,
-        input: crate::engine::vm::suspend::VmActivationResume,
-        resume: Resume,
+        activation: Option<Box<crate::engine::vm::suspend::RootedVmActivation>>,
+        input: Option<crate::engine::vm::suspend::VmActivationResume>,
+        resume: Option<Resume>,
     },
     ForInComplete {
-        value: Value,
-        done: Option<bool>,
+        value: Option<Value>,
+        done: Option<Option<bool>>,
     },
     TypedIteratorMethod {
-        source: Value,
-        resume: Resume,
+        source: Option<Value>,
+        resume: Option<Resume>,
     },
-    TypedIteratorMethodComplete(NativeConversion<Option<crate::engine::object::CallableRef>>),
+    TypedIteratorMethodComplete(
+        Option<NativeConversion<Option<crate::engine::object::CallableRef>>>,
+    ),
     TypedCollect {
-        source: Value,
-        method: crate::engine::object::CallableRef,
-        element: TypedArrayElementKind,
-        resume: Resume,
+        source: Option<Value>,
+        method: Option<crate::engine::object::CallableRef>,
+        element: Option<TypedArrayElementKind>,
+        resume: Option<Resume>,
     },
-    TypedCollectComplete(NativeConversion<Vec<Value>>),
+    TypedCollectComplete(Option<NativeConversion<Vec<Value>>>),
     TypedCreate {
-        constructor: Value,
-        length: u64,
-        resume: Resume,
+        constructor: Option<Value>,
+        length: Option<u64>,
+        resume: Option<Resume>,
     },
-
     NumericComplete {
-        value: Value,
-        previous: Option<Value>,
+        value: Option<Value>,
+        previous: Option<Option<Value>>,
     },
     NumericHtmlDda {
-        value: Value,
-        resume: crate::engine::vm::numeric::operation::NumericResume,
+        value: Option<Value>,
+        resume: Option<crate::engine::vm::numeric::operation::NumericResume>,
     },
     TypedSpeciesView {
-        source: ObjectRef,
-        element: TypedArrayElementKind,
-        buffer: ObjectRef,
-        offset: u64,
-        length: Option<u64>,
-        resume: Resume,
+        source: Option<ObjectRef>,
+        element: Option<TypedArrayElementKind>,
+        buffer: Option<ObjectRef>,
+        offset: Option<u64>,
+        length: Option<Option<u64>>,
+        resume: Option<Resume>,
     },
     RegExpSpecies {
-        regexp: ObjectRef,
-        resume: Resume,
+        regexp: Option<ObjectRef>,
+        resume: Option<Resume>,
     },
-    RegExpSpeciesComplete(NativeConversion<crate::engine::vm::call::ConstructorRef>),
+    RegExpSpeciesComplete(Option<NativeConversion<crate::engine::vm::call::ConstructorRef>>),
     IndirectEval {
-        source: crate::engine::value::JsString,
-        resume: Resume,
+        source: Option<crate::engine::value::JsString>,
+        resume: Option<Resume>,
     },
     Aggregate {
-        iterable: Value,
-        resume: Resume,
+        iterable: Option<Value>,
+        resume: Option<Resume>,
     },
     OrdinaryPrimitive {
-        object: ObjectRef,
-        hint: ToPrimitiveHint,
+        object: Option<ObjectRef>,
+        hint: Option<ToPrimitiveHint>,
     },
-
     ConstructorSource {
-        new_target: Value,
-        resume: Resume,
+        new_target: Option<Value>,
+        resume: Option<Resume>,
     },
     ConstructorSourceComplete(
-        NativeConversion<crate::engine::vm::call::ConstructorPrototypeSource>,
+        Option<NativeConversion<crate::engine::vm::call::ConstructorPrototypeSource>>,
     ),
     TypedSpecies {
-        source: ObjectRef,
-        element: TypedArrayElementKind,
-        length: u64,
-        resume: Resume,
+        source: Option<ObjectRef>,
+        element: Option<TypedArrayElementKind>,
+        length: Option<u64>,
+        resume: Option<Resume>,
     },
-    TypedSpeciesComplete(NativeConversion<ObjectRef>),
+    TypedSpeciesComplete(Option<NativeConversion<ObjectRef>>),
     ArrayCopy {
-        object: ObjectRef,
-        to: u64,
-        from: u64,
-        count: u64,
-        backwards: bool,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        to: Option<u64>,
+        from: Option<u64>,
+        count: Option<u64>,
+        backwards: Option<bool>,
+        resume: Option<Resume>,
     },
     OrdinaryInstance {
-        constructor: crate::engine::object::CallableRef,
-        value: Value,
-        resume: Resume,
+        constructor: Option<crate::engine::object::CallableRef>,
+        value: Option<Value>,
+        resume: Option<Resume>,
     },
     ParseIterator {
-        result: Completion,
-        resume: Resume,
+        result: Option<Completion>,
+        resume: Option<Resume>,
     },
     String {
-        value: Value,
-        resume: Resume,
+        value: Option<Value>,
+        resume: Option<Resume>,
     },
     ObjectTag {
-        receiver: Value,
+        receiver: Option<Value>,
     },
     RegExpExec {
-        regexp: Value,
-        input: Value,
-        resume: Resume,
+        regexp: Option<Value>,
+        input: Option<Value>,
+        resume: Option<Resume>,
     },
     IteratorCloseWithResume {
-        iterator: ObjectRef,
-        completion: Completion,
-        resume: Resume,
+        iterator: Option<ObjectRef>,
+        completion: Option<Completion>,
+        resume: Option<Resume>,
     },
-    NativeRawComplete(crate::engine::vm::call::NativeInvokeOutcome),
+    NativeRawComplete(Option<crate::engine::vm::call::NativeInvokeOutcome>),
     ArraySpecies {
-        source: ObjectRef,
-        length: u64,
-        resume: Resume,
+        source: Option<ObjectRef>,
+        length: Option<u64>,
+        resume: Option<Resume>,
     },
     ArrayPush {
-        object: ObjectRef,
-        value: Value,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        value: Option<Value>,
+        resume: Option<Resume>,
     },
     IteratorNext {
-        iterator: ObjectRef,
-        method: Value,
-        resume: Resume,
+        iterator: Option<ObjectRef>,
+        method: Option<Value>,
+        resume: Option<Resume>,
     },
-    IteratorNextComplete(crate::engine::builtins::ObjectIteratorStep),
+    IteratorNextComplete(Option<crate::engine::builtins::ObjectIteratorStep>),
     IteratorCall {
-        callable: crate::engine::object::CallableRef,
-        iterator: ObjectRef,
-        resume: crate::engine::builtins::IteratorNextResume,
+        callable: Option<crate::engine::object::CallableRef>,
+        iterator: Option<ObjectRef>,
+        resume: Option<crate::engine::builtins::IteratorNextResume>,
     },
     IteratorClose {
-        iterator: ObjectRef,
-        completion: Completion,
+        iterator: Option<ObjectRef>,
+        completion: Option<Completion>,
     },
-
     Native {
-        callable: crate::engine::object::CallableRef,
-        target: crate::engine::builtins::native::NativeFunctionId,
-        defining_realm: crate::engine::heap::ContextId,
-        min_readable_args: u8,
-        mode: crate::engine::vm::call::NativeInvokeMode,
-        invocation: crate::engine::vm::call::NativeInvocation,
-        arguments: Vec<Value>,
-        resume: Resume,
+        callable: Option<crate::engine::object::CallableRef>,
+        target: Option<crate::engine::builtins::native::NativeFunctionId>,
+        defining_realm: Option<crate::engine::heap::ContextId>,
+        min_readable_args: Option<u8>,
+        mode: Option<crate::engine::vm::call::NativeInvokeMode>,
+        invocation: Option<crate::engine::vm::call::NativeInvocation>,
+        arguments: Option<Vec<Value>>,
+        resume: Option<Resume>,
     },
     Construct {
-        target: crate::engine::vm::call::ConstructorRef,
-        new_target: crate::engine::vm::call::ConstructNewTarget,
-        arguments: Vec<Value>,
-        resume: Resume,
+        target: Option<crate::engine::vm::call::ConstructorRef>,
+        new_target: Option<crate::engine::vm::call::ConstructNewTarget>,
+        arguments: Option<Vec<Value>>,
+        resume: Option<Resume>,
     },
     ConstructProxy {
-        target: crate::engine::vm::call::ConstructorRef,
-        new_target: crate::engine::vm::call::ConstructNewTarget,
-        arguments: Vec<Value>,
-        resume: Resume,
+        target: Option<crate::engine::vm::call::ConstructorRef>,
+        new_target: Option<crate::engine::vm::call::ConstructNewTarget>,
+        arguments: Option<Vec<Value>>,
+        resume: Option<Resume>,
     },
     ConstructorReady {
-        request: Box<BytecodeCallRequest>,
-        receiver: Completion,
-        derived: bool,
-        resume: Resume,
+        request: Option<Box<BytecodeCallRequest>>,
+        receiver: Option<Completion>,
+        derived: Option<bool>,
+        resume: Option<Resume>,
     },
     Arguments {
-        value: Value,
-        resume: Resume,
+        value: Option<Value>,
+        resume: Option<Resume>,
     },
-    ArgumentsComplete(NativeConversion<Vec<Value>>),
+    ArgumentsComplete(Option<NativeConversion<Vec<Value>>>),
     SnapshotEnumerable {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        resume: Option<Resume>,
     },
     OwnFlag {
-        object: ObjectRef,
-        key: PropertyKey,
-        enumerable: bool,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        enumerable: Option<bool>,
+        resume: Option<Resume>,
     },
     Keys {
-        object: ObjectRef,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        resume: Option<Resume>,
     },
-    KeysComplete(NativeConversion<Vec<PropertyKey>>),
+    KeysComplete(Option<NativeConversion<Vec<PropertyKey>>>),
     ReadValue {
-        receiver: Value,
-        key: PropertyKey,
-        resume: Resume,
+        receiver: Option<Value>,
+        key: Option<PropertyKey>,
+        resume: Option<Resume>,
     },
     PreparedHas {
-        probe: crate::engine::object::PreparedHas,
-        key: PropertyKey,
-        resume: Resume,
+        probe: Option<crate::engine::object::PreparedHas>,
+        key: Option<PropertyKey>,
+        resume: Option<Resume>,
     },
     PreparedRead {
-        read: OrdinaryRead,
-        key: PropertyKey,
-        resume: Resume,
+        read: Option<OrdinaryRead>,
+        key: Option<PropertyKey>,
+        resume: Option<Resume>,
     },
     Primitive {
-        value: Value,
-        hint: crate::engine::vm::ToPrimitiveHint,
-        resume: Resume,
+        value: Option<Value>,
+        hint: Option<crate::engine::vm::ToPrimitiveHint>,
+        resume: Option<Resume>,
     },
     GetPrototype {
-        object: ObjectRef,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        resume: Option<Resume>,
     },
     SetPrototype {
-        object: ObjectRef,
-        prototype: Option<ObjectRef>,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        prototype: Option<Option<ObjectRef>>,
+        resume: Option<Resume>,
     },
     Delete {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        resume: Option<Resume>,
     },
     PreventExtensions {
-        object: ObjectRef,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        resume: Option<Resume>,
     },
     Element {
-        element: TypedArrayElementKind,
-        value: Value,
-        resume: Resume,
+        element: Option<TypedArrayElementKind>,
+        value: Option<Value>,
+        resume: Option<Resume>,
     },
-    ElementComplete(NativeConversion<[u8; 8]>),
-    TypedComplete(NativeConversion<bool>),
+    ElementComplete(Option<NativeConversion<[u8; 8]>>),
+    TypedComplete(Option<NativeConversion<bool>>),
     Number {
-        value: Value,
-        resume: Resume,
+        value: Option<Value>,
+        resume: Option<Resume>,
     },
-    NumberComplete(NativeConversion<f64>),
-    LengthComplete(ArrayLengthConversion),
+    NumberComplete(Option<NativeConversion<f64>>),
+    LengthComplete(Option<ArrayLengthConversion>),
     SetLength {
-        value: Value,
-        resume: SetResume,
+        value: Option<Value>,
+        resume: Option<SetResume>,
     },
-    SetComplete(PropertySetAction),
-    // An internal domain has already selected this effect. Only a real wait
-    // owns this box; dispatch must not repeat the initial storage probe.
+    SetComplete(Option<PropertySetAction>),
     PreparedSet {
-        step: Box<SetStep>,
-        resume: Resume,
+        step: Option<Box<SetStep>>,
+        resume: Option<Resume>,
     },
-    SetContinue(SetResume),
+    SetContinue(Option<SetResume>),
     SetSpecial {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        receiver: Value,
-        resume: SetResume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        value: Option<Value>,
+        receiver: Option<Value>,
+        resume: Option<SetResume>,
     },
     Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        receiver: Value,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        value: Option<Value>,
+        receiver: Option<Value>,
+        resume: Option<Resume>,
     },
     SetProxy {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        receiver: Value,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        value: Option<Value>,
+        receiver: Option<Value>,
+        resume: Option<Resume>,
     },
     Define {
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        descriptor: Option<OrdinaryPropertyDescriptor>,
+        resume: Option<Resume>,
     },
     DefineOrdinary {
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        descriptor: Option<OrdinaryPropertyDescriptor>,
+        resume: Option<Resume>,
     },
-    Defined(NativeConversion<InternalDefineResult>),
-    Complete(Completion),
-    BooleanComplete(NativeConversion<bool>),
-    OwnComplete(NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>),
-    Converted(NativeConversion<OrdinaryPropertyDescriptor>),
+    Defined(Option<NativeConversion<InternalDefineResult>>),
+    Complete(Option<Completion>),
+    BooleanComplete(Option<NativeConversion<bool>>),
+    OwnComplete(Option<NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>>),
+    Converted(Option<NativeConversion<OrdinaryPropertyDescriptor>>),
     Has {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        resume: Option<Resume>,
     },
     Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: Value,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        receiver: Option<Value>,
+        resume: Option<Resume>,
     },
     Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: Resume,
+        target: Option<DirectCallTarget>,
+        receiver: Option<Value>,
+        arguments: Option<Vec<Value>>,
+        resume: Option<Resume>,
     },
     Descriptor {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        key: Option<PropertyKey>,
+        resume: Option<Resume>,
     },
     Extensible {
-        object: ObjectRef,
-        resume: Resume,
+        object: Option<ObjectRef>,
+        resume: Option<Resume>,
     },
     Convert {
-        value: Value,
-        resume: Resume,
+        value: Option<Value>,
+        resume: Option<Resume>,
     },
 }
 
@@ -638,54 +635,84 @@ impl Resume {
         action: PropertySetAction,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::RootSet => Ok(Step::Complete(match set_result(action)? {
+            Self::RootSet => Ok(Step::Complete(Some(match set_result(action)? {
                 NativeConversion::Throw(value) => Completion::Throw(value),
                 NativeConversion::Value(result) => {
                     Completion::Return(Value::Bool(matches!(result, InternalSetResult::Accepted)))
                 }
-            })),
+            }))),
 
             Self::RegExpMatchAll(resume) => {
                 resume.set(runtime, set_result(action)?).map(Into::into)
             }
             Self::RegExpSplit(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
             Self::Environment(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
-            Self::RegExpIteratorSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
+            Self::RegExpIteratorSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
 
             Self::RegExpSearch(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
             Self::RegExpMatch(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
 
-            Self::ArrayConstructorSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
-            Self::ArraySliceSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
+            Self::ArrayConstructorSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
+            Self::ArraySliceSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
             Self::IteratorTag(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
-            Self::ArrayCopySet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
-            Self::ArrayConcatSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
-            Self::ArrayBuildSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
+            Self::ArrayCopySet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
+            Self::ArrayConcatSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
+            Self::ArrayBuildSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
             Self::RegExpReplace(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
-            Self::ArraySortSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
-            Self::ArrayIndexedSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
-            Self::ArrayReverseSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
-            Self::ArrayMutationSet { key, resume } => resume
-                .set(runtime, key, set_result(action)?)
-                .map(Into::into),
+            Self::ArraySortSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
+            Self::ArrayIndexedSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
+            Self::ArrayReverseSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
+            Self::ArrayMutationSet { mut resume } => {
+                let key = resume.take_scheduler_set_key();
+                resume
+                    .set(runtime, key, set_result(action)?)
+                    .map(Into::into)
+            }
             Self::Property(resume) => resume.set(runtime, set_result(action)?).map(Into::into),
             Self::OrdinarySet(resume) => resume.forward(action).map(Into::into),
             Self::ProxySet(resume) => resume.set(set_result(action)?).map(Into::into),
@@ -700,17 +727,17 @@ impl Resume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::RootDefine => Ok(Step::Complete(match result {
+            Self::RootDefine => Ok(Step::Complete(Some(match result {
                 NativeConversion::Throw(value) => Completion::Throw(value),
                 NativeConversion::Value(result) => {
                     Completion::Return(Value::Bool(matches!(result, InternalDefineResult::Defined)))
                 }
-            })),
+            }))),
 
             Self::LiteralDefinition(resume) => resume.defined(result).map(Into::into),
             Self::PublicField => match Runtime::finish_public_class_field_definition(result)? {
                 crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
-                    Ok(Step::Complete(Completion::Return(Value::Undefined)))
+                    Ok(Step::Complete(Some(Completion::Return(Value::Undefined))))
                 }
                 crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
                     Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
@@ -718,7 +745,7 @@ impl Resume {
                     ))
                 }
                 crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
-                    Ok(Step::Complete(Completion::Throw(value)))
+                    Ok(Step::Complete(Some(Completion::Throw(value))))
                 }
             },
 
@@ -779,13 +806,9 @@ impl Resume {
             Self::ArrayReverse(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::ArrayMutation(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::ArrayCallback(resume) => resume.boolean(runtime, result).map(Into::into),
-            Self::BooleanResult {
-                _object,
-                _key,
-                strict_delete,
-            } => runtime
-                .finish_property_delete(result, strict_delete)
-                .map(Step::Complete),
+            Self::BooleanResult { payload } => runtime
+                .finish_property_delete(result, payload.strict_delete)
+                .map(|result| Step::Complete(Some(result))),
             Self::Definitions(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Predicate(resume) => resume.boolean(result).map(Into::into),
             Self::Keys(resume) => resume.boolean(runtime, result).map(Into::into),
@@ -1000,7 +1023,7 @@ impl Resume {
                 super::construct::prototype(runtime, request, completion, *resume)
                     .map_err(crate::engine::api::runtime_error::RuntimeError::Engine)
             }
-            Self::Identity => Ok(Step::Complete(completion)),
+            Self::Identity => Ok(Step::Complete(Some(completion))),
             Self::ObjectString(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Definitions(resume) => resume.read(completion).map(Into::into),
             Self::PredicateKey(resume) => resume.key(runtime, completion).map(Into::into),
@@ -1043,16 +1066,16 @@ impl Resume {
             }
             Self::ProxySet(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Define(resume) => resume.resume(runtime, completion).map(Into::into),
-            Self::Setter => Ok(Step::SetComplete(match completion {
+            Self::Setter => Ok(Step::SetComplete(Some(match completion {
                 Completion::Return(_) => PropertySetAction::Complete,
                 Completion::Throw(value) => PropertySetAction::Throw(value),
-            })),
+            }))),
             Self::BooleanResult { .. } => {
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "boolean operation received an untyped reply",
                 ))
             }
-            Self::ReadOwner(_owner) => Ok(Step::Complete(completion)),
+            Self::ReadOwner(_owner) => Ok(Step::Complete(Some(completion))),
             Self::Element(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Number(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::IteratorConstructor(_)
@@ -1093,7 +1116,7 @@ impl Resume {
         result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::RootDescriptor => Ok(Step::RootDescriptor(result)),
+            Self::RootDescriptor => Ok(Step::RootDescriptor(Some(result))),
             Self::OwnFlagReply { enumerable, resume } => resume.boolean(
                 runtime,
                 match result {
@@ -1128,12 +1151,13 @@ impl Resume {
         use crate::engine::object::operations::PropertyDefineOutcome;
         match self {
             Self::SetLength(resume) => resume.array_length(runtime, result).map(Into::into),
-            Self::DefineLength {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => {
+            Self::DefineLength { payload } => {
+                let DefineLengthPayload {
+                    object,
+                    key,
+                    descriptor,
+                    resume,
+                } = *payload;
                 let result = match result {
                     ArrayLengthConversion::Throw(value) => NativeConversion::Throw(value),
                     ArrayLengthConversion::Length(length) => match runtime
@@ -1173,11 +1197,12 @@ impl Resume {
                 };
                 resume.special(runtime, Some(result)).map(Into::into)
             }
-            Self::DefineTyped {
-                object,
-                _descriptor,
-                resume,
-            } => {
+            Self::DefineTyped { payload } => {
+                let DefineTypedPayload {
+                    object,
+                    _descriptor,
+                    resume,
+                } = *payload;
                 let result = match result {
                     NativeConversion::Value(true) => {
                         NativeConversion::Value(InternalDefineResult::Defined)
@@ -1386,7 +1411,9 @@ impl Resume {
             Self::DynamicFunction(resume) => resume.string(result).map(Into::into),
             Self::JsonParse(resume) => resume.string(runtime, result).map(Into::into),
             Self::JsonStringify(resume) => resume.string(runtime, result).map(Into::into),
-            Self::JsonRaw(resume) => resume.string(runtime, result).map(Step::Complete),
+            Self::JsonRaw(resume) => resume
+                .string(runtime, result)
+                .map(|result| Step::Complete(Some(result))),
 
             Self::PrimitiveConstructor(resume) => resume.string(runtime, result).map(Into::into),
             Self::Global(resume) => resume.string(runtime, result).map(Into::into),
@@ -1505,10 +1532,37 @@ impl Resume {
         }
     }
 }
-impl Step {
-    /// Move the selected domain payload once. The vacant state owns no roots;
-    /// a helper installs its next request here before returning Continue.
-    pub(super) fn take(&mut self) -> Self {
-        std::mem::replace(self, Self::Complete(Completion::Return(Value::Undefined)))
+
+#[cfg(test)]
+#[test]
+fn s11_protocol_layout_inventory() {
+    assert!(
+        std::mem::size_of::<Resume>() <= 32,
+        "Resume {}",
+        std::mem::size_of::<Resume>()
+    );
+    // Step is intentionally resident: dispatchers drain selected Option fields
+    // through &mut Step, never take/rebuild the entire packet to retry dispatch.
+    assert!(
+        std::mem::size_of::<Step>() <= 192,
+        "Step {}",
+        std::mem::size_of::<Step>()
+    );
+    assert!(
+        std::mem::size_of::<super::Next>() <= 64,
+        "Next {}",
+        std::mem::size_of::<super::Next>()
+    );
+    assert!(std::mem::size_of::<super::super::conversion_driver::ConversionTask>() <= 8);
+    assert!(std::mem::size_of::<super::super::iterator_driver::PendingIterator>() <= 8);
+    #[cfg(feature = "test262-host")]
+    {
+        assert!(
+            std::mem::size_of::<crate::engine::api::test262_agent::operation::AgentResume>() <= 8
+        );
+        assert!(
+            std::mem::size_of::<crate::engine::api::test262_host::operation::EvalScriptResume>()
+                <= 8
+        );
     }
 }

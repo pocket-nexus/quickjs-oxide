@@ -28,14 +28,21 @@ impl PromiseStep {
             Value::Object(resolve.as_object().clone()),
             Value::Object(reject.as_object().clone()),
         ];
-        Ok(Self::Call {
-            callable: then,
-            receiver: Value::Object(thenable),
-            arguments,
-            resume: Box::new(PromiseResume {
+        Ok({
+            let __pending_field_callable = then;
+            let __pending_field_receiver = Value::Object(thenable);
+            let __pending_field_arguments = arguments;
+            let __pending_field_resume = Box::new(PromiseResume {
+                pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::Thenable(reject),
-            }),
+            });
+            Self::request_call(
+                __pending_field_callable,
+                __pending_field_receiver,
+                __pending_field_arguments,
+                __pending_field_resume,
+            )
         })
     }
 
@@ -56,6 +63,7 @@ impl PromiseStep {
             })
             .transpose()?;
         let resume = Box::new(PromiseResume {
+            pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: Phase::Reaction(targets),
         });
@@ -66,11 +74,17 @@ impl PromiseStep {
                 .ok_or(RuntimeError::Invariant(
                     "queued Promise reaction handler was no longer callable",
                 ))?;
-            Ok(Self::Call {
-                callable: handler,
-                receiver: Value::Undefined,
-                arguments: vec![argument],
-                resume,
+            Ok({
+                let __pending_field_callable = handler;
+                let __pending_field_receiver = Value::Undefined;
+                let __pending_field_arguments = vec![argument];
+                let __pending_field_resume = resume;
+                Self::request_call(
+                    __pending_field_callable,
+                    __pending_field_receiver,
+                    __pending_field_arguments,
+                    __pending_field_resume,
+                )
             })
         } else {
             let completion = if reaction.kind == PromiseReactionKind::Reject {

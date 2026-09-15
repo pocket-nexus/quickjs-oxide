@@ -3,31 +3,54 @@ use super::FrameCold;
 use crate::engine::api::error::Error;
 use std::ops::{Deref, DerefMut};
 
-pub(in crate::engine::vm) struct ColdFrame(Box<FrameCold>);
+/// Keep owners first: abort drops activation/function/input before releasing
+/// the executable publication, matching the prior separate-frame drop order.
+/// Run splits these three fields once, so its slot borrow never aliases owners.
+pub(in crate::engine::vm) struct FrameBody {
+    pub owners: FrameCold,
+    pub executable: Resident<crate::engine::code::runtime::PublishedFunctionSnapshot>,
+    pub window: Resident<crate::engine::vm::stack::FrameWindow>,
+}
+impl Deref for FrameBody {
+    type Target = FrameCold;
+    fn deref(&self) -> &FrameCold {
+        &self.owners
+    }
+}
+impl DerefMut for FrameBody {
+    fn deref_mut(&mut self) -> &mut FrameCold {
+        &mut self.owners
+    }
+}
+pub(in crate::engine::vm) struct ColdFrame(Box<FrameBody>);
 impl ColdFrame {
     pub(in crate::engine::vm) fn new(frame: FrameCold) -> Self {
-        let cold = Self(Box::new(frame));
+        let cold = Self(Box::new(FrameBody {
+            executable: Default::default(),
+            window: Default::default(),
+            owners: frame,
+        }));
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_call_buffer_capacity(
             "cold.frame_box",
             0,
             1,
-            size_of::<Option<FrameCold>>(),
+            size_of::<FrameBody>(),
         );
         cold
     }
     pub(in crate::engine::vm) fn into_inner(self) -> FrameCold {
-        *self.0
+        self.0.owners
     }
 }
 impl Deref for ColdFrame {
-    type Target = FrameCold;
-    fn deref(&self) -> &FrameCold {
+    type Target = FrameBody;
+    fn deref(&self) -> &FrameBody {
         self.0.as_ref()
     }
 }
 impl DerefMut for ColdFrame {
-    fn deref_mut(&mut self) -> &mut FrameCold {
+    fn deref_mut(&mut self) -> &mut FrameBody {
         self.0.as_mut()
     }
 }
@@ -35,7 +58,7 @@ impl DerefMut for ColdFrame {
 #[derive(Default)]
 pub(in crate::engine::vm) struct CallStorage {
     prepared_depth: usize,
-    empty_frames: Vec<Box<FrameCold>>,
+    empty_frames: Vec<Box<FrameBody>>,
     capture_flags: Vec<Vec<bool>>,
     regions: Vec<Vec<crate::engine::vm::VmUnwindRegion>>,
 }
@@ -59,7 +82,7 @@ impl CallStorage {
             "cold.empty_pool",
             before,
             self.empty_frames.capacity(),
-            size_of::<Box<FrameCold>>(),
+            size_of::<Box<FrameBody>>(),
         );
         #[cfg(feature = "profiling")]
         let before = self.capture_flags.capacity();
@@ -136,7 +159,7 @@ impl CallStorage {
             if frame.rare.get().is_none() {
                 frame.rare = std::mem::take(&mut empty.rare);
             }
-            *empty = frame;
+            empty.owners = frame;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("call_cold_frame_reused");
             (ColdFrame(empty), 0)
@@ -145,7 +168,7 @@ impl CallStorage {
             crate::engine::api::profiling::record_owned_execution_event(
                 "call_cold_frame_allocated",
             );
-            (ColdFrame::new(frame), size_of::<Option<FrameCold>>())
+            (ColdFrame::new(frame), size_of::<FrameBody>())
         }
     }
     pub(in crate::engine::vm) fn recycle(&mut self, mut cold: ColdFrame) {
@@ -165,11 +188,13 @@ impl CallStorage {
             rare.normalized_this = None;
         }
 
+        cold.window.0 = None;
         cold.return_to = None;
         cold.entry_guard = None;
         cold.function.0 = None;
         cold.closure_slots = Default::default();
         cold.input.0 = None;
+        cold.executable.0 = None;
         if flags.capacity() != 0 && self.capture_flags.len() < self.capture_flags.capacity() {
             self.capture_flags.push(flags);
         }
@@ -184,6 +209,57 @@ impl CallStorage {
 mod tests {
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn narrow_header_reuses_body_allocation_without_retaining_previous_owners() {
+        use super::{CallStorage, FrameBody};
+        use crate::engine::vm::{
+            CallInput,
+            stack::{FrameStorage, SlotStore},
+        };
+        assert!(size_of::<crate::engine::vm::frame::Frame>() <= 64);
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut storage = CallStorage::default();
+        storage.reserve_depth(1).unwrap();
+        let (mut cold, _) = storage.vacant(context.realm_id());
+        let address = (&*cold) as *const FrameBody;
+        let executable = crate::engine::code::runtime::PublishedFunctionSnapshot::empty_for_test(
+            context.realm_id(),
+        );
+        let mut slots = SlotStore::new(16);
+        let window = slots
+            .push_frame(
+                &executable.frame_layout(),
+                FrameStorage {
+                    original_arguments: Vec::new(),
+                    parameters: Vec::new(),
+                    locals: Vec::new(),
+                    operands: Vec::new(),
+                },
+            )
+            .unwrap();
+        let function = runtime.new_object(None).unwrap();
+        let id = function.object_id();
+        cold.function = function.into();
+        cold.input = CallInput {
+            this_value: Value::Undefined,
+            new_target: Value::Undefined,
+            callee_global: None,
+        }
+        .into();
+        cold.executable = executable.into();
+        cold.window = window.into();
+        slots.clear_frame(cold.window.take()).unwrap();
+        storage.recycle(cold);
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        let cached = &storage.empty_frames[0];
+        assert!(cached.executable.0.is_none() && cached.window.0.is_none());
+        assert!(cached.owners.function.0.is_none() && cached.owners.input.0.is_none());
+        let (reused, bytes) = storage.vacant(context.realm_id());
+        assert_eq!((&*reused) as *const FrameBody, address);
+        assert_eq!(bytes, 0);
+    }
 
     #[test]
     fn repeated_calls_reuse_empty_buffers_at_stable_depth() {
@@ -275,12 +351,20 @@ mod tests {
 /// An empty cached allocation has no roots. Running frames have initialized
 /// owners; field-level replacement avoids constructing/moving the whole frame.
 pub(in crate::engine::vm) struct Resident<T>(Option<T>);
+impl<T> Default for Resident<T> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
 impl<T> From<T> for Resident<T> {
     fn from(value: T) -> Self {
         Self(Some(value))
     }
 }
 impl<T> Resident<T> {
+    pub(in crate::engine::vm) fn take(&mut self) -> T {
+        self.0.take().expect("resident owner already taken")
+    }
     pub(in crate::engine::vm) fn into_inner(self) -> T {
         self.0.unwrap()
     }
@@ -334,7 +418,7 @@ impl CallStorage {
                     closure_slots: Default::default(),
                     reusable_captured_locals: Vec::new(),
                 }),
-                size_of::<FrameCold>(),
+                size_of::<FrameBody>(),
             )
         }
     }

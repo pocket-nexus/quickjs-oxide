@@ -39,7 +39,20 @@ enum Phase {
     Width,
     BigInt,
 }
-pub(crate) struct NumericResume {
+pub(crate) struct NumericResume(Box<NumericResumeState>);
+impl std::ops::Deref for NumericResume {
+    type Target = NumericResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for NumericResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<NumericResume>() <= 8);
+pub(crate) struct NumericResumeState {
     realm: ContextId,
     kind: NumericKind,
     value: Value,
@@ -84,31 +97,29 @@ impl NumericStep {
                 }
             }
         };
+        if let NumericKind::ToString(brand) = kind {
+            if !matches!(brand, PrimitiveKind::Number | PrimitiveKind::BigInt)
+                || matches!(argument, Value::Undefined)
+            {
+                return Ok(Self::Complete(
+                    runtime.finish_branded_to_string(realm, brand, value, 10)?,
+                ));
+            }
+        }
         let phase = match kind {
             NumericKind::ToString(_) => Phase::Radix,
             NumericKind::Format(_) => Phase::Digits,
             NumericKind::BigIntAsN(_) => Phase::Width,
         };
-        let resume = NumericResume {
+        let resume = NumericResume(Box::new(NumericResumeState {
             realm,
             kind,
             value,
             argument: argument.clone(),
             phase,
             bits: 0,
-        };
+        }));
         match kind {
-            NumericKind::ToString(brand)
-                if !matches!(brand, PrimitiveKind::Number | PrimitiveKind::BigInt)
-                    || matches!(argument, Value::Undefined) =>
-            {
-                Ok(Self::Complete(runtime.finish_branded_to_string(
-                    realm,
-                    brand,
-                    resume.value,
-                    10,
-                )?))
-            }
             NumericKind::Format(NumberFormatKind::LocaleString) => resume.format(runtime, 0),
             NumericKind::Format(NumberFormatKind::Precision)
                 if matches!(argument, Value::Undefined) =>
@@ -134,25 +145,25 @@ impl NumericResume {
                 return Ok(NumericStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Radix => {
                 let radix = crate::engine::value::number::to_int32_sat(value);
                 if !(2..=36).contains(&radix) {
                     return Ok(NumericStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Range,
                             "radix must be between 2 and 36",
                         )?,
                     )));
                 }
-                let NumericKind::ToString(kind) = self.kind else {
+                let NumericKind::ToString(kind) = self.0.kind else {
                     return Err(RuntimeError::Invariant("scalar radix kind mismatch"));
                 };
                 Ok(NumericStep::Complete(runtime.finish_branded_to_string(
-                    self.realm,
+                    self.0.realm,
                     kind,
-                    self.value,
+                    self.0.value,
                     radix as u32,
                 )?))
             }
@@ -160,14 +171,14 @@ impl NumericResume {
                 self.format(runtime, crate::engine::value::number::to_int32_sat(value))
             }
             Phase::Width => {
-                self.bits = match runtime.index_from_number(self.realm, value)? {
+                self.0.bits = match runtime.index_from_number(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(NumericStep::Complete(Completion::Throw(value)));
                     }
                 };
-                self.phase = Phase::BigInt;
-                let value = std::mem::replace(&mut self.value, Value::Undefined);
+                self.0.phase = Phase::BigInt;
+                let value = std::mem::replace(&mut self.0.value, Value::Undefined);
                 Ok(NumericStep::Primitive {
                     value,
                     resume: self,
@@ -179,10 +190,10 @@ impl NumericResume {
         }
     }
     fn format(self, runtime: &Runtime, digits: i32) -> Result<NumericStep, RuntimeError> {
-        let NumericKind::Format(kind) = self.kind else {
+        let NumericKind::Format(kind) = self.0.kind else {
             return Err(RuntimeError::Invariant("scalar formatter kind mismatch"));
         };
-        let number = self.value.as_number().ok_or(RuntimeError::Invariant(
+        let number = self.0.value.as_number().ok_or(RuntimeError::Invariant(
             "Number formatter brand returned non-number",
         ))?;
         let result = match kind {
@@ -192,15 +203,15 @@ impl NumericResume {
             NumberFormatKind::Fixed => crate::engine::value::number::to_fixed(number, digits),
             NumberFormatKind::Exponential => crate::engine::value::number::to_exponential(
                 number,
-                (!matches!(self.argument, Value::Undefined)).then_some(digits),
+                (!matches!(self.0.argument, Value::Undefined)).then_some(digits),
             ),
             NumberFormatKind::Precision => crate::engine::value::number::to_precision(
                 number,
-                (!matches!(self.argument, Value::Undefined)).then_some(digits),
+                (!matches!(self.0.argument, Value::Undefined)).then_some(digits),
             ),
         };
         Ok(NumericStep::Complete(
-            runtime.finish_number_format(self.realm, result)?,
+            runtime.finish_number_format(self.0.realm, result)?,
         ))
     }
     pub(crate) fn primitive(
@@ -208,7 +219,7 @@ impl NumericResume {
         runtime: &Runtime,
         result: Completion,
     ) -> Result<NumericStep, RuntimeError> {
-        if !matches!(self.phase, Phase::BigInt) {
+        if !matches!(self.0.phase, Phase::BigInt) {
             return Err(RuntimeError::Invariant(
                 "BigInt width primitive phase mismatch",
             ));
@@ -217,23 +228,23 @@ impl NumericResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(NumericStep::Complete(Completion::Throw(value))),
         };
-        let value = match runtime.bigint_from_primitive(self.realm, value)? {
+        let value = match runtime.bigint_from_primitive(self.0.realm, value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(NumericStep::Complete(Completion::Throw(value)));
             }
         };
-        let NumericKind::BigIntAsN(kind) = self.kind else {
+        let NumericKind::BigIntAsN(kind) = self.0.kind else {
             return Err(RuntimeError::Invariant("BigInt width kind mismatch"));
         };
         let result = match kind {
-            BigIntAsNKind::AsUintN => value.as_uint_n(self.bits),
-            BigIntAsNKind::AsIntN => value.as_int_n(self.bits),
+            BigIntAsNKind::AsUintN => value.as_uint_n(self.0.bits),
+            BigIntAsNKind::AsIntN => value.as_int_n(self.0.bits),
         };
         Ok(NumericStep::Complete(match result {
             Ok(value) => Completion::Return(Value::BigInt(value)),
             Err(_) => Completion::Throw(runtime.new_native_error(
-                self.realm,
+                self.0.realm,
                 NativeErrorKind::Range,
                 "BigInt is too large to allocate",
             )?),
@@ -258,3 +269,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<NumericStep>() <= 64);

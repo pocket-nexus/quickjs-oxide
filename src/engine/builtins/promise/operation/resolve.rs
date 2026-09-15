@@ -28,17 +28,23 @@ impl PromiseStep {
                 ObjectPayload::Promise(_)
             )
         {
-            return Ok(Self::Read {
-                receiver: Value::Object(promise.clone()),
-                key: runtime.intern_property_key("constructor")?,
-                resume: Box::new(PromiseResume {
+            return Ok({
+                let __pending_field_receiver = Value::Object(promise.clone());
+                let __pending_field_key = runtime.intern_property_key("constructor")?;
+                let __pending_field_resume = Box::new(PromiseResume {
+                    pending_effect: super::PromiseStepPending::default(),
                     realm,
                     phase: Phase::StaticConstructor {
                         constructor,
                         argument,
                         kind,
                     },
-                }),
+                });
+                Self::request_read(
+                    __pending_field_receiver,
+                    __pending_field_key,
+                    __pending_field_resume,
+                )
             });
         }
         create(runtime, realm, constructor, argument, kind)
@@ -74,6 +80,7 @@ fn create(
         NativeConversion::Value(constructor) => constructor,
     };
     Box::new(PromiseResume {
+        pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: Phase::StaticCapability { argument, kind },
     })

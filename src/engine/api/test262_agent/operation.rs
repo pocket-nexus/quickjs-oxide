@@ -23,7 +23,20 @@ enum Phase {
     Broadcast(SharedBufferHandle),
     Sleep,
 }
-pub(crate) struct AgentResume {
+pub(crate) struct AgentResume(Box<AgentResumeState>);
+impl std::ops::Deref for AgentResume {
+    type Target = AgentResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for AgentResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<AgentResume>() <= 8);
+pub(crate) struct AgentResumeState {
     realm: ContextId,
     session: Test262AgentSession,
     phase: Phase,
@@ -56,11 +69,11 @@ impl AgentStep {
                 if kind == Test262AgentKind::Start {
                     Ok(Self::String {
                         value: arguments.readable[0].clone(),
-                        resume: AgentResume {
+                        resume: AgentResume(Box::new(AgentResumeState {
                             realm,
                             session,
                             phase: Phase::Start,
-                        },
+                        })),
                     })
                 } else {
                     // Brand/detached/shared checks precede observable numeric conversion.
@@ -74,29 +87,29 @@ impl AgentStep {
                     };
                     Ok(Self::Number {
                         value: arguments.readable[1].clone(),
-                        resume: AgentResume {
+                        resume: AgentResume(Box::new(AgentResumeState {
                             realm,
                             session,
                             phase: Phase::Broadcast(handle),
-                        },
+                        })),
                     })
                 }
             }
             Test262AgentKind::Report => Ok(Self::String {
                 value: arguments.readable[0].clone(),
-                resume: AgentResume {
+                resume: AgentResume(Box::new(AgentResumeState {
                     realm,
                     session,
                     phase: Phase::Report,
-                },
+                })),
             }),
             Test262AgentKind::Sleep => Ok(Self::Number {
                 value: arguments.readable[0].clone(),
-                resume: AgentResume {
+                resume: AgentResume(Box::new(AgentResumeState {
                     realm,
                     session,
                     phase: Phase::Sleep,
-                },
+                })),
             }),
             Test262AgentKind::GetReport => (|| -> Result<Completion, RuntimeError> {
                 let report = lock_unpoisoned(&session.inner.reports).pop_front();
@@ -155,10 +168,11 @@ impl AgentResume {
                 ));
             }
         };
-        let realm = self.realm;
-        let session = &self.session;
+        let state = *self.0;
+        let realm = state.realm;
+        let session = &state.session;
         let result = (|| -> Result<Completion, RuntimeError> {
-            match self.phase {
+            match state.phase {
                 Phase::Start => {
                     let source = match String::from_utf16(&source.utf16_units().collect::<Vec<_>>())
                     {
@@ -182,7 +196,7 @@ impl AgentResume {
                 }
                 Phase::Report => {
                     let report = source;
-                    lock_unpoisoned(&self.session.inner.reports).push_back(report.to_utf8_lossy());
+                    lock_unpoisoned(&session.inner.reports).push_back(report.to_utf8_lossy());
                     Ok(Completion::Return(Value::Undefined))
                 }
                 _ => Err(RuntimeError::Invariant(
@@ -203,10 +217,11 @@ impl AgentResume {
                 return Ok(AgentStep::Complete(Completion::Throw(value)));
             }
         };
-        let realm = self.realm;
-        let session = &self.session;
+        let state = *self.0;
+        let realm = state.realm;
+        let session = &state.session;
         let result = (|| -> Result<Completion, RuntimeError> {
-            match self.phase {
+            match state.phase {
                 Phase::Broadcast(handle) => {
                     let value = crate::engine::value::number::to_int32(value);
                     if let Err(error) = session.broadcast(handle, value) {
@@ -239,3 +254,6 @@ impl AgentResume {
         Ok(AgentStep::Complete(result))
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<AgentStep>() <= 64);

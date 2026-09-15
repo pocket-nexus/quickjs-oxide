@@ -11,7 +11,20 @@ pub(crate) enum ArrayLengthStep {
         resume: ArrayLengthResume,
     },
 }
-pub(crate) struct ArrayLengthResume {
+pub(crate) struct ArrayLengthResume(Box<ArrayLengthResumeState>);
+impl std::ops::Deref for ArrayLengthResume {
+    type Target = ArrayLengthResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ArrayLengthResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ArrayLengthResume>() <= 8);
+pub(crate) struct ArrayLengthResumeState {
     realm: Option<ContextId>,
     phase: Phase,
 }
@@ -37,10 +50,10 @@ impl ArrayLengthStep {
             Value::Int(_) => Self::Complete(runtime.invalid_array_length(realm)?),
             value => Self::Number {
                 value: value.clone(),
-                resume: ArrayLengthResume {
+                resume: ArrayLengthResume(Box::new(ArrayLengthResumeState {
                     realm,
                     phase: Phase::First(value),
-                },
+                })),
             },
         })
     }
@@ -59,19 +72,19 @@ impl ArrayLengthResume {
                 )));
             }
         };
-        Ok(match self.phase {
+        Ok(match self.0.phase {
             Phase::First(original) => ArrayLengthStep::Number {
                 value: original.clone(),
-                resume: Self {
-                    realm: self.realm,
+                resume: Self(Box::new(ArrayLengthResumeState {
+                    realm: self.0.realm,
                     phase: Phase::Second {
                         _original: original,
                         uint32: Runtime::to_uint32_number(number),
                     },
-                },
+                })),
             },
             Phase::Second { _original, uint32 } => ArrayLengthStep::Complete(
-                runtime.validate_array_length_number(self.realm, number, Some(uint32))?,
+                runtime.validate_array_length_number(self.0.realm, number, Some(uint32))?,
             ),
         })
     }
@@ -118,3 +131,6 @@ mod tests {
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ArrayLengthStep>() <= 64);

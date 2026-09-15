@@ -214,7 +214,20 @@ pub(crate) enum TypedWithStep {
         resume: TypedWithResume,
     },
 }
-pub(crate) struct TypedWithResume {
+pub(crate) struct TypedWithResume(Box<TypedWithResumeState>);
+impl std::ops::Deref for TypedWithResume {
+    type Target = TypedWithResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedWithResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedWithResume>() <= 8);
+pub(crate) struct TypedWithResumeState {
     realm: ContextId,
     source: ObjectRef,
     element: TypedArrayElementKind,
@@ -266,19 +279,19 @@ impl TypedWithStep {
                     "TypedArray.with index argv was not padded",
                 ))?
                 .clone(),
-            resume: TypedWithResume {
+            resume: TypedWithResume(Box::new(TypedWithResumeState {
                 realm,
                 source,
                 element: initial.snapshot.element,
                 length: i64::from(initial.length),
                 phase: WithPhase::Index(replacement),
-            },
+            })),
         })
     }
 }
 impl TypedWithResume {
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<TypedWithStep, RuntimeError> {
@@ -288,33 +301,34 @@ impl TypedWithResume {
                 return Ok(TypedWithStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             WithPhase::Index(replacement) => {
-                let index = match runtime.native_to_int64_sat(self.realm, &value)? {
+                let index = match runtime.native_to_int64_sat(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(TypedWithStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let index = if index < 0 {
-                    self.length + index
+                    self.0.length + index
                 } else {
                     index
                 };
                 Ok(TypedWithStep::Primitive {
                     value: replacement,
-                    resume: Self {
-                        phase: WithPhase::Replacement(index),
-                        ..self
+                    resume: {
+                        let updated_0 = WithPhase::Replacement(index);
+                        self.0.phase = updated_0;
+                        self
                     },
                 })
             }
             WithPhase::Replacement(index) => {
                 Ok(TypedWithStep::Complete(runtime.finish_typed_with(
-                    self.realm,
-                    self.source,
-                    self.element,
-                    self.length as u64,
+                    self.0.realm,
+                    self.0.source,
+                    self.0.element,
+                    self.0.length as u64,
                     index,
                     value,
                 )?))
@@ -341,3 +355,6 @@ fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedWithStep>() <= 64);

@@ -49,10 +49,10 @@ pub(super) fn prepared(
     let (callable, classification) = match target {
         ConstructorTarget::Proxy(target) => {
             return Ok(Step::ConstructProxy {
-                target,
-                new_target,
-                arguments,
-                resume,
+                target: Some(target),
+                new_target: Some(new_target),
+                arguments: Some(arguments),
+                resume: Some(resume),
             });
         }
         ConstructorTarget::Ordinary {
@@ -66,16 +66,16 @@ pub(super) fn prepared(
             realm: defining_realm,
             min_readable_args,
         } => Ok(Step::Native {
-            mode: crate::engine::vm::call::NativeInvokeMode::Ordinary,
-            callable,
-            target,
-            defining_realm,
-            min_readable_args,
-            invocation: crate::engine::vm::call::NativeInvocation::Construct {
+            mode: Some(crate::engine::vm::call::NativeInvokeMode::Ordinary),
+            callable: Some(callable),
+            target: Some(target),
+            defining_realm: Some(defining_realm),
+            min_readable_args: Some(min_readable_args),
+            invocation: Some(crate::engine::vm::call::NativeInvocation::Construct {
                 new_target: new_target.value(),
-            },
-            arguments,
-            resume,
+            }),
+            arguments: Some(arguments),
+            resume: Some(resume),
         }),
         CallableExecution::Bytecode {
             bytecode,
@@ -110,10 +110,10 @@ pub(super) fn prepared(
                     "constructor bit disagrees with bytecode constructor metadata",
                 )),
                 ConstructorKind::Derived => Ok(Step::ConstructorReady {
-                    request,
-                    receiver: Completion::Return(Value::Undefined),
-                    derived: true,
-                    resume,
+                    request: Some(request),
+                    receiver: Some(Completion::Return(Value::Undefined)),
+                    derived: Some(true),
+                    resume: Some(resume),
                 }),
                 ConstructorKind::Base if matches!(request.new_target, Value::Undefined) => {
                     prototype(
@@ -124,14 +124,16 @@ pub(super) fn prepared(
                     )
                 }
                 ConstructorKind::Base => Ok(Step::ReadValue {
-                    receiver: request.new_target.clone(),
-                    key: runtime
-                        .intern_property_key("prototype")
-                        .map_err(|error| Error::internal(error.to_string()))?,
-                    resume: Resume::ConstructorPrototype {
+                    receiver: Some(request.new_target.clone()),
+                    key: Some(
+                        runtime
+                            .intern_property_key("prototype")
+                            .map_err(|error| Error::internal(error.to_string()))?,
+                    ),
+                    resume: Some(Resume::ConstructorPrototype {
                         request,
                         resume: Box::new(resume),
-                    },
+                    }),
                 }),
             }
         }
@@ -152,10 +154,10 @@ pub(super) fn prototype(
         )
         .map_err(runtime_error_to_vm_error)?;
     Ok(Step::ConstructorReady {
-        request,
-        receiver,
-        derived: false,
-        resume,
+        request: Some(request),
+        receiver: Some(receiver),
+        derived: Some(false),
+        resume: Some(resume),
     })
 }
 pub(super) fn ready(
@@ -192,7 +194,7 @@ pub(super) fn ready(
         crate::engine::vm::frame::ConstructorReturn::Base(receiver)
     });
     Ok(Ok(Next::Call {
-        entry,
+        entry: Box::new(entry),
         pc: 0,
         resume,
     }))

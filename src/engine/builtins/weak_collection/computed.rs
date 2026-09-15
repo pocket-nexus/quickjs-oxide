@@ -18,7 +18,20 @@ pub(crate) enum ComputedStep {
         resume: ComputedResume,
     },
 }
-pub(crate) struct ComputedResume {
+pub(crate) struct ComputedResume(Box<ComputedResumeState>);
+impl std::ops::Deref for ComputedResume {
+    type Target = ComputedResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ComputedResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ComputedResume>() <= 8);
+pub(crate) struct ComputedResumeState {
     map: ObjectRef,
     key: WeakCollectionKey,
     _key_owner: Value,
@@ -72,11 +85,11 @@ impl ComputedStep {
         Ok(Self::Call {
             callable,
             arguments: vec![key_value.clone()],
-            resume: ComputedResume {
+            resume: ComputedResume(Box::new(ComputedResumeState {
                 map,
                 key,
                 _key_owner: key_value,
-            },
+            })),
         })
     }
 }
@@ -89,8 +102,8 @@ impl ComputedResume {
         match reply {
             Completion::Throw(value) => Ok(ComputedStep::Complete(Completion::Throw(value))),
             Completion::Return(value) => {
-                runtime.delete_weak_map_record(&self.map, self.key)?;
-                runtime.set_weak_map_record(&self.map, self.key, value.clone())?;
+                runtime.delete_weak_map_record(&self.0.map, self.0.key)?;
+                runtime.set_weak_map_record(&self.0.map, self.0.key, value.clone())?;
                 Ok(ComputedStep::Complete(Completion::Return(value)))
             }
         }
@@ -115,3 +128,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ComputedStep>() <= 64);

@@ -241,13 +241,14 @@ impl OrdinaryCall {
             callee_global: None,
         }
         .into();
+        cold.executable = self.executable.into();
+        cold.window = window.into();
         prepared.install(Frame {
             property_generation: 0,
             iterator_generation: 0,
             caller_realm,
             active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
-            executable: self.executable,
-            window,
+
             fault_pc: 0,
             resume_pc: 0,
             cold,

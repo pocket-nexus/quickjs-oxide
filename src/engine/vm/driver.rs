@@ -1,5 +1,6 @@
 //! Own frames and advance ordinary bytecode calls without native recursion.
 
+mod cold;
 mod ordinary;
 mod ready;
 
@@ -39,14 +40,15 @@ pub(super) fn push_frame(
             .slots
             .push_frame(&entry.executable.frame_layout(), entry.storage)?
     };
+    let mut cold = entry.cold;
+    cold.executable = entry.executable.into();
+    cold.window = window.into();
     Ok(prepared.install(Frame {
         property_generation: entry.property_generation,
         iterator_generation: entry.iterator_generation,
         caller_realm: entry.caller_realm,
         active_frame: entry.active_frame,
-        executable: entry.executable,
-        cold: entry.cold,
-        window,
+        cold,
         fault_pc: 0,
         resume_pc: 0,
     }))
@@ -82,14 +84,15 @@ fn push_direct_call_frame(
         entry.executable.metadata.function_name_local,
     )?;
     frame.resume_pc = resume;
+    let mut cold = entry.cold;
+    cold.executable = entry.executable.into();
+    cold.window = window.into();
     Ok(prepared.install(Frame {
         property_generation: entry.property_generation,
         iterator_generation: entry.iterator_generation,
         caller_realm: entry.caller_realm,
         active_frame: entry.active_frame,
-        executable: entry.executable,
-        cold: entry.cold,
-        window,
+        cold,
         fault_pc: 0,
         resume_pc: 0,
     }))
@@ -107,9 +110,10 @@ pub(super) fn prepare_captured_reuse(
             "reusable captured-local flags disagree with the frame",
         ));
     }
-    for (index, reusable) in frame.cold.reusable_captured_locals.iter_mut().enumerate() {
+    let body = &mut *frame.cold;
+    for (index, reusable) in body.owners.reusable_captured_locals.iter_mut().enumerate() {
         *reusable = matches!(
-            slots.local(&frame.window, index as u16)?,
+            slots.local(&body.window, index as u16)?,
             super::bindings::FrameBinding::Captured(_)
         );
     }
@@ -151,10 +155,10 @@ pub(super) fn enter_call(
     tail: bool,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let window = &mut frame.window;
+    let realm = frame.executable.realm;
+    let window = &mut frame.cold.window;
     let count = usize::from(count);
     execution.slots.peek(window, count + usize::from(method))?;
-    let realm = frame.executable.realm;
     let mut callable =
         match runtime.direct_call_target_from_value(execution.slots.peek(window, count)?.clone()) {
             Ok(super::call::DirectCallTarget::Callable(callable)) => callable,
@@ -796,347 +800,20 @@ fn run_frames_with_state(
             }
         };
         execution.frames.materialize(runtime)?;
-        // Calls do not belong to the outlined frame-operation dispatcher.
-        // Enter them before scanning unrelated cold exits on every invocation.
-        if let RunExit::Call {
-            arguments,
-            method,
-            tail,
-        } = exit
-        {
-            match enter_call(runtime, &mut execution, id, arguments, method, tail)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::Environment(super::environment_driver::Operation::Has { source, name }) =
-            exit
-        {
-            match super::with_driver::start(runtime, &mut execution, id, source, name)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::Environment(op) = exit {
-            match super::environment_driver::step(runtime, &mut execution, id, op)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::DefineProperty { key, method } = exit {
-            match super::construct_driver::define_property(
-                runtime,
-                &mut execution,
-                id,
-                key,
-                method,
-            )? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::DefineClass { name, has_heritage } = exit {
-            next_operation = next_operation
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("operation identity exhausted"))?;
-            match super::construct_driver::define_class(
-                runtime,
-                &mut execution,
-                id,
-                name,
-                has_heritage,
-                next_operation,
-            )? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::ClassInitializer(mode) = exit {
-            match super::construct_driver::initializer(runtime, &mut execution, id, mode)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => {
-                    return Err(Error::internal("class initialization attempted replay"));
-                }
-            }
-        }
-        if exit != RunExit::Complete
-            && let Some(step) = super::frame_operations::step(runtime, &mut execution, id, exit)?
-        {
-            match step {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if matches!(
+        match cold::dispatch(
+            runtime,
+            &mut execution,
+            id,
             exit,
-            RunExit::Construct(_) | RunExit::InitDerivedConstructor | RunExit::Apply(_)
-        ) {
-            next_operation = next_operation
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("operation identity exhausted"))?;
-            let step = match exit {
-                RunExit::Apply(kind) => {
-                    super::apply_driver::step(runtime, &mut execution, id, kind, next_operation)?
-                }
-                RunExit::Construct(count) => super::construct_driver::enter(
-                    runtime,
-                    &mut execution,
-                    id,
-                    count,
-                    next_operation,
-                )?,
-                _ => super::construct_driver::enter_default_derived(
-                    runtime,
-                    &mut execution,
-                    id,
-                    next_operation,
-                )?,
-            };
-            match step {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if matches!(
-            exit,
-            RunExit::ConvertPlus | RunExit::ConvertAdd | RunExit::ConvertPropertyKey
-        ) {
-            let addition = exit == RunExit::ConvertAdd;
-            let mut invalid = false;
-            if !conversion_prepared {
-                let frame = execution.frames.current_mut(id)?;
-                for offset in (0..=usize::from(addition)).rev() {
-                    invalid |= runtime
-                        .validate_value_domain(
-                            execution.slots.peek(&frame.window, offset)?,
-                            "conversion operand",
-                        )
-                        .is_err();
-                }
-            }
-            if invalid {
-                exit = RunExit::Bridge;
-            } else {
-                if !conversion_prepared {
-                    next_operation = next_operation
-                        .checked_add(1)
-                        .ok_or_else(|| Error::internal("conversion identity exhausted"))?;
-                }
-                conversion = Some(crate::engine::vm::conversion_driver::ConversionTask::start(
-                    runtime,
-                    &mut execution,
-                    id,
-                    next_operation,
-                    addition,
-                    exit == RunExit::ConvertPropertyKey,
-                )?);
-                continue;
-            }
-        }
-        if let RunExit::ApplyEval(environment) = exit {
-            match super::eval_driver::apply(runtime, &mut execution, id, environment)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::Eval {
-            arguments,
-            environment,
-        } = exit
-        {
-            match super::eval_driver::step(runtime, &mut execution, id, arguments, environment)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::Import = exit {
-            match super::proxy_get_driver::start_import(runtime, &mut execution, id)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => return Err(Error::internal("dynamic import attempted replay")),
-            }
-        }
-        if let RunExit::Predicate(kind) = exit {
-            match super::predicate_driver::start(runtime, &mut execution, id, kind)? {
-                super::predicate_driver::Progress::Convert(input) => {
-                    next_operation = next_operation.checked_add(1).ok_or_else(|| {
-                        Error::internal("predicate conversion identity exhausted")
-                    })?;
-                    conversion = Some(super::conversion_driver::ConversionTask::start_predicate(
-                        runtime,
-                        &mut execution,
-                        id,
-                        next_operation,
-                        input,
-                    )?);
-                    continue;
-                }
-                super::predicate_driver::Progress::Call(CallStep::Entered) => continue,
-                super::predicate_driver::Progress::Call(CallStep::Complete(completion)) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                super::predicate_driver::Progress::Call(CallStep::Bridge) => {
-                    return Err(Error::internal("predicate attempted replay"));
-                }
-            }
-        }
-        if let RunExit::SuperProperty(kind) = exit {
-            match super::super_property_driver::start(runtime, &mut execution, id, kind)? {
-                super::super_property_driver::Progress::Convert(input) => {
-                    next_operation = next_operation
-                        .checked_add(1)
-                        .ok_or_else(|| Error::internal("super conversion identity exhausted"))?;
-                    conversion = Some(
-                        super::conversion_driver::ConversionTask::start_super_property(
-                            runtime,
-                            &mut execution,
-                            id,
-                            next_operation,
-                            input,
-                        )?,
-                    );
-                    continue;
-                }
-                super::super_property_driver::Progress::Call(CallStep::Entered) => continue,
-                super::super_property_driver::Progress::Call(CallStep::Complete(completion)) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                super::super_property_driver::Progress::Call(CallStep::Bridge) => {
-                    return Err(Error::internal("super property attempted replay"));
-                }
-            }
-        }
-        if let RunExit::SetProperty(key) = exit {
-            let frame = execution.frames.current_mut(id)?;
-            if key.is_none() && matches!(execution.slots.peek(&frame.window, 1)?, Value::Object(_))
-            {
-                next_operation = next_operation
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("write conversion identity exhausted"))?;
-                conversion = Some(
-                    super::conversion_driver::ConversionTask::start_property_write(
-                        runtime,
-                        &mut execution,
-                        id,
-                        next_operation,
-                    )?,
-                );
-                continue;
-            }
-            match super::property_write_driver::write(runtime, &mut execution, id, key)? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::GetField {
-            index,
-            keep_receiver,
-        } = exit
-        {
-            match super::property_driver::read(
-                runtime,
-                &mut execution,
-                id,
-                super::property_driver::ReadKey::Static(index),
-                keep_receiver,
-            )? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
-        }
-        if let RunExit::GetElement {
-            keep_receiver,
-            keep_key,
-        } = exit
-        {
-            let frame = execution.frames.current_mut(id)?;
-            if !matches!(
-                execution.slots.peek(&frame.window, 1)?,
-                Value::Null | Value::Undefined
-            ) && matches!(execution.slots.peek(&frame.window, 0)?, Value::Object(_))
-            {
-                next_operation = next_operation
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("property conversion identity exhausted"))?;
-                conversion = Some(
-                    super::conversion_driver::ConversionTask::start_property_read(
-                        runtime,
-                        &mut execution,
-                        id,
-                        next_operation,
-                        keep_receiver,
-                        keep_key,
-                    )?,
-                );
-                continue;
-            }
-            match super::property_driver::read(
-                runtime,
-                &mut execution,
-                id,
-                super::property_driver::ReadKey::Computed { keep_key },
-                keep_receiver,
-            )? {
-                CallStep::Entered => continue,
-                CallStep::Complete(completion) => {
-                    forwarded = Some(completion);
-                    exit = RunExit::Complete;
-                }
-                CallStep::Bridge => exit = RunExit::Bridge,
-            }
+            &mut forwarded,
+            &mut conversion,
+            &mut next_operation,
+            conversion_prepared,
+        )? {
+            cold::Disposition::Entered => continue,
+            cold::Disposition::Complete | cold::Disposition::Rethrow => exit = RunExit::Complete,
+            cold::Disposition::Bridge => exit = RunExit::Bridge,
+            cold::Disposition::Suspend(kind) => exit = RunExit::Suspend(kind),
         }
         if matches!(forwarded, Some(Completion::Throw(_))) {
             let Some(Completion::Throw(value)) = forwarded.take() else {
@@ -7367,14 +7044,13 @@ mod tests {
                 1 + usize::from(keep_top)
             );
             assert!(matches!(
-                super::super::frame_operations::step(
-                    &runtime,
+                super::super::frame_operations::complete_owned_slot(
                     &mut execution,
                     id,
                     RunExit::ReleaseOperand { keep_top }
                 )
                 .unwrap(),
-                Some(CallStep::Entered)
+                true
             ));
             let frame = execution.frames.current_mut(id).unwrap();
             assert_eq!(frame.resume_pc, frame.fault_pc + 1);
@@ -8477,3 +8153,6 @@ mod tests {
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CallStep>() <= 64);

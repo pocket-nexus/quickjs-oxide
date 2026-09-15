@@ -54,7 +54,20 @@ enum Phase {
     Chunk,
     Index,
 }
-pub(crate) struct ScalarTextResume {
+pub(crate) struct ScalarTextResume(Box<ScalarTextResumeState>);
+impl std::ops::Deref for ScalarTextResume {
+    type Target = ScalarTextResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ScalarTextResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ScalarTextResume>() <= 8);
+pub(crate) struct ScalarTextResumeState {
     realm: ContextId,
     kind: ScalarTextKind,
     phase: Phase,
@@ -95,13 +108,13 @@ impl ScalarTextStep {
         };
         Ok(Self::String {
             value: this_value.clone(),
-            resume: ScalarTextResume {
+            resume: ScalarTextResume(Box::new(ScalarTextResumeState {
                 realm,
                 kind,
                 phase: Phase::Source,
                 string: JsString::from_static(""),
                 arguments: arguments.into_iter(),
-            },
+            })),
         })
     }
 }
@@ -117,32 +130,36 @@ impl ScalarTextResume {
                 return Ok(ScalarTextStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
-            Phase::Source => self.string = string,
-            Phase::Chunk => self.string = self.string.try_concat(&string).map_err(Error::from)?,
+        match self.0.phase {
+            Phase::Source => self.0.string = string,
+            Phase::Chunk => {
+                self.0.string = self.0.string.try_concat(&string).map_err(Error::from)?
+            }
             _ => {
                 return Err(RuntimeError::Invariant(
                     "String scalar string phase mismatch",
                 ));
             }
         }
-        match self.kind {
+        match self.0.kind {
             ScalarTextKind::WellFormed(kind) => {
                 Ok(ScalarTextStep::Complete(Completion::Return(match kind {
-                    StringWellFormedKind::IsWellFormed => Value::Bool(self.string.is_well_formed()),
+                    StringWellFormedKind::IsWellFormed => {
+                        Value::Bool(self.0.string.is_well_formed())
+                    }
                     StringWellFormedKind::ToWellFormed => {
-                        Value::String(self.string.to_well_formed())
+                        Value::String(self.0.string.to_well_formed())
                     }
                 })))
             }
             ScalarTextKind::Iterator => Ok(ScalarTextStep::Complete(Completion::Return(
-                Value::Object(runtime.new_string_iterator(self.realm, self.string)?),
+                Value::Object(runtime.new_string_iterator(self.0.realm, self.0.string)?),
             ))),
             ScalarTextKind::Concat => self.concat(),
             _ => {
-                self.phase = Phase::Index;
+                self.0.phase = Phase::Index;
                 Ok(ScalarTextStep::Number {
-                    value: self.arguments.next().unwrap_or(Value::Undefined),
+                    value: self.0.arguments.next().unwrap_or(Value::Undefined),
                     resume: self,
                 })
             }
@@ -150,17 +167,17 @@ impl ScalarTextResume {
     }
     fn concat(mut self) -> Result<ScalarTextStep, RuntimeError> {
         loop {
-            match self.arguments.next() {
+            match self.0.arguments.next() {
                 None => {
                     return Ok(ScalarTextStep::Complete(Completion::Return(Value::String(
-                        self.string,
+                        self.0.string,
                     ))));
                 }
                 Some(Value::String(chunk)) => {
-                    self.string = self.string.try_concat(&chunk).map_err(Error::from)?
+                    self.0.string = self.0.string.try_concat(&chunk).map_err(Error::from)?
                 }
                 Some(value) => {
-                    self.phase = Phase::Chunk;
+                    self.0.phase = Phase::Chunk;
                     return Ok(ScalarTextStep::String {
                         value,
                         resume: self,
@@ -173,7 +190,7 @@ impl ScalarTextResume {
         self,
         result: NativeConversion<f64>,
     ) -> Result<ScalarTextStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Index) {
+        if !matches!(self.0.phase, Phase::Index) {
             return Err(RuntimeError::Invariant(
                 "String scalar index phase mismatch",
             ));
@@ -185,38 +202,37 @@ impl ScalarTextResume {
             }
         };
         let mut index = crate::engine::value::number::to_int32_sat(number);
-        let value =
-            match self.kind {
-                ScalarTextKind::CharAt(kind) => {
-                    let length = i32::try_from(self.string.len()).map_err(|_| {
-                        RuntimeError::Invariant("String length exceeded QuickJS signed index range")
-                    })?;
-                    if kind == StringCharAtKind::At && index < 0 {
-                        index += length;
-                    }
-                    if index < 0 || index >= length {
-                        match kind {
-                            StringCharAtKind::At => Value::Undefined,
-                            StringCharAtKind::CharAt => Value::String(JsString::from_static("")),
-                        }
-                    } else {
-                        Value::String(JsString::from_code_unit(
-                            self.string.code_unit_at(index as usize).ok_or(
-                                RuntimeError::Invariant("validated String index missing code unit"),
-                            )?,
-                        ))
-                    }
+        let value = match self.0.kind {
+            ScalarTextKind::CharAt(kind) => {
+                let length = i32::try_from(self.0.string.len()).map_err(|_| {
+                    RuntimeError::Invariant("String length exceeded QuickJS signed index range")
+                })?;
+                if kind == StringCharAtKind::At && index < 0 {
+                    index += length;
                 }
-                ScalarTextKind::CharCodeAt => usize::try_from(index)
-                    .ok()
-                    .and_then(|index| self.string.code_unit_at(index))
-                    .map_or(Value::Float(f64::NAN), |unit| Value::Int(i32::from(unit))),
-                ScalarTextKind::CodePointAt => usize::try_from(index)
-                    .ok()
-                    .and_then(|index| self.string.code_point_at(index))
-                    .map_or(Value::Undefined, |point| Value::Int(point as i32)),
-                _ => return Err(RuntimeError::Invariant("String scalar index kind mismatch")),
-            };
+                if index < 0 || index >= length {
+                    match kind {
+                        StringCharAtKind::At => Value::Undefined,
+                        StringCharAtKind::CharAt => Value::String(JsString::from_static("")),
+                    }
+                } else {
+                    Value::String(JsString::from_code_unit(
+                        self.0.string.code_unit_at(index as usize).ok_or(
+                            RuntimeError::Invariant("validated String index missing code unit"),
+                        )?,
+                    ))
+                }
+            }
+            ScalarTextKind::CharCodeAt => usize::try_from(index)
+                .ok()
+                .and_then(|index| self.0.string.code_unit_at(index))
+                .map_or(Value::Float(f64::NAN), |unit| Value::Int(i32::from(unit))),
+            ScalarTextKind::CodePointAt => usize::try_from(index)
+                .ok()
+                .and_then(|index| self.0.string.code_point_at(index))
+                .map_or(Value::Undefined, |point| Value::Int(point as i32)),
+            _ => return Err(RuntimeError::Invariant("String scalar index kind mismatch")),
+        };
         Ok(ScalarTextStep::Complete(Completion::Return(value)))
     }
 }
@@ -237,3 +253,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ScalarTextStep>() <= 64);

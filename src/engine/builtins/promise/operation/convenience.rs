@@ -33,6 +33,7 @@ impl PromiseStep {
             NativeConversion::Value(constructor) => constructor,
         };
         Box::new(PromiseResume {
+            pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: Phase::ConvenienceCapability {
                 kind,
@@ -95,14 +96,22 @@ pub(super) fn ready(
         ))?;
     match runtime.promise_callable(realm, callback)? {
         NativeConversion::Throw(reason) => settle(realm, capability, Completion::Throw(reason)),
-        NativeConversion::Value(callable) => Ok(PromiseStep::Call {
-            callable,
-            receiver: Value::Undefined,
-            arguments: arguments.readable[1..arguments.actual_arg_count.max(1)].to_vec(),
-            resume: Box::new(PromiseResume {
+        NativeConversion::Value(callable) => Ok({
+            let __pending_field_callable = callable;
+            let __pending_field_receiver = Value::Undefined;
+            let __pending_field_arguments =
+                arguments.readable[1..arguments.actual_arg_count.max(1)].to_vec();
+            let __pending_field_resume = Box::new(PromiseResume {
+                pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::TryCallback(capability),
-            }),
+            });
+            PromiseStep::request_call(
+                __pending_field_callable,
+                __pending_field_receiver,
+                __pending_field_arguments,
+                __pending_field_resume,
+            )
         }),
     }
 }
@@ -116,13 +125,20 @@ pub(super) fn settle(
         Completion::Return(value) => (capability.resolve, value),
         Completion::Throw(value) => (capability.reject, value),
     };
-    Ok(PromiseStep::Call {
-        callable,
-        receiver: Value::Undefined,
-        arguments: vec![value],
-        resume: Box::new(PromiseResume {
+    Ok({
+        let __pending_field_callable = callable;
+        let __pending_field_receiver = Value::Undefined;
+        let __pending_field_arguments = vec![value];
+        let __pending_field_resume = Box::new(PromiseResume {
+            pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: Phase::ReturnPromise(capability.promise),
-        }),
+        });
+        PromiseStep::request_call(
+            __pending_field_callable,
+            __pending_field_receiver,
+            __pending_field_arguments,
+            __pending_field_resume,
+        )
     })
 }

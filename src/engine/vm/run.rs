@@ -104,9 +104,9 @@ pub(super) enum RunExit {
     ForIn(bool),
     LogicalNot,
     CopyData {
-        target: usize,
-        source: usize,
-        excluded: Option<usize>,
+        target: u8,
+        source: u8,
+        excluded: Option<u8>,
     },
     ReplaceBinding {
         source: BindingSource,
@@ -183,6 +183,7 @@ impl RunExit {
     }
 }
 
+mod cold;
 mod fusion;
 mod numeric;
 mod program_counter;
@@ -231,7 +232,7 @@ fn release_displaced(
     old: FrameBinding,
 ) -> Result<(), Error> {
     let FrameBinding::Direct(mut old) = old else {
-        return Err(Error::internal(
+        return Err(cold::internal(
             "non-direct binding passed a direct release preflight",
         ));
     };
@@ -241,7 +242,7 @@ fn release_displaced(
         .try_release_slot_value(&mut old)
         .map_err(runtime_error_to_vm_error)?
     {
-        return Err(Error::internal(
+        return Err(cold::internal(
             "slot release proof changed without a callback",
         ));
     }
@@ -250,9 +251,11 @@ fn release_displaced(
 
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
+    let body = &mut *frame.cold;
+    let executable = &*body.executable;
+    let mut transaction = execution.slots.frame_transaction(&mut body.window)?;
     let mut slots = transaction.slots();
-    let cold = &mut *frame.cold;
+    let cold = &mut body.owners;
     let runtime = cold.function.runtime();
     let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
     // Preserve the cold path's observation order, but keep this authenticated
@@ -276,17 +279,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     }
     loop {
         pc.fault = pc.resume;
-        let instruction = frame
-            .executable
+        let instruction = executable
             .code
             .get(pc.fault)
-            .ok_or_else(|| Error::internal("owned bytecode ended without return"))?;
+            .ok_or_else(|| cold::internal("owned bytecode ended without return"))?;
         #[cfg(feature = "profiling")]
         let observed_depth = slots.depth();
         let mut next_pc = pc
             .fault
             .checked_add(1)
-            .ok_or_else(|| Error::internal("owned program counter overflow"))?;
+            .ok_or_else(|| cold::internal("owned program counter overflow"))?;
         let handled = match instruction {
             Instruction::Call(arguments)
             | Instruction::TailCall(arguments)
@@ -327,15 +329,13 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     .and_then(|rare| rare.normalized_this.as_ref())
                 {
                     copy_value(value)?
-                } else if frame.executable.metadata.strict
+                } else if executable.metadata.strict
                     || matches!(cold.input.this_value, Value::Object(_))
                 {
                     copy_value(&cold.input.this_value)?
                 } else if matches!(cold.input.this_value, Value::Undefined | Value::Null) {
                     copy_value(&Value::Object(
-                        cold.input
-                            .callee_global(runtime, frame.executable.realm)?
-                            .clone(),
+                        cold.input.callee_global(runtime, executable.realm)?.clone(),
                     ))?
                 } else {
                     return Ok(RunExit::NormalizeThis);
@@ -347,7 +347,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 };
-                if !slots.ordinary_field_immediate_write(runtime, &frame.executable, *index)? {
+                if !slots.ordinary_field_immediate_write(runtime, &executable, *index)? {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 }
                 frame.property_generation = identity;
@@ -364,7 +364,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::GetField(index) => {
-                if !slots.ordinary_field_immediate_read(runtime, &frame.executable, *index)? {
+                if !slots.ordinary_field_immediate_read(runtime, &executable, *index)? {
                     return Ok(RunExit::GetField {
                         index: *index,
                         keep_receiver: false,
@@ -416,9 +416,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 excluded_depth,
             } => {
                 return Ok(RunExit::CopyData {
-                    target: usize::from(*target_depth),
-                    source: usize::from(*source_depth),
-                    excluded: Some(usize::from(*excluded_depth)),
+                    target: *target_depth,
+                    source: *source_depth,
+                    excluded: Some(*excluded_depth),
                 });
             }
             Instruction::InstanceOf => {
@@ -455,15 +455,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::PushActiveFunction => {
                 slots.push(Value::Object(cold.function.clone()))?;
                 #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_storage(
-                    crate::engine::api::profiling::OwnedStorageEvent::Copy { heap_root: true },
-                );
+                cold::storage(crate::engine::api::profiling::OwnedStorageEvent::Copy {
+                    heap_root: true,
+                });
                 true
             }
             Instruction::InitDerivedConstructor => return Ok(RunExit::InitDerivedConstructor),
             Instruction::PutVar(index) | Instruction::PutVarInit(index) => {
-                let root = frame
-                    .executable
+                let root = executable
                     .closure_variables
                     .get(usize::from(*index))
                     .filter(|descriptor| {
@@ -493,9 +492,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if stored {
                     slots.pop()?;
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "global_immediate_cell_write",
-                    );
+                    cold::event("global_immediate_cell_write");
                     true
                 } else {
                     return Ok(RunExit::Environment(
@@ -505,7 +502,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                                 initialize: matches!(instruction, Instruction::PutVarInit(_)),
                             },
                             name: 0, // Global names come from the authenticated closure descriptor.
-                            strict: frame.executable.metadata.strict,
+                            strict: executable.metadata.strict,
                             check_presence: true,
                         },
                     ));
@@ -517,8 +514,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::GetVar(index) | Instruction::GetVarUndef(index) => {
-                let immediate = frame
-                    .executable
+                let immediate = executable
                     .closure_variables
                     .get(usize::from(*index))
                     .filter(|descriptor| {
@@ -537,7 +533,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if let Some((value, _owned)) = immediate {
                     slots.push(value)?;
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(if _owned {
+                    cold::event(if _owned {
                         "global_owned_cell_read"
                     } else {
                         "global_immediate_cell_read"
@@ -545,7 +541,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     true
                 } else if let Some(value) = super::environment_driver::try_global_own_read(
                     runtime,
-                    &frame.executable,
+                    &executable,
                     &cold.closure_slots,
                     *index,
                 )? {
@@ -570,7 +566,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     super::environment_driver::Operation::ReadReference {
                         name: *name,
                         strict: matches!(instruction, Instruction::GetRefValue(_))
-                            && frame.executable.metadata.strict,
+                            && executable.metadata.strict,
                     },
                 ));
             }
@@ -610,7 +606,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     super::environment_driver::Operation::Put {
                         source: super::environment_driver::WriteTarget::Dynamic(*source),
                         name: *name,
-                        strict: frame.executable.metadata.strict,
+                        strict: executable.metadata.strict,
                         check_presence: true,
                     },
                 ));
@@ -632,7 +628,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     super::environment_driver::Operation::Put {
                         source: super::environment_driver::WriteTarget::Reference,
                         name: *name,
-                        strict: frame.executable.metadata.strict,
+                        strict: executable.metadata.strict,
                         check_presence: true,
                     },
                 ));
@@ -671,7 +667,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     super::environment_driver::Operation::Get {
                         source: *source,
                         name: *name,
-                        strict: frame.executable.metadata.strict,
+                        strict: executable.metadata.strict,
                     },
                 ));
             }
@@ -906,7 +902,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::PushConst(index) => {
-                let result = match frame.executable.constant(*index) {
+                let result = match executable.constant(*index) {
                     Some(BytecodeConstant::Value(RawValue::Int(number))) => {
                         Some(Value::Int(*number))
                     }
@@ -928,9 +924,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 };
                 if let Some(value) = result {
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_storage(
-                        crate::engine::api::profiling::OwnedStorageEvent::Copy { heap_root: false },
-                    );
+                    cold::storage(crate::engine::api::profiling::OwnedStorageEvent::Copy {
+                        heap_root: false,
+                    });
                     slots.push(value)?;
                     true
                 } else {
@@ -949,7 +945,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 {
                     slots.push(value)?;
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(if _owned {
+                    cold::event(if _owned {
                         "captured_owned_cell_read"
                     } else {
                         "captured_immediate_cell_read"
@@ -970,7 +966,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::PutVarRefCheck(index) => {
                 let stored = if let (Some(root), Some(descriptor)) = (
                     cold.closure_slots.get(usize::from(*index)),
-                    frame.executable.closure_variables.get(usize::from(*index)),
+                    executable.closure_variables.get(usize::from(*index)),
                 ) {
                     super::bindings::try_write_immediate_cell(
                         runtime,
@@ -986,9 +982,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         slots.pop()?;
                     }
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "captured_immediate_cell_write",
-                    );
+                    cold::event("captured_immediate_cell_write");
                     true
                 } else {
                     return Ok(RunExit::Binding {
@@ -1008,7 +1002,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             {
                 let stored = if let (FrameBinding::Captured(root), Some(definition)) = (
                     slots.local(*index)?,
-                    frame.executable.local_definitions.get(usize::from(*index)),
+                    executable.local_definitions.get(usize::from(*index)),
                 ) {
                     super::bindings::try_write_immediate_cell(
                         runtime,
@@ -1027,9 +1021,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         slots.pop()?;
                     }
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "captured_immediate_cell_write",
-                    );
+                    cold::event("captured_immediate_cell_write");
                     true
                 } else {
                     return Ok(RunExit::Binding {
@@ -1065,7 +1057,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if let Some((value, _owned)) = immediate {
                     slots.push(value)?;
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(if _owned {
+                    cold::event(if _owned {
                         "captured_owned_cell_read"
                     } else {
                         "captured_immediate_cell_read"
@@ -1074,10 +1066,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 } else if !matches!(instruction, Instruction::GetArg(_))
                     && match (
                         slots.parameter(*index)?,
-                        frame
-                            .executable
-                            .argument_definitions
-                            .get(usize::from(*index)),
+                        executable.argument_definitions.get(usize::from(*index)),
                     ) {
                         (FrameBinding::Captured(root), Some(definition)) => {
                             super::bindings::try_write_immediate_cell(
@@ -1094,9 +1083,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         slots.pop()?;
                     }
                     #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "captured_immediate_cell_write",
-                    );
+                    cold::event("captured_immediate_cell_write");
                     true
                 } else {
                     return Ok(RunExit::Binding {
@@ -1110,7 +1097,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::InitializeLocal(index)
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_))
-                    && frame.executable.local_definitions[usize::from(*index)].kind
+                    && executable.local_definitions[usize::from(*index)].kind
                         == crate::engine::code::function::metadata::ClosureVariableKind::Normal =>
             {
                 return Ok(RunExit::Binding {
@@ -1122,20 +1109,20 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                if frame.executable.fusion.local_add_span(pc.fault).is_some() {
+                if executable.fusion.local_add_span(pc.fault).is_some() {
                     if let Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) =
-                        frame.executable.code.get(pc.fault + 1)
+                        executable.code.get(pc.fault + 1)
                     {
                         if slots.local_add_supported(runtime, *index, *right)? {
                             return Ok(RunExit::AddLocal);
                         }
                     }
                 }
-                if let Some(update) = frame.executable.fusion.update(pc.fault) {
+                if let Some(update) = executable.fusion.update(pc.fault) {
                     if fusion::update_local(&mut slots, *index, update)? {
                         #[cfg(feature = "profiling")]
                         fusion::record_span(
-                            &frame.executable.code[pc.fault..pc.fault + update.instructions],
+                            &executable.code[pc.fault..pc.fault + update.instructions],
                             observed_depth,
                         );
                         pc.resume = pc.fault + update.instructions;
@@ -1154,13 +1141,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         {
                             slots.push(value)?;
                             #[cfg(feature = "profiling")]
-                            crate::engine::api::profiling::record_owned_execution_event(
-                                if _owned {
-                                    "captured_owned_cell_read"
-                                } else {
-                                    "captured_immediate_cell_read"
-                                },
-                            );
+                            cold::event(if _owned {
+                                "captured_owned_cell_read"
+                            } else {
+                                "captured_immediate_cell_read"
+                            });
                             true
                         } else {
                             return Ok(RunExit::Binding {
@@ -1273,7 +1258,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::InitializeLocal(index) => {
-                let definition = frame.executable.local_definitions[usize::from(*index)];
+                let definition = executable.local_definitions[usize::from(*index)];
                 if definition.kind
                     == crate::engine::code::function::metadata::ClosureVariableKind::WithObject
                 {
@@ -1488,14 +1473,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::Neq
             | Instruction::StrictEq
             | Instruction::StrictNeq
-                if frame.executable.fusion.compare_branch(pc.fault) =>
+                if executable.fusion.compare_branch(pc.fault) =>
             {
                 let branch_pc = pc.fault + 1;
-                let Some(target) = fusion::compare_branch(
-                    &mut slots,
-                    instruction,
-                    &frame.executable.code[branch_pc],
-                )?
+                let Some(target) =
+                    fusion::compare_branch(&mut slots, instruction, &executable.code[branch_pc])?
                 else {
                     if matches!(instruction, Instruction::StrictEq | Instruction::StrictNeq) {
                         return Ok(RunExit::StrictEquality(matches!(
@@ -1505,16 +1487,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                     return Ok(RunExit::Numeric(
                         super::numeric::operation::NumericKind::for_instruction(instruction)
-                            .ok_or_else(|| {
-                                Error::internal("comparison has no numeric operation")
-                            })?,
+                            .ok_or_else(|| cold::internal("comparison has no numeric operation"))?,
                     ));
                 };
                 #[cfg(feature = "profiling")]
-                fusion::record_span(
-                    &frame.executable.code[pc.fault..pc.fault + 2],
-                    observed_depth,
-                );
+                fusion::record_span(&executable.code[pc.fault..pc.fault + 2], observed_depth);
                 pc.resume = if target == usize::MAX {
                     pc.fault + 2
                 } else {
@@ -1594,25 +1571,25 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::Throw => return Ok(RunExit::Throw),
             Instruction::Gosub(target) => {
                 let pc = i32::try_from(next_pc)
-                    .map_err(|_| Error::internal("gosub return PC does not fit Int"))?;
+                    .map_err(|_| cold::internal("gosub return PC does not fit Int"))?;
                 slots.push(Value::Int(pc))?;
                 next_pc = *target as usize;
                 true
             }
             Instruction::Ret => {
                 let Value::Int(target) = slots.pop()? else {
-                    return Err(Error::internal("invalid ret value"));
+                    return Err(cold::internal("invalid ret value"));
                 };
                 next_pc =
-                    usize::try_from(target).map_err(|_| Error::internal("invalid ret value"))?;
-                if next_pc >= frame.executable.code.len() {
-                    return Err(Error::internal("invalid ret value"));
+                    usize::try_from(target).map_err(|_| cold::internal("invalid ret value"))?;
+                if next_pc >= executable.code.len() {
+                    return Err(cold::internal("invalid ret value"));
                 }
                 true
             }
             Instruction::DropGosub => {
                 if !matches!(slots.pop()?, Value::Int(_)) {
-                    return Err(Error::internal("invalid gosub cleanup value"));
+                    return Err(cold::internal("invalid gosub cleanup value"));
                 }
                 true
             }
@@ -1634,21 +1611,21 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
                 pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_instruction(observed_depth);
+                cold::instruction(observed_depth);
                 return Ok(RunExit::Suspend(kind));
             }
             Instruction::Return => {
                 execution.pending = Some(slots.pop()?);
                 pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_instruction(observed_depth);
+                cold::instruction(observed_depth);
                 return Ok(RunExit::Complete);
             }
             Instruction::ReturnUndefined => {
                 execution.pending = Some(Value::Undefined);
                 pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_instruction(observed_depth);
+                cold::instruction(observed_depth);
                 return Ok(RunExit::Complete);
             }
         };
@@ -1679,7 +1656,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                     if !numeric::complete(
                         runtime,
-                        frame.executable.realm,
+                        executable.realm,
                         &mut transaction,
                         kind,
                         &mut execution.pending,
@@ -1695,7 +1672,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
         }
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(observed_depth);
+        cold::instruction(observed_depth);
         pc.resume = next_pc;
     }
 }
@@ -2222,8 +2199,8 @@ pub(super) fn strict_comparison(
     frame.resume_pc = frame
         .fault_pc
         .checked_add(1)
-        .ok_or_else(|| Error::internal("comparison resume PC overflow"))?;
+        .ok_or_else(|| cold::internal("comparison resume PC overflow"))?;
     #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    cold::instruction(depth);
     Ok(())
 }

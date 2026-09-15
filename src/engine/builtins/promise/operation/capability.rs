@@ -16,16 +16,22 @@ impl PromiseResume {
             return self.capability_ready(runtime, NativeConversion::Value(capability));
         };
         let executor = runtime.prepare_promise_capability_executor(self.realm)?;
-        Ok(PromiseStep::Construct {
-            target,
-            arguments: vec![Value::Object(executor.as_object().clone())],
-            resume: Box::new(Self {
+        Ok({
+            let __pending_field_target = target;
+            let __pending_field_arguments = vec![Value::Object(executor.as_object().clone())];
+            let __pending_field_resume = Box::new(Self {
+                pending_effect: super::PromiseStepPending::default(),
                 realm: self.realm,
                 phase: Phase::Capability {
                     executor,
                     after: self,
                 },
-            }),
+            });
+            PromiseStep::request_construct(
+                __pending_field_target,
+                __pending_field_arguments,
+                __pending_field_resume,
+            )
         })
     }
 
@@ -62,14 +68,21 @@ impl PromiseResume {
                 } else {
                     capability.resolve
                 };
-                Ok(PromiseStep::Call {
-                    callable: target,
-                    receiver: Value::Undefined,
-                    arguments: vec![argument],
-                    resume: Box::new(Self {
+                Ok({
+                    let __pending_field_callable = target;
+                    let __pending_field_receiver = Value::Undefined;
+                    let __pending_field_arguments = vec![argument];
+                    let __pending_field_resume = Box::new(Self {
+                        pending_effect: super::PromiseStepPending::default(),
                         realm: self.realm,
                         phase: Phase::ReturnPromise(capability.promise),
-                    }),
+                    });
+                    PromiseStep::request_call(
+                        __pending_field_callable,
+                        __pending_field_receiver,
+                        __pending_field_arguments,
+                        __pending_field_resume,
+                    )
                 })
             }
             Phase::ThenCapability { promise, handlers } => handlers

@@ -34,45 +34,36 @@ fn clone_set_value(value: &Value) -> Value {
 
 pub(crate) enum SetStep {
     Complete(PropertySetAction),
-    Continue {
-        resume: SetResume,
-    },
-    Proxy {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        receiver: Value,
-        resume: SetResume,
-    },
-    Special {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        receiver: Value,
-        resume: SetResume,
-    },
-    ArrayLength {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        resume: SetResume,
-    },
-    Descriptor {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: SetResume,
-    },
-    Define {
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
-        resume: SetResume,
-    },
+    Continue { resume: SetResume },
+    Proxy { resume: SetResume },
+    Special { resume: SetResume },
+    ArrayLength { resume: SetResume },
+    Descriptor { resume: SetResume },
+    Define { resume: SetResume },
 }
 
-pub(crate) struct SetResume {
+const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);
+pub(crate) struct SetResume(Box<SetResumeState>);
+impl std::ops::Deref for SetResume {
+    type Target = SetResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for SetResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<SetResume>() <= 8);
+pub(crate) struct SetResumeState {
     state: State,
     phase: Phase,
+    request_object: Option<ObjectRef>,
+    request_key: Option<PropertyKey>,
+    request_value: Option<Value>,
+    request_receiver: Option<Value>,
+    request_descriptor: Option<OrdinaryPropertyDescriptor>,
 }
 enum Phase {
     Walk(ObjectRef),
@@ -276,13 +267,20 @@ impl SetStep {
         loop {
             self = match self {
                 Self::Continue { resume } => resume.advance(runtime)?,
-                Self::Special {
-                    object,
-                    key,
-                    value,
-                    receiver,
-                    resume,
-                } if !matches!(value, Value::Object(_)) => {
+                Self::Special { mut resume }
+                    if !matches!(
+                        resume
+                            .0
+                            .request_value
+                            .as_ref()
+                            .expect("selected Set request field"),
+                        Value::Object(_)
+                    ) =>
+                {
+                    let object = resume.take_object();
+                    let key = resume.take_key();
+                    let value = resume.take_value();
+                    let receiver = resume.take_receiver();
                     let realm = resume
                         .state
                         .realm
@@ -309,12 +307,19 @@ impl SetStep {
                     };
                     resume.special(runtime, result)?
                 }
-                Self::ArrayLength {
-                    object,
-                    key,
-                    value,
-                    resume,
-                } if !matches!(value, Value::Object(_)) => {
+                Self::ArrayLength { mut resume }
+                    if !matches!(
+                        resume
+                            .0
+                            .request_value
+                            .as_ref()
+                            .expect("selected Set request field"),
+                        Value::Object(_)
+                    ) =>
+                {
+                    let object = resume.take_object();
+                    let key = resume.take_key();
+                    let value = resume.take_value();
                     let action = runtime.prepare_set_array_length(
                         resume.state.realm,
                         &object,
@@ -323,22 +328,62 @@ impl SetStep {
                     )?;
                     resume.forward(action)?
                 }
-                Self::Descriptor {
-                    object,
-                    key,
-                    resume,
-                } if matches!(runtime.array_own_key(&object, &key)?, ArrayOwnKey::Index(_)) => {
+                Self::Descriptor { mut resume }
+                    if matches!(
+                        runtime.array_own_key(
+                            resume
+                                .0
+                                .request_object
+                                .as_ref()
+                                .expect("selected Set request field"),
+                            resume
+                                .0
+                                .request_key
+                                .as_ref()
+                                .expect("selected Set request field")
+                        )?,
+                        ArrayOwnKey::Index(_)
+                    ) =>
+                {
+                    let object = resume.take_object();
+                    let key = resume.take_key();
                     let descriptor = runtime.get_own_property(&object, &key)?;
                     resume.descriptor(runtime, NativeConversion::Value(descriptor))?
                 }
-                Self::Define {
-                    object,
-                    key,
-                    descriptor,
-                    resume,
-                } if matches!(runtime.array_own_key(&object, &key)?, ArrayOwnKey::Index(_))
-                    || matches!(runtime.ordinary_property_flags(&object, &key)?, Some(None)) =>
+                Self::Define { mut resume }
+                    if matches!(
+                        runtime.array_own_key(
+                            resume
+                                .0
+                                .request_object
+                                .as_ref()
+                                .expect("selected Set request field"),
+                            resume
+                                .0
+                                .request_key
+                                .as_ref()
+                                .expect("selected Set request field")
+                        )?,
+                        ArrayOwnKey::Index(_)
+                    ) || matches!(
+                        runtime.ordinary_property_flags(
+                            resume
+                                .0
+                                .request_object
+                                .as_ref()
+                                .expect("selected Set request field"),
+                            resume
+                                .0
+                                .request_key
+                                .as_ref()
+                                .expect("selected Set request field")
+                        )?,
+                        Some(None)
+                    ) =>
                 {
+                    let object = resume.take_object();
+                    let key = resume.take_key();
+                    let descriptor = resume.take_descriptor();
                     // An already-selected new ordinary own property needs no
                     // callback. Prototype setters/Proxy traversal were handled
                     // before selecting Define; existing/lazy slots stay on the
@@ -376,13 +421,11 @@ impl SetStep {
         match self {
             Self::Complete(_) => Ok(self),
             Self::Continue { resume } => resume.advance(runtime),
-            Self::Proxy {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            } => {
+            Self::Proxy { mut resume } => {
+                let object = resume.take_object();
+                let key = resume.take_key();
+                let value = resume.take_value();
+                let receiver = resume.take_receiver();
                 let realm = resume
                     .state
                     .realm
@@ -390,13 +433,11 @@ impl SetStep {
                 let result = runtime.proxy_set(realm, &object, &key, value, receiver)?;
                 resume.forward(set_completion(result))
             }
-            Self::Special {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            } => {
+            Self::Special { mut resume } => {
+                let object = resume.take_object();
+                let key = resume.take_key();
+                let value = resume.take_value();
+                let receiver = resume.take_receiver();
                 let realm = resume
                     .state
                     .realm
@@ -411,33 +452,27 @@ impl SetStep {
                 )?;
                 resume.special(runtime, result)
             }
-            Self::ArrayLength {
-                object,
-                key,
-                value,
-                resume,
-            } => {
+            Self::ArrayLength { mut resume } => {
+                let object = resume.take_object();
+                let key = resume.take_key();
+                let value = resume.take_value();
                 let action =
                     runtime.prepare_set_array_length(resume.state.realm, &object, &key, value)?;
                 resume.forward(action)
             }
-            Self::Descriptor {
-                object,
-                key,
-                resume,
-            } => {
+            Self::Descriptor { mut resume } => {
+                let object = resume.take_object();
+                let key = resume.take_key();
                 let result = match resume.state.realm {
                     Some(realm) => runtime.internal_get_own_property(realm, &object, &key)?,
                     None => NativeConversion::Value(runtime.get_own_property(&object, &key)?),
                 };
                 resume.descriptor(runtime, result)
             }
-            Self::Define {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => {
+            Self::Define { mut resume } => {
+                let object = resume.take_object();
+                let key = resume.take_key();
+                let descriptor = resume.take_descriptor();
                 let result = match resume.state.realm {
                     Some(realm) => {
                         runtime.internal_define_own_property(realm, &object, &key, &descriptor)?
@@ -582,11 +617,22 @@ impl State {
                 SetProbe::Setter(set) => {
                     let action = match set {
                         Some(setter) => PropertySetAction::Call {
-                            setter: crate::engine::object::CallableRef::from_validated_object(
-                                ObjectRef::from_borrowed_handle(runtime.clone(), setter)?,
+                            payload: Box::new(
+                                crate::engine::object::operations::PropertySetterCall {
+                                    setter:
+                                        crate::engine::object::CallableRef::from_validated_object(
+                                            ObjectRef::from_borrowed_handle(
+                                                runtime.clone(),
+                                                setter,
+                                            )?,
+                                        ),
+                                    receiver: std::mem::replace(
+                                        &mut self.receiver,
+                                        Value::Undefined,
+                                    ),
+                                    argument: std::mem::replace(&mut self.value, Value::Undefined),
+                                },
                             ),
-                            receiver: std::mem::replace(&mut self.receiver, Value::Undefined),
-                            argument: std::mem::replace(&mut self.value, Value::Undefined),
                         },
                         None => PropertySetAction::Rejected(PropertySetRejection::NoSetter),
                     };
@@ -665,9 +711,16 @@ impl State {
                 CompleteOrdinaryPropertyDescriptor::Accessor { set, .. } => {
                     return Ok(SelectedSet::Complete(match set {
                         Some(setter) => PropertySetAction::Call {
-                            setter,
-                            receiver: std::mem::replace(&mut self.receiver, Value::Undefined),
-                            argument: std::mem::replace(&mut self.value, Value::Undefined),
+                            payload: Box::new(
+                                crate::engine::object::operations::PropertySetterCall {
+                                    setter,
+                                    receiver: std::mem::replace(
+                                        &mut self.receiver,
+                                        Value::Undefined,
+                                    ),
+                                    argument: std::mem::replace(&mut self.value, Value::Undefined),
+                                },
+                            ),
                         },
                         None => PropertySetAction::Rejected(PropertySetRejection::NoSetter),
                     }));
@@ -896,6 +949,26 @@ impl State {
     }
 
     fn publish_selected(self, selected: SelectedSet) -> Result<SetStep, RuntimeError> {
+        if let SelectedSet::Complete(action) = selected {
+            return complete(action);
+        }
+        SetResume(Box::new(SetResumeState {
+            state: self,
+            phase: Phase::Forward,
+            request_object: None,
+            request_key: None,
+            request_value: None,
+            request_receiver: None,
+            request_descriptor: None,
+        }))
+        .publish_selected(selected)
+    }
+}
+
+impl SetResume {
+    // Effect owners live in the same continuation allocation across local and
+    // scheduler transitions. SetStep transports only the phase and pointer.
+    fn publish_selected(mut self, selected: SelectedSet) -> Result<SetStep, RuntimeError> {
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event(match &selected {
             SelectedSet::Complete(_) => "set_completion_adapter",
@@ -906,72 +979,96 @@ impl State {
             SelectedSet::Descriptor(_) => "set_request_publish.Descriptor",
             SelectedSet::Define(..) => "set_request_publish.Define",
         });
-        Ok(match selected {
-            SelectedSet::Complete(action) => SetStep::Complete(action),
-            SelectedSet::Walk(object) => SetStep::Continue {
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Walk(object),
-                },
-            },
-            SelectedSet::Proxy(object) => SetStep::Proxy {
-                object,
-                key: clone_set_key(&self.key),
-                value: clone_set_value(&self.value),
-                receiver: clone_set_value(&self.receiver),
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Forward,
-                },
-            },
-            SelectedSet::Special(object) => SetStep::Special {
-                object: clone_set_object(&object),
-                key: clone_set_key(&self.key),
-                value: clone_set_value(&self.value),
-                receiver: clone_set_value(&self.receiver),
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Special(object),
-                },
-            },
-            SelectedSet::ArrayLength(object) => SetStep::ArrayLength {
-                object,
-                key: clone_set_key(&self.key),
-                value: clone_set_value(&self.value),
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Forward,
-                },
-            },
-            SelectedSet::Descriptor(object) => SetStep::Descriptor {
-                object,
-                key: clone_set_key(&self.key),
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Receiver,
-                },
-            },
-            SelectedSet::Define(object, existing) => SetStep::Define {
-                object: clone_set_object(&object),
-                key: clone_set_key(&self.key),
-                descriptor: self.descriptor(existing),
-                resume: SetResume {
-                    state: self,
-                    phase: Phase::Define(object),
-                },
-            },
-        })
+        match selected {
+            SelectedSet::Complete(action) => complete(action),
+            SelectedSet::Walk(object) => {
+                self.0.phase = Phase::Walk(object);
+                Ok(SetStep::Continue { resume: self })
+            }
+            SelectedSet::Proxy(object) => {
+                self.0.request_object = Some(object);
+                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_value = Some(clone_set_value(&self.0.state.value));
+                self.0.request_receiver = Some(clone_set_value(&self.0.state.receiver));
+                self.0.phase = Phase::Forward;
+                Ok(SetStep::Proxy { resume: self })
+            }
+            SelectedSet::Special(object) => {
+                self.0.request_object = Some(clone_set_object(&object));
+                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_value = Some(clone_set_value(&self.0.state.value));
+                self.0.request_receiver = Some(clone_set_value(&self.0.state.receiver));
+                self.0.phase = Phase::Special(object);
+                Ok(SetStep::Special { resume: self })
+            }
+            SelectedSet::ArrayLength(object) => {
+                self.0.request_object = Some(object);
+                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_value = Some(clone_set_value(&self.0.state.value));
+                self.0.phase = Phase::Forward;
+                Ok(SetStep::ArrayLength { resume: self })
+            }
+            SelectedSet::Descriptor(object) => {
+                self.0.request_object = Some(object);
+                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.phase = Phase::Receiver;
+                Ok(SetStep::Descriptor { resume: self })
+            }
+            SelectedSet::Define(object, existing) => {
+                self.0.request_object = Some(clone_set_object(&object));
+                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_descriptor = Some(self.0.state.descriptor(existing));
+                self.0.phase = Phase::Define(object);
+                Ok(SetStep::Define { resume: self })
+            }
+        }
     }
-}
+    pub(crate) fn take_object(&mut self) -> ObjectRef {
+        self.0
+            .request_object
+            .take()
+            .expect("selected Set request field")
+    }
+    pub(crate) fn take_key(&mut self) -> PropertyKey {
+        self.0
+            .request_key
+            .take()
+            .expect("selected Set request field")
+    }
+    pub(crate) fn take_value(&mut self) -> Value {
+        self.0
+            .request_value
+            .take()
+            .expect("selected Set request field")
+    }
+    pub(crate) fn take_receiver(&mut self) -> Value {
+        self.0
+            .request_receiver
+            .take()
+            .expect("selected Set request field")
+    }
+    pub(crate) fn take_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+        self.0
+            .request_descriptor
+            .take()
+            .expect("selected Set request field")
+    }
+    fn finish_selected(
+        mut self,
+        runtime: &Runtime,
+        selected: SelectedSet,
+    ) -> Result<SetStep, RuntimeError> {
+        let selected = self.0.state.advance_selected(runtime, selected)?;
+        self.publish_selected(selected)
+    }
 
-impl SetResume {
     #[cfg(feature = "stack-vm")]
     pub(crate) fn array_length(
         self,
         runtime: &Runtime,
         result: crate::engine::object::operations::ArrayLengthConversion,
     ) -> Result<SetStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Forward) {
+        if !matches!(self.0.phase, Phase::Forward) {
             return Err(RuntimeError::Invariant(
                 "Set continuation received an Array length reply",
             ));
@@ -981,27 +1078,28 @@ impl SetResume {
                 PropertySetAction::Throw(value)
             }
             crate::engine::object::operations::ArrayLengthConversion::Length(length) => {
-                let Value::Object(object) = &self.state.receiver else {
+                let Value::Object(object) = &self.0.state.receiver else {
                     return Err(RuntimeError::Invariant(
                         "Array length receiver lost its object",
                     ));
                 };
-                runtime.apply_set_array_length(object, &self.state.key, length)?
+                runtime.apply_set_array_length(object, &self.0.state.key, length)?
             }
         };
         complete(action)
     }
 
-    pub(crate) fn advance(self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
-        let Phase::Walk(object) = self.phase else {
+    pub(crate) fn advance(mut self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
+        let Phase::Walk(object) = std::mem::replace(&mut self.0.phase, Phase::Forward) else {
             return Err(RuntimeError::Invariant(
                 "Set continuation received a walk reply",
             ));
         };
-        self.state.walk(runtime, object)
+        let selected = self.0.state.select_walk(runtime, object)?;
+        self.finish_selected(runtime, selected)
     }
     pub(crate) fn forward(self, action: PropertySetAction) -> Result<SetStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Forward) {
+        if !matches!(self.0.phase, Phase::Forward) {
             return Err(RuntimeError::Invariant(
                 "Set continuation received a forward reply",
             ));
@@ -1009,33 +1107,35 @@ impl SetResume {
         complete(action)
     }
     pub(crate) fn special(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Option<NativeConversion<InternalSetResult>>,
     ) -> Result<SetStep, RuntimeError> {
-        let Phase::Special(current) = self.phase else {
+        let Phase::Special(current) = std::mem::replace(&mut self.0.phase, Phase::Forward) else {
             return Err(RuntimeError::Invariant(
                 "Set continuation received a special reply",
             ));
         };
         match result {
             Some(result) => complete(set_completion(result)),
-            None => self.state.special_own(runtime, current),
+            None => {
+                let selected = self.0.state.select_special_own(runtime, current)?;
+                self.finish_selected(runtime, selected)
+            }
         }
     }
     pub(crate) fn descriptor(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<SetStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Receiver) {
+        if !matches!(self.0.phase, Phase::Receiver) {
             return Err(RuntimeError::Invariant(
                 "Set continuation received a descriptor reply",
             ));
         }
-        let mut state = self.state;
-        let selected = state.select_descriptor(runtime, result)?;
-        state.finish_selected(runtime, selected)
+        let selected = self.0.state.select_descriptor(runtime, result)?;
+        self.finish_selected(runtime, selected)
     }
 
     pub(crate) fn defined(
@@ -1043,12 +1143,12 @@ impl SetResume {
         runtime: &Runtime,
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<SetStep, RuntimeError> {
-        let Phase::Define(receiver) = self.phase else {
+        let Phase::Define(receiver) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "Set continuation received a define reply",
             ));
         };
-        complete(self.state.defined_action(runtime, &receiver, result)?)
+        complete(self.0.state.defined_action(runtime, &receiver, result)?)
     }
 }
 
@@ -1681,9 +1781,15 @@ mod tests {
             )
             .unwrap();
             if after_descriptor {
-                step = take_descriptor(step)
+                let resume = take_descriptor(step);
+                let owner = (&*resume.0) as *const SetResumeState;
+                step = resume
                     .descriptor(&runtime, NativeConversion::Value(None))
                     .unwrap();
+                let SetStep::Define { resume } = &step else {
+                    panic!("expected define");
+                };
+                assert_eq!(owner, (&*resume.0) as *const SetResumeState);
             }
             runtime.run_gc().unwrap();
             for id in [target_id, handler_id, receiver_id, value_id] {
@@ -1737,3 +1843,6 @@ mod tests {
         assert_eq!(runtime.0.proxy_method_depth.get(), 0);
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);

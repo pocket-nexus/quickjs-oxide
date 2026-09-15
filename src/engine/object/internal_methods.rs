@@ -805,34 +805,34 @@ impl Runtime {
         loop {
             step = match step {
                 ProxyGetStep::Complete(completion) => return Ok(completion),
-                ProxyGetStep::Read {
-                    object,
-                    key,
-                    receiver,
-                    resume,
-                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
-                ProxyGetStep::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } => {
-                    let completion = match target {
-                        DirectCallTarget::Callable(callable) => {
-                            self.call_internal(realm, &callable, receiver, &arguments)?
-                        }
-                        DirectCallTarget::NonCallableProxy(proxy) => {
-                            self.call_proxy(realm, &proxy, receiver, &arguments)?
-                        }
-                    };
-                    resume.resume(self, completion)?
+                ProxyGetStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
                 }
-                ProxyGetStep::Descriptor {
-                    object,
-                    key,
-                    resume,
-                } => resume
-                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
+                ProxyGetStep::Call { mut resume } => {
+                    let target = resume.take_call_target();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    {
+                        let completion = match target {
+                            DirectCallTarget::Callable(callable) => {
+                                self.call_internal(realm, &callable, receiver, &arguments)?
+                            }
+                            DirectCallTarget::NonCallableProxy(proxy) => {
+                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                            }
+                        };
+                        resume.resume(self, completion)?
+                    }
+                }
+                ProxyGetStep::Descriptor { mut resume } => {
+                    let object = resume.take_descriptor_object();
+                    let key = resume.take_descriptor_key();
+                    resume
+                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                }
             };
         }
     }
@@ -860,11 +860,13 @@ impl Runtime {
             PropertySetAction::Rejected(reason) => {
                 Ok(NativeConversion::Value(InternalSetResult::Rejected(reason)))
             }
-            PropertySetAction::Call {
-                setter,
-                receiver,
-                argument,
-            } => {
+            PropertySetAction::Call { payload } => {
+                let crate::engine::object::operations::PropertySetterCall {
+                    setter,
+                    receiver,
+                    argument,
+                } = *payload;
+
                 let _operation = self.operation();
                 match self.call_internal(realm, &setter, receiver, &[argument])? {
                     Completion::Return(_) => {
@@ -1011,41 +1013,41 @@ impl Runtime {
         loop {
             step = match step {
                 ProxySetStep::Complete(result) => return Ok(result),
-                ProxySetStep::Read {
-                    object,
-                    key,
-                    receiver,
-                    resume,
-                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
-                ProxySetStep::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } => {
-                    let completion = match target {
-                        DirectCallTarget::Callable(callable) => {
-                            self.call_internal(realm, &callable, receiver, &arguments)?
-                        }
-                        DirectCallTarget::NonCallableProxy(proxy) => {
-                            self.call_proxy(realm, &proxy, receiver, &arguments)?
-                        }
-                    };
-                    resume.resume(self, completion)?
+                ProxySetStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
                 }
-                ProxySetStep::Set {
-                    object,
-                    key,
-                    value,
-                    receiver,
-                    resume,
-                } => resume.set(self.internal_set(realm, &object, &key, value, receiver)?)?,
-                ProxySetStep::Descriptor {
-                    object,
-                    key,
-                    resume,
-                } => resume
-                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
+                ProxySetStep::Call { mut resume } => {
+                    let target = resume.take_call_target();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    {
+                        let completion = match target {
+                            DirectCallTarget::Callable(callable) => {
+                                self.call_internal(realm, &callable, receiver, &arguments)?
+                            }
+                            DirectCallTarget::NonCallableProxy(proxy) => {
+                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                            }
+                        };
+                        resume.resume(self, completion)?
+                    }
+                }
+                ProxySetStep::Set { mut resume } => {
+                    let object = resume.take_set_object();
+                    let key = resume.take_set_key();
+                    let value = resume.take_set_value();
+                    let receiver = resume.take_set_receiver();
+                    resume.set(self.internal_set(realm, &object, &key, value, receiver)?)?
+                }
+                ProxySetStep::Descriptor { mut resume } => {
+                    let object = resume.take_descriptor_object();
+                    let key = resume.take_descriptor_key();
+                    resume
+                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                }
             };
         }
     }
@@ -1123,38 +1125,40 @@ impl Runtime {
         loop {
             step = match step {
                 ProxyOwnStep::Complete(result) => return Ok(result),
-                ProxyOwnStep::Read {
-                    object,
-                    key,
-                    receiver,
-                    resume,
-                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
-                ProxyOwnStep::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } => {
-                    let completion = match target {
-                        DirectCallTarget::Callable(callable) => {
-                            self.call_internal(realm, &callable, receiver, &arguments)?
-                        }
-                        DirectCallTarget::NonCallableProxy(proxy) => {
-                            self.call_proxy(realm, &proxy, receiver, &arguments)?
-                        }
-                    };
-                    resume.resume(self, completion)?
+                ProxyOwnStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
                 }
-                ProxyOwnStep::Descriptor {
-                    object,
-                    key,
-                    resume,
-                } => resume
-                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
-                ProxyOwnStep::Extensible { object, resume } => {
+                ProxyOwnStep::Call { mut resume } => {
+                    let target = resume.take_call_target();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    {
+                        let completion = match target {
+                            DirectCallTarget::Callable(callable) => {
+                                self.call_internal(realm, &callable, receiver, &arguments)?
+                            }
+                            DirectCallTarget::NonCallableProxy(proxy) => {
+                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                            }
+                        };
+                        resume.resume(self, completion)?
+                    }
+                }
+                ProxyOwnStep::Descriptor { mut resume } => {
+                    let object = resume.take_descriptor_object();
+                    let key = resume.take_descriptor_key();
+                    resume
+                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                }
+                ProxyOwnStep::Extensible { mut resume } => {
+                    let object = resume.take_extensible_object();
                     resume.extensible(self.internal_is_extensible(realm, &object)?)?
                 }
-                ProxyOwnStep::Convert { value, resume } => {
+                ProxyOwnStep::Convert { mut resume } => {
+                    let value = resume.take_convert_value();
                     resume.converted(self, self.native_to_property_descriptor(realm, value)?)?
                 }
             };
@@ -1196,45 +1200,45 @@ impl Runtime {
         loop {
             step = match step {
                 ProxyDefineStep::Complete(result) => return Ok(result),
-                ProxyDefineStep::Read {
-                    object,
-                    key,
-                    receiver,
-                    resume,
-                } => resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?,
-                ProxyDefineStep::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } => {
-                    let completion = match target {
-                        DirectCallTarget::Callable(callable) => {
-                            self.call_internal(realm, &callable, receiver, &arguments)?
-                        }
-                        DirectCallTarget::NonCallableProxy(proxy) => {
-                            self.call_proxy(realm, &proxy, receiver, &arguments)?
-                        }
-                    };
-                    resume.resume(self, completion)?
+                ProxyDefineStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
                 }
-                ProxyDefineStep::Define {
-                    object,
-                    key,
-                    descriptor,
-                    resume,
-                } => resume.defined(self.internal_define_own_property(
-                    realm,
-                    &object,
-                    &key,
-                    &descriptor,
-                )?)?,
-                ProxyDefineStep::Descriptor {
-                    object,
-                    key,
-                    resume,
-                } => resume
-                    .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?,
+                ProxyDefineStep::Call { mut resume } => {
+                    let target = resume.take_call_target();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    {
+                        let completion = match target {
+                            DirectCallTarget::Callable(callable) => {
+                                self.call_internal(realm, &callable, receiver, &arguments)?
+                            }
+                            DirectCallTarget::NonCallableProxy(proxy) => {
+                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                            }
+                        };
+                        resume.resume(self, completion)?
+                    }
+                }
+                ProxyDefineStep::Define { mut resume } => {
+                    let object = resume.take_define_object();
+                    let key = resume.take_define_key();
+                    let descriptor = resume.take_define_descriptor();
+                    resume.defined(self.internal_define_own_property(
+                        realm,
+                        &object,
+                        &key,
+                        &descriptor,
+                    )?)?
+                }
+                ProxyDefineStep::Descriptor { mut resume } => {
+                    let object = resume.take_descriptor_object();
+                    let key = resume.take_descriptor_key();
+                    resume
+                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                }
             };
         }
     }
@@ -1294,30 +1298,30 @@ impl Runtime {
         loop {
             step = match step {
                 ProxyCallStep::Complete(completion) => return Ok(completion),
-                ProxyCallStep::Read {
-                    object,
-                    key,
-                    receiver,
-                    resume,
-                } => {
-                    let completion = self.internal_get(realm, &object, &key, receiver)?;
-                    resume.resume(self, completion)?
+                ProxyCallStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    let receiver = resume.take_read_receiver();
+                    {
+                        let completion = self.internal_get(realm, &object, &key, receiver)?;
+                        resume.resume(self, completion)?
+                    }
                 }
-                ProxyCallStep::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } => {
-                    let completion = match target {
-                        DirectCallTarget::Callable(callable) => {
-                            self.call_internal(realm, &callable, receiver, &arguments)?
-                        }
-                        DirectCallTarget::NonCallableProxy(proxy) => {
-                            self.call_proxy(realm, &proxy, receiver, &arguments)?
-                        }
-                    };
-                    resume.resume(self, completion)?
+                ProxyCallStep::Call { mut resume } => {
+                    let target = resume.take_call_target();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    {
+                        let completion = match target {
+                            DirectCallTarget::Callable(callable) => {
+                                self.call_internal(realm, &callable, receiver, &arguments)?
+                            }
+                            DirectCallTarget::NonCallableProxy(proxy) => {
+                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                            }
+                        };
+                        resume.resume(self, completion)?
+                    }
                 }
             };
         }

@@ -55,25 +55,25 @@ impl Runtime {
 
 pub(crate) enum TagSetterStep {
     Complete(Completion),
-    Own {
-        object: crate::engine::object::ObjectRef,
-        key: PropertyKey,
-        resume: TagSetterResume,
-    },
-    Define {
-        object: crate::engine::object::ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
-        resume: TagSetterResume,
-    },
-    Set {
-        object: crate::engine::object::ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        resume: TagSetterResume,
-    },
+    Own { resume: TagSetterResume },
+    Define { resume: TagSetterResume },
+    Set { resume: TagSetterResume },
 }
-pub(crate) struct TagSetterResume {
+pub(crate) struct TagSetterResume(Box<TagSetterResumeState>);
+impl std::ops::Deref for TagSetterResume {
+    type Target = TagSetterResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TagSetterResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TagSetterResume>() <= 8);
+pub(crate) struct TagSetterResumeState {
+    pending_effect: TagSetterStepPending,
     realm: ContextId,
     receiver: crate::engine::object::ObjectRef,
     key: PropertyKey,
@@ -118,15 +118,21 @@ impl TagSetterStep {
             )));
         }
         let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
-        Ok(Self::Own {
-            object: receiver.clone(),
-            key: key.clone(),
-            resume: TagSetterResume {
+        Ok({
+            let __pending_field_object = receiver.clone();
+            let __pending_field_key = key.clone();
+            let __pending_field_resume = TagSetterResume(Box::new(TagSetterResumeState {
+                pending_effect: TagSetterStepPending::default(),
                 realm,
                 receiver: receiver.clone(),
                 key,
                 value,
-            },
+            }));
+            Self::request_own(
+                __pending_field_object,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         })
     }
 }
@@ -137,23 +143,35 @@ impl TagSetterResume {
     ) -> Result<TagSetterStep, RuntimeError> {
         match reply {
             NativeConversion::Throw(value) => Ok(TagSetterStep::Complete(Completion::Throw(value))),
-            NativeConversion::Value(true) => Ok(TagSetterStep::Set {
-                object: self.receiver.clone(),
-                key: self.key.clone(),
-                value: self.value.clone(),
-                resume: self,
+            NativeConversion::Value(true) => Ok({
+                let __pending_field_object = self.0.receiver.clone();
+                let __pending_field_key = self.0.key.clone();
+                let __pending_field_value = self.0.value.clone();
+                let __pending_field_resume = self;
+                TagSetterStep::request_set(
+                    __pending_field_object,
+                    __pending_field_key,
+                    __pending_field_value,
+                    __pending_field_resume,
+                )
             }),
-            NativeConversion::Value(false) => Ok(TagSetterStep::Define {
-                object: self.receiver.clone(),
-                key: self.key.clone(),
-                descriptor: OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(self.value.clone()),
+            NativeConversion::Value(false) => Ok({
+                let __pending_field_object = self.0.receiver.clone();
+                let __pending_field_key = self.0.key.clone();
+                let __pending_field_descriptor = OrdinaryPropertyDescriptor {
+                    value: DescriptorField::Present(self.0.value.clone()),
                     writable: DescriptorField::Present(true),
                     enumerable: DescriptorField::Present(true),
                     configurable: DescriptorField::Present(true),
                     ..OrdinaryPropertyDescriptor::new()
-                },
-                resume: self,
+                };
+                let __pending_field_resume = self;
+                TagSetterStep::request_define(
+                    __pending_field_object,
+                    __pending_field_key,
+                    __pending_field_descriptor,
+                    __pending_field_resume,
+                )
             }),
         }
     }
@@ -168,13 +186,13 @@ impl TagSetterResume {
             }
             NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
                 Completion::Throw(runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Type,
                     "proxy: defineProperty exception",
                 )?)
             }
             NativeConversion::Value(InternalDefineResult::RejectedOrdinary(target)) => {
-                let message = if !runtime.has_own_property(&target, &self.key)?
+                let message = if !runtime.has_own_property(&target, &self.0.key)?
                     && !runtime.is_extensible(&target)?
                 {
                     "object is not extensible"
@@ -182,7 +200,7 @@ impl TagSetterResume {
                     "property is not configurable"
                 };
                 Completion::Throw(runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Type,
                     message,
                 )?)
@@ -196,7 +214,7 @@ impl TagSetterResume {
         reply: NativeConversion<crate::engine::object::operations::InternalSetResult>,
     ) -> Result<TagSetterStep, RuntimeError> {
         Ok(TagSetterStep::Complete(
-            match runtime.finish_set_property_or_throw(self.realm, &self.key, reply)? {
+            match runtime.finish_set_property_or_throw(self.0.realm, &self.0.key, reply)? {
                 Some(value) => Completion::Throw(value),
                 None => Completion::Return(Value::Undefined),
             },
@@ -211,29 +229,142 @@ pub(crate) fn finish_tag(
     loop {
         step = match step {
             TagSetterStep::Complete(result) => return Ok(result),
-            TagSetterStep::Own {
-                object,
-                key,
-                resume,
-            } => resume.boolean(runtime.internal_has_own_property(realm, &object, &key)?)?,
-            TagSetterStep::Define {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => resume.defined(
-                runtime,
-                runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
-            )?,
-            TagSetterStep::Set {
-                object,
-                key,
-                value,
-                resume,
-            } => resume.set(
-                runtime,
-                runtime.internal_set(realm, &object, &key, value, Value::Object(object.clone()))?,
-            )?,
+            TagSetterStep::Own { mut resume } => {
+                let object = resume.take_own_object();
+                let key = resume.take_own_key();
+                resume.boolean(runtime.internal_has_own_property(realm, &object, &key)?)?
+            }
+            TagSetterStep::Define { mut resume } => {
+                let object = resume.take_define_object();
+                let key = resume.take_define_key();
+                let descriptor = resume.take_define_descriptor();
+                resume.defined(
+                    runtime,
+                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                )?
+            }
+            TagSetterStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                resume.set(
+                    runtime,
+                    runtime.internal_set(
+                        realm,
+                        &object,
+                        &key,
+                        value,
+                        Value::Object(object.clone()),
+                    )?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct TagSetterStepPending {
+    own_object: Option<crate::engine::object::ObjectRef>,
+    own_key: Option<PropertyKey>,
+    define_object: Option<crate::engine::object::ObjectRef>,
+    define_key: Option<PropertyKey>,
+    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    set_object: Option<crate::engine::object::ObjectRef>,
+    set_key: Option<PropertyKey>,
+    set_value: Option<Value>,
+}
+impl TagSetterStep {
+    pub(crate) fn request_own(
+        object: crate::engine::object::ObjectRef,
+        key: PropertyKey,
+        mut resume: TagSetterResume,
+    ) -> Self {
+        resume.0.pending_effect.own_object = Some(object);
+        resume.0.pending_effect.own_key = Some(key);
+        Self::Own { resume }
+    }
+    pub(crate) fn request_define(
+        object: crate::engine::object::ObjectRef,
+        key: PropertyKey,
+        descriptor: OrdinaryPropertyDescriptor,
+        mut resume: TagSetterResume,
+    ) -> Self {
+        resume.0.pending_effect.define_object = Some(object);
+        resume.0.pending_effect.define_key = Some(key);
+        resume.0.pending_effect.define_descriptor = Some(descriptor);
+        Self::Define { resume }
+    }
+    pub(crate) fn request_set(
+        object: crate::engine::object::ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: TagSetterResume,
+    ) -> Self {
+        resume.0.pending_effect.set_object = Some(object);
+        resume.0.pending_effect.set_key = Some(key);
+        resume.0.pending_effect.set_value = Some(value);
+        Self::Set { resume }
+    }
+}
+impl TagSetterResume {
+    pub(crate) fn take_own_object(&mut self) -> crate::engine::object::ObjectRef {
+        self.0
+            .pending_effect
+            .own_object
+            .take()
+            .expect("TagSetterStep Own object")
+    }
+    pub(crate) fn take_own_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .own_key
+            .take()
+            .expect("TagSetterStep Own key")
+    }
+    pub(crate) fn take_define_object(&mut self) -> crate::engine::object::ObjectRef {
+        self.0
+            .pending_effect
+            .define_object
+            .take()
+            .expect("TagSetterStep Define object")
+    }
+    pub(crate) fn take_define_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .define_key
+            .take()
+            .expect("TagSetterStep Define key")
+    }
+    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+        self.0
+            .pending_effect
+            .define_descriptor
+            .take()
+            .expect("TagSetterStep Define descriptor")
+    }
+    pub(crate) fn take_set_object(&mut self) -> crate::engine::object::ObjectRef {
+        self.0
+            .pending_effect
+            .set_object
+            .take()
+            .expect("TagSetterStep Set object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .set_key
+            .take()
+            .expect("TagSetterStep Set key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .set_value
+            .take()
+            .expect("TagSetterStep Set value")
+    }
+}
+const _: () = assert!(std::mem::size_of::<TagSetterStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TagSetterStep>() <= 64);

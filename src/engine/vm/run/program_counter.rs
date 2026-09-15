@@ -22,7 +22,7 @@ impl<'a> ProgramCounter<'a> {
     pub fn publish_fault(&mut self) {
         *self.published_fault = self.fault;
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("run_frame_fault_pc_write");
+        super::cold::event("run_frame_fault_pc_write");
     }
 }
 impl Drop for ProgramCounter<'_> {
@@ -30,7 +30,7 @@ impl Drop for ProgramCounter<'_> {
         self.publish_fault();
         *self.published_resume = self.resume;
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("run_frame_resume_pc_write");
+        super::cold::event("run_frame_resume_pc_write");
     }
 }
 

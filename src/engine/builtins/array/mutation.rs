@@ -31,42 +31,25 @@ pub(crate) enum MutationStep {
     Complete(Completion),
     #[cfg(feature = "stack-vm")]
     PreparedRead {
-        read: crate::engine::object::OrdinaryRead,
-        key: PropertyKey,
         resume: MutationResume,
     },
     #[cfg(feature = "stack-vm")]
     PreparedSet {
-        step: Box<crate::engine::object::SetStep>,
-        key: PropertyKey,
         resume: MutationResume,
     },
     Read {
-        object: ObjectRef,
-        key: PropertyKey,
         resume: MutationResume,
     },
     Number {
-        value: Value,
         resume: MutationResume,
     },
     Copy {
-        object: ObjectRef,
-        to: u64,
-        from: u64,
-        count: u64,
-        backwards: bool,
         resume: MutationResume,
     },
     Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
         resume: MutationResume,
     },
     Delete {
-        object: ObjectRef,
-        key: PropertyKey,
         resume: MutationResume,
     },
 }
@@ -79,7 +62,22 @@ enum Phase {
     DeleteLast,
     LengthWrite,
 }
-pub(crate) struct MutationResume {
+pub(crate) struct MutationResume(Box<MutationResumeState>);
+impl std::ops::Deref for MutationResume {
+    type Target = MutationResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for MutationResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<MutationResume>() <= 8);
+pub(crate) struct MutationResumeState {
+    pending_effect: MutationStepPending,
+    scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
     kind: MutationKind,
     object: ObjectRef,
@@ -191,7 +189,9 @@ impl MutationStep {
             }
         }
         let action = MutationAction::Read(runtime.intern_property_key("length")?);
-        MutationResume {
+        MutationResume(Box::new(MutationResumeState {
+            pending_effect: MutationStepPending::default(),
+            scheduler_set_key: None,
             realm,
             kind,
             object,
@@ -202,23 +202,31 @@ impl MutationStep {
             new_length: 0,
             cursor: 0,
             result: inline.unwrap_or(Value::Undefined),
-        }
+        }))
         .drive(runtime, action)
     }
 }
 impl MutationResume {
+    pub(crate) fn with_scheduler_set_key(mut self, key: PropertyKey) -> Self {
+        self.0.scheduler_set_key = Some(key);
+        self
+    }
+    pub(crate) fn take_scheduler_set_key(&mut self) -> PropertyKey {
+        self.0.scheduler_set_key.take().expect("waiting Set key")
+    }
+
     fn argument_count(&self) -> usize {
-        if self.inline_argument {
+        if self.0.inline_argument {
             1
         } else {
-            self.arguments.len()
+            self.0.arguments.len()
         }
     }
     fn argument(&self, index: usize) -> Option<&Value> {
-        if self.inline_argument {
-            (index == 0).then_some(&self.result)
+        if self.0.inline_argument {
+            (index == 0).then_some(&self.0.result)
         } else {
-            self.arguments.get(index)
+            self.0.arguments.get(index)
         }
     }
     fn resume_once(
@@ -232,13 +240,13 @@ impl MutationResume {
                 return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Length => {
-                self.phase = Phase::Number;
+                self.0.phase = Phase::Number;
                 Ok(MutationAction::Number(value))
             }
             Phase::Result => {
-                self.result = value;
+                self.0.result = value;
                 self.copy_next(runtime)
             }
             Phase::Copy => self.copied(runtime),
@@ -252,24 +260,24 @@ impl MutationResume {
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<MutationAction, RuntimeError> {
-        if !matches!(self.phase, Phase::Number) {
+        if !matches!(self.0.phase, Phase::Number) {
             return Err(RuntimeError::Invariant(
                 "Array mutation number phase mismatch",
             ));
         }
-        self.length = match result {
+        self.0.length = match result {
             NativeConversion::Value(number) => Runtime::length_from_number(number),
             NativeConversion::Throw(value) => {
                 return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
-        match self.kind {
+        match self.0.kind {
             MutationKind::Push(_) => {
-                self.new_length = self.length.saturating_add(self.argument_count() as u64);
-                if self.new_length > (1_u64 << 53) - 1 {
+                self.0.new_length = self.0.length.saturating_add(self.argument_count() as u64);
+                if self.0.new_length > (1_u64 << 53) - 1 {
                     return Ok(MutationAction::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "Array loo long",
                         )?,
@@ -278,29 +286,29 @@ impl MutationResume {
                 self.copy_next(runtime)
             }
             MutationKind::Pop(kind) => {
-                self.new_length = self.length.saturating_sub(1);
-                if self.length == 0 {
+                self.0.new_length = self.0.length.saturating_sub(1);
+                if self.0.length == 0 {
                     return self.write_length(runtime);
                 }
                 let index = if kind == ArrayPopKind::Shift {
                     0
                 } else {
-                    self.new_length
+                    self.0.new_length
                 };
-                self.phase = Phase::Result;
+                self.0.phase = Phase::Result;
                 Ok(MutationAction::Read(runtime.property_key_for_index(index)?))
             }
         }
     }
     fn copy_next(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
-        let (to, from, count, backwards) = match self.kind {
+        let (to, from, count, backwards) = match self.0.kind {
             MutationKind::Push(ArrayPushKind::Unshift) if self.argument_count() != 0 => {
-                (self.argument_count() as u64, 0, self.length, true)
+                (self.argument_count() as u64, 0, self.0.length, true)
             }
-            MutationKind::Pop(ArrayPopKind::Shift) => (0, 1, self.new_length, false),
+            MutationKind::Pop(ArrayPopKind::Shift) => (0, 1, self.0.new_length, false),
             _ => return self.copied(runtime),
         };
-        self.phase = Phase::Copy;
+        self.0.phase = Phase::Copy;
         Ok(MutationAction::Copy {
             to,
             from,
@@ -309,32 +317,32 @@ impl MutationResume {
         })
     }
     fn copied(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
-        self.cursor = 0;
-        match self.kind {
+        self.0.cursor = 0;
+        match self.0.kind {
             MutationKind::Push(_) => self.write_next(runtime),
             MutationKind::Pop(_) => {
-                self.phase = Phase::DeleteLast;
+                self.0.phase = Phase::DeleteLast;
                 Ok(MutationAction::Delete(
-                    runtime.property_key_for_index(self.new_length)?,
+                    runtime.property_key_for_index(self.0.new_length)?,
                 ))
             }
         }
     }
     fn write_next(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
-        if let Some(value) = self.argument(self.cursor as usize).cloned() {
-            let from = match self.kind {
+        if let Some(value) = self.argument(self.0.cursor as usize).cloned() {
+            let from = match self.0.kind {
                 MutationKind::Push(ArrayPushKind::Unshift) if self.argument_count() != 0 => 0,
-                _ => self.length,
+                _ => self.0.length,
             };
-            self.phase = Phase::Write;
+            self.0.phase = Phase::Write;
             return Ok(MutationAction::Set {
-                key: runtime.property_key_for_index(from + self.cursor)?,
+                key: runtime.property_key_for_index(from + self.0.cursor)?,
                 value,
             });
         }
-        let redundant = matches!(self.kind, MutationKind::Push(ArrayPushKind::Push))
-            && self.new_length <= u64::from(u32::MAX)
-            && matches!(runtime.array_length_state_if_genuine(&self.object)?, Some((length, true)) if u64::from(length) == self.new_length);
+        let redundant = matches!(self.0.kind, MutationKind::Push(ArrayPushKind::Push))
+            && self.0.new_length <= u64::from(u32::MAX)
+            && matches!(runtime.array_length_state_if_genuine(&self.0.object)?, Some((length, true)) if u64::from(length) == self.0.new_length);
         if redundant {
             self.complete()
         } else {
@@ -342,17 +350,17 @@ impl MutationResume {
         }
     }
     fn write_length(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
-        self.phase = Phase::LengthWrite;
+        self.0.phase = Phase::LengthWrite;
         Ok(MutationAction::Set {
             key: runtime.intern_property_key("length")?,
-            value: Value::number(self.new_length as f64),
+            value: Value::number(self.0.new_length as f64),
         })
     }
     fn complete(&mut self) -> Result<MutationAction, RuntimeError> {
         Ok(MutationAction::Complete(Completion::Return(
-            match self.kind {
-                MutationKind::Push(_) => Value::number(self.new_length as f64),
-                MutationKind::Pop(_) => std::mem::replace(&mut self.result, Value::Undefined),
+            match self.0.kind {
+                MutationKind::Push(_) => Value::number(self.0.new_length as f64),
+                MutationKind::Pop(_) => std::mem::replace(&mut self.0.result, Value::Undefined),
             },
         )))
     }
@@ -367,12 +375,12 @@ impl MutationResume {
                 return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::DeleteLast => {
                 if !value {
                     return Ok(MutationAction::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "could not delete property",
                         )?,
@@ -391,12 +399,12 @@ impl MutationResume {
         key: PropertyKey,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<MutationAction, RuntimeError> {
-        if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
+        if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(MutationAction::Complete(Completion::Throw(value)));
         }
-        match self.phase {
+        match self.0.phase {
             Phase::Write => {
-                self.cursor += 1;
+                self.0.cursor += 1;
                 self.write_next(runtime)
             }
             Phase::LengthWrite => self.complete(),
@@ -450,9 +458,9 @@ impl MutationResume {
                 use crate::engine::value::conversion::number::NumberStep;
                 action = match action {
                     MutationAction::Read(key) => {
-                        let receiver = Value::Object(self.object.clone());
+                        let receiver = Value::Object(self.0.object.clone());
                         match runtime.prepare_ordinary_read_borrowed(
-                            &self.object,
+                            &self.0.object,
                             &key,
                             &receiver,
                         )? {
@@ -461,17 +469,13 @@ impl MutationResume {
                                 Completion::Return(value.unwrap_or(Value::Undefined)),
                             )?,
                             read => {
-                                return Ok(MutationStep::PreparedRead {
-                                    read,
-                                    key,
-                                    resume: self,
-                                });
+                                return Ok(MutationStep::request_prepared_read(read, key, self));
                             }
                         }
                     }
                     MutationAction::Number(value) if !matches!(value, Value::Object(_)) => {
                         let NumberStep::Complete(reply) =
-                            NumberStep::start(runtime, self.realm, value)?
+                            NumberStep::start(runtime, self.0.realm, value)?
                         else {
                             return Err(RuntimeError::Invariant(
                                 "primitive mutation number suspended",
@@ -483,10 +487,10 @@ impl MutationResume {
                         let mut pending = None;
                         let selected = SetStep::start_receiver_into(
                             runtime,
-                            self.realm,
+                            self.0.realm,
                             &key,
                             value,
-                            Value::Object(self.object.clone()),
+                            Value::Object(self.0.object.clone()),
                             |step| pending = Some(step),
                         )?;
                         let step = match selected {
@@ -507,17 +511,17 @@ impl MutationResume {
                                 self.set_once(runtime, key, local_set_result(action)?)?
                             }
                             step => {
-                                return Ok(MutationStep::PreparedSet {
-                                    step: Box::new(step),
+                                return Ok(MutationStep::request_prepared_set(
+                                    Box::new(step),
                                     key,
-                                    resume: self,
-                                });
+                                    self,
+                                ));
                             }
                         }
                     }
-                    MutationAction::Delete(key) if !runtime.is_proxy_object(&self.object)? => {
+                    MutationAction::Delete(key) if !runtime.is_proxy_object(&self.0.object)? => {
                         let reply =
-                            runtime.internal_delete_property(self.realm, &self.object, &key)?;
+                            runtime.internal_delete_property(self.0.realm, &self.0.object, &key)?;
                         self.boolean_once(runtime, reply)?
                     }
                     action => return Ok(self.wait(action)),
@@ -534,39 +538,24 @@ impl MutationResume {
     fn wait(self, action: MutationAction) -> MutationStep {
         match action {
             MutationAction::Complete(result) => MutationStep::Complete(result),
-            MutationAction::Read(key) => MutationStep::Read {
-                object: self.object.clone(),
-                key,
-                resume: self,
-            },
-            MutationAction::Number(value) => MutationStep::Number {
-                value,
-                resume: self,
-            },
+            MutationAction::Read(key) => {
+                MutationStep::request_read(self.0.object.clone(), key, self)
+            }
+            MutationAction::Number(value) => MutationStep::request_number(value, self),
             MutationAction::Copy {
                 to,
                 from,
                 count,
                 backwards,
-            } => MutationStep::Copy {
-                object: self.object.clone(),
-                to,
-                from,
-                count,
-                backwards,
-                resume: self,
-            },
-            MutationAction::Set { key, value } => MutationStep::Set {
-                object: self.object.clone(),
-                key,
-                value,
-                resume: self,
-            },
-            MutationAction::Delete(key) => MutationStep::Delete {
-                object: self.object.clone(),
-                key,
-                resume: self,
-            },
+            } => {
+                MutationStep::request_copy(self.0.object.clone(), to, from, count, backwards, self)
+            }
+            MutationAction::Set { key, value } => {
+                MutationStep::request_set(self.0.object.clone(), key, value, self)
+            }
+            MutationAction::Delete(key) => {
+                MutationStep::request_delete(self.0.object.clone(), key, self)
+            }
         }
     }
 }
@@ -601,95 +590,106 @@ pub(crate) fn finish(
         step = match step {
             MutationStep::Complete(result) => return Ok(result),
             #[cfg(feature = "stack-vm")]
-            MutationStep::PreparedRead { read, key, resume } => {
-                let reply = match runtime.finish_prepared_read(realm, &key, read)? {
-                    NativeConversion::Value(value) => {
-                        Completion::Return(value.unwrap_or(Value::Undefined))
-                    }
-                    NativeConversion::Throw(value) => Completion::Throw(value),
-                };
-                resume.resume(runtime, reply)?
+            MutationStep::PreparedRead { mut resume } => {
+                let read = resume.take_prepared_read_read();
+                let key = resume.take_prepared_read_key();
+                {
+                    let reply = match runtime.finish_prepared_read(realm, &key, read)? {
+                        NativeConversion::Value(value) => {
+                            Completion::Return(value.unwrap_or(Value::Undefined))
+                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
+                    };
+                    resume.resume(runtime, reply)?
+                }
             }
             #[cfg(feature = "stack-vm")]
-            MutationStep::PreparedSet { step, key, resume } => {
-                use crate::engine::object::{SetStep, operations::PropertySetAction};
-                let mut step = *step;
-                let result = loop {
-                    match step {
-                        SetStep::Complete(PropertySetAction::Call {
-                            setter,
-                            receiver,
-                            argument,
-                        }) => {
-                            break match runtime.call_internal(
-                                realm,
-                                &setter,
-                                receiver,
-                                &[argument],
-                            )? {
-                                Completion::Return(_) => {
-                                    NativeConversion::Value(InternalSetResult::Accepted)
-                                }
-                                Completion::Throw(value) => NativeConversion::Throw(value),
-                            };
+            MutationStep::PreparedSet { mut resume } => {
+                let step = resume.take_prepared_set_step();
+                let key = resume.take_prepared_set_key();
+                {
+                    use crate::engine::object::{SetStep, operations::PropertySetAction};
+                    let mut step = *step;
+                    let result = loop {
+                        match step {
+                            SetStep::Complete(PropertySetAction::Call { payload }) => {
+                                let crate::engine::object::operations::PropertySetterCall {
+                                    setter,
+                                    receiver,
+                                    argument,
+                                } = *payload;
+
+                                break match runtime.call_internal(
+                                    realm,
+                                    &setter,
+                                    receiver,
+                                    &[argument],
+                                )? {
+                                    Completion::Return(_) => {
+                                        NativeConversion::Value(InternalSetResult::Accepted)
+                                    }
+                                    Completion::Throw(value) => NativeConversion::Throw(value),
+                                };
+                            }
+                            SetStep::Complete(action) => break local_set_result(action)?,
+                            request => step = request.finish_sync(runtime)?,
                         }
-                        SetStep::Complete(action) => break local_set_result(action)?,
-                        request => step = request.finish_sync(runtime)?,
-                    }
-                };
-                resume.set(runtime, key, result)?
+                    };
+                    resume.set(runtime, key, result)?
+                }
             }
-            MutationStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            MutationStep::Number { value, resume } => {
+            MutationStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
+                )?
+            }
+            MutationStep::Number { mut resume } => {
+                let value = resume.take_number_value();
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
-            MutationStep::Copy {
-                object,
-                to,
-                from,
-                count,
-                backwards,
-                resume,
-            } => resume.resume(
-                runtime,
-                super::copy::finish(
+            MutationStep::Copy { mut resume } => {
+                let object = resume.take_copy_object();
+                let to = resume.take_copy_to();
+                let from = resume.take_copy_from();
+                let count = resume.take_copy_count();
+                let backwards = resume.take_copy_backwards();
+                resume.resume(
                     runtime,
-                    realm,
-                    super::copy::CopyStep::start(
-                        runtime, realm, object, to, from, count, backwards,
+                    super::copy::finish(
+                        runtime,
+                        realm,
+                        super::copy::CopyStep::start(
+                            runtime, realm, object, to, from, count, backwards,
+                        )?,
                     )?,
-                )?,
-            )?,
-            MutationStep::Set {
-                object,
-                key,
-                value,
-                resume,
-            } => {
-                let result = runtime.internal_set(
-                    realm,
-                    &object,
-                    &key,
-                    value,
-                    Value::Object(object.clone()),
-                )?;
-                resume.set(runtime, key, result)?
+                )?
             }
-            MutationStep::Delete {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_delete_property(realm, &object, &key)?,
-            )?,
+            MutationStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                {
+                    let result = runtime.internal_set(
+                        realm,
+                        &object,
+                        &key,
+                        value,
+                        Value::Object(object.clone()),
+                    )?;
+                    resume.set(runtime, key, result)?
+                }
+            }
+            MutationStep::Delete { mut resume } => {
+                let object = resume.take_delete_object();
+                let key = resume.take_delete_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_delete_property(realm, &object, &key)?,
+                )?
+            }
         };
     }
 }
@@ -831,3 +831,217 @@ mod tests {
         assert!(matches!(value, Value::Bool(true)));
     }
 }
+
+#[derive(Default)]
+struct MutationStepPending {
+    prepared_read_read: Option<crate::engine::object::OrdinaryRead>,
+    prepared_read_key: Option<PropertyKey>,
+    prepared_set_step: Option<Box<crate::engine::object::SetStep>>,
+    prepared_set_key: Option<PropertyKey>,
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    number_value: Option<Value>,
+    copy_object: Option<ObjectRef>,
+    copy_to: Option<u64>,
+    copy_from: Option<u64>,
+    copy_count: Option<u64>,
+    copy_backwards: Option<bool>,
+    set_object: Option<ObjectRef>,
+    set_key: Option<PropertyKey>,
+    set_value: Option<Value>,
+    delete_object: Option<ObjectRef>,
+    delete_key: Option<PropertyKey>,
+}
+impl MutationStep {
+    pub(crate) fn request_prepared_read(
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+        mut resume: MutationResume,
+    ) -> Self {
+        resume.0.pending_effect.prepared_read_read = Some(read);
+        resume.0.pending_effect.prepared_read_key = Some(key);
+        Self::PreparedRead { resume }
+    }
+    pub(crate) fn request_prepared_set(
+        step: Box<crate::engine::object::SetStep>,
+        key: PropertyKey,
+        mut resume: MutationResume,
+    ) -> Self {
+        resume.0.pending_effect.prepared_set_step = Some(step);
+        resume.0.pending_effect.prepared_set_key = Some(key);
+        Self::PreparedSet { resume }
+    }
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: MutationResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_number(value: Value, mut resume: MutationResume) -> Self {
+        resume.0.pending_effect.number_value = Some(value);
+        Self::Number { resume }
+    }
+    pub(crate) fn request_copy(
+        object: ObjectRef,
+        to: u64,
+        from: u64,
+        count: u64,
+        backwards: bool,
+        mut resume: MutationResume,
+    ) -> Self {
+        resume.0.pending_effect.copy_object = Some(object);
+        resume.0.pending_effect.copy_to = Some(to);
+        resume.0.pending_effect.copy_from = Some(from);
+        resume.0.pending_effect.copy_count = Some(count);
+        resume.0.pending_effect.copy_backwards = Some(backwards);
+        Self::Copy { resume }
+    }
+    pub(crate) fn request_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: MutationResume,
+    ) -> Self {
+        resume.0.pending_effect.set_object = Some(object);
+        resume.0.pending_effect.set_key = Some(key);
+        resume.0.pending_effect.set_value = Some(value);
+        Self::Set { resume }
+    }
+    pub(crate) fn request_delete(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: MutationResume,
+    ) -> Self {
+        resume.0.pending_effect.delete_object = Some(object);
+        resume.0.pending_effect.delete_key = Some(key);
+        Self::Delete { resume }
+    }
+}
+impl MutationResume {
+    pub(crate) fn take_prepared_read_read(&mut self) -> crate::engine::object::OrdinaryRead {
+        self.0
+            .pending_effect
+            .prepared_read_read
+            .take()
+            .expect("MutationStep PreparedRead read")
+    }
+    pub(crate) fn take_prepared_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .prepared_read_key
+            .take()
+            .expect("MutationStep PreparedRead key")
+    }
+    pub(crate) fn take_prepared_set_step(&mut self) -> Box<crate::engine::object::SetStep> {
+        self.0
+            .pending_effect
+            .prepared_set_step
+            .take()
+            .expect("MutationStep PreparedSet step")
+    }
+    pub(crate) fn take_prepared_set_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .prepared_set_key
+            .take()
+            .expect("MutationStep PreparedSet key")
+    }
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("MutationStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("MutationStep Read key")
+    }
+    pub(crate) fn take_number_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .number_value
+            .take()
+            .expect("MutationStep Number value")
+    }
+    pub(crate) fn take_copy_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .copy_object
+            .take()
+            .expect("MutationStep Copy object")
+    }
+    pub(crate) fn take_copy_to(&mut self) -> u64 {
+        self.0
+            .pending_effect
+            .copy_to
+            .take()
+            .expect("MutationStep Copy to")
+    }
+    pub(crate) fn take_copy_from(&mut self) -> u64 {
+        self.0
+            .pending_effect
+            .copy_from
+            .take()
+            .expect("MutationStep Copy from")
+    }
+    pub(crate) fn take_copy_count(&mut self) -> u64 {
+        self.0
+            .pending_effect
+            .copy_count
+            .take()
+            .expect("MutationStep Copy count")
+    }
+    pub(crate) fn take_copy_backwards(&mut self) -> bool {
+        self.0
+            .pending_effect
+            .copy_backwards
+            .take()
+            .expect("MutationStep Copy backwards")
+    }
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .set_object
+            .take()
+            .expect("MutationStep Set object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .set_key
+            .take()
+            .expect("MutationStep Set key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .set_value
+            .take()
+            .expect("MutationStep Set value")
+    }
+    pub(crate) fn take_delete_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .delete_object
+            .take()
+            .expect("MutationStep Delete object")
+    }
+    pub(crate) fn take_delete_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .delete_key
+            .take()
+            .expect("MutationStep Delete key")
+    }
+}
+const _: () = assert!(std::mem::size_of::<MutationStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<MutationStep>() <= 64);

@@ -311,6 +311,7 @@ mod tests {
         execution.slots.push(&mut frame.window, text).unwrap();
         let depth = execution.slots.depth(&frame.window);
         let before = (frame.fault_pc, frame.resume_pc);
+        let realm = frame.executable.realm;
         runtime
             .update_active_bytecode_pc(
                 frame.active_frame,
@@ -331,7 +332,7 @@ mod tests {
             }
             let result = crate::engine::vm::run::test_complete_numeric(
                 &runtime,
-                frame.executable.realm,
+                realm,
                 &mut transaction,
                 NumericKind::PostInc,
                 &mut execution.pending,

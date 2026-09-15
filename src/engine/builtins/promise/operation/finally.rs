@@ -33,6 +33,7 @@ pub(super) enum Phase {
 }
 fn continuation(realm: ContextId, phase: Phase) -> Box<PromiseResume> {
     Box::new(PromiseResume {
+        pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: super::Phase::Finally(phase),
     })
@@ -44,16 +45,22 @@ impl PromiseStep {
         receiver: Value,
         arguments: Vec<Value>,
     ) -> Result<Self, RuntimeError> {
-        Ok(Self::Read {
-            receiver: receiver.clone(),
-            key: runtime.intern_property_key("then")?,
-            resume: Box::new(PromiseResume {
+        Ok({
+            let __pending_field_receiver = receiver.clone();
+            let __pending_field_key = runtime.intern_property_key("then")?;
+            let __pending_field_resume = Box::new(PromiseResume {
+                pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: super::Phase::InvokeThen {
                     receiver,
                     arguments,
                 },
-            }),
+            });
+            Self::request_read(
+                __pending_field_receiver,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         })
     }
 }
@@ -80,16 +87,21 @@ pub(super) fn start(
         let Value::Object(receiver) = this_value else {
             return capability::error(runtime, realm, "not an object");
         };
-        return Ok(PromiseStep::Read {
-            receiver: this_value.clone(),
-            key: runtime.intern_property_key("constructor")?,
-            resume: continuation(
+        return Ok({
+            let __pending_field_receiver = this_value.clone();
+            let __pending_field_key = runtime.intern_property_key("constructor")?;
+            let __pending_field_resume = continuation(
                 realm,
                 Phase::Constructor {
                     receiver: receiver.clone(),
                     callback: argument,
                 },
-            ),
+            );
+            PromiseStep::request_read(
+                __pending_field_receiver,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         });
     }
     let NativeFunctionId::PromiseFinallyHandler(kind) = target else {
@@ -125,18 +137,24 @@ pub(super) fn start(
         Some(id) => Value::Object(ObjectRef::from_borrowed_handle(runtime.clone(), id)?),
         None => Value::Undefined,
     };
-    Ok(PromiseStep::Call {
-        callable,
-        receiver: Value::Undefined,
-        arguments: Vec::new(),
-        resume: continuation(
+    Ok({
+        let __pending_field_callable = callable;
+        let __pending_field_receiver = Value::Undefined;
+        let __pending_field_arguments = Vec::new();
+        let __pending_field_resume = continuation(
             realm,
             Phase::Callback {
                 constructor,
                 settlement: argument,
                 kind,
             },
-        ),
+        );
+        PromiseStep::request_call(
+            __pending_field_callable,
+            __pending_field_receiver,
+            __pending_field_arguments,
+            __pending_field_resume,
+        )
     })
 }
 pub(super) fn resume(
@@ -152,10 +170,17 @@ pub(super) fn resume(
     match phase {
         Phase::Constructor { receiver, callback } => match value {
             Value::Undefined => handlers(runtime, realm, receiver, callback, None),
-            Value::Object(constructor) => Ok(PromiseStep::Read {
-                receiver: Value::Object(constructor),
-                key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
-                resume: continuation(realm, Phase::Species { receiver, callback }),
+            Value::Object(constructor) => Ok({
+                let __pending_field_receiver = Value::Object(constructor);
+                let __pending_field_key =
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
+                let __pending_field_resume =
+                    continuation(realm, Phase::Species { receiver, callback });
+                PromiseStep::request_read(
+                    __pending_field_receiver,
+                    __pending_field_key,
+                    __pending_field_resume,
+                )
             }),
             _ => capability::error(runtime, realm, "not an object"),
         },
@@ -175,15 +200,16 @@ pub(super) fn resume(
             constructor,
             settlement,
             kind,
-        } => Ok(PromiseStep::Nested {
-            step: Box::new(PromiseStep::static_resolve(
+        } => Ok({
+            let __pending_field_step = Box::new(PromiseStep::static_resolve(
                 runtime,
                 realm,
                 PromiseNativeKind::Resolve,
                 constructor,
                 value,
-            )?),
-            resume: continuation(realm, Phase::Resolved { settlement, kind }),
+            )?);
+            let __pending_field_resume = continuation(realm, Phase::Resolved { settlement, kind });
+            PromiseStep::request_nested(__pending_field_step, __pending_field_resume)
         }),
         Phase::Resolved { settlement, kind } => {
             let raw = runtime.raw_property_value(&settlement)?;

@@ -29,14 +29,23 @@ impl TypedTraversalKind {
 }
 pub(crate) enum TypedTraversalStep {
     Complete(Completion),
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: TypedTraversalResume,
-    },
+    Call { resume: TypedTraversalResume },
 }
-pub(crate) struct TypedTraversalResume {
+pub(crate) struct TypedTraversalResume(Box<TypedTraversalResumeState>);
+impl std::ops::Deref for TypedTraversalResume {
+    type Target = TypedTraversalResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedTraversalResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedTraversalResume>() <= 8);
+pub(crate) struct TypedTraversalResumeState {
+    pending_effect: TypedTraversalStepPending,
     state: TraversalState,
     phase: TraversalPhase,
 }
@@ -185,15 +194,16 @@ impl TraversalState {
         arguments.push(value.clone());
         arguments.push(Value::number(index as f64));
         arguments.push(Value::Object(self.target.clone()));
-        Ok(TypedTraversalStep::Call {
-            target: DirectCallTarget::Callable(self.callback.clone()),
-            receiver: self.this_arg.clone(),
+        Ok(TypedTraversalStep::request_call(
+            DirectCallTarget::Callable(self.callback.clone()),
+            self.this_arg.clone(),
             arguments,
-            resume: TypedTraversalResume {
+            TypedTraversalResume(Box::new(TypedTraversalResumeState {
+                pending_effect: TypedTraversalStepPending::default(),
                 state: self,
                 phase: TraversalPhase::Find { value, index },
-            },
-        })
+            })),
+        ))
     }
     fn reduce(
         mut self,
@@ -220,15 +230,16 @@ impl TraversalState {
         arguments.push(value);
         arguments.push(Value::number(index as f64));
         arguments.push(Value::Object(self.target.clone()));
-        Ok(TypedTraversalStep::Call {
-            target: DirectCallTarget::Callable(self.callback.clone()),
-            receiver: Value::Undefined,
+        Ok(TypedTraversalStep::request_call(
+            DirectCallTarget::Callable(self.callback.clone()),
+            Value::Undefined,
             arguments,
-            resume: TypedTraversalResume {
+            TypedTraversalResume(Box::new(TypedTraversalResumeState {
+                pending_effect: TypedTraversalStepPending::default(),
                 state: self,
                 phase: TraversalPhase::Reduce,
-            },
-        })
+            })),
+        ))
     }
 }
 impl TypedTraversalResume {
@@ -243,11 +254,11 @@ impl TypedTraversalResume {
                 return Ok(TypedTraversalStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             TraversalPhase::Find { value, index } => {
                 if runtime.value_to_boolean(&result)? {
                     Ok(TypedTraversalStep::Complete(Completion::Return(
-                        match self.state.kind {
+                        match self.0.state.kind {
                             TypedTraversalKind::Find(
                                 ArrayFindKind::Find | ArrayFindKind::FindLast,
                             ) => value,
@@ -260,10 +271,10 @@ impl TypedTraversalResume {
                         },
                     )))
                 } else {
-                    self.state.find(runtime)
+                    self.0.state.find(runtime)
                 }
             }
-            TraversalPhase::Reduce => self.state.reduce(runtime, result),
+            TraversalPhase::Reduce => self.0.state.reduce(runtime, result),
         }
     }
 }
@@ -275,22 +286,69 @@ pub(super) fn finish(
     loop {
         step = match step {
             TypedTraversalStep::Complete(result) => return Ok(result),
-            TypedTraversalStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => {
-                let DirectCallTarget::Callable(callable) = target else {
-                    return Err(RuntimeError::Invariant(
-                        "TypedArray traversal requested an invalid call target",
-                    ));
-                };
-                resume.resume(
-                    runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
-                )?
+            TypedTraversalStep::Call { mut resume } => {
+                let target = resume.take_call_target();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                {
+                    let DirectCallTarget::Callable(callable) = target else {
+                        return Err(RuntimeError::Invariant(
+                            "TypedArray traversal requested an invalid call target",
+                        ));
+                    };
+                    resume.resume(
+                        runtime,
+                        runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    )?
+                }
             }
         };
     }
 }
+
+#[derive(Default)]
+struct TypedTraversalStepPending {
+    call_target: Option<DirectCallTarget>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+}
+impl TypedTraversalStep {
+    pub(crate) fn request_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: TypedTraversalResume,
+    ) -> Self {
+        resume.0.pending_effect.call_target = Some(target);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+}
+impl TypedTraversalResume {
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .pending_effect
+            .call_target
+            .take()
+            .expect("TypedTraversalStep Call target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("TypedTraversalStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("TypedTraversalStep Call arguments")
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedTraversalStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedTraversalStep>() <= 64);

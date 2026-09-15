@@ -13,29 +13,13 @@ use crate::engine::vm::{
 };
 pub(crate) enum FromSyncStep {
     Complete(Completion),
-    Read {
-        receiver: Value,
-        key: PropertyKey,
-        resume: Box<FromSyncResume>,
-    },
-    Call {
-        callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: Box<FromSyncResume>,
-    },
-    Resolve {
-        value: Value,
-        realm: ContextId,
-        resume: Box<FromSyncResume>,
-    },
-    Close {
-        iterator: ObjectRef,
-        completion: Completion,
-        resume: Box<FromSyncResume>,
-    },
+    Read { resume: Box<FromSyncResume> },
+    Call { resume: Box<FromSyncResume> },
+    Resolve { resume: Box<FromSyncResume> },
+    Close { resume: Box<FromSyncResume> },
 }
 pub(crate) struct FromSyncResume {
+    pending_effect: FromSyncStepPending,
     realm: ContextId,
     phase: Phase,
 }
@@ -57,7 +41,11 @@ struct State {
     arguments: Vec<Value>,
 }
 fn continuation(realm: ContextId, phase: Phase) -> Box<FromSyncResume> {
-    Box::new(FromSyncResume { realm, phase })
+    Box::new(FromSyncResume {
+        pending_effect: FromSyncStepPending::default(),
+        realm,
+        phase,
+    })
 }
 fn settle(
     realm: ContextId,
@@ -68,11 +56,17 @@ fn settle(
         Completion::Return(value) => (capability.resolve, value),
         Completion::Throw(value) => (capability.reject, value),
     };
-    FromSyncStep::Call {
-        callable,
-        receiver: Value::Undefined,
-        arguments: vec![value],
-        resume: continuation(realm, Phase::Settled(capability.promise)),
+    {
+        let __pending_field_callable = callable;
+        let __pending_field_receiver = Value::Undefined;
+        let __pending_field_arguments = vec![value];
+        let __pending_field_resume = continuation(realm, Phase::Settled(capability.promise));
+        FromSyncStep::request_call(
+            __pending_field_callable,
+            __pending_field_receiver,
+            __pending_field_arguments,
+            __pending_field_resume,
+        )
     }
 }
 impl FromSyncStep {
@@ -118,10 +112,15 @@ impl FromSyncStep {
                     "Async-from-Sync close argv was not padded",
                 ))?;
             let iterator = ObjectRef::from_borrowed_handle(runtime.clone(), sync_iterator)?;
-            return Ok(Self::Close {
-                iterator,
-                completion: Completion::Throw(reason),
-                resume: continuation(realm, Phase::Identity),
+            return Ok({
+                let __pending_field_iterator = iterator;
+                let __pending_field_completion = Completion::Throw(reason);
+                let __pending_field_resume = continuation(realm, Phase::Identity);
+                Self::request_close(
+                    __pending_field_iterator,
+                    __pending_field_completion,
+                    __pending_field_resume,
+                )
             });
         }
         let NativeFunctionId::AsyncFromSyncIteratorResume(kind) = target else {
@@ -183,14 +182,20 @@ impl FromSyncStep {
                 runtime,
                 Completion::Return(runtime.root_raw_value(&cached_next)?),
             ),
-            GeneratorResumeKind::Return | GeneratorResumeKind::Throw => Ok(Self::Read {
-                receiver: Value::Object(state.iterator.clone()),
-                key: runtime.intern_property_key(if kind == GeneratorResumeKind::Return {
-                    "return"
-                } else {
-                    "throw"
-                })?,
-                resume: continuation(realm, Phase::Method(state)),
+            GeneratorResumeKind::Return | GeneratorResumeKind::Throw => Ok({
+                let __pending_field_receiver = Value::Object(state.iterator.clone());
+                let __pending_field_key =
+                    runtime.intern_property_key(if kind == GeneratorResumeKind::Return {
+                        "return"
+                    } else {
+                        "throw"
+                    })?;
+                let __pending_field_resume = continuation(realm, Phase::Method(state));
+                Self::request_read(
+                    __pending_field_receiver,
+                    __pending_field_key,
+                    __pending_field_resume,
+                )
             }),
         }
     }
@@ -214,42 +219,45 @@ impl FromSyncStep {
             loop {
                 step = match step {
                     Self::Complete(completion) => return Ok(completion),
-                    Self::Read {
-                        receiver,
-                        key,
-                        resume,
-                    } => resume.resume(
-                        runtime,
-                        runtime.get_value_property_in_realm(realm, receiver, &key)?,
-                    )?,
-                    Self::Call {
-                        callable,
-                        receiver,
-                        arguments,
-                        resume,
-                    } => resume.resume(
-                        runtime,
-                        runtime.call_internal(realm, &callable, receiver, &arguments)?,
-                    )?,
-                    Self::Resolve {
-                        value,
-                        realm,
-                        resume,
-                    } => {
-                        resume.resume(runtime, runtime.promise_resolve_intrinsic(realm, value)?)?
-                    }
-                    Self::Close {
-                        iterator,
-                        completion,
-                        resume,
-                    } => {
-                        let close = crate::engine::builtins::IteratorCloseStep::start(
-                            runtime, realm, iterator, completion,
-                        )?;
+                    Self::Read { mut resume } => {
+                        let receiver = resume.take_read_receiver();
+                        let key = resume.take_read_key();
                         resume.resume(
                             runtime,
-                            crate::engine::builtins::finish_iterator_close(runtime, realm, close)?,
+                            runtime.get_value_property_in_realm(realm, receiver, &key)?,
                         )?
+                    }
+                    Self::Call { mut resume } => {
+                        let callable = resume.take_call_callable();
+                        let receiver = resume.take_call_receiver();
+                        let arguments = resume.take_call_arguments();
+                        resume.resume(
+                            runtime,
+                            runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                        )?
+                    }
+                    Self::Resolve { mut resume } => {
+                        let value = resume.take_resolve_value();
+                        let realm = resume.take_resolve_realm();
+                        {
+                            resume
+                                .resume(runtime, runtime.promise_resolve_intrinsic(realm, value)?)?
+                        }
+                    }
+                    Self::Close { mut resume } => {
+                        let iterator = resume.take_close_iterator();
+                        let completion = resume.take_close_completion();
+                        {
+                            let close = crate::engine::builtins::IteratorCloseStep::start(
+                                runtime, realm, iterator, completion,
+                            )?;
+                            resume.resume(
+                                runtime,
+                                crate::engine::builtins::finish_iterator_close(
+                                    runtime, realm, close,
+                                )?,
+                            )?
+                        }
                     }
                 };
             }
@@ -258,15 +266,16 @@ impl FromSyncStep {
 }
 impl FromSyncResume {
     pub(crate) fn resume(
-        self: Box<Self>,
+        mut self: Box<Self>,
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<FromSyncStep, RuntimeError> {
         let realm = self.realm;
-        if let Phase::Identity = self.phase {
+        let phase = std::mem::replace(&mut self.phase, Phase::Identity);
+        if let Phase::Identity = phase {
             return Ok(FromSyncStep::Complete(completion));
         }
-        if let Phase::Settled(promise) = self.phase {
+        if let Phase::Settled(promise) = phase {
             return match completion {
                 Completion::Return(_) => Ok(FromSyncStep::Complete(Completion::Return(
                     Value::Object(promise),
@@ -279,31 +288,35 @@ impl FromSyncResume {
         let value = match completion {
             Completion::Return(value) => value,
             Completion::Throw(reason) => {
-                return Ok(match self.phase {
+                return Ok(match phase {
                     Phase::Promise { state, done }
                         if state.kind != GeneratorResumeKind::Return && !done =>
                     {
-                        FromSyncStep::Close {
-                            iterator: state.iterator,
-                            completion: Completion::Throw(reason),
-                            resume: continuation(realm, Phase::Reject(state.capability)),
-                        }
+                        let __pending_field_iterator = state.iterator;
+                        let __pending_field_completion = Completion::Throw(reason);
+                        let __pending_field_resume =
+                            self.continue_with(Phase::Reject(state.capability));
+                        FromSyncStep::request_close(
+                            __pending_field_iterator,
+                            __pending_field_completion,
+                            __pending_field_resume,
+                        )
                     }
                     Phase::Method(state)
                     | Phase::Result(state)
                     | Phase::Done { state, .. }
                     | Phase::Value { state, .. }
                     | Phase::Promise { state, .. } => {
-                        settle(realm, state.capability, Completion::Throw(reason))
+                        self.settle(state.capability, Completion::Throw(reason))
                     }
                     Phase::MissingThrow(capability) | Phase::Reject(capability) => {
-                        settle(realm, capability, Completion::Throw(reason))
+                        self.settle(capability, Completion::Throw(reason))
                     }
                     Phase::Identity | Phase::Settled(_) => unreachable!(),
                 });
             }
         };
-        match self.phase {
+        match phase {
             Phase::Method(state) => {
                 if matches!(value, Value::Undefined | Value::Null) {
                     return Ok(match state.kind {
@@ -314,24 +327,26 @@ impl FromSyncResume {
                                 .next()
                                 .unwrap_or(Value::Undefined);
                             let result = runtime.new_iterator_result(realm, value, true)?;
-                            settle(
-                                realm,
-                                state.capability,
-                                Completion::Return(Value::Object(result)),
+                            self.settle(state.capability, Completion::Return(Value::Object(result)))
+                        }
+                        GeneratorResumeKind::Throw => {
+                            let __pending_field_iterator = state.iterator;
+                            let __pending_field_completion = Completion::Return(Value::Undefined);
+                            let __pending_field_resume =
+                                self.continue_with(Phase::MissingThrow(state.capability));
+                            FromSyncStep::request_close(
+                                __pending_field_iterator,
+                                __pending_field_completion,
+                                __pending_field_resume,
                             )
                         }
-                        GeneratorResumeKind::Throw => FromSyncStep::Close {
-                            iterator: state.iterator,
-                            completion: Completion::Return(Value::Undefined),
-                            resume: continuation(realm, Phase::MissingThrow(state.capability)),
-                        },
                         GeneratorResumeKind::Next => {
                             let reason = runtime.new_native_error(
                                 realm,
                                 NativeErrorKind::Type,
                                 "not a function",
                             )?;
-                            settle(realm, state.capability, Completion::Throw(reason))
+                            self.settle(state.capability, Completion::Throw(reason))
                         }
                     });
                 }
@@ -339,14 +354,20 @@ impl FromSyncResume {
                     match runtime.async_from_sync_callable(realm, value, "not a function")? {
                         NativeConversion::Value(callable) => callable,
                         NativeConversion::Throw(reason) => {
-                            return Ok(settle(realm, state.capability, Completion::Throw(reason)));
+                            return Ok(self.settle(state.capability, Completion::Throw(reason)));
                         }
                     };
-                Ok(FromSyncStep::Call {
-                    callable,
-                    receiver: Value::Object(state.iterator.clone()),
-                    arguments: state.arguments.clone(),
-                    resume: continuation(realm, Phase::Result(state)),
+                Ok({
+                    let __pending_field_callable = callable;
+                    let __pending_field_receiver = Value::Object(state.iterator.clone());
+                    let __pending_field_arguments = state.arguments.clone();
+                    let __pending_field_resume = self.continue_with(Phase::Result(state));
+                    FromSyncStep::request_call(
+                        __pending_field_callable,
+                        __pending_field_receiver,
+                        __pending_field_arguments,
+                        __pending_field_resume,
+                    )
                 })
             }
             Phase::Result(state) => {
@@ -356,26 +377,41 @@ impl FromSyncResume {
                         NativeErrorKind::Type,
                         "iterator must return an object",
                     )?;
-                    return Ok(settle(realm, state.capability, Completion::Throw(reason)));
+                    return Ok(self.settle(state.capability, Completion::Throw(reason)));
                 };
-                Ok(FromSyncStep::Read {
-                    receiver: Value::Object(result.clone()),
-                    key: runtime.intern_property_key("done")?,
-                    resume: continuation(realm, Phase::Done { state, result }),
+                Ok({
+                    let __pending_field_receiver = Value::Object(result.clone());
+                    let __pending_field_key = runtime.intern_property_key("done")?;
+                    let __pending_field_resume = self.continue_with(Phase::Done { state, result });
+                    FromSyncStep::request_read(
+                        __pending_field_receiver,
+                        __pending_field_key,
+                        __pending_field_resume,
+                    )
                 })
             }
             Phase::Done { state, result } => {
                 let done = runtime.value_to_boolean(&value)?;
-                Ok(FromSyncStep::Read {
-                    receiver: Value::Object(result),
-                    key: runtime.intern_property_key("value")?,
-                    resume: continuation(realm, Phase::Value { state, done }),
+                Ok({
+                    let __pending_field_receiver = Value::Object(result);
+                    let __pending_field_key = runtime.intern_property_key("value")?;
+                    let __pending_field_resume = self.continue_with(Phase::Value { state, done });
+                    FromSyncStep::request_read(
+                        __pending_field_receiver,
+                        __pending_field_key,
+                        __pending_field_resume,
+                    )
                 })
             }
-            Phase::Value { state, done } => Ok(FromSyncStep::Resolve {
-                value,
-                realm,
-                resume: continuation(realm, Phase::Promise { state, done }),
+            Phase::Value { state, done } => Ok({
+                let __pending_field_value = value;
+                let __pending_field_realm = realm;
+                let __pending_field_resume = self.continue_with(Phase::Promise { state, done });
+                FromSyncStep::request_resolve(
+                    __pending_field_value,
+                    __pending_field_realm,
+                    __pending_field_resume,
+                )
             }),
             Phase::Promise { state, done } => {
                 let Value::Object(promise) = value else {
@@ -420,7 +456,7 @@ impl FromSyncResume {
                     NativeErrorKind::Type,
                     "throw is not a method",
                 )?;
-                Ok(settle(realm, capability, Completion::Throw(reason)))
+                Ok(self.settle(capability, Completion::Throw(reason)))
             }
             Phase::Reject(_) | Phase::Identity | Phase::Settled(_) => {
                 Err(RuntimeError::Invariant("Async-from-Sync unexpected reply"))
@@ -428,3 +464,138 @@ impl FromSyncResume {
         }
     }
 }
+impl FromSyncResume {
+    fn continue_with(mut self: Box<Self>, phase: Phase) -> Box<Self> {
+        self.phase = phase;
+        self
+    }
+    fn settle(
+        self: Box<Self>,
+        capability: RootedPromiseCapability,
+        completion: Completion,
+    ) -> FromSyncStep {
+        let (callable, value) = match completion {
+            Completion::Return(value) => (capability.resolve, value),
+            Completion::Throw(value) => (capability.reject, value),
+        };
+        FromSyncStep::request_call(
+            callable,
+            Value::Undefined,
+            vec![value],
+            self.continue_with(Phase::Settled(capability.promise)),
+        )
+    }
+}
+
+#[derive(Default)]
+struct FromSyncStepPending {
+    read_receiver: Option<Value>,
+    read_key: Option<PropertyKey>,
+    call_callable: Option<CallableRef>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+    resolve_value: Option<Value>,
+    resolve_realm: Option<ContextId>,
+    close_iterator: Option<ObjectRef>,
+    close_completion: Option<Completion>,
+}
+impl FromSyncStep {
+    pub(crate) fn request_read(
+        receiver: Value,
+        key: PropertyKey,
+        mut resume: Box<FromSyncResume>,
+    ) -> Self {
+        resume.pending_effect.read_receiver = Some(receiver);
+        resume.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_call(
+        callable: CallableRef,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: Box<FromSyncResume>,
+    ) -> Self {
+        resume.pending_effect.call_callable = Some(callable);
+        resume.pending_effect.call_receiver = Some(receiver);
+        resume.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_resolve(
+        value: Value,
+        realm: ContextId,
+        mut resume: Box<FromSyncResume>,
+    ) -> Self {
+        resume.pending_effect.resolve_value = Some(value);
+        resume.pending_effect.resolve_realm = Some(realm);
+        Self::Resolve { resume }
+    }
+    pub(crate) fn request_close(
+        iterator: ObjectRef,
+        completion: Completion,
+        mut resume: Box<FromSyncResume>,
+    ) -> Self {
+        resume.pending_effect.close_iterator = Some(iterator);
+        resume.pending_effect.close_completion = Some(completion);
+        Self::Close { resume }
+    }
+}
+impl FromSyncResume {
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.pending_effect
+            .read_receiver
+            .take()
+            .expect("FromSyncStep Read receiver")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.pending_effect
+            .read_key
+            .take()
+            .expect("FromSyncStep Read key")
+    }
+    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
+        self.pending_effect
+            .call_callable
+            .take()
+            .expect("FromSyncStep Call callable")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.pending_effect
+            .call_receiver
+            .take()
+            .expect("FromSyncStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.pending_effect
+            .call_arguments
+            .take()
+            .expect("FromSyncStep Call arguments")
+    }
+    pub(crate) fn take_resolve_value(&mut self) -> Value {
+        self.pending_effect
+            .resolve_value
+            .take()
+            .expect("FromSyncStep Resolve value")
+    }
+    pub(crate) fn take_resolve_realm(&mut self) -> ContextId {
+        self.pending_effect
+            .resolve_realm
+            .take()
+            .expect("FromSyncStep Resolve realm")
+    }
+    pub(crate) fn take_close_iterator(&mut self) -> ObjectRef {
+        self.pending_effect
+            .close_iterator
+            .take()
+            .expect("FromSyncStep Close iterator")
+    }
+    pub(crate) fn take_close_completion(&mut self) -> Completion {
+        self.pending_effect
+            .close_completion
+            .take()
+            .expect("FromSyncStep Close completion")
+    }
+}
+const _: () = assert!(std::mem::size_of::<FromSyncStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<FromSyncStep>() <= 64);

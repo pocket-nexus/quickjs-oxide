@@ -38,34 +38,28 @@ impl PredicateKind {
     }
 }
 pub(crate) enum PredicateStep {
-    Descriptor {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: PredicateResume,
-    },
-    Prototype {
-        object: ObjectRef,
-        resume: PredicateResume,
-    },
-    Define {
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
-        resume: PredicateResume,
-    },
+    Descriptor { resume: PredicateResume },
+    Prototype { resume: PredicateResume },
+    Define { resume: PredicateResume },
     Complete(Completion),
-    Key {
-        value: Value,
-        resume: PredicateResume,
-    },
-    Own {
-        object: ObjectRef,
-        key: PropertyKey,
-        enumerable: bool,
-        resume: PredicateResume,
-    },
+    Key { resume: PredicateResume },
+    Own { resume: PredicateResume },
 }
-pub(crate) struct PredicateResume {
+pub(crate) struct PredicateResume(Box<PredicateResumeState>);
+impl std::ops::Deref for PredicateResume {
+    type Target = PredicateResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for PredicateResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<PredicateResume>() <= 8);
+pub(crate) struct PredicateResumeState {
+    pending_effect: PredicateStepPending,
     realm: ContextId,
     receiver: Value,
     kind: PredicateKind,
@@ -138,24 +132,25 @@ impl PredicateStep {
         let value = key.cloned().ok_or(RuntimeError::Invariant(
             "own predicate key argv was not padded",
         ))?;
-        Ok(Self::Key {
+        Ok(Self::request_key(
             value,
-            resume: PredicateResume {
+            PredicateResume(Box::new(PredicateResumeState {
+                pending_effect: PredicateStepPending::default(),
                 realm,
                 receiver,
                 kind,
                 phase: Phase::Key { accessor },
-            },
-        })
+            })),
+        ))
     }
 }
 impl PredicateResume {
     pub(crate) fn key(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<PredicateStep, RuntimeError> {
-        let Phase::Key { accessor } = self.phase else {
+        let Phase::Key { accessor } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "own predicate received a second key reply",
             ));
@@ -166,21 +161,22 @@ impl PredicateResume {
                 return Ok(PredicateStep::Complete(Completion::Throw(value)));
             }
         };
-        let key = match runtime.property_key_from_primitive(self.realm, value)? {
+        let key = match runtime.property_key_from_primitive(self.0.realm, value)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
                 return Ok(PredicateStep::Complete(Completion::Throw(value)));
             }
         };
-        let object = match runtime.native_to_object(self.realm, self.receiver.clone())? {
+        let object = match runtime.native_to_object(self.0.realm, self.0.receiver.clone())? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
                 return Ok(PredicateStep::Complete(Completion::Throw(value)));
             }
         };
-        let resume = Self {
-            phase: Phase::Own(key.clone()),
-            ..self
+        let resume = {
+            let updated_0 = Phase::Own(key.clone());
+            self.0.phase = updated_0;
+            self
         };
         Ok(match resume.kind {
             PredicateKind::Define(kind) => {
@@ -200,33 +196,24 @@ impl PredicateResume {
                         descriptor.set = DescriptorField::Present(AccessorValue::Callable(accessor))
                     }
                 }
-                PredicateStep::Define {
-                    object,
-                    key,
-                    descriptor,
-                    resume,
-                }
+                PredicateStep::request_define(object, key, descriptor, resume)
             }
-            PredicateKind::Lookup(_) => PredicateStep::Descriptor {
+            PredicateKind::Lookup(_) => PredicateStep::request_descriptor(object, key, resume),
+            _ => PredicateStep::request_own(
                 object,
                 key,
+                matches!(resume.kind, PredicateKind::Enumerable),
                 resume,
-            },
-            _ => PredicateStep::Own {
-                object,
-                key,
-                enumerable: matches!(resume.kind, PredicateKind::Enumerable),
-                resume,
-            },
+            ),
         })
     }
     pub(crate) fn boolean(
         self,
         result: NativeConversion<bool>,
     ) -> Result<PredicateStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Own(_))
+        if !matches!(self.0.phase, Phase::Own(_))
             || matches!(
-                self.kind,
+                self.0.kind,
                 PredicateKind::Define(_) | PredicateKind::Lookup(_)
             )
         {
@@ -246,31 +233,31 @@ impl PredicateResume {
         runtime: &Runtime,
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<PredicateStep, RuntimeError> {
-        let Phase::Own(key) = self.phase else {
+        let Phase::Own(key) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "accessor definition has wrong phase",
             ));
         };
-        if !matches!(self.kind, PredicateKind::Define(_)) {
+        if !matches!(self.0.kind, PredicateKind::Define(_)) {
             return Err(RuntimeError::Invariant(
                 "accessor definition has wrong kind",
             ));
         }
         Ok(PredicateStep::Complete(
-            match runtime.finish_define_property_or_throw(self.realm, &key, result)? {
+            match runtime.finish_define_property_or_throw(self.0.realm, &key, result)? {
                 Some(value) => Completion::Throw(value),
                 None => Completion::Return(Value::Undefined),
             },
         ))
     }
     pub(crate) fn descriptor(
-        self,
+        mut self,
         result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<PredicateStep, RuntimeError> {
-        let Phase::Own(key) = self.phase else {
+        let Phase::Own(key) = self.0.phase else {
             return Err(RuntimeError::Invariant("accessor lookup has wrong phase"));
         };
-        let PredicateKind::Lookup(kind) = self.kind else {
+        let PredicateKind::Lookup(kind) = self.0.kind else {
             return Err(RuntimeError::Invariant("accessor lookup has wrong kind"));
         };
         let descriptor = match result {
@@ -280,16 +267,14 @@ impl PredicateResume {
             }
         };
         let Some(descriptor) = descriptor else {
-            let Value::Object(object) = &self.receiver else {
+            let Value::Object(object) = &self.0.receiver else {
                 return Err(RuntimeError::Invariant("accessor lookup lost its object"));
             };
-            return Ok(PredicateStep::Prototype {
-                object: object.clone(),
-                resume: Self {
-                    phase: Phase::Prototype(key),
-                    ..self
-                },
-            });
+            return Ok(PredicateStep::request_prototype(object.clone(), {
+                let updated_0 = Phase::Prototype(key);
+                self.0.phase = updated_0;
+                self
+            }));
         };
         let value = match descriptor {
             CompleteOrdinaryPropertyDescriptor::Data { .. } => Value::Undefined,
@@ -304,10 +289,10 @@ impl PredicateResume {
         Ok(PredicateStep::Complete(Completion::Return(value)))
     }
     pub(crate) fn prototype(
-        self,
+        mut self,
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<PredicateStep, RuntimeError> {
-        let Phase::Prototype(key) = self.phase else {
+        let Phase::Prototype(key) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "accessor prototype reply has wrong phase",
             ));
@@ -317,15 +302,15 @@ impl PredicateResume {
             NativeConversion::Value(None) => {
                 PredicateStep::Complete(Completion::Return(Value::Undefined))
             }
-            NativeConversion::Value(Some(object)) => PredicateStep::Descriptor {
-                object: object.clone(),
-                key: key.clone(),
-                resume: Self {
-                    receiver: Value::Object(object),
-                    phase: Phase::Own(key),
-                    ..self
-                },
-            },
+            NativeConversion::Value(Some(object)) => {
+                PredicateStep::request_descriptor(object.clone(), key.clone(), {
+                    let updated_0 = Value::Object(object);
+                    let updated_1 = Phase::Own(key);
+                    self.0.receiver = updated_0;
+                    self.0.phase = updated_1;
+                    self
+                })
+            }
         })
     }
 }
@@ -338,37 +323,172 @@ pub(in crate::engine::builtins) fn finish(
     loop {
         step = match step {
             PredicateStep::Complete(result) => return Ok(result),
-            PredicateStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => resume.descriptor(runtime.internal_get_own_property(realm, &object, &key)?)?,
-            PredicateStep::Prototype { object, resume } => {
+            PredicateStep::Descriptor { mut resume } => {
+                let object = resume.take_descriptor_object();
+                let key = resume.take_descriptor_key();
+                resume.descriptor(runtime.internal_get_own_property(realm, &object, &key)?)?
+            }
+            PredicateStep::Prototype { mut resume } => {
+                let object = resume.take_prototype_object();
                 resume.prototype(runtime.internal_get_prototype_of(realm, &object)?)?
             }
-            PredicateStep::Define {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => resume.defined(
-                runtime,
-                runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
-            )?,
-            PredicateStep::Key { value, resume } => resume.key(
-                runtime,
-                runtime.to_primitive(realm, value, ToPrimitiveHint::String)?,
-            )?,
-            PredicateStep::Own {
-                object,
-                key,
-                enumerable,
-                resume,
-            } => resume.boolean(if enumerable {
-                runtime.internal_own_property_is_enumerable(realm, &object, &key)?
-            } else {
-                runtime.internal_has_own_property(realm, &object, &key)?
-            })?,
+            PredicateStep::Define { mut resume } => {
+                let object = resume.take_define_object();
+                let key = resume.take_define_key();
+                let descriptor = resume.take_define_descriptor();
+                resume.defined(
+                    runtime,
+                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                )?
+            }
+            PredicateStep::Key { mut resume } => {
+                let value = resume.take_key_value();
+                resume.key(
+                    runtime,
+                    runtime.to_primitive(realm, value, ToPrimitiveHint::String)?,
+                )?
+            }
+            PredicateStep::Own { mut resume } => {
+                let object = resume.take_own_object();
+                let key = resume.take_own_key();
+                let enumerable = resume.take_own_enumerable();
+                resume.boolean(if enumerable {
+                    runtime.internal_own_property_is_enumerable(realm, &object, &key)?
+                } else {
+                    runtime.internal_has_own_property(realm, &object, &key)?
+                })?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct PredicateStepPending {
+    descriptor_object: Option<ObjectRef>,
+    descriptor_key: Option<PropertyKey>,
+    prototype_object: Option<ObjectRef>,
+    define_object: Option<ObjectRef>,
+    define_key: Option<PropertyKey>,
+    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    key_value: Option<Value>,
+    own_object: Option<ObjectRef>,
+    own_key: Option<PropertyKey>,
+    own_enumerable: Option<bool>,
+}
+impl PredicateStep {
+    pub(crate) fn request_descriptor(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: PredicateResume,
+    ) -> Self {
+        resume.0.pending_effect.descriptor_object = Some(object);
+        resume.0.pending_effect.descriptor_key = Some(key);
+        Self::Descriptor { resume }
+    }
+    pub(crate) fn request_prototype(object: ObjectRef, mut resume: PredicateResume) -> Self {
+        resume.0.pending_effect.prototype_object = Some(object);
+        Self::Prototype { resume }
+    }
+    pub(crate) fn request_define(
+        object: ObjectRef,
+        key: PropertyKey,
+        descriptor: OrdinaryPropertyDescriptor,
+        mut resume: PredicateResume,
+    ) -> Self {
+        resume.0.pending_effect.define_object = Some(object);
+        resume.0.pending_effect.define_key = Some(key);
+        resume.0.pending_effect.define_descriptor = Some(descriptor);
+        Self::Define { resume }
+    }
+    pub(crate) fn request_key(value: Value, mut resume: PredicateResume) -> Self {
+        resume.0.pending_effect.key_value = Some(value);
+        Self::Key { resume }
+    }
+    pub(crate) fn request_own(
+        object: ObjectRef,
+        key: PropertyKey,
+        enumerable: bool,
+        mut resume: PredicateResume,
+    ) -> Self {
+        resume.0.pending_effect.own_object = Some(object);
+        resume.0.pending_effect.own_key = Some(key);
+        resume.0.pending_effect.own_enumerable = Some(enumerable);
+        Self::Own { resume }
+    }
+}
+impl PredicateResume {
+    pub(crate) fn take_descriptor_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .descriptor_object
+            .take()
+            .expect("PredicateStep Descriptor object")
+    }
+    pub(crate) fn take_descriptor_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .descriptor_key
+            .take()
+            .expect("PredicateStep Descriptor key")
+    }
+    pub(crate) fn take_prototype_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .prototype_object
+            .take()
+            .expect("PredicateStep Prototype object")
+    }
+    pub(crate) fn take_define_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .define_object
+            .take()
+            .expect("PredicateStep Define object")
+    }
+    pub(crate) fn take_define_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .define_key
+            .take()
+            .expect("PredicateStep Define key")
+    }
+    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+        self.0
+            .pending_effect
+            .define_descriptor
+            .take()
+            .expect("PredicateStep Define descriptor")
+    }
+    pub(crate) fn take_key_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .key_value
+            .take()
+            .expect("PredicateStep Key value")
+    }
+    pub(crate) fn take_own_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .own_object
+            .take()
+            .expect("PredicateStep Own object")
+    }
+    pub(crate) fn take_own_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .own_key
+            .take()
+            .expect("PredicateStep Own key")
+    }
+    pub(crate) fn take_own_enumerable(&mut self) -> bool {
+        self.0
+            .pending_effect
+            .own_enumerable
+            .take()
+            .expect("PredicateStep Own enumerable")
+    }
+}
+const _: () = assert!(std::mem::size_of::<PredicateStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<PredicateStep>() <= 64);

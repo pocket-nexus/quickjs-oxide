@@ -110,7 +110,20 @@ enum Phase {
     Done,
     Value,
 }
-pub(crate) struct TypedCollectResume {
+pub(crate) struct TypedCollectResume(Box<TypedCollectResumeState>);
+impl std::ops::Deref for TypedCollectResume {
+    type Target = TypedCollectResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedCollectResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedCollectResume>() <= 8);
+pub(crate) struct TypedCollectResumeState {
     realm: ContextId,
     _method: CallableRef,
     iterator: Option<ObjectRef>,
@@ -132,7 +145,7 @@ impl TypedCollectStep {
         Self::Call {
             callable: method.clone(),
             receiver: source,
-            resume: TypedCollectResume {
+            resume: TypedCollectResume(Box::new(TypedCollectResumeState {
                 realm,
                 _method: method,
                 iterator: None,
@@ -143,7 +156,7 @@ impl TypedCollectStep {
                 maximum: super::MAX_ARRAY_BUFFER_LENGTH / u64::from(element.byte_length()),
                 values: Vec::new(),
                 phase: Phase::Factory,
-            },
+            })),
         }
     }
 }
@@ -152,14 +165,15 @@ impl TypedCollectResume {
         TypedCollectStep::Complete(NativeConversion::Throw(value))
     }
     fn fail(self, runtime: &Runtime, message: &str) -> Result<TypedCollectStep, RuntimeError> {
-        let error = runtime.new_native_error(self.realm, NativeErrorKind::Type, message)?;
+        let error = runtime.new_native_error(self.0.realm, NativeErrorKind::Type, message)?;
         Ok(self.abrupt(error))
     }
     fn next(mut self) -> Result<TypedCollectStep, RuntimeError> {
-        self.iteration = None;
-        self.phase = Phase::NextResult;
+        self.0.iteration = None;
+        self.0.phase = Phase::NextResult;
         Ok(TypedCollectStep::Call {
             callable: self
+                .0
                 .next
                 .as_ref()
                 .ok_or(RuntimeError::Invariant(
@@ -167,7 +181,8 @@ impl TypedCollectResume {
                 ))?
                 .clone(),
             receiver: Value::Object(
-                self.iterator
+                self.0
+                    .iterator
                     .as_ref()
                     .ok_or(RuntimeError::Invariant(
                         "TypedArray collection lost iterator",
@@ -186,13 +201,13 @@ impl TypedCollectResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(self.abrupt(value)),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Factory => {
                 let Value::Object(iterator) = value else {
                     return self.fail(runtime, "not an object");
                 };
-                self.iterator = Some(iterator.clone());
-                self.phase = Phase::NextMethod;
+                self.0.iterator = Some(iterator.clone());
+                self.0.phase = Phase::NextMethod;
                 Ok(TypedCollectStep::Read {
                     object: iterator,
                     key: runtime.intern_property_key("next")?,
@@ -207,20 +222,21 @@ impl TypedCollectResume {
                 let Some(next) = next else {
                     return self.fail(runtime, "not a function");
                 };
-                self.next = Some(next);
-                self.done_key = Some(runtime.intern_property_key("done")?);
-                self.value_key = Some(runtime.intern_property_key("value")?);
+                self.0.next = Some(next);
+                self.0.done_key = Some(runtime.intern_property_key("done")?);
+                self.0.value_key = Some(runtime.intern_property_key("value")?);
                 self.next()
             }
             Phase::NextResult => {
                 let Value::Object(iteration) = value else {
                     return self.fail(runtime, "iterator must return an object");
                 };
-                self.iteration = Some(iteration.clone());
-                self.phase = Phase::Done;
+                self.0.iteration = Some(iteration.clone());
+                self.0.phase = Phase::Done;
                 Ok(TypedCollectStep::Read {
                     object: iteration,
                     key: self
+                        .0
                         .done_key
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("TypedArray iterator lost done key"))?
@@ -231,23 +247,25 @@ impl TypedCollectResume {
             Phase::Done => {
                 if runtime.value_to_boolean(&value)? {
                     return Ok(TypedCollectStep::Complete(NativeConversion::Value(
-                        self.values,
+                        self.0.values,
                     )));
                 }
                 // This limit is observed before Get(value), unlike the shared
                 // generic next consumer. No failure path closes the iterator.
-                if self.values.len() as u64 == self.maximum {
-                    let error = runtime.typed_array_invalid_length(self.realm)?;
+                if self.0.values.len() as u64 == self.0.maximum {
+                    let error = runtime.typed_array_invalid_length(self.0.realm)?;
                     return Ok(self.abrupt(error));
                 }
-                self.phase = Phase::Value;
+                self.0.phase = Phase::Value;
                 Ok(TypedCollectStep::Read {
                     object: self
+                        .0
                         .iteration
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("TypedArray iterator lost result"))?
                         .clone(),
                     key: self
+                        .0
                         .value_key
                         .as_ref()
                         .ok_or(RuntimeError::Invariant(
@@ -258,15 +276,15 @@ impl TypedCollectResume {
                 })
             }
             Phase::Value => {
-                if self.values.try_reserve(1).is_err() {
+                if self.0.values.try_reserve(1).is_err() {
                     let error = runtime.new_native_error(
-                        self.realm,
+                        self.0.realm,
                         NativeErrorKind::Internal,
                         "out of memory",
                     )?;
                     return Ok(self.abrupt(error));
                 }
-                self.values.push(value);
+                self.0.values.push(value);
                 self.next()
             }
         }
@@ -299,3 +317,9 @@ pub(crate) fn finish_collect(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedCollectStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedIteratorMethodStep>() <= 64);

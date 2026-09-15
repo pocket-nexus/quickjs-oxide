@@ -151,7 +151,7 @@ pub(super) fn finish(execution: &mut RunningExecution, id: FrameId) -> Result<bo
     let value = execution.pending.take().unwrap();
     let mut frame = execution.frames.pop(id)?;
     let guard = frame.cold.entry_guard.take();
-    execution.slots.clear_frame(frame.window)?;
+    execution.slots.clear_frame(frame.window.take())?;
     if let Some(guard) = guard {
         guard.finish().map_err(runtime_error_to_vm_error)?;
     }

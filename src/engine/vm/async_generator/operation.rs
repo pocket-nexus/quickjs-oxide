@@ -20,23 +20,12 @@ use crate::engine::vm::{
 
 pub(crate) enum AsyncGeneratorStep {
     Complete(Completion),
-    Run {
-        activation: Box<RootedVmActivation>,
-        input: VmActivationResume,
-        resume: Box<AsyncGeneratorResume>,
-    },
-    Resolve {
-        value: Value,
-        realm: ContextId,
-        resume: Box<AsyncGeneratorResume>,
-    },
-    Call {
-        callable: CallableRef,
-        value: Value,
-        resume: Box<AsyncGeneratorResume>,
-    },
+    Run { resume: Box<AsyncGeneratorResume> },
+    Resolve { resume: Box<AsyncGeneratorResume> },
+    Call { resume: Box<AsyncGeneratorResume> },
 }
 pub(crate) struct AsyncGeneratorResume {
+    pending_effect: AsyncGeneratorStepPending,
     runtime: Runtime,
     realm: ContextId,
     generator: Option<ObjectRef>,
@@ -114,6 +103,7 @@ impl AsyncGeneratorStep {
                 _ => None,
             };
             let resume = Box::new(AsyncGeneratorResume {
+                pending_effect: AsyncGeneratorStepPending::default(),
                 runtime: runtime.clone(),
                 realm,
                 generator,
@@ -127,10 +117,15 @@ impl AsyncGeneratorStep {
                     NativeErrorKind::Type,
                     "not an async generator",
                 )?;
-                return Ok(Self::Call {
-                    callable: capability.reject,
-                    value: reason,
-                    resume,
+                return Ok({
+                    let __pending_field_callable = capability.reject;
+                    let __pending_field_value = reason;
+                    let __pending_field_resume = resume;
+                    Self::request_call(
+                        __pending_field_callable,
+                        __pending_field_value,
+                        __pending_field_resume,
+                    )
                 });
             };
             runtime.enqueue_async_generator_request(generator, kind, argument, &capability)?;
@@ -180,6 +175,7 @@ impl AsyncGeneratorStep {
             .heap
             .async_generator_snapshot(generator.object_id())?;
         let mut resume = Box::new(AsyncGeneratorResume {
+            pending_effect: AsyncGeneratorStepPending::default(),
             runtime: runtime.clone(),
             realm,
             generator: Some(generator.clone()),
@@ -217,10 +213,15 @@ impl AsyncGeneratorStep {
                 } else {
                     VmActivationResume::AwaitReject(argument)
                 };
-                Ok(Self::Run {
-                    activation: Box::new(rooted),
-                    input,
-                    resume,
+                Ok({
+                    let __pending_field_activation = Box::new(rooted);
+                    let __pending_field_input = input;
+                    let __pending_field_resume = resume;
+                    Self::request_run(
+                        __pending_field_activation,
+                        __pending_field_input,
+                        __pending_field_resume,
+                    )
                 })
             }
             AsyncGeneratorResumeKind::ReturnFulfill | AsyncGeneratorResumeKind::ReturnReject => {
@@ -278,28 +279,28 @@ impl AsyncGeneratorStep {
             loop {
                 step = match step {
                     Self::Complete(completion) => return Ok(completion),
-                    Self::Run {
-                        activation,
-                        input,
-                        resume,
-                    } => resume.body(activation.run(runtime, input)?)?,
-                    Self::Resolve {
-                        value,
-                        realm,
-                        resume,
-                    } => resume.resume(runtime.promise_resolve_intrinsic(realm, value)?)?,
-                    Self::Call {
-                        callable,
-                        value,
-                        resume,
-                    } => {
-                        let realm = resume.realm;
-                        resume.resume(runtime.call_internal(
-                            realm,
-                            &callable,
-                            Value::Undefined,
-                            &[value],
-                        )?)?
+                    Self::Run { mut resume } => {
+                        let activation = resume.take_run_activation();
+                        let input = resume.take_run_input();
+                        resume.body(activation.run(runtime, input)?)?
+                    }
+                    Self::Resolve { mut resume } => {
+                        let value = resume.take_resolve_value();
+                        let realm = resume.take_resolve_realm();
+                        resume.resume(runtime.promise_resolve_intrinsic(realm, value)?)?
+                    }
+                    Self::Call { mut resume } => {
+                        let callable = resume.take_call_callable();
+                        let value = resume.take_call_value();
+                        {
+                            let realm = resume.realm;
+                            resume.resume(runtime.call_internal(
+                                realm,
+                                &callable,
+                                Value::Undefined,
+                                &[value],
+                            )?)?
+                        }
                     }
                 };
             }
@@ -391,10 +392,15 @@ impl AsyncGeneratorResume {
                                 )?;
                             self.cleanup = Cleanup::AwaitingReturn;
                             self.phase = Phase::CompletedReturn;
-                            Ok(AsyncGeneratorStep::Resolve {
-                                value: request.result,
-                                realm: self.realm,
-                                resume: self,
+                            Ok({
+                                let __pending_field_value = request.result;
+                                let __pending_field_realm = self.realm;
+                                let __pending_field_resume = self;
+                                AsyncGeneratorStep::request_resolve(
+                                    __pending_field_value,
+                                    __pending_field_realm,
+                                    __pending_field_resume,
+                                )
                             })
                         }
                     };
@@ -440,10 +446,15 @@ impl AsyncGeneratorResume {
                 }
                 _ => unreachable!(),
             };
-            return Ok(AsyncGeneratorStep::Run {
-                activation: Box::new(rooted),
-                input,
-                resume: self,
+            return Ok({
+                let __pending_field_activation = Box::new(rooted);
+                let __pending_field_input = input;
+                let __pending_field_resume = self;
+                AsyncGeneratorStep::request_run(
+                    __pending_field_activation,
+                    __pending_field_input,
+                    __pending_field_resume,
+                )
             });
         }
     }
@@ -465,10 +476,15 @@ impl AsyncGeneratorResume {
         self.runtime
             .remove_front_async_generator_request(generator)?;
         self.phase = Phase::Settled { pump };
-        Ok(AsyncGeneratorStep::Call {
-            callable,
-            value,
-            resume: self,
+        Ok({
+            let __pending_field_callable = callable;
+            let __pending_field_value = value;
+            let __pending_field_resume = self;
+            AsyncGeneratorStep::request_call(
+                __pending_field_callable,
+                __pending_field_value,
+                __pending_field_resume,
+            )
         })
     }
     pub(crate) fn body(
@@ -515,10 +531,15 @@ impl AsyncGeneratorResume {
                 }
                 VmSuspendKind::Await => {
                     self.phase = Phase::Await(activation);
-                    Ok(AsyncGeneratorStep::Resolve {
-                        value,
-                        realm: self.realm,
-                        resume: self,
+                    Ok({
+                        let __pending_field_value = value;
+                        let __pending_field_realm = self.realm;
+                        let __pending_field_resume = self;
+                        AsyncGeneratorStep::request_resolve(
+                            __pending_field_value,
+                            __pending_field_realm,
+                            __pending_field_resume,
+                        )
                     })
                 }
                 _ => Err(RuntimeError::Invariant(
@@ -563,10 +584,15 @@ impl AsyncGeneratorResume {
                             FunctionKind::AsyncGenerator,
                         )?;
                         drop(activation);
-                        return Ok(AsyncGeneratorStep::Run {
-                            activation: Box::new(rooted),
-                            input: VmActivationResume::AwaitReject(reason),
-                            resume: self,
+                        return Ok({
+                            let __pending_field_activation = Box::new(rooted);
+                            let __pending_field_input = VmActivationResume::AwaitReject(reason);
+                            let __pending_field_resume = self;
+                            AsyncGeneratorStep::request_run(
+                                __pending_field_activation,
+                                __pending_field_input,
+                                __pending_field_resume,
+                            )
                         });
                     }
                 };
@@ -624,3 +650,84 @@ impl AsyncGeneratorResume {
         }
     }
 }
+
+#[derive(Default)]
+struct AsyncGeneratorStepPending {
+    run_activation: Option<Box<RootedVmActivation>>,
+    run_input: Option<VmActivationResume>,
+    resolve_value: Option<Value>,
+    resolve_realm: Option<ContextId>,
+    call_callable: Option<CallableRef>,
+    call_value: Option<Value>,
+}
+impl AsyncGeneratorStep {
+    pub(crate) fn request_run(
+        activation: Box<RootedVmActivation>,
+        input: VmActivationResume,
+        mut resume: Box<AsyncGeneratorResume>,
+    ) -> Self {
+        resume.pending_effect.run_activation = Some(activation);
+        resume.pending_effect.run_input = Some(input);
+        Self::Run { resume }
+    }
+    pub(crate) fn request_resolve(
+        value: Value,
+        realm: ContextId,
+        mut resume: Box<AsyncGeneratorResume>,
+    ) -> Self {
+        resume.pending_effect.resolve_value = Some(value);
+        resume.pending_effect.resolve_realm = Some(realm);
+        Self::Resolve { resume }
+    }
+    pub(crate) fn request_call(
+        callable: CallableRef,
+        value: Value,
+        mut resume: Box<AsyncGeneratorResume>,
+    ) -> Self {
+        resume.pending_effect.call_callable = Some(callable);
+        resume.pending_effect.call_value = Some(value);
+        Self::Call { resume }
+    }
+}
+impl AsyncGeneratorResume {
+    pub(crate) fn take_run_activation(&mut self) -> Box<RootedVmActivation> {
+        self.pending_effect
+            .run_activation
+            .take()
+            .expect("AsyncGeneratorStep Run activation")
+    }
+    pub(crate) fn take_run_input(&mut self) -> VmActivationResume {
+        self.pending_effect
+            .run_input
+            .take()
+            .expect("AsyncGeneratorStep Run input")
+    }
+    pub(crate) fn take_resolve_value(&mut self) -> Value {
+        self.pending_effect
+            .resolve_value
+            .take()
+            .expect("AsyncGeneratorStep Resolve value")
+    }
+    pub(crate) fn take_resolve_realm(&mut self) -> ContextId {
+        self.pending_effect
+            .resolve_realm
+            .take()
+            .expect("AsyncGeneratorStep Resolve realm")
+    }
+    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
+        self.pending_effect
+            .call_callable
+            .take()
+            .expect("AsyncGeneratorStep Call callable")
+    }
+    pub(crate) fn take_call_value(&mut self) -> Value {
+        self.pending_effect
+            .call_value
+            .take()
+            .expect("AsyncGeneratorStep Call value")
+    }
+}
+const _: () = assert!(std::mem::size_of::<AsyncGeneratorStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<AsyncGeneratorStep>() <= 64);

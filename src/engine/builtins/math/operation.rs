@@ -45,7 +45,20 @@ pub(crate) enum MathStep {
     Complete(Completion),
     Number { value: Value, resume: MathResume },
 }
-pub(crate) struct MathResume {
+pub(crate) struct MathResume(Box<MathResumeState>);
+impl std::ops::Deref for MathResume {
+    type Target = MathResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for MathResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<MathResume>() <= 8);
+pub(crate) struct MathResumeState {
     kind: MathKind,
     arguments: std::vec::IntoIter<Value>,
     result: Option<f64>,
@@ -73,12 +86,12 @@ impl MathStep {
             .ok_or(RuntimeError::Invariant("Math argv was not padded"))?;
         #[cfg(feature = "stack-vm")]
         {
-            let mut resume = MathResume {
+            let mut resume = MathResume(Box::new(MathResumeState {
                 kind,
                 arguments: Vec::new().into_iter(),
                 result: None,
                 count,
-            };
+            }));
             for (index, value) in values.iter().enumerate() {
                 if matches!(value, Value::Object(_)) {
                     // The native activation owns original argv. A suspended
@@ -111,26 +124,26 @@ impl MathStep {
         #[cfg(not(feature = "stack-vm"))]
         {
             let _ = (runtime, realm);
-            MathResume {
+            MathResume(Box::new(MathResumeState {
                 kind,
                 arguments: values.to_vec().into_iter(),
                 result: None,
                 count,
-            }
+            }))
             .next()
         }
     }
 }
 impl MathResume {
     fn next(mut self) -> Result<MathStep, RuntimeError> {
-        if let Some(value) = self.arguments.next() {
+        if let Some(value) = self.0.arguments.next() {
             return Ok(MathStep::Number {
                 value,
                 resume: self,
             });
         }
-        let value = match self.kind {
-            MathKind::MinMax(kind) if self.result.is_none() => {
+        let value = match self.0.kind {
+            MathKind::MinMax(kind) if self.0.result.is_none() => {
                 return Ok(MathStep::Complete(Completion::Return(Value::Float(
                     match kind {
                         MathMinMaxKind::Min => f64::INFINITY,
@@ -138,14 +151,16 @@ impl MathResume {
                     },
                 ))));
             }
-            MathKind::Hypot if self.count == 0 => {
+            MathKind::Hypot if self.0.count == 0 => {
                 return Ok(MathStep::Complete(Completion::Return(Value::Int(0))));
             }
-            MathKind::Hypot if self.count == 1 => self
+            MathKind::Hypot if self.0.count == 1 => self
+                .0
                 .result
                 .ok_or(RuntimeError::Invariant("Math hypot result missing"))?
                 .abs(),
             _ => self
+                .0
                 .result
                 .ok_or(RuntimeError::Invariant("Math result missing"))?,
         };
@@ -173,7 +188,7 @@ impl MathResume {
                 return Ok(Some(Completion::Throw(value)));
             }
         };
-        self.result = Some(match self.kind {
+        self.0.result = Some(match self.0.kind {
             MathKind::Unary(kind) => quickjs_unary(kind, value),
             MathKind::Clz32 => {
                 return Ok(Some(Completion::Return(Value::Int(
@@ -181,14 +196,14 @@ impl MathResume {
                 ))));
             }
             MathKind::Binary(kind) => {
-                if let Some(left) = self.result {
+                if let Some(left) = self.0.result {
                     quickjs_binary(kind, left, value)
                 } else {
                     value
                 }
             }
             MathKind::Imul => {
-                if let Some(left) = self.result {
+                if let Some(left) = self.0.result {
                     let product = Runtime::to_uint32_number(left)
                         .wrapping_mul(Runtime::to_uint32_number(value));
                     return Ok(Some(Completion::Return(Value::Int(i32::from_ne_bytes(
@@ -199,7 +214,7 @@ impl MathResume {
                 }
             }
             MathKind::MinMax(kind) => {
-                if let Some(left) = self.result {
+                if let Some(left) = self.0.result {
                     if left.is_nan() {
                         left
                     } else if value.is_nan() {
@@ -215,7 +230,7 @@ impl MathResume {
                 }
             }
             MathKind::Hypot => {
-                if let Some(left) = self.result {
+                if let Some(left) = self.0.result {
                     left.hypot(value)
                 } else {
                     value
@@ -242,3 +257,6 @@ pub(crate) fn finish(
 
 #[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
 mod tests;
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<MathStep>() <= 64);

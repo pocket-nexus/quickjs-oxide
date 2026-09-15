@@ -10,7 +10,7 @@ pub(super) fn finish(
     mut resume: Resume,
     result: Result<NativeInvokeOutcome, Error>,
 ) -> Result<Step, Error> {
-    let mut output = Step::Complete(Completion::Return(Value::Undefined));
+    let mut output = Step::Complete(Some(Completion::Return(Value::Undefined)));
     finish_into(runtime, slots, call, &mut resume, result, &mut output)?;
     Ok(output)
 }
@@ -68,11 +68,11 @@ fn apply_into(
     output: &mut Step,
 ) -> Result<(), Error> {
     if matches!(resume, Resume::Identity) {
-        *output = Step::Complete(identity_completion(result)?);
+        *output = Step::Complete(Some(identity_completion(result)?));
     } else if let Resume::IteratorNext(next) = resume {
         match next.raw_completion(result) {
             Ok(Ok(result)) => {
-                *output = Step::IteratorNextComplete(result);
+                *output = Step::IteratorNextComplete(Some(result));
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "native_iterator_completed_in_place",
@@ -204,13 +204,19 @@ fn capture_native_step(
     use crate::engine::builtins::native::{NativeFunctionId, RegExpNativeKind};
     // Consume exactly the method selected by String.replace's observable Get.
     // Bound, Proxy and custom methods retain their general Call continuation.
-    if let NativeStep::StringReplace(StringReplaceStep::Call {
-        target: DirectCallTarget::Callable(callable),
-        receiver,
-        arguments,
-        resume,
-    }) = step
-    {
+    if let NativeStep::StringReplace(StringReplaceStep::Call { mut resume }) = step {
+        let target = resume.take_call_target();
+        let receiver = resume.take_call_receiver();
+        let arguments = resume.take_call_arguments();
+        let DirectCallTarget::Callable(callable) = target else {
+            return capture_waiting_step(
+                storage,
+                NativeStep::StringReplace(StringReplaceStep::make_call(
+                    target, receiver, arguments, resume,
+                )),
+                pending,
+            );
+        };
         if resume.awaits_protocol_result() {
             if let Some(mut selected) =
                 super::super::frames::NativeClassification::select(runtime, &callable)
@@ -274,7 +280,8 @@ fn capture_native_step(
                                 Err(Error::internal("replace parent storage allocation failed")),
                             )
                             .and_then(identity_completion);
-                            records[0].step = Step::Complete(Completion::Return(Value::Undefined));
+                            records[0].step =
+                                Step::Complete(Some(Completion::Return(Value::Undefined)));
                             storage.recycle_native_wait(records);
                             let result = result?;
                             return match resume
@@ -300,12 +307,12 @@ fn capture_native_step(
         }
         return capture_waiting_step(
             storage,
-            NativeStep::StringReplace(StringReplaceStep::Call {
-                target: DirectCallTarget::Callable(callable),
+            NativeStep::StringReplace(StringReplaceStep::make_call(
+                DirectCallTarget::Callable(callable),
                 receiver,
                 arguments,
                 resume,
-            }),
+            )),
             pending,
         );
     }
@@ -424,7 +431,7 @@ pub(super) fn begin_local(
             if let Some(inner) = records[0].call.take() {
                 result = finish_result(runtime, slots, inner, result);
             }
-            records[0].step = Step::Complete(Completion::Return(Value::Undefined));
+            records[0].step = Step::Complete(Some(Completion::Return(Value::Undefined)));
             debug_assert!(
                 records[0]
                     .parents
@@ -458,14 +465,8 @@ pub(super) fn begin_local(
 // Take only that small payload, leaving the wide output enum in its destination.
 fn take_immediate(output: &mut Step) -> Option<NativeInvokeOutcome> {
     match output {
-        Step::Complete(result) => Some(NativeInvokeOutcome::Completion(std::mem::replace(
-            result,
-            Completion::Return(Value::Undefined),
-        ))),
-        Step::NativeRawComplete(result) => Some(std::mem::replace(
-            result,
-            NativeInvokeOutcome::Completion(Completion::Return(Value::Undefined)),
-        )),
+        Step::Complete(result) => result.take().map(NativeInvokeOutcome::Completion),
+        Step::NativeRawComplete(result) => result.take(),
         _ => None,
     }
 }

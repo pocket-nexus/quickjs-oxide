@@ -61,7 +61,7 @@ pub(in crate::engine::vm) fn execute_call(
     });
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_call_storage(
-        size_of::<Option<FrameCold>>(),
+        size_of::<crate::engine::vm::frame::FrameBody>(),
         cold.reusable_captured_locals.capacity(),
         original_arguments.capacity() * size_of::<Value>(),
     );
@@ -176,7 +176,7 @@ pub(in crate::engine::vm) fn prepare(
     };
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_call_storage(
-        size_of::<FrameCold>(),
+        size_of::<crate::engine::vm::frame::FrameBody>(),
         entry.cold.reusable_captured_locals.capacity() * size_of::<bool>(),
         entry.storage.original_arguments.capacity() * size_of::<Value>(),
     );

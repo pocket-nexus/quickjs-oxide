@@ -23,7 +23,20 @@ pub(crate) enum BindStep {
         resume: BindResume,
     },
 }
-pub(crate) struct BindResume {
+pub(crate) struct BindResume(Box<BindResumeState>);
+impl std::ops::Deref for BindResume {
+    type Target = BindResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for BindResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<BindResume>() <= 8);
+pub(crate) struct BindResumeState {
     target: ObjectRef,
     bound: CallableRef,
     count: usize,
@@ -61,12 +74,12 @@ impl BindStep {
         Ok(Self::Own {
             object: target.as_object().clone(),
             key: runtime.intern_property_key("length")?,
-            resume: BindResume {
+            resume: BindResume(Box::new(BindResumeState {
                 target: target.into_object(),
                 bound,
                 count,
                 name: false,
-            },
+            })),
         })
     }
 }
@@ -79,7 +92,7 @@ impl BindResume {
         match result {
             NativeConversion::Throw(value) => Ok(BindStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(true) => Ok(BindStep::Read {
-                object: self.target.clone(),
+                object: self.0.target.clone(),
                 key: runtime.intern_property_key("length")?,
                 resume: self,
             }),
@@ -88,15 +101,15 @@ impl BindResume {
     }
     fn length(mut self, runtime: &Runtime, value: Value) -> Result<BindStep, RuntimeError> {
         runtime.define_function_data_property(
-            self.bound.as_object(),
+            self.0.bound.as_object(),
             "length",
             value,
             false,
             true,
         )?;
-        self.name = true;
+        self.0.name = true;
         Ok(BindStep::Read {
-            object: self.target.clone(),
+            object: self.0.target.clone(),
             key: runtime.intern_property_key("name")?,
             resume: self,
         })
@@ -110,8 +123,8 @@ impl BindResume {
             Completion::Return(value) => value,
             result @ Completion::Throw(_) => return Ok(BindStep::Complete(result)),
         };
-        if !self.name {
-            let length = bound_function_length(&value, self.count)?;
+        if !self.0.name {
+            let length = bound_function_length(&value, self.0.count)?;
             return self.length(runtime, length);
         }
         let name = match value {
@@ -120,14 +133,14 @@ impl BindResume {
         };
         let name = JsString::from_static("bound ").try_concat(&name)?;
         runtime.define_function_data_property(
-            self.bound.as_object(),
+            self.0.bound.as_object(),
             "name",
             Value::String(name),
             false,
             true,
         )?;
         Ok(BindStep::Complete(Completion::Return(Value::Object(
-            self.bound.into_object(),
+            self.0.bound.into_object(),
         ))))
     }
 }
@@ -158,3 +171,6 @@ pub(super) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<BindStep>() <= 64);

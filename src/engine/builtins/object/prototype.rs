@@ -49,7 +49,20 @@ pub(crate) enum BuiltinPrototypeStep {
         resume: BuiltinPrototypeResume,
     },
 }
-pub(crate) struct BuiltinPrototypeResume {
+pub(crate) struct BuiltinPrototypeResume(Box<BuiltinPrototypeResumeState>);
+impl std::ops::Deref for BuiltinPrototypeResume {
+    type Target = BuiltinPrototypeResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for BuiltinPrototypeResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<BuiltinPrototypeResume>() <= 8);
+pub(crate) struct BuiltinPrototypeResumeState {
     object: ObjectRef,
     realm: ContextId,
     kind: BuiltinPrototypeKind,
@@ -97,11 +110,11 @@ impl BuiltinPrototypeStep {
             return Ok(Self::Set {
                 object: object.clone(),
                 prototype,
-                resume: BuiltinPrototypeResume {
+                resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
                     object: object.clone(),
                     realm,
                     kind,
-                },
+                })),
             });
         }
         // isPrototypeOf checks the candidate before converting its receiver.
@@ -119,11 +132,11 @@ impl BuiltinPrototypeStep {
         };
         Ok(Self::Get {
             object: candidate.unwrap_or_else(|| object.clone()),
-            resume: BuiltinPrototypeResume {
+            resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
                 object,
                 realm,
                 kind,
-            },
+            })),
         })
     }
 
@@ -163,11 +176,11 @@ impl BuiltinPrototypeStep {
             };
             return Ok(Self::Get {
                 object: object.clone(),
-                resume: BuiltinPrototypeResume {
+                resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
                     object,
                     realm,
                     kind,
-                },
+                })),
             });
         }
         let prototype = match arguments.readable.get(1).ok_or(RuntimeError::Invariant(
@@ -183,11 +196,11 @@ impl BuiltinPrototypeStep {
         Ok(Self::Set {
             object: object.clone(),
             prototype,
-            resume: BuiltinPrototypeResume {
+            resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
                 object: object.clone(),
                 realm,
                 kind,
-            },
+            })),
         })
     }
 }
@@ -202,7 +215,7 @@ impl BuiltinPrototypeResume {
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<BuiltinPrototypeStep, RuntimeError> {
         if !matches!(
-            self.kind,
+            self.0.kind,
             BuiltinPrototypeKind::ObjectGet
                 | BuiltinPrototypeKind::ReflectGet
                 | BuiltinPrototypeKind::Getter
@@ -212,7 +225,7 @@ impl BuiltinPrototypeResume {
                 "prototype builtin received a Get reply for Set",
             ));
         }
-        if matches!(self.kind, BuiltinPrototypeKind::IsPrototype) {
+        if matches!(self.0.kind, BuiltinPrototypeKind::IsPrototype) {
             return Ok(match result {
                 NativeConversion::Throw(value) => {
                     BuiltinPrototypeStep::Complete(Completion::Throw(value))
@@ -220,7 +233,7 @@ impl BuiltinPrototypeResume {
                 NativeConversion::Value(None) => {
                     BuiltinPrototypeStep::Complete(Completion::Return(Value::Bool(false)))
                 }
-                NativeConversion::Value(Some(object)) if object == self.object => {
+                NativeConversion::Value(Some(object)) if object == self.0.object => {
                     BuiltinPrototypeStep::Complete(Completion::Return(Value::Bool(true)))
                 }
                 NativeConversion::Value(Some(object)) => BuiltinPrototypeStep::Get {
@@ -241,19 +254,19 @@ impl BuiltinPrototypeResume {
         runtime: &Runtime,
         result: NativeConversion<bool>,
     ) -> Result<BuiltinPrototypeStep, RuntimeError> {
-        Ok(BuiltinPrototypeStep::Complete(match self.kind {
+        Ok(BuiltinPrototypeStep::Complete(match self.0.kind {
             BuiltinPrototypeKind::ReflectSet => match result {
                 NativeConversion::Value(value) => Completion::Return(Value::Bool(value)),
                 NativeConversion::Throw(value) => Completion::Throw(value),
             },
             BuiltinPrototypeKind::ObjectSet | BuiltinPrototypeKind::Setter => {
-                match runtime.finish_set_prototype_or_throw(self.realm, &self.object, result)? {
+                match runtime.finish_set_prototype_or_throw(self.0.realm, &self.0.object, result)? {
                     Some(value) => Completion::Throw(value),
                     None => {
-                        Completion::Return(if matches!(self.kind, BuiltinPrototypeKind::Setter) {
+                        Completion::Return(if matches!(self.0.kind, BuiltinPrototypeKind::Setter) {
                             Value::Undefined
                         } else {
-                            Value::Object(self.object)
+                            Value::Object(self.0.object)
                         })
                     }
                 }
@@ -288,3 +301,6 @@ pub(in crate::engine::builtins) fn finish(
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<BuiltinPrototypeStep>() <= 64);

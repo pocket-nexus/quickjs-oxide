@@ -208,7 +208,20 @@ pub(crate) enum TypedMutationStep {
         resume: TypedMutationResume,
     },
 }
-pub(crate) struct TypedMutationResume {
+pub(crate) struct TypedMutationResume(Box<TypedMutationResumeState>);
+impl std::ops::Deref for TypedMutationResume {
+    type Target = TypedMutationResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedMutationResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedMutationResume>() <= 8);
+pub(crate) struct TypedMutationResumeState {
     realm: ContextId,
     target: ObjectRef,
     length: i64,
@@ -289,7 +302,7 @@ impl TypedMutationStep {
         Ok(match kind {
             TypedMutationKind::CopyWithin => Self::Primitive {
                 value: first,
-                resume: TypedMutationResume {
+                resume: TypedMutationResume(Box::new(TypedMutationResumeState {
                     realm,
                     target,
                     length,
@@ -303,7 +316,7 @@ impl TypedMutationStep {
                             .clone(),
                         end,
                     },
-                },
+                })),
             },
             TypedMutationKind::Fill => {
                 let element = runtime.typed_array_snapshot(&target)?.element;
@@ -323,7 +336,7 @@ impl TypedMutationStep {
                 Self::Element {
                     element,
                     value: first,
-                    resume: TypedMutationResume {
+                    resume: TypedMutationResume(Box::new(TypedMutationResumeState {
                         realm,
                         target,
                         length,
@@ -332,7 +345,7 @@ impl TypedMutationStep {
                             start,
                             end,
                         },
-                    },
+                    })),
                 }
             }
         })
@@ -340,7 +353,7 @@ impl TypedMutationStep {
 }
 impl TypedMutationResume {
     pub(crate) fn element(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<[u8; 8]>,
     ) -> Result<TypedMutationStep, RuntimeError> {
@@ -354,19 +367,20 @@ impl TypedMutationResume {
             element,
             start,
             end,
-        } = self.phase
+        } = self.0.phase
         else {
             return Err(RuntimeError::Invariant(
                 "TypedArray mutation element reply in wrong phase",
             ));
         };
-        let resume = Self {
-            phase: Phase::FillStart {
+        let resume = {
+            let updated_0 = Phase::FillStart {
                 element,
                 bytes,
                 end,
-            },
-            ..self
+            };
+            self.0.phase = updated_0;
+            self
         };
         if let Some(value) = start {
             Ok(TypedMutationStep::Primitive { value, resume })
@@ -375,7 +389,7 @@ impl TypedMutationResume {
         }
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<TypedMutationStep, RuntimeError> {
@@ -385,48 +399,55 @@ impl TypedMutationResume {
                 return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
             }
         };
-        let index =
-            match runtime.native_to_int64_clamp(self.realm, &value, 0, self.length, self.length)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => {
-                    return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
-                }
-            };
-        match self.phase {
+        let index = match runtime.native_to_int64_clamp(
+            self.0.realm,
+            &value,
+            0,
+            self.0.length,
+            self.0.length,
+        )? {
+            NativeConversion::Value(value) => value,
+            NativeConversion::Throw(value) => {
+                return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
+            }
+        };
+        match self.0.phase {
             Phase::To { from, end } => Ok(TypedMutationStep::Primitive {
                 value: from,
-                resume: Self {
-                    phase: Phase::From { to: index, end },
-                    ..self
+                resume: {
+                    let updated_0 = Phase::From { to: index, end };
+                    self.0.phase = updated_0;
+                    self
                 },
             }),
             Phase::From { to, end } => {
                 if let Some(value) = end {
                     Ok(TypedMutationStep::Primitive {
                         value,
-                        resume: Self {
-                            phase: Phase::CopyEnd { to, from: index },
-                            ..self
+                        resume: {
+                            let updated_0 = Phase::CopyEnd { to, from: index };
+                            self.0.phase = updated_0;
+                            self
                         },
                     })
                 } else {
                     Ok(TypedMutationStep::Complete(
                         runtime.finish_typed_copy_within(
-                            self.realm,
-                            self.target,
-                            self.length,
+                            self.0.realm,
+                            self.0.target,
+                            self.0.length,
                             to,
                             index,
-                            self.length,
+                            self.0.length,
                         )?,
                     ))
                 }
             }
             Phase::CopyEnd { to, from } => Ok(TypedMutationStep::Complete(
                 runtime.finish_typed_copy_within(
-                    self.realm,
-                    self.target,
-                    self.length,
+                    self.0.realm,
+                    self.0.target,
+                    self.0.length,
                     to,
                     from,
                     index,
@@ -440,23 +461,24 @@ impl TypedMutationResume {
                 if let Some(value) = end {
                     Ok(TypedMutationStep::Primitive {
                         value,
-                        resume: Self {
-                            phase: Phase::FillEnd {
+                        resume: {
+                            let updated_0 = Phase::FillEnd {
                                 element,
                                 bytes,
                                 start: index,
-                            },
-                            ..self
+                            };
+                            self.0.phase = updated_0;
+                            self
                         },
                     })
                 } else {
                     Ok(TypedMutationStep::Complete(runtime.finish_typed_fill(
-                        self.realm,
-                        self.target,
+                        self.0.realm,
+                        self.0.target,
                         element,
                         bytes,
                         index,
-                        self.length,
+                        self.0.length,
                     )?))
                 }
             }
@@ -465,8 +487,8 @@ impl TypedMutationResume {
                 bytes,
                 start,
             } => Ok(TypedMutationStep::Complete(runtime.finish_typed_fill(
-                self.realm,
-                self.target,
+                self.0.realm,
+                self.0.target,
                 element,
                 bytes,
                 start,
@@ -505,3 +527,6 @@ fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedMutationStep>() <= 64);

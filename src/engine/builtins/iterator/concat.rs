@@ -220,21 +220,9 @@ pub(crate) enum ConcatKind {
 }
 pub(crate) enum ConcatStep {
     Complete(NativeInvokeOutcome),
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: ConcatResume,
-    },
-    Call {
-        callable: CallableRef,
-        receiver: Value,
-        resume: ConcatResume,
-    },
-    Next {
-        iterator: ObjectRef,
-        method: Value,
-        resume: ConcatResume,
-    },
+    Read { resume: ConcatResume },
+    Call { resume: ConcatResume },
+    Next { resume: ConcatResume },
 }
 struct ConcatGuard {
     runtime: Runtime,
@@ -265,7 +253,21 @@ impl Drop for ConcatGuard {
         }
     }
 }
-pub(crate) struct ConcatResume {
+pub(crate) struct ConcatResume(Box<ConcatResumeState>);
+impl std::ops::Deref for ConcatResume {
+    type Target = ConcatResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ConcatResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ConcatResume>() <= 8);
+pub(crate) struct ConcatResumeState {
+    pending_effect: ConcatStepPending,
     realm: ContextId,
     phase: ConcatPhase,
     guard: Option<ConcatGuard>,
@@ -343,11 +345,12 @@ impl ConcatStep {
             active: true,
             clear: false,
         };
-        let mut resume = ConcatResume {
+        let mut resume = ConcatResume(Box::new(ConcatResumeState {
+            pending_effect: ConcatStepPending::default(),
             realm,
             phase: ConcatPhase::Next,
             guard: Some(guard),
-        };
+        }));
         if matches!(kind, ConcatKind::Return) {
             let iterator = ObjectRef::from_borrowed_handle(
                 runtime.clone(),
@@ -356,10 +359,15 @@ impl ConcatStep {
                     .ok_or(RuntimeError::Invariant("concat return iterator missing"))?,
             )?;
             resume.phase = ConcatPhase::ReturnMethod(iterator.clone());
-            return Ok(Self::Read {
-                object: iterator,
-                key: runtime.intern_property_key("return")?,
-                resume,
+            return Ok({
+                let __pending_field_object = iterator;
+                let __pending_field_key = runtime.intern_property_key("return")?;
+                let __pending_field_resume = resume;
+                Self::request_read(
+                    __pending_field_object,
+                    __pending_field_key,
+                    __pending_field_resume,
+                )
             });
         }
         resume.advance(runtime)
@@ -386,10 +394,12 @@ impl ConcatResume {
                 )?),
             )));
         };
-        Ok(ConcatStep::Read {
-            object: current.clone(),
-            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
-            resume: Self {
+        Ok({
+            let __pending_field_object = current.clone();
+            let __pending_field_key =
+                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+            let __pending_field_resume = Self(Box::new(ConcatResumeState {
+                pending_effect: ConcatStepPending::default(),
                 realm,
                 guard: None,
                 phase: ConcatPhase::Input {
@@ -397,11 +407,17 @@ impl ConcatResume {
                     inputs,
                     current,
                 },
-            },
+            }));
+            ConcatStep::request_read(
+                __pending_field_object,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         })
     }
     fn concat(&self) -> Result<&ObjectRef, RuntimeError> {
-        self.guard
+        self.0
+            .guard
             .as_ref()
             .map(|guard| &guard.concat)
             .ok_or(RuntimeError::Invariant(
@@ -409,7 +425,7 @@ impl ConcatResume {
             ))
     }
     fn complete(mut self, result: NativeInvokeOutcome) -> Result<ConcatStep, RuntimeError> {
-        if let Some(guard) = &mut self.guard {
+        if let Some(guard) = &mut self.0.guard {
             guard.reset()?;
         }
         Ok(ConcatStep::Complete(result))
@@ -444,7 +460,7 @@ impl ConcatResume {
             ))?;
         let iterable = ObjectRef::from_borrowed_handle(runtime.clone(), item.iterable)?;
         let callable = match runtime
-            .iterator_callable_value(self.realm, runtime.root_raw_value(&item.method)?)?
+            .iterator_callable_value(self.0.realm, runtime.root_raw_value(&item.method)?)?
         {
             NativeConversion::Value(callable) => callable,
             NativeConversion::Throw(_) => {
@@ -453,11 +469,16 @@ impl ConcatResume {
                 ));
             }
         };
-        self.phase = ConcatPhase::Iterator;
-        Ok(ConcatStep::Call {
-            callable,
-            receiver: Value::Object(iterable),
-            resume: self,
+        self.0.phase = ConcatPhase::Iterator;
+        Ok({
+            let __pending_field_callable = callable;
+            let __pending_field_receiver = Value::Object(iterable);
+            let __pending_field_resume = self;
+            ConcatStep::request_call(
+                __pending_field_callable,
+                __pending_field_receiver,
+                __pending_field_resume,
+            )
         })
     }
     fn method(
@@ -474,19 +495,29 @@ impl ConcatResume {
                 .iterator_concat_state(self.concat()?.object_id())?
         };
         if matches!(snapshot.next, RawValue::Undefined) {
-            self.phase = ConcatPhase::Method(iterator.clone());
-            return Ok(ConcatStep::Read {
-                object: iterator,
-                key: runtime.intern_property_key("next")?,
-                resume: self,
+            self.0.phase = ConcatPhase::Method(iterator.clone());
+            return Ok({
+                let __pending_field_object = iterator;
+                let __pending_field_key = runtime.intern_property_key("next")?;
+                let __pending_field_resume = self;
+                ConcatStep::request_read(
+                    __pending_field_object,
+                    __pending_field_key,
+                    __pending_field_resume,
+                )
             });
         }
         let method = runtime.root_raw_value(&snapshot.next)?;
-        self.phase = ConcatPhase::Next;
-        Ok(ConcatStep::Next {
-            iterator,
-            method,
-            resume: self,
+        self.0.phase = ConcatPhase::Next;
+        Ok({
+            let __pending_field_iterator = iterator;
+            let __pending_field_method = method;
+            let __pending_field_resume = self;
+            ConcatStep::request_next(
+                __pending_field_iterator,
+                __pending_field_method,
+                __pending_field_resume,
+            )
         })
     }
     pub(crate) fn resume(
@@ -500,25 +531,25 @@ impl ConcatResume {
                 return self.complete(NativeInvokeOutcome::Completion(Completion::Throw(value)));
             }
         };
-        match std::mem::replace(&mut self.phase, ConcatPhase::Next) {
+        match std::mem::replace(&mut self.0.phase, ConcatPhase::Next) {
             ConcatPhase::Input {
                 remaining,
                 mut inputs,
                 current,
             } => {
                 if let NativeConversion::Throw(value) =
-                    runtime.iterator_callable_value(self.realm, value.clone())?
+                    runtime.iterator_callable_value(self.0.realm, value.clone())?
                 {
                     return self
                         .complete(NativeInvokeOutcome::Completion(Completion::Throw(value)));
                 }
                 inputs.push((current, value));
-                Self::input(runtime, self.realm, remaining, inputs)
+                Self::input(runtime, self.0.realm, remaining, inputs)
             }
             ConcatPhase::Iterator => {
                 let Value::Object(iterator) = value else {
                     let error = runtime.new_native_error(
-                        self.realm,
+                        self.0.realm,
                         NativeErrorKind::Type,
                         "not an object",
                     )?;
@@ -530,29 +561,40 @@ impl ConcatResume {
             }
             ConcatPhase::Method(iterator) => {
                 runtime.set_iterator_concat_next(self.concat()?, &value)?;
-                Ok(ConcatStep::Next {
-                    iterator,
-                    method: value,
-                    resume: self,
+                Ok({
+                    let __pending_field_iterator = iterator;
+                    let __pending_field_method = value;
+                    let __pending_field_resume = self;
+                    ConcatStep::request_next(
+                        __pending_field_iterator,
+                        __pending_field_method,
+                        __pending_field_resume,
+                    )
                 })
             }
             ConcatPhase::ReturnMethod(iterator) => {
-                self.guard
+                self.0
+                    .guard
                     .as_mut()
                     .ok_or(RuntimeError::Invariant("concat return owner missing"))?
                     .clear = true;
-                let callable = match runtime.iterator_callable_value(self.realm, value)? {
+                let callable = match runtime.iterator_callable_value(self.0.realm, value)? {
                     NativeConversion::Value(callable) => callable,
                     NativeConversion::Throw(value) => {
                         return self
                             .complete(NativeInvokeOutcome::Completion(Completion::Throw(value)));
                     }
                 };
-                self.phase = ConcatPhase::ReturnResult;
-                Ok(ConcatStep::Call {
-                    callable,
-                    receiver: Value::Object(iterator),
-                    resume: self,
+                self.0.phase = ConcatPhase::ReturnResult;
+                Ok({
+                    let __pending_field_callable = callable;
+                    let __pending_field_receiver = Value::Object(iterator);
+                    let __pending_field_resume = self;
+                    ConcatStep::request_call(
+                        __pending_field_callable,
+                        __pending_field_receiver,
+                        __pending_field_resume,
+                    )
                 })
             }
             ConcatPhase::ReturnResult => {
@@ -566,7 +608,7 @@ impl ConcatResume {
         runtime: &Runtime,
         reply: ObjectIteratorStep,
     ) -> Result<ConcatStep, RuntimeError> {
-        if !matches!(self.phase, ConcatPhase::Next) {
+        if !matches!(self.0.phase, ConcatPhase::Next) {
             return Err(RuntimeError::Invariant("concat next reply phase mismatch"));
         }
         match reply {
@@ -591,34 +633,121 @@ pub(crate) fn finish(
     loop {
         step = match step {
             ConcatStep::Complete(result) => return Ok(result),
-            ConcatStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            ConcatStep::Call {
-                callable,
-                receiver,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, receiver, &[])?,
-            )?,
-            ConcatStep::Next {
-                iterator,
-                method,
-                resume,
-            } => resume.next(
-                runtime,
-                super::step::finish_next(
+            ConcatStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                resume.resume(
                     runtime,
-                    realm,
-                    super::step::NextStep::start(runtime, realm, iterator, method)?,
-                )?,
-            )?,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
+                )?
+            }
+            ConcatStep::Call { mut resume } => {
+                let callable = resume.take_call_callable();
+                let receiver = resume.take_call_receiver();
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, receiver, &[])?,
+                )?
+            }
+            ConcatStep::Next { mut resume } => {
+                let iterator = resume.take_next_iterator();
+                let method = resume.take_next_method();
+                resume.next(
+                    runtime,
+                    super::step::finish_next(
+                        runtime,
+                        realm,
+                        super::step::NextStep::start(runtime, realm, iterator, method)?,
+                    )?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct ConcatStepPending {
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    call_callable: Option<CallableRef>,
+    call_receiver: Option<Value>,
+    next_iterator: Option<ObjectRef>,
+    next_method: Option<Value>,
+}
+impl ConcatStep {
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: ConcatResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_call(
+        callable: CallableRef,
+        receiver: Value,
+        mut resume: ConcatResume,
+    ) -> Self {
+        resume.0.pending_effect.call_callable = Some(callable);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_next(
+        iterator: ObjectRef,
+        method: Value,
+        mut resume: ConcatResume,
+    ) -> Self {
+        resume.0.pending_effect.next_iterator = Some(iterator);
+        resume.0.pending_effect.next_method = Some(method);
+        Self::Next { resume }
+    }
+}
+impl ConcatResume {
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("ConcatStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("ConcatStep Read key")
+    }
+    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
+        self.0
+            .pending_effect
+            .call_callable
+            .take()
+            .expect("ConcatStep Call callable")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("ConcatStep Call receiver")
+    }
+    pub(crate) fn take_next_iterator(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .next_iterator
+            .take()
+            .expect("ConcatStep Next iterator")
+    }
+    pub(crate) fn take_next_method(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .next_method
+            .take()
+            .expect("ConcatStep Next method")
+    }
+}
+const _: () = assert!(std::mem::size_of::<ConcatStep>() <= 56);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ConcatStep>() <= 64);

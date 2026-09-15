@@ -19,23 +19,10 @@ use crate::engine::{
 };
 pub(crate) enum DateConstructorStep {
     Complete(Completion),
-    Primitive {
-        value: Value,
-        resume: DateConstructorResume,
-    },
-    String {
-        value: Value,
-        resume: DateConstructorResume,
-    },
-    Number {
-        value: Value,
-        resume: DateConstructorResume,
-    },
-    Read {
-        receiver: Value,
-        key: PropertyKey,
-        resume: DateConstructorResume,
-    },
+    Primitive { resume: DateConstructorResume },
+    String { resume: DateConstructorResume },
+    Number { resume: DateConstructorResume },
+    Read { resume: DateConstructorResume },
 }
 enum Phase {
     Single,
@@ -43,7 +30,21 @@ enum Phase {
     Prototype,
     Parse,
 }
-pub(crate) struct DateConstructorResume {
+pub(crate) struct DateConstructorResume(Box<DateConstructorResumeState>);
+impl std::ops::Deref for DateConstructorResume {
+    type Target = DateConstructorResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DateConstructorResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<DateConstructorResume>() <= 8);
+pub(crate) struct DateConstructorResumeState {
+    pending_effect: DateConstructorStepPending,
     realm: ContextId,
     kind: DateNativeKind,
     new_target: Value,
@@ -87,7 +88,8 @@ impl DateConstructorStep {
             .get(..count)
             .ok_or(RuntimeError::Invariant("Date actual arguments unreadable"))?
             .to_vec();
-        let mut resume = DateConstructorResume {
+        let mut resume = DateConstructorResume(Box::new(DateConstructorResumeState {
+            pending_effect: DateConstructorStepPending::default(),
             realm,
             kind,
             new_target,
@@ -96,16 +98,17 @@ impl DateConstructorStep {
             index: 0,
             value: f64::NAN,
             phase: Phase::Fields,
-        };
+        }));
         if kind == DateNativeKind::Parse {
             resume.phase = Phase::Parse;
-            return Ok(Self::String {
-                value: arguments
+            return Ok({
+                let __pending_field_value = arguments
                     .readable
                     .first()
                     .cloned()
-                    .unwrap_or(Value::Undefined),
-                resume,
+                    .unwrap_or(Value::Undefined);
+                let __pending_field_resume = resume;
+                Self::request_string(__pending_field_value, __pending_field_resume)
             });
         }
         if arguments.actual_arg_count == 0 {
@@ -125,7 +128,11 @@ impl DateConstructorStep {
                 return resume.prototype(runtime);
             }
             resume.phase = Phase::Single;
-            return Ok(Self::Primitive { value, resume });
+            return Ok({
+                let __pending_field_value = value;
+                let __pending_field_resume = resume;
+                Self::request_primitive(__pending_field_value, __pending_field_resume)
+            });
         }
         resume.fields(runtime)
     }
@@ -136,7 +143,7 @@ impl DateConstructorResume {
         runtime: &Runtime,
         result: Completion,
     ) -> Result<DateConstructorStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Single) {
+        if !matches!(self.0.phase, Phase::Single) {
             return Err(RuntimeError::Invariant("Date primitive phase mismatch"));
         }
         let value = match result {
@@ -145,19 +152,19 @@ impl DateConstructorResume {
                 return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
             }
         };
-        self.value = if let Value::String(string) = value {
+        self.0.value = if let Value::String(string) = value {
             parsed_date_value(parse_date_string(&string), |instant| {
                 runtime.date_timezone_offset_minutes(instant)
             })
         } else {
-            match runtime.number_from_primitive(self.realm, &value)? {
+            match runtime.number_from_primitive(self.0.realm, &value)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
                     return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
                 }
             }
         };
-        self.value = time_clip(self.value);
+        self.0.value = time_clip(self.0.value);
         self.prototype(runtime)
     }
     pub(crate) fn string(
@@ -165,7 +172,7 @@ impl DateConstructorResume {
         runtime: &Runtime,
         result: NativeConversion<JsString>,
     ) -> Result<DateConstructorStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Parse) {
+        if !matches!(self.0.phase, Phase::Parse) {
             return Err(RuntimeError::Invariant("Date parse phase mismatch"));
         }
         let string = match result {
@@ -181,20 +188,21 @@ impl DateConstructorResume {
         )))
     }
     fn fields(mut self, runtime: &Runtime) -> Result<DateConstructorStep, RuntimeError> {
-        if let Some(value) = self.arguments.next() {
-            return Ok(DateConstructorStep::Number {
-                value,
-                resume: self,
+        if let Some(value) = self.0.arguments.next() {
+            return Ok({
+                let __pending_field_value = value;
+                let __pending_field_resume = self;
+                DateConstructorStep::request_number(__pending_field_value, __pending_field_resume)
             });
         }
-        self.value = set_date_fields_checked(
-            self.fields,
-            self.kind == DateNativeKind::Constructor,
+        self.0.value = set_date_fields_checked(
+            self.0.fields,
+            self.0.kind == DateNativeKind::Constructor,
             |instant| runtime.date_timezone_offset_minutes(instant),
         );
-        if self.kind == DateNativeKind::Utc {
+        if self.0.kind == DateNativeKind::Utc {
             return Ok(DateConstructorStep::Complete(Completion::Return(
-                Value::number(self.value),
+                Value::number(self.0.value),
             )));
         }
         self.prototype(runtime)
@@ -204,24 +212,29 @@ impl DateConstructorResume {
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<DateConstructorStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Fields) {
+        if !matches!(self.0.phase, Phase::Fields) {
             return Err(RuntimeError::Invariant("Date numeric field phase mismatch"));
         }
-        self.fields[self.index] = match result {
+        self.0.fields[self.0.index] = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
             }
         };
-        self.index += 1;
+        self.0.index += 1;
         self.fields(runtime)
     }
     fn prototype(mut self, runtime: &Runtime) -> Result<DateConstructorStep, RuntimeError> {
-        self.phase = Phase::Prototype;
-        Ok(DateConstructorStep::Read {
-            receiver: self.new_target.clone(),
-            key: runtime.intern_property_key("prototype")?,
-            resume: self,
+        self.0.phase = Phase::Prototype;
+        Ok({
+            let __pending_field_receiver = self.0.new_target.clone();
+            let __pending_field_key = runtime.intern_property_key("prototype")?;
+            let __pending_field_resume = self;
+            DateConstructorStep::request_read(
+                __pending_field_receiver,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         })
     }
     pub(crate) fn resume(
@@ -229,7 +242,7 @@ impl DateConstructorResume {
         runtime: &Runtime,
         result: Completion,
     ) -> Result<DateConstructorStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Prototype) {
+        if !matches!(self.0.phase, Phase::Prototype) {
             return Err(RuntimeError::Invariant(
                 "Date prototype lookup phase mismatch",
             ));
@@ -240,12 +253,13 @@ impl DateConstructorResume {
                 return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
             }
             Completion::Return(_) => {
-                let realm = match runtime.function_realm_from_value(self.realm, &self.new_target)? {
-                    NativeConversion::Value(realm) => realm,
-                    NativeConversion::Throw(value) => {
-                        return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
-                    }
-                };
+                let realm =
+                    match runtime.function_realm_from_value(self.0.realm, &self.0.new_target)? {
+                        NativeConversion::Value(realm) => realm,
+                        NativeConversion::Throw(value) => {
+                            return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
+                        }
+                    };
                 let prototype = runtime
                     .0
                     .state
@@ -258,7 +272,7 @@ impl DateConstructorResume {
             }
         };
         Ok(DateConstructorStep::Complete(Completion::Return(
-            Value::Object(runtime.new_date_object(&prototype, self.value)?),
+            Value::Object(runtime.new_date_object(&prototype, self.0.value)?),
         )))
     }
 }
@@ -270,24 +284,106 @@ pub(crate) fn finish(
     loop {
         step = match step {
             DateConstructorStep::Complete(result) => return Ok(result),
-            DateConstructorStep::Primitive { value, resume } => resume.primitive(
-                runtime,
-                runtime.to_primitive(realm, value, crate::engine::vm::ToPrimitiveHint::Default)?,
-            )?,
-            DateConstructorStep::String { value, resume } => {
+            DateConstructorStep::Primitive { mut resume } => {
+                let value = resume.take_primitive_value();
+                resume.primitive(
+                    runtime,
+                    runtime.to_primitive(
+                        realm,
+                        value,
+                        crate::engine::vm::ToPrimitiveHint::Default,
+                    )?,
+                )?
+            }
+            DateConstructorStep::String { mut resume } => {
+                let value = resume.take_string_value();
                 resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
             }
-            DateConstructorStep::Number { value, resume } => {
+            DateConstructorStep::Number { mut resume } => {
+                let value = resume.take_number_value();
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
-            DateConstructorStep::Read {
-                receiver,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
-            )?,
+            DateConstructorStep::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct DateConstructorStepPending {
+    primitive_value: Option<Value>,
+    string_value: Option<Value>,
+    number_value: Option<Value>,
+    read_receiver: Option<Value>,
+    read_key: Option<PropertyKey>,
+}
+impl DateConstructorStep {
+    pub(crate) fn request_primitive(value: Value, mut resume: DateConstructorResume) -> Self {
+        resume.0.pending_effect.primitive_value = Some(value);
+        Self::Primitive { resume }
+    }
+    pub(crate) fn request_string(value: Value, mut resume: DateConstructorResume) -> Self {
+        resume.0.pending_effect.string_value = Some(value);
+        Self::String { resume }
+    }
+    pub(crate) fn request_number(value: Value, mut resume: DateConstructorResume) -> Self {
+        resume.0.pending_effect.number_value = Some(value);
+        Self::Number { resume }
+    }
+    pub(crate) fn request_read(
+        receiver: Value,
+        key: PropertyKey,
+        mut resume: DateConstructorResume,
+    ) -> Self {
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+}
+impl DateConstructorResume {
+    pub(crate) fn take_primitive_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .primitive_value
+            .take()
+            .expect("DateConstructorStep Primitive value")
+    }
+    pub(crate) fn take_string_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .string_value
+            .take()
+            .expect("DateConstructorStep String value")
+    }
+    pub(crate) fn take_number_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .number_value
+            .take()
+            .expect("DateConstructorStep Number value")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("DateConstructorStep Read receiver")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("DateConstructorStep Read key")
+    }
+}
+const _: () = assert!(std::mem::size_of::<DateConstructorStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<DateConstructorStep>() <= 64);

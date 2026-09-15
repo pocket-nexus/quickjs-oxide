@@ -102,17 +102,19 @@ pub(super) fn read_progress_selected(
     let mut selected_read = None;
     if let ReadKey::Static(index) = key_kind {
         use super::stack::LinkedReadCompletion;
-        let depth = execution.slots.depth(&frame.window);
+        let body = &mut *frame.cold;
+        let executable = &*body.executable;
+        let depth = execution.slots.depth(&body.window);
         let mut preserved_receiver = None;
         let mut retained_key = None;
         let mut method_call = None;
         let candidate = keep_receiver
-            .then(|| frame.executable.fusion.method_call(frame.fault_pc))
+            .then(|| executable.fusion.method_call(frame.fault_pc))
             .flatten();
         let result = execution.slots.with_linked_own_read_selected(
-            &mut frame.window,
+            &mut body.window,
             runtime,
-            &frame.executable,
+            &executable,
             index,
             candidate.map(|_| &mut *native),
             |slots, value| {
@@ -124,7 +126,7 @@ pub(super) fn read_progress_selected(
                 // pushes if the verified capacity cannot hold the whole span.
                 let count = candidate.filter(|count| {
                     slots.has_operand_capacity(count + 2)
-                        && frame.executable.code[frame.fault_pc + 1..frame.fault_pc + count + 1]
+                        && executable.code[frame.fault_pc + 1..frame.fault_pc + count + 1]
                             .iter()
                             .all(|instruction| {
                                 use super::bindings::FrameBinding;
@@ -163,7 +165,7 @@ pub(super) fn read_progress_selected(
                         // the RunSlots borrow has ended below.
                         frame.fault_pc = start + offset + 1;
                         frame.resume_pc = frame.fault_pc;
-                        let literal = match &frame.executable.code[frame.fault_pc] {
+                        let literal = match &executable.code[frame.fault_pc] {
                             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
                                 let super::bindings::FrameBinding::Direct(value) =
                                     slots.local(*index)?
@@ -519,7 +521,7 @@ fn complete_read(
     }
     let mut value = Some(value);
     let frame = execution.frames.current_mut(id)?;
-    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
+    let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
     let discarded = {
         let mut slots = transaction.slots();
         // Moving the base preserves its owner until after result publication.
@@ -713,15 +715,15 @@ fn read_pending(
     };
     let frame = execution.frames.current_mut(id)?;
     for _ in 0..consume {
-        execution.slots.pop(&mut frame.window)?;
+        execution.slots.pop(&mut frame.cold.window)?;
     }
     if keep_receiver {
         execution
             .slots
-            .push(&mut frame.window, preserved_receiver)?;
+            .push(&mut frame.cold.window, preserved_receiver)?;
     }
     if let Some(key) = retained_key {
-        execution.slots.push(&mut frame.window, key)?;
+        execution.slots.push(&mut frame.cold.window, key)?;
     }
     if let Some((object, key, receiver)) = proxy {
         return super::proxy_get_driver::start(
@@ -757,7 +759,7 @@ fn read_pending(
         push_frame(execution, entry)?;
     } else {
         execution.slots.push(
-            &mut frame.window,
+            &mut frame.cold.window,
             value.ok_or_else(|| Error::internal("property result missing"))?,
         )?;
     }

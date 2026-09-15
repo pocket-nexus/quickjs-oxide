@@ -84,18 +84,21 @@ impl Runtime {
         let mut step = DescriptorStep::start(self, realm, value)?;
         loop {
             step = match step {
-                DescriptorStep::Complete(result) => return Ok(result),
-                DescriptorStep::Has {
-                    object,
-                    key,
-                    resume,
-                } => resume.has(self, self.internal_has_property(realm, &object, &key)?)?,
-                DescriptorStep::Read {
-                    object,
-                    key,
-                    receiver,
-                    resume,
-                } => resume.read(self, self.internal_get(realm, &object, &key, receiver)?)?,
+                DescriptorStep::Complete(resume) => {
+                    return Ok(NativeConversion::Value(resume.take_descriptor()));
+                }
+                DescriptorStep::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                DescriptorStep::Has { mut resume } => {
+                    let object = resume.take_has_object();
+                    let key = resume.take_has_key();
+                    resume.has(self, self.internal_has_property(realm, &object, &key)?)?
+                }
+                DescriptorStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    let receiver = resume.take_read_receiver();
+                    resume.read(self, self.internal_get(realm, &object, &key, receiver)?)?
+                }
             };
         }
     }
@@ -156,20 +159,20 @@ impl Runtime {
         loop {
             step = match step {
                 number::NumberStep::Complete(result) => return Ok(result),
-                number::NumberStep::Read {
-                    object,
-                    key,
-                    resume,
-                } => resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?,
-                number::NumberStep::Call {
-                    callable,
-                    receiver,
-                    arguments,
-                    resume,
-                } => resume.resume(
-                    self,
-                    self.call_internal(realm, &callable, receiver, &arguments)?,
-                )?,
+                number::NumberStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
+                }
+                number::NumberStep::Call { mut resume } => {
+                    let callable = resume.take_call_callable();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    resume.resume(
+                        self,
+                        self.call_internal(realm, &callable, receiver, &arguments)?,
+                    )?
+                }
             };
         }
     }

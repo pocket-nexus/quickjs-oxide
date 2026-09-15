@@ -21,7 +21,20 @@ pub(crate) enum ArgumentsStep {
         resume: ArgumentsResume,
     },
 }
-pub(crate) struct ArgumentsResume {
+pub(crate) struct ArgumentsResume(Box<ArgumentsResumeState>);
+impl std::ops::Deref for ArgumentsResume {
+    type Target = ArgumentsResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ArgumentsResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ArgumentsResume>() <= 8);
+pub(crate) struct ArgumentsResumeState {
     realm: ContextId,
     carrier: ObjectRef,
     phase: Phase,
@@ -48,11 +61,11 @@ impl ArgumentsStep {
         Ok(Self::Read {
             object: carrier.clone(),
             key: runtime.intern_property_key("length")?,
-            resume: ArgumentsResume {
+            resume: ArgumentsResume(Box::new(ArgumentsResumeState {
                 realm,
                 carrier,
                 phase: Phase::Length,
-            },
+            })),
         })
     }
 }
@@ -68,9 +81,9 @@ impl ArgumentsResume {
                 return Ok(ArgumentsStep::Complete(NativeConversion::Throw(value)));
             }
         };
-        match std::mem::replace(&mut self.phase, Phase::Number) {
+        match std::mem::replace(&mut self.0.phase, Phase::Number) {
             Phase::Length => {
-                self.phase = Phase::Number;
+                self.0.phase = Phase::Number;
                 Ok(ArgumentsStep::Number {
                     value,
                     resume: self,
@@ -92,7 +105,7 @@ impl ArgumentsResume {
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<ArgumentsStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Number) {
+        if !matches!(self.0.phase, Phase::Number) {
             return Err(RuntimeError::Invariant(
                 "argument number reply has no length phase",
             ));
@@ -107,7 +120,7 @@ impl ArgumentsResume {
         if length > MAX_APPLY_ARGUMENTS {
             return Ok(ArgumentsStep::Complete(NativeConversion::Throw(
                 runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Range,
                     "too many arguments in function call (only 65534 allowed)",
                 )?,
@@ -115,7 +128,7 @@ impl ArgumentsResume {
         }
         let length = usize::try_from(length)
             .map_err(|_| RuntimeError::Invariant("argument-list length does not fit usize"))?;
-        if let Some(values) = runtime.fast_array_like_values(&self.carrier, length as u32)? {
+        if let Some(values) = runtime.fast_array_like_values(&self.0.carrier, length as u32)? {
             return Ok(ArgumentsStep::Complete(NativeConversion::Value(values)));
         }
         let mut values = Vec::new();
@@ -143,9 +156,9 @@ impl ArgumentsResume {
             return Ok(ArgumentsStep::Complete(NativeConversion::Value(values)));
         }
         let key = runtime.intern_property_key(&values.len().to_string())?;
-        self.phase = Phase::Item { length, values };
+        self.0.phase = Phase::Item { length, values };
         Ok(ArgumentsStep::Read {
-            object: self.carrier.clone(),
+            object: self.0.carrier.clone(),
             key,
             resume: self,
         })
@@ -173,3 +186,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ArgumentsStep>() <= 64);

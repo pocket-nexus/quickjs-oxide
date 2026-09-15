@@ -11,28 +11,26 @@ use crate::engine::{
 };
 pub(crate) enum RegExpSearchStep {
     Complete(Completion),
-    Primitive {
-        value: Value,
-        resume: RegExpSearchResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: RegExpSearchResume,
-    },
-    Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        resume: RegExpSearchResume,
-    },
-    Exec {
-        regexp: Value,
-        input: Value,
-        resume: RegExpSearchResume,
-    },
+    Primitive { resume: RegExpSearchResume },
+    Read { resume: RegExpSearchResume },
+    Set { resume: RegExpSearchResume },
+    Exec { resume: RegExpSearchResume },
 }
-pub(crate) struct RegExpSearchResume {
+pub(crate) struct RegExpSearchResume(Box<RegExpSearchResumeState>);
+impl std::ops::Deref for RegExpSearchResume {
+    type Target = RegExpSearchResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for RegExpSearchResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<RegExpSearchResume>() <= 8);
+pub(crate) struct RegExpSearchResumeState {
+    step_pending: RegExpSearchStepPending,
     realm: ContextId,
     regexp: ObjectRef,
     phase: SearchPhase,
@@ -63,53 +61,60 @@ impl RegExpSearchStep {
                 runtime.new_native_error(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        Ok(Self::Primitive {
-            value: arguments
+        Ok(Self::make_primitive(
+            arguments
                 .readable
                 .first()
                 .ok_or(RuntimeError::Invariant(
                     "RegExp @@search input argv was not padded",
                 ))?
                 .clone(),
-            resume: RegExpSearchResume {
+            RegExpSearchResume(Box::new(RegExpSearchResumeState {
+                step_pending: RegExpSearchStepPending::default(),
                 realm,
                 regexp: regexp.clone(),
                 phase: SearchPhase::Input,
-            },
-        })
+            })),
+        ))
     }
 }
 impl RegExpSearchResume {
-    fn execute(self, input: JsString, previous: Value) -> RegExpSearchStep {
-        RegExpSearchStep::Exec {
-            regexp: Value::Object(self.regexp.clone()),
-            input: Value::String(input),
-            resume: Self {
-                phase: SearchPhase::Exec(previous),
-                ..self
+    fn execute(mut self, input: JsString, previous: Value) -> RegExpSearchStep {
+        RegExpSearchStep::make_exec(
+            Value::Object(self.0.regexp.clone()),
+            Value::String(input),
+            {
+                let updated_0 = SearchPhase::Exec(previous);
+                self.0.phase = updated_0;
+                self
             },
-        }
+        )
     }
-    fn result(self, runtime: &Runtime, result: Value) -> Result<RegExpSearchStep, RuntimeError> {
+    fn result(
+        mut self,
+        runtime: &Runtime,
+        result: Value,
+    ) -> Result<RegExpSearchStep, RuntimeError> {
         match result {
             Value::Null => Ok(RegExpSearchStep::Complete(Completion::Return(Value::Int(
                 -1,
             )))),
-            Value::Object(result) => Ok(RegExpSearchStep::Read {
-                object: result,
-                key: runtime.intern_property_key("index")?,
-                resume: Self {
-                    phase: SearchPhase::Index,
-                    ..self
+            Value::Object(result) => Ok(RegExpSearchStep::make_read(
+                result,
+                runtime.intern_property_key("index")?,
+                {
+                    let updated_0 = SearchPhase::Index;
+                    self.0.phase = updated_0;
+                    self
                 },
-            }),
+            )),
             _ => Err(RuntimeError::Invariant(
                 "RegExpExec returned neither an object nor null",
             )),
         }
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<RegExpSearchStep, RuntimeError> {
@@ -120,78 +125,84 @@ impl RegExpSearchResume {
                 return Ok(RegExpSearchStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             SearchPhase::Input => {
                 if matches!(value, Value::Object(_)) {
                     return Err(RuntimeError::Invariant(
                         "RegExp search input conversion returned an object",
                     ));
                 }
-                let input = match runtime.native_to_js_string(self.realm, &value)? {
+                let input = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
-                Ok(RegExpSearchStep::Read {
-                    object: self.regexp.clone(),
-                    key: runtime.intern_property_key("lastIndex")?,
-                    resume: Self {
-                        phase: SearchPhase::Previous(input),
-                        ..self
+                Ok(RegExpSearchStep::make_read(
+                    self.0.regexp.clone(),
+                    runtime.intern_property_key("lastIndex")?,
+                    {
+                        let updated_0 = SearchPhase::Previous(input);
+                        self.0.phase = updated_0;
+                        self
                     },
-                })
+                ))
             }
             SearchPhase::Previous(input) => {
                 if value.same_value(&Value::Int(0)) {
-                    Ok(Self {
-                        phase: SearchPhase::Index,
-                        ..self
+                    Ok({
+                        let updated_0 = SearchPhase::Index;
+                        self.0.phase = updated_0;
+                        self
                     }
                     .execute(input, value))
                 } else {
-                    Ok(RegExpSearchStep::Set {
-                        object: self.regexp.clone(),
-                        key: runtime.intern_property_key("lastIndex")?,
-                        value: Value::Int(0),
-                        resume: Self {
-                            phase: SearchPhase::InitialSet {
+                    Ok(RegExpSearchStep::make_set(
+                        self.0.regexp.clone(),
+                        runtime.intern_property_key("lastIndex")?,
+                        Value::Int(0),
+                        {
+                            let updated_0 = SearchPhase::InitialSet {
                                 input,
                                 previous: value,
-                            },
-                            ..self
+                            };
+                            self.0.phase = updated_0;
+                            self
                         },
-                    })
+                    ))
                 }
             }
-            SearchPhase::Exec(previous) => Ok(RegExpSearchStep::Read {
-                object: self.regexp.clone(),
-                key: runtime.intern_property_key("lastIndex")?,
-                resume: Self {
-                    phase: SearchPhase::Current {
+            SearchPhase::Exec(previous) => Ok(RegExpSearchStep::make_read(
+                self.0.regexp.clone(),
+                runtime.intern_property_key("lastIndex")?,
+                {
+                    let updated_0 = SearchPhase::Current {
                         previous,
                         result: value,
-                    },
-                    ..self
+                    };
+                    self.0.phase = updated_0;
+                    self
                 },
-            }),
+            )),
             SearchPhase::Current { previous, result } => {
                 if value.same_value(&previous) {
-                    Self {
-                        phase: SearchPhase::Index,
-                        ..self
+                    {
+                        let updated_0 = SearchPhase::Index;
+                        self.0.phase = updated_0;
+                        self
                     }
                     .result(runtime, result)
                 } else {
-                    Ok(RegExpSearchStep::Set {
-                        object: self.regexp.clone(),
-                        key: runtime.intern_property_key("lastIndex")?,
-                        value: previous,
-                        resume: Self {
-                            phase: SearchPhase::Restored(result),
-                            ..self
+                    Ok(RegExpSearchStep::make_set(
+                        self.0.regexp.clone(),
+                        runtime.intern_property_key("lastIndex")?,
+                        previous,
+                        {
+                            let updated_0 = SearchPhase::Restored(result);
+                            self.0.phase = updated_0;
+                            self
                         },
-                    })
+                    ))
                 }
             }
             SearchPhase::Index => Ok(RegExpSearchStep::Complete(Completion::Return(value))),
@@ -201,23 +212,25 @@ impl RegExpSearchResume {
         }
     }
     pub(crate) fn set(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpSearchStep, RuntimeError> {
         let key = runtime.intern_property_key("lastIndex")?;
-        if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
+        if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(RegExpSearchStep::Complete(Completion::Throw(value)));
         }
-        match self.phase {
-            SearchPhase::InitialSet { input, previous } => Ok(Self {
-                phase: SearchPhase::Index,
-                ..self
+        match self.0.phase {
+            SearchPhase::InitialSet { input, previous } => Ok({
+                let updated_0 = SearchPhase::Index;
+                self.0.phase = updated_0;
+                self
             }
             .execute(input, previous)),
-            SearchPhase::Restored(result) => Self {
-                phase: SearchPhase::Index,
-                ..self
+            SearchPhase::Restored(result) => {
+                let updated_0 = SearchPhase::Index;
+                self.0.phase = updated_0;
+                self
             }
             .result(runtime, result),
             _ => Err(RuntimeError::Invariant(
@@ -237,34 +250,149 @@ impl Runtime {
         loop {
             step = match step {
                 RegExpSearchStep::Complete(result) => return Ok(result),
-                RegExpSearchStep::Primitive { value, resume } => {
-                    let result = if matches!(value, Value::Object(_)) {
-                        self.to_primitive(realm, value, ToPrimitiveHint::String)?
-                    } else {
-                        Completion::Return(value)
-                    };
-                    resume.resume(self, result)?
+                RegExpSearchStep::Primitive { mut resume } => {
+                    let value = resume.take_primitive_value();
+                    {
+                        let result = if matches!(value, Value::Object(_)) {
+                            self.to_primitive(realm, value, ToPrimitiveHint::String)?
+                        } else {
+                            Completion::Return(value)
+                        };
+                        resume.resume(self, result)?
+                    }
                 }
-                RegExpSearchStep::Read {
-                    object,
-                    key,
-                    resume,
-                } => resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?,
-                RegExpSearchStep::Exec {
-                    regexp,
-                    input,
-                    resume,
-                } => resume.resume(self, self.regexp_exec_abstract(realm, regexp, input)?)?,
-                RegExpSearchStep::Set {
-                    object,
-                    key,
-                    value,
-                    resume,
-                } => resume.set(
-                    self,
-                    self.internal_set(realm, &object, &key, value, Value::Object(object.clone()))?,
-                )?,
+                RegExpSearchStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
+                }
+                RegExpSearchStep::Exec { mut resume } => {
+                    let regexp = resume.take_exec_regexp();
+                    let input = resume.take_exec_input();
+                    resume.resume(self, self.regexp_exec_abstract(realm, regexp, input)?)?
+                }
+                RegExpSearchStep::Set { mut resume } => {
+                    let object = resume.take_set_object();
+                    let key = resume.take_set_key();
+                    let value = resume.take_set_value();
+                    resume.set(
+                        self,
+                        self.internal_set(
+                            realm,
+                            &object,
+                            &key,
+                            value,
+                            Value::Object(object.clone()),
+                        )?,
+                    )?
+                }
             };
         }
     }
 }
+
+#[derive(Default)]
+pub(crate) struct RegExpSearchStepPending {
+    value: Option<Value>,
+    object: Option<ObjectRef>,
+    key: Option<PropertyKey>,
+    regexp: Option<Value>,
+    input: Option<Value>,
+}
+impl RegExpSearchStep {
+    pub(crate) fn make_primitive(value: Value, mut resume: RegExpSearchResume) -> Self {
+        resume.0.step_pending.value = Some(value);
+        Self::Primitive { resume }
+    }
+    pub(crate) fn make_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: RegExpSearchResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn make_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: RegExpSearchResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        resume.0.step_pending.value = Some(value);
+        Self::Set { resume }
+    }
+    pub(crate) fn make_exec(regexp: Value, input: Value, mut resume: RegExpSearchResume) -> Self {
+        resume.0.step_pending.regexp = Some(regexp);
+        resume.0.step_pending.input = Some(input);
+        Self::Exec { resume }
+    }
+}
+impl RegExpSearchResume {
+    pub(crate) fn take_primitive_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("RegExpSearchStep::Primitive lost value")
+    }
+
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("RegExpSearchStep::Read lost object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("RegExpSearchStep::Read lost key")
+    }
+
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("RegExpSearchStep::Set lost object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("RegExpSearchStep::Set lost key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("RegExpSearchStep::Set lost value")
+    }
+
+    pub(crate) fn take_exec_regexp(&mut self) -> Value {
+        self.0
+            .step_pending
+            .regexp
+            .take()
+            .expect("RegExpSearchStep::Exec lost regexp")
+    }
+    pub(crate) fn take_exec_input(&mut self) -> Value {
+        self.0
+            .step_pending
+            .input
+            .take()
+            .expect("RegExpSearchStep::Exec lost input")
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<RegExpSearchStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<RegExpSearchStep>() <= 64);

@@ -366,43 +366,42 @@ pub(crate) enum RegExpReplaceStep {
     Complete(Completion),
     #[cfg(feature = "stack-vm")]
     PreparedSet {
-        step: Box<crate::engine::object::SetStep>,
         resume: RegExpReplaceResume,
     },
     PreparedRead {
-        read: crate::engine::object::OrdinaryRead,
-        key: PropertyKey,
         resume: RegExpReplaceResume,
     },
     Read {
-        object: ObjectRef,
-        key: PropertyKey,
         resume: RegExpReplaceResume,
     },
     Primitive {
-        value: Value,
-        hint: ToPrimitiveHint,
         resume: RegExpReplaceResume,
     },
     Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
         resume: RegExpReplaceResume,
     },
     Exec {
-        regexp: Value,
-        input: Value,
         resume: RegExpReplaceResume,
     },
     Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
         resume: RegExpReplaceResume,
     },
 }
-pub(crate) struct RegExpReplaceResume {
+pub(crate) struct RegExpReplaceResume(Box<RegExpReplaceResumeState>);
+impl std::ops::Deref for RegExpReplaceResume {
+    type Target = RegExpReplaceResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for RegExpReplaceResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<RegExpReplaceResume>() <= 8);
+pub(crate) struct RegExpReplaceResumeState {
+    step_pending: RegExpReplaceStepPending,
     realm: ContextId,
     phase: ReplacePhase,
     state: ReplaceState,
@@ -514,21 +513,56 @@ impl RegExpReplaceStep {
                 runtime.new_native_error(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        let input = arguments
+        let mut input = arguments
             .readable
             .first()
             .ok_or(RuntimeError::Invariant(
                 "RegExp @@replace input argv was not padded",
             ))?
             .clone();
-        let replacement = arguments
+        let mut replacement = arguments
             .readable
             .get(1)
             .ok_or(RuntimeError::Invariant(
                 "RegExp @@replace replacement argv was not padded",
             ))?
             .clone();
-        RegExpReplaceResume {
+        // Preserve the outer buffer reservation/error latch even when the
+        // standard kernel subsequently uses its own second buffer.
+        let output = ReplacementStringBuffer::new(0);
+        // Primitive conversions cannot wait. Preserve input-before-replacement
+        // conversion (and Symbol TypeError) before allocating a continuation.
+        if !matches!(input, Value::Object(_)) {
+            input = match converted_string(runtime, realm, input)? {
+                NativeConversion::Value(value) => Value::String(value),
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(value)));
+                }
+            };
+            if !matches!(replacement, Value::Object(_)) {
+                replacement = match converted_string(runtime, realm, replacement)? {
+                    NativeConversion::Value(value) => Value::String(value),
+                    NativeConversion::Throw(value) => {
+                        return Ok(Self::Complete(Completion::Throw(value)));
+                    }
+                };
+            }
+        }
+        // Already converted strings and a guarded standard RegExp complete
+        // through the existing kernel; no continuation owner is needed.
+        if let (Value::String(source), Value::String(text)) = (&input, &replacement)
+            && let Some(standard) = runtime.standard_regexp_replace(regexp)?
+        {
+            return Ok(Self::Complete(runtime.call_standard_regexp_replace(
+                realm, regexp, source, text, standard,
+            )?));
+        }
+        #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "regexpreplace_resident_allocated",
+        );
+        RegExpReplaceResume(Box::new(RegExpReplaceResumeState {
+            step_pending: RegExpReplaceStepPending::default(),
             realm,
             phase: ReplacePhase::Input,
             state: ReplaceState {
@@ -537,7 +571,7 @@ impl RegExpReplaceStep {
                 input: None,
                 functional: None,
                 replacement: None,
-                output: Some(ReplacementStringBuffer::new(0)),
+                output: Some(output),
                 results: Vec::new(),
                 zero: None,
                 global: false,
@@ -546,7 +580,7 @@ impl RegExpReplaceStep {
             result: None,
             matched: None,
             named: None,
-        }
+        }))
         .deliver(
             runtime,
             ReplaceAction::Primitive {
@@ -570,18 +604,21 @@ fn converted_string(
 }
 impl RegExpReplaceResume {
     fn source(&self) -> &JsString {
-        self.state
+        self.0
+            .state
             .input
             .as_ref()
             .expect("replacement input was not converted")
     }
     fn result_cursor(&self) -> &ResultCursor {
-        self.result
+        self.0
+            .result
             .as_ref()
             .expect("replacement result cursor disappeared")
     }
     fn match_cursor(&self) -> &MatchCursor {
-        self.matched
+        self.0
+            .matched
             .as_ref()
             .expect("replacement match cursor disappeared")
     }
@@ -592,7 +629,7 @@ impl RegExpReplaceResume {
         message: &str,
     ) -> Result<ReplaceAction, RuntimeError> {
         Ok(ReplaceAction::Complete(Completion::Throw(
-            runtime.new_native_error(self.realm, kind, message)?,
+            runtime.new_native_error(self.0.realm, kind, message)?,
         )))
     }
     fn primitive(
@@ -601,23 +638,25 @@ impl RegExpReplaceResume {
         hint: ToPrimitiveHint,
         phase: ReplacePhase,
     ) -> ReplaceAction {
-        self.phase = phase;
+        self.0.phase = phase;
         ReplaceAction::Primitive { value, hint }
     }
     fn read(&mut self, target: ReadTarget, key: PropertyKey, phase: ReplacePhase) -> ReplaceAction {
-        self.phase = phase;
+        self.0.phase = phase;
         ReplaceAction::Read { target, key }
     }
     fn read_object(&self, target: ReadTarget) -> &ObjectRef {
         match target {
-            ReadTarget::RegExp => &self.state.regexp,
+            ReadTarget::RegExp => &self.0.state.regexp,
             ReadTarget::CollectedLast => self
+                .0
                 .state
                 .results
                 .last()
                 .expect("replacement collection lost last result"),
             ReadTarget::Match => &self.match_cursor().result,
             ReadTarget::Named => self
+                .0
                 .named
                 .as_ref()
                 .and_then(|state| state.groups.as_ref())
@@ -654,11 +693,7 @@ impl RegExpReplaceResume {
                             )?
                         }
                         read => {
-                            return Ok(RegExpReplaceStep::PreparedRead {
-                                read,
-                                key,
-                                resume: self,
-                            });
+                            return Ok(RegExpReplaceStep::make_preparedread(read, key, self));
                         }
                     }
                 }
@@ -668,10 +703,10 @@ impl RegExpReplaceResume {
                     let mut pending = None;
                     let selected = SetStep::start_receiver_into(
                         runtime,
-                        self.realm,
+                        self.0.realm,
                         &key,
                         value,
-                        Value::Object(self.state.regexp.clone()),
+                        Value::Object(self.0.state.regexp.clone()),
                         |step| pending = Some(step),
                     )?;
                     let step = match selected {
@@ -690,47 +725,37 @@ impl RegExpReplaceResume {
                             self.set_once(runtime, result)?
                         }
                         step => {
-                            return Ok(RegExpReplaceStep::PreparedSet {
-                                step: Box::new(step),
-                                resume: self,
-                            });
+                            return Ok(RegExpReplaceStep::make_preparedset(Box::new(step), self));
                         }
                     }
                 }
                 ReplaceAction::Primitive { value, hint } => {
-                    return Ok(RegExpReplaceStep::Primitive {
-                        value,
-                        hint,
-                        resume: self,
-                    });
+                    return Ok(RegExpReplaceStep::make_primitive(value, hint, self));
                 }
                 ReplaceAction::Call {
                     target,
                     receiver,
                     arguments,
                 } => {
-                    return Ok(RegExpReplaceStep::Call {
-                        target,
-                        receiver,
-                        arguments,
-                        resume: self,
-                    });
+                    return Ok(RegExpReplaceStep::make_call(
+                        target, receiver, arguments, self,
+                    ));
                 }
                 ReplaceAction::Exec => {
-                    return Ok(RegExpReplaceStep::Exec {
-                        regexp: Value::Object(self.state.regexp.clone()),
-                        input: Value::String(self.source().clone()),
-                        resume: self,
-                    });
+                    return Ok(RegExpReplaceStep::make_exec(
+                        Value::Object(self.0.state.regexp.clone()),
+                        Value::String(self.source().clone()),
+                        self,
+                    ));
                 }
                 #[cfg(not(feature = "stack-vm"))]
                 ReplaceAction::Set { key, value } => {
-                    return Ok(RegExpReplaceStep::Set {
-                        object: self.state.regexp.clone(),
+                    return Ok(RegExpReplaceStep::make_set(
+                        self.0.state.regexp.clone(),
                         key,
                         value,
-                        resume: self,
-                    });
+                        self,
+                    ));
                 }
             };
         }
@@ -742,7 +767,7 @@ impl RegExpReplaceResume {
         initial: bool,
     ) -> Result<ReplaceAction, RuntimeError> {
         let key = runtime.intern_property_key("lastIndex")?;
-        self.phase = if initial {
+        self.0.phase = if initial {
             ReplacePhase::InitialSet
         } else {
             ReplacePhase::AdvancedSet
@@ -750,16 +775,17 @@ impl RegExpReplaceResume {
         Ok(ReplaceAction::Set { key, value })
     }
     fn prepared(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
-        if self.state.functional.is_none()
-            && let Some(standard) = runtime.standard_regexp_replace(&self.state.regexp)?
+        if self.0.state.functional.is_none()
+            && let Some(standard) = runtime.standard_regexp_replace(&self.0.state.regexp)?
         {
             // Preserve the existing raw predicate and matcher unchanged.
             return Ok(ReplaceAction::Complete(
                 runtime.call_standard_regexp_replace(
-                    self.realm,
-                    &self.state.regexp,
+                    self.0.realm,
+                    &self.0.state.regexp,
                     self.source(),
-                    self.state
+                    self.0
+                        .state
                         .replacement
                         .as_ref()
                         .expect("non-functional replacement was not converted"),
@@ -774,15 +800,15 @@ impl RegExpReplaceResume {
         ))
     }
     fn execute(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
-        if self.state.zero.is_none() {
-            self.state.zero = Some(runtime.intern_property_key("0")?);
+        if self.0.state.zero.is_none() {
+            self.0.state.zero = Some(runtime.intern_property_key("0")?);
         }
-        self.phase = ReplacePhase::Exec;
+        self.0.phase = ReplacePhase::Exec;
         Ok(ReplaceAction::Exec)
     }
     fn collected(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
-        let results = std::mem::take(&mut self.state.results).into_iter();
-        self.result = Some(ResultCursor {
+        let results = std::mem::take(&mut self.0.state.results).into_iter();
+        self.0.result = Some(ResultCursor {
             results,
             length_key: runtime.intern_property_key("length")?,
             index_key: runtime.intern_property_key("index")?,
@@ -793,11 +819,12 @@ impl RegExpReplaceResume {
     }
     fn next_result(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
         let state = self
+            .0
             .result
             .as_mut()
             .expect("replacement result cursor disappeared");
         if let Some(result) = state.results.next() {
-            self.matched = Some(MatchCursor {
+            self.0.matched = Some(MatchCursor {
                 result,
                 capture_count: 0,
                 matched: None,
@@ -809,11 +836,13 @@ impl RegExpReplaceResume {
         }
         let next_source = state.next_source;
         let input = self
+            .0
             .state
             .input
             .as_ref()
             .expect("replacement input was not converted");
         let mut output = self
+            .0
             .state
             .output
             .take()
@@ -822,7 +851,7 @@ impl RegExpReplaceResume {
             output.append_range(input, next_source, input.len());
         }
         Ok(ReplaceAction::Complete(
-            runtime.complete_regexp_replacement_buffer(self.realm, output)?,
+            runtime.complete_regexp_replacement_buffer(self.0.realm, output)?,
         ))
     }
     fn next_capture(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
@@ -843,6 +872,7 @@ impl RegExpReplaceResume {
     }
     fn capture(&mut self, runtime: &Runtime, value: Value) -> Result<ReplaceAction, RuntimeError> {
         let state = self
+            .0
             .matched
             .as_mut()
             .expect("replacement match cursor disappeared");
@@ -860,20 +890,24 @@ impl RegExpReplaceResume {
         // Release each finished match at the same per-result boundary; do not
         // retain all captures or groups until the overall replacement ends.
         let matched = self
+            .0
             .matched
             .take()
             .expect("replacement match cursor disappeared");
         let result = self
+            .0
             .result
             .as_mut()
             .expect("replacement result cursor disappeared");
         if matched.position >= result.next_source {
             let input = self
+                .0
                 .state
                 .input
                 .as_ref()
                 .expect("replacement input was not converted");
             let output = self
+                .0
                 .state
                 .output
                 .as_mut()
@@ -896,10 +930,12 @@ impl RegExpReplaceResume {
     }
     fn named(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
         let matched = self
+            .0
             .matched
             .as_ref()
             .expect("replacement match cursor disappeared");
         let named = self
+            .0
             .named
             .as_mut()
             .expect("replacement named cursor disappeared");
@@ -913,6 +949,7 @@ impl RegExpReplaceResume {
                         .expect("replacement match was not converted"),
                 ),
                 input: self
+                    .0
                     .state
                     .input
                     .as_ref()
@@ -921,6 +958,7 @@ impl RegExpReplaceResume {
                 captures: Some(SubstitutionCaptures::Converted(&matched.captures)),
                 named_captures: named.groups.as_ref(),
                 replacement: self
+                    .0
                     .state
                     .replacement
                     .as_ref()
@@ -937,10 +975,11 @@ impl RegExpReplaceResume {
     }
     fn finish_named(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
         let state = self
+            .0
             .named
             .take()
             .expect("replacement named cursor disappeared");
-        match runtime.finish_replacement_buffer(self.realm, state.buffer)? {
+        match runtime.finish_replacement_buffer(self.0.realm, state.buffer)? {
             NativeConversion::Value(value) => self.append_result(runtime, value),
             NativeConversion::Throw(value) => Ok(ReplaceAction::Complete(Completion::Throw(value))),
         }
@@ -959,10 +998,10 @@ impl RegExpReplaceResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ReplaceAction, RuntimeError> {
         let key = runtime.intern_property_key("lastIndex")?;
-        if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
+        if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(ReplaceAction::Complete(Completion::Throw(value)));
         }
-        match self.phase {
+        match self.0.phase {
             ReplacePhase::InitialSet | ReplacePhase::AdvancedSet => self.execute(runtime),
             _ => Err(RuntimeError::Invariant(
                 "RegExp replacement received an unexpected set reply",
@@ -988,8 +1027,8 @@ impl RegExpReplaceResume {
                 return Ok(ReplaceAction::Complete(Completion::Throw(value)));
             }
         };
-        let realm = self.realm;
-        match self.phase {
+        let realm = self.0.realm;
+        match self.0.phase {
             ReplacePhase::Input => {
                 let source = match converted_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
@@ -998,16 +1037,17 @@ impl RegExpReplaceResume {
                     }
                 };
                 let replacement = self
+                    .0
                     .state
                     .replacement_value
                     .take()
                     .expect("replacement argument disappeared");
-                self.state.functional = match &replacement {
+                self.0.state.functional = match &replacement {
                     Value::Object(object) => runtime.as_callable(object)?,
                     _ => None,
                 };
-                self.state.input = Some(source);
-                if self.state.functional.is_none() {
+                self.0.state.input = Some(source);
+                if self.0.state.functional.is_none() {
                     Ok(self.primitive(
                         replacement,
                         ToPrimitiveHint::String,
@@ -1020,7 +1060,7 @@ impl RegExpReplaceResume {
                 }
             }
             ReplacePhase::Replacement => {
-                self.state.replacement = Some(match converted_string(runtime, realm, value)? {
+                self.0.state.replacement = Some(match converted_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(ReplaceAction::Complete(Completion::Throw(value)));
@@ -1038,12 +1078,12 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
-                self.state.global = flags.utf16_units().any(|unit| unit == u16::from(b'g'));
-                self.state.unicode = self.state.global
+                self.0.state.global = flags.utf16_units().any(|unit| unit == u16::from(b'g'));
+                self.0.state.unicode = self.0.state.global
                     && flags
                         .utf16_units()
                         .any(|unit| unit == u16::from(b'u') || unit == u16::from(b'v'));
-                if self.state.global {
+                if self.0.state.global {
                     self.set_index(runtime, Value::Int(0), true)
                 } else {
                     self.execute(runtime)
@@ -1059,16 +1099,17 @@ impl RegExpReplaceResume {
                         ));
                     }
                 };
-                if self.state.results.try_reserve(1).is_err() {
+                if self.0.state.results.try_reserve(1).is_err() {
                     return self.throw(runtime, NativeErrorKind::Internal, "out of memory");
                 }
-                self.state.results.push(result);
-                if !self.state.global {
+                self.0.state.results.push(result);
+                if !self.0.state.global {
                     return self.collected(runtime);
                 }
                 Ok(self.read(
                     ReadTarget::CollectedLast,
-                    self.state
+                    self.0
+                        .state
                         .zero
                         .as_ref()
                         .expect("replace collection omitted zero key")
@@ -1113,7 +1154,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
-                let next = advance_string_index(self.source(), current, self.state.unicode);
+                let next = advance_string_index(self.source(), current, self.0.state.unicode);
                 self.set_index(runtime, Value::number(next as f64), false)
             }
             ReplacePhase::Length => {
@@ -1131,13 +1172,15 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
-                self.matched
+                self.0
+                    .matched
                     .as_mut()
                     .expect("replacement match cursor disappeared")
                     .capture_count = count;
                 Ok(self.read(
                     ReadTarget::Match,
-                    self.state
+                    self.0
+                        .state
                         .zero
                         .as_ref()
                         .expect("replace collection omitted zero key")
@@ -1155,7 +1198,8 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
-                self.matched
+                self.0
+                    .matched
                     .as_mut()
                     .expect("replacement match cursor disappeared")
                     .matched = Some(matched);
@@ -1181,6 +1225,7 @@ impl RegExpReplaceResume {
                     }
                 };
                 let state = self
+                    .0
                     .matched
                     .as_mut()
                     .expect("replacement match cursor disappeared");
@@ -1213,13 +1258,14 @@ impl RegExpReplaceResume {
                 self.capture(runtime, Value::String(capture))
             }
             ReplacePhase::Groups => {
-                if let Some(callable) = &self.state.functional {
+                if let Some(callable) = &self.0.state.functional {
                     let extra = if matches!(value, Value::Undefined) {
                         2
                     } else {
                         3
                     };
                     let state = self
+                        .0
                         .matched
                         .as_mut()
                         .expect("replacement match cursor disappeared");
@@ -1231,7 +1277,8 @@ impl RegExpReplaceResume {
                     }
                     state.captures.push(position);
                     state.captures.push(Value::String(
-                        self.state
+                        self.0
+                            .state
                             .input
                             .as_ref()
                             .expect("replacement input was not converted")
@@ -1249,7 +1296,7 @@ impl RegExpReplaceResume {
                     }
                     let target = DirectCallTarget::Callable(callable.clone());
                     let arguments = std::mem::take(&mut state.captures);
-                    self.phase = ReplacePhase::Callback;
+                    self.0.phase = ReplacePhase::Callback;
                     Ok(ReplaceAction::Call {
                         target,
                         receiver: Value::Undefined,
@@ -1266,7 +1313,7 @@ impl RegExpReplaceResume {
                             }
                         }
                     };
-                    self.named = Some(NamedCursor {
+                    self.0.named = Some(NamedCursor {
                         groups,
                         buffer: ReplacementStringBuffer::new(0),
                         cursor: 0,
@@ -1288,6 +1335,7 @@ impl RegExpReplaceResume {
             }
             ReplacePhase::Named => match named_substitution_capture(
                 &self
+                    .0
                     .named
                     .as_ref()
                     .expect("replacement named cursor disappeared")
@@ -1308,6 +1356,7 @@ impl RegExpReplaceResume {
                     }
                 };
                 let named = self
+                    .0
                     .named
                     .as_mut()
                     .expect("replacement named cursor disappeared");
@@ -1354,93 +1403,108 @@ fn finish_replace(
         step = match step {
             RegExpReplaceStep::Complete(result) => return Ok(result),
             #[cfg(feature = "stack-vm")]
-            RegExpReplaceStep::PreparedSet { step, resume } => {
-                use crate::engine::object::{SetStep, operations::PropertySetAction};
-                let mut step = *step;
-                let result = loop {
-                    match step {
-                        SetStep::Complete(PropertySetAction::Call {
-                            setter,
-                            receiver,
-                            argument,
-                        }) => {
-                            break match runtime.call_internal(
-                                realm,
-                                &setter,
-                                receiver,
-                                &[argument],
-                            )? {
-                                Completion::Return(_) => {
-                                    NativeConversion::Value(InternalSetResult::Accepted)
-                                }
-                                Completion::Throw(value) => NativeConversion::Throw(value),
-                            };
+            RegExpReplaceStep::PreparedSet { mut resume } => {
+                let step = resume.take_preparedset_step();
+                {
+                    use crate::engine::object::{SetStep, operations::PropertySetAction};
+                    let mut step = *step;
+                    let result = loop {
+                        match step {
+                            SetStep::Complete(PropertySetAction::Call { payload }) => {
+                                let crate::engine::object::operations::PropertySetterCall {
+                                    setter,
+                                    receiver,
+                                    argument,
+                                } = *payload;
+
+                                break match runtime.call_internal(
+                                    realm,
+                                    &setter,
+                                    receiver,
+                                    &[argument],
+                                )? {
+                                    Completion::Return(_) => {
+                                        NativeConversion::Value(InternalSetResult::Accepted)
+                                    }
+                                    Completion::Throw(value) => NativeConversion::Throw(value),
+                                };
+                            }
+                            SetStep::Complete(action) => break local_set_result(action)?,
+                            pending => step = pending.finish_sync(runtime)?,
                         }
-                        SetStep::Complete(action) => break local_set_result(action)?,
-                        pending => step = pending.finish_sync(runtime)?,
-                    }
-                };
-                resume.set(runtime, result)?
+                    };
+                    resume.set(runtime, result)?
+                }
             }
-            RegExpReplaceStep::PreparedRead { read, key, resume } => {
-                let result = match runtime.finish_prepared_read(realm, &key, read)? {
-                    NativeConversion::Value(value) => {
-                        Completion::Return(value.unwrap_or(Value::Undefined))
-                    }
-                    NativeConversion::Throw(value) => Completion::Throw(value),
-                };
-                resume.resume(runtime, result)?
+            RegExpReplaceStep::PreparedRead { mut resume } => {
+                let read = resume.take_preparedread_read();
+                let key = resume.take_preparedread_key();
+                {
+                    let result = match runtime.finish_prepared_read(realm, &key, read)? {
+                        NativeConversion::Value(value) => {
+                            Completion::Return(value.unwrap_or(Value::Undefined))
+                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
+                    };
+                    resume.resume(runtime, result)?
+                }
             }
-            RegExpReplaceStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            RegExpReplaceStep::Primitive {
-                value,
-                hint,
-                resume,
-            } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, hint)?
-                } else {
-                    Completion::Return(value)
-                };
-                resume.resume(runtime, result)?
-            }
-            RegExpReplaceStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => {
-                let DirectCallTarget::Callable(callable) = target else {
-                    return Err(RuntimeError::Invariant(
-                        "RegExp replacement requested an invalid call target",
-                    ));
-                };
+            RegExpReplaceStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
                 )?
             }
-            RegExpReplaceStep::Exec {
-                regexp,
-                input,
-                resume,
-            } => resume.resume(runtime, runtime.regexp_exec_abstract(realm, regexp, input)?)?,
-            RegExpReplaceStep::Set {
-                object,
-                key,
-                value,
-                resume,
-            } => resume.set(
-                runtime,
-                runtime.internal_set(realm, &object, &key, value, Value::Object(object.clone()))?,
-            )?,
+            RegExpReplaceStep::Primitive { mut resume } => {
+                let value = resume.take_primitive_value();
+                let hint = resume.take_primitive_hint();
+                {
+                    let result = if matches!(value, Value::Object(_)) {
+                        runtime.to_primitive(realm, value, hint)?
+                    } else {
+                        Completion::Return(value)
+                    };
+                    resume.resume(runtime, result)?
+                }
+            }
+            RegExpReplaceStep::Call { mut resume } => {
+                let target = resume.take_call_target();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                {
+                    let DirectCallTarget::Callable(callable) = target else {
+                        return Err(RuntimeError::Invariant(
+                            "RegExp replacement requested an invalid call target",
+                        ));
+                    };
+                    resume.resume(
+                        runtime,
+                        runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    )?
+                }
+            }
+            RegExpReplaceStep::Exec { mut resume } => {
+                let regexp = resume.take_exec_regexp();
+                let input = resume.take_exec_input();
+                resume.resume(runtime, runtime.regexp_exec_abstract(realm, regexp, input)?)?
+            }
+            RegExpReplaceStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                resume.set(
+                    runtime,
+                    runtime.internal_set(
+                        realm,
+                        &object,
+                        &key,
+                        value,
+                        Value::Object(object.clone()),
+                    )?,
+                )?
+            }
         };
     }
 }
@@ -1448,6 +1512,39 @@ fn finish_replace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[test]
+    fn standard_string_replace_completes_before_resident_allocation() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context.eval("RegExp.prototype.exec").unwrap();
+        let regexp = context.eval("/a/g").unwrap();
+        let invocation = NativeInvocation::Call { this_value: regexp };
+        let arguments = NativeArguments {
+            actual_arg_count: 2,
+            readable: vec![
+                Value::String(JsString::from_static("aba")),
+                Value::String(JsString::from_static("x")),
+            ],
+        };
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let RegExpReplaceStep::Complete(Completion::Return(value)) =
+            RegExpReplaceStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()
+        else {
+            panic!("standard replace must complete locally")
+        };
+        assert_eq!(value, Value::String(JsString::from_static("xbx")));
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("regexpreplace_resident_allocated")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+    }
+
     #[test]
     fn fresh_lazy_exec_preserves_the_selected_flags_getter() {
         let runtime = Runtime::new();
@@ -1474,14 +1571,9 @@ mod tests {
             RegExpReplaceStep::start(&runtime, context.realm, &invocation, &arguments).unwrap();
         assert!(matches!(
             &step,
-            RegExpReplaceStep::PreparedRead {
-                read: crate::engine::object::OrdinaryRead::Call { .. },
-                resume: RegExpReplaceResume {
-                    phase: ReplacePhase::Flags,
-                    ..
-                },
-                ..
-            }
+            RegExpReplaceStep::PreparedRead { resume }
+                if matches!(resume.0.phase, ReplacePhase::Flags)
+                    && matches!(resume.0.step_pending.read.as_ref(), Some(crate::engine::object::OrdinaryRead::Call { .. }))
         ));
         // Consuming the already-selected intrinsic must not probe flags again.
         context.eval("Object.defineProperty(coldReplace, 'flags', { get() { throw 'repeated flags'; } });").unwrap();
@@ -1517,23 +1609,32 @@ mod tests {
         // Primitive input/flags now complete locally. Pause at actual exec,
         // then at a selected result getter so abandonment still owns the
         // collected result, callback and original RegExp receiver together.
-        let RegExpReplaceStep::Exec { resume, .. } =
+        let RegExpReplaceStep::Exec { mut resume } =
             RegExpReplaceStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()
         else {
             panic!("expected exec request")
         };
+        drop(resume.take_exec_regexp());
+        drop(resume.take_exec_input());
+        let resident_address = &*resume.0 as *const RegExpReplaceResumeState;
         drop(invocation);
         drop(arguments);
         let Value::Object(result) = context.eval("({get length(){return 1;}})").unwrap() else {
             panic!("result object")
         };
         let result_id = result.object_id();
-        let RegExpReplaceStep::PreparedRead { resume, .. } = resume
+        let RegExpReplaceStep::PreparedRead { mut resume } = resume
             .resume(&runtime, Completion::Return(Value::Object(result)))
             .unwrap()
         else {
             panic!("expected selected result length getter")
         };
+        drop(resume.take_preparedread_read());
+        drop(resume.take_preparedread_key());
+        assert_eq!(
+            &*resume.0 as *const RegExpReplaceResumeState,
+            resident_address
+        );
         runtime.run_gc().unwrap();
         for id in [regexp_id, callback_id, result_id] {
             assert!(runtime.0.state.borrow().heap.object(id).is_ok());
@@ -1548,3 +1649,202 @@ mod tests {
         assert!(weak.upgrade().is_none());
     }
 }
+
+#[derive(Default)]
+pub(crate) struct RegExpReplaceStepPending {
+    step: Option<Box<crate::engine::object::SetStep>>,
+    read: Option<crate::engine::object::OrdinaryRead>,
+    key: Option<PropertyKey>,
+    object: Option<ObjectRef>,
+    value: Option<Value>,
+    hint: Option<ToPrimitiveHint>,
+    target: Option<DirectCallTarget>,
+    receiver: Option<Value>,
+    arguments: Option<Vec<Value>>,
+    regexp: Option<Value>,
+    input: Option<Value>,
+}
+impl RegExpReplaceStep {
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn make_preparedset(
+        step: Box<crate::engine::object::SetStep>,
+        mut resume: RegExpReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.step = Some(step);
+        Self::PreparedSet { resume }
+    }
+    pub(crate) fn make_preparedread(
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+        mut resume: RegExpReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.read = Some(read);
+        resume.0.step_pending.key = Some(key);
+        Self::PreparedRead { resume }
+    }
+    pub(crate) fn make_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: RegExpReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn make_primitive(
+        value: Value,
+        hint: ToPrimitiveHint,
+        mut resume: RegExpReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.value = Some(value);
+        resume.0.step_pending.hint = Some(hint);
+        Self::Primitive { resume }
+    }
+    pub(crate) fn make_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: RegExpReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.target = Some(target);
+        resume.0.step_pending.receiver = Some(receiver);
+        resume.0.step_pending.arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn make_exec(regexp: Value, input: Value, mut resume: RegExpReplaceResume) -> Self {
+        resume.0.step_pending.regexp = Some(regexp);
+        resume.0.step_pending.input = Some(input);
+        Self::Exec { resume }
+    }
+    pub(crate) fn make_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: RegExpReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        resume.0.step_pending.value = Some(value);
+        Self::Set { resume }
+    }
+}
+impl RegExpReplaceResume {
+    #[cfg(feature = "stack-vm")]
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn take_preparedset_step(&mut self) -> Box<crate::engine::object::SetStep> {
+        self.0
+            .step_pending
+            .step
+            .take()
+            .expect("RegExpReplaceStep::PreparedSet lost step")
+    }
+
+    pub(crate) fn take_preparedread_read(&mut self) -> crate::engine::object::OrdinaryRead {
+        self.0
+            .step_pending
+            .read
+            .take()
+            .expect("RegExpReplaceStep::PreparedRead lost read")
+    }
+    pub(crate) fn take_preparedread_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("RegExpReplaceStep::PreparedRead lost key")
+    }
+
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("RegExpReplaceStep::Read lost object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("RegExpReplaceStep::Read lost key")
+    }
+
+    pub(crate) fn take_primitive_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("RegExpReplaceStep::Primitive lost value")
+    }
+    pub(crate) fn take_primitive_hint(&mut self) -> ToPrimitiveHint {
+        self.0
+            .step_pending
+            .hint
+            .take()
+            .expect("RegExpReplaceStep::Primitive lost hint")
+    }
+
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .step_pending
+            .target
+            .take()
+            .expect("RegExpReplaceStep::Call lost target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .step_pending
+            .receiver
+            .take()
+            .expect("RegExpReplaceStep::Call lost receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .step_pending
+            .arguments
+            .take()
+            .expect("RegExpReplaceStep::Call lost arguments")
+    }
+
+    pub(crate) fn take_exec_regexp(&mut self) -> Value {
+        self.0
+            .step_pending
+            .regexp
+            .take()
+            .expect("RegExpReplaceStep::Exec lost regexp")
+    }
+    pub(crate) fn take_exec_input(&mut self) -> Value {
+        self.0
+            .step_pending
+            .input
+            .take()
+            .expect("RegExpReplaceStep::Exec lost input")
+    }
+
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("RegExpReplaceStep::Set lost object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("RegExpReplaceStep::Set lost key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("RegExpReplaceStep::Set lost value")
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<RegExpReplaceStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<RegExpReplaceStep>() <= 64);

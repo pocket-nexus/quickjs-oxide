@@ -90,20 +90,20 @@ pub(super) fn finish(
                 .ok_or_else(|| Error::internal("owned completion has no payload"))?,
         };
         // Install the completion owner before releasing any window root.
-        execution.slots.clear_frame(frame.window)?;
+        execution.slots.clear_frame(frame.window.take())?;
         retired_cold = Some(frame.cold);
         Ok(super::suspend::VmRunOutcome::Complete(completion))
     } else {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_bridge();
-        let storage = execution.slots.take_frame(frame.window)?;
+        let storage = execution.slots.take_frame(frame.window.take())?;
         let entry = FrameEntry {
             initialize_bindings: false,
             property_generation: frame.property_generation,
             iterator_generation: frame.iterator_generation,
             caller_realm: frame.caller_realm,
             active_frame: frame.active_frame,
-            executable: frame.executable,
+            executable: frame.executable.take(),
             cold: frame.cold,
             storage,
         };

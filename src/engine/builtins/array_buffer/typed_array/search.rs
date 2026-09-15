@@ -192,7 +192,20 @@ pub(crate) enum TypedSearchStep {
         resume: TypedSearchResume,
     },
 }
-pub(crate) struct TypedSearchResume {
+pub(crate) struct TypedSearchResume(Box<TypedSearchResumeState>);
+impl std::ops::Deref for TypedSearchResume {
+    type Target = TypedSearchResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedSearchResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedSearchResume>() <= 8);
+pub(crate) struct TypedSearchResumeState {
     realm: ContextId,
     target: ObjectRef,
     length: i64,
@@ -245,13 +258,13 @@ impl TypedSearchStep {
                         "TypedArray.at index argv was not padded",
                     ))?
                     .clone(),
-                resume: TypedSearchResume {
+                resume: TypedSearchResume(Box::new(TypedSearchResumeState {
                     realm,
                     target,
                     length,
                     kind,
                     search: Value::Undefined,
-                },
+                })),
             }),
             TypedSearchKind::Search(search_kind) => {
                 if length == 0 {
@@ -285,13 +298,13 @@ impl TypedSearchStep {
                             "TypedArray search fromIndex argv was missing",
                         ))?
                         .clone(),
-                    resume: TypedSearchResume {
+                    resume: TypedSearchResume(Box::new(TypedSearchResumeState {
                         realm,
                         target,
                         length,
                         kind,
                         search,
-                    },
+                    })),
                 })
             }
         }
@@ -309,16 +322,16 @@ impl TypedSearchResume {
                 return Ok(TypedSearchStep::Complete(Completion::Throw(value)));
             }
         };
-        Ok(TypedSearchStep::Complete(match self.kind {
+        Ok(TypedSearchStep::Complete(match self.0.kind {
             TypedSearchKind::At => {
-                let index = match runtime.native_to_int64_sat(self.realm, &value)? {
+                let index = match runtime.native_to_int64_sat(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(TypedSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let index = if index < 0 {
-                    self.length + index
+                    self.0.length + index
                 } else {
                     index
                 };
@@ -328,7 +341,7 @@ impl TypedSearchResume {
                     Completion::Return(
                         runtime
                             .typed_array_read_index(
-                                &self.target,
+                                &self.0.target,
                                 u64::try_from(index).map_err(|_| {
                                     RuntimeError::Invariant("TypedArray.at index overflowed u64")
                                 })?,
@@ -338,11 +351,11 @@ impl TypedSearchResume {
                 }
             }
             TypedSearchKind::Search(kind) => runtime.finish_typed_array_search(
-                self.realm,
+                self.0.realm,
                 kind,
-                self.target,
-                self.length,
-                self.search,
+                self.0.target,
+                self.0.length,
+                self.0.search,
                 Some(value),
             )?,
         }))
@@ -367,3 +380,6 @@ fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedSearchStep>() <= 64);

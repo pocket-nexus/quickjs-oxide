@@ -743,7 +743,20 @@ pub(crate) enum DataViewAccessStep {
         resume: DataViewAccessResume,
     },
 }
-pub(crate) struct DataViewAccessResume {
+pub(crate) struct DataViewAccessResume(Box<DataViewAccessResumeState>);
+impl std::ops::Deref for DataViewAccessResume {
+    type Target = DataViewAccessResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DataViewAccessResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<DataViewAccessResume>() <= 8);
+pub(crate) struct DataViewAccessResumeState {
     realm: ContextId,
     object: ObjectRef,
     element: DataViewElementKind,
@@ -814,19 +827,19 @@ impl DataViewAccessStep {
             .unwrap_or(Value::Bool(false));
         Ok(Self::Primitive {
             value,
-            resume: DataViewAccessResume {
+            resume: DataViewAccessResume(Box::new(DataViewAccessResumeState {
                 realm,
                 object,
                 element,
                 endian,
                 phase,
-            },
+            })),
         })
     }
 }
 impl DataViewAccessResume {
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<DataViewAccessStep, RuntimeError> {
@@ -841,53 +854,61 @@ impl DataViewAccessResume {
                 "DataView conversion returned an object",
             ));
         }
-        match self.phase {
+        match self.0.phase {
             AccessPhase::GetPosition | AccessPhase::SetPosition(_) => {
-                let position = match runtime.native_to_index(self.realm, &value)? {
+                let position = match runtime.native_to_index(self.0.realm, &value)? {
                     NativeConversion::Value(position) => position,
                     NativeConversion::Throw(value) => {
                         return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
                     }
                 };
-                if let AccessPhase::SetPosition(value) = self.phase {
+                if let AccessPhase::SetPosition(value) = self.0.phase {
                     return Ok(DataViewAccessStep::Primitive {
                         value,
-                        resume: Self {
-                            phase: AccessPhase::SetValue(position),
-                            ..self
+                        resume: {
+                            let updated_0 = AccessPhase::SetValue(position);
+                            self.0.phase = updated_0;
+                            self
                         },
                     });
                 }
-                let little_endian = runtime.value_to_boolean(&self.endian)?;
-                let view = runtime.data_view_snapshot(&self.object)?;
-                let bytes =
-                    match runtime.data_view_read_word(self.realm, view, position, self.element)? {
-                        NativeConversion::Value(bytes) => bytes,
-                        NativeConversion::Throw(value) => {
-                            return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
-                        }
-                    };
+                let little_endian = runtime.value_to_boolean(&self.0.endian)?;
+                let view = runtime.data_view_snapshot(&self.0.object)?;
+                let bytes = match runtime.data_view_read_word(
+                    self.0.realm,
+                    view,
+                    position,
+                    self.0.element,
+                )? {
+                    NativeConversion::Value(bytes) => bytes,
+                    NativeConversion::Throw(value) => {
+                        return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
+                    }
+                };
                 Ok(DataViewAccessStep::Complete(Completion::Return(
-                    data_view_decode(self.element, bytes, little_endian),
+                    data_view_decode(self.0.element, bytes, little_endian),
                 )))
             }
             AccessPhase::SetValue(position) => {
-                let converted =
-                    match runtime.data_view_convert_set_value(self.realm, self.element, &value)? {
-                        NativeConversion::Value(value) => value,
-                        NativeConversion::Throw(value) => {
-                            return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
-                        }
-                    };
-                let little_endian = runtime.value_to_boolean(&self.endian)?;
-                let bytes = data_view_encode(self.element, converted, little_endian);
-                let view = runtime.data_view_snapshot(&self.object)?;
+                let converted = match runtime.data_view_convert_set_value(
+                    self.0.realm,
+                    self.0.element,
+                    &value,
+                )? {
+                    NativeConversion::Value(value) => value,
+                    NativeConversion::Throw(value) => {
+                        return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
+                    }
+                };
+                let little_endian = runtime.value_to_boolean(&self.0.endian)?;
+                let bytes = data_view_encode(self.0.element, converted, little_endian);
+                let view = runtime.data_view_snapshot(&self.0.object)?;
                 Ok(DataViewAccessStep::Complete(
                     match runtime.data_view_write_word(
-                        self.realm,
+                        self.0.realm,
                         view,
                         position,
-                        self.element,
+                        self.0.element,
                         &bytes,
                     )? {
                         NativeConversion::Value(()) => Completion::Return(Value::Undefined),
@@ -929,7 +950,20 @@ pub(crate) enum DataViewConstructorStep {
         resume: DataViewConstructorResume,
     },
 }
-pub(crate) struct DataViewConstructorResume {
+pub(crate) struct DataViewConstructorResume(Box<DataViewConstructorResumeState>);
+impl std::ops::Deref for DataViewConstructorResume {
+    type Target = DataViewConstructorResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for DataViewConstructorResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<DataViewConstructorResume>() <= 8);
+pub(crate) struct DataViewConstructorResumeState {
     realm: ContextId,
     buffer: ObjectRef,
     new_target: Value,
@@ -977,13 +1011,13 @@ impl DataViewConstructorStep {
         } else {
             None
         };
-        let resume = DataViewConstructorResume {
+        let resume = DataViewConstructorResume(Box::new(DataViewConstructorResumeState {
             realm,
             buffer,
             new_target: new_target.clone(),
             length,
             phase: DataViewConstructorPhase::Offset,
-        };
+        }));
         if arguments.actual_arg_count > 1 {
             Ok(Self::Primitive {
                 value: arguments
@@ -1001,27 +1035,28 @@ impl DataViewConstructorStep {
     }
 }
 impl DataViewConstructorResume {
-    fn lookup(self, offset: u32, length: Option<u32>) -> DataViewConstructorStep {
+    fn lookup(mut self, offset: u32, length: Option<u32>) -> DataViewConstructorStep {
         DataViewConstructorStep::Prototype {
-            new_target: self.new_target.clone(),
-            resume: Self {
-                phase: DataViewConstructorPhase::Prototype { offset, length },
-                ..self
+            new_target: self.0.new_target.clone(),
+            resume: {
+                let updated_0 = DataViewConstructorPhase::Prototype { offset, length };
+                self.0.phase = updated_0;
+                self
             },
         }
     }
     fn offset(
-        self,
+        mut self,
         runtime: &Runtime,
         offset: u64,
     ) -> Result<DataViewConstructorStep, RuntimeError> {
         let initial = runtime
-            .snapshot_buffer_access(self.buffer.object_id())?
+            .snapshot_buffer_access(self.0.buffer.object_id())?
             .state;
         if initial.detached {
             return Ok(DataViewConstructorStep::Complete(Completion::Throw(
                 runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Type,
                     "ArrayBuffer is detached",
                 )?,
@@ -1030,7 +1065,7 @@ impl DataViewConstructorResume {
         if offset > u64::from(initial.byte_length) {
             return Ok(DataViewConstructorStep::Complete(Completion::Throw(
                 runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Range,
                     "invalid byteOffset",
                 )?,
@@ -1038,15 +1073,16 @@ impl DataViewConstructorResume {
         }
         let offset = u32::try_from(offset)
             .map_err(|_| RuntimeError::Invariant("validated DataView offset overflowed u32"))?;
-        if let Some(length) = &self.length {
+        if let Some(length) = &self.0.length {
             Ok(DataViewConstructorStep::Primitive {
                 value: length.clone(),
-                resume: Self {
-                    phase: DataViewConstructorPhase::Length {
+                resume: {
+                    let updated_0 = DataViewConstructorPhase::Length {
                         offset,
                         available: initial.byte_length - offset,
-                    },
-                    ..self
+                    };
+                    self.0.phase = updated_0;
+                    self
                 },
             })
         } else {
@@ -1076,19 +1112,19 @@ impl DataViewConstructorResume {
                 "DataView constructor numeric conversion returned an object",
             ));
         }
-        let value = match runtime.native_to_index(self.realm, &value)? {
+        let value = match runtime.native_to_index(self.0.realm, &value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(DataViewConstructorStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             DataViewConstructorPhase::Offset => self.offset(runtime, value),
             DataViewConstructorPhase::Length { offset, available } => {
                 if value > u64::from(available) {
                     return Ok(DataViewConstructorStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Range,
                             "invalid byteLength",
                         )?,
@@ -1118,15 +1154,15 @@ impl DataViewConstructorResume {
                 return Ok(DataViewConstructorStep::Complete(Completion::Throw(value)));
             }
         };
-        let DataViewConstructorPhase::Prototype { offset, length } = self.phase else {
+        let DataViewConstructorPhase::Prototype { offset, length } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "DataView constructor received an unexpected prototype reply",
             ));
         };
         Ok(DataViewConstructorStep::Complete(
             runtime.finish_data_view_construction(
-                self.realm,
-                self.buffer,
+                self.0.realm,
+                self.0.buffer,
                 offset,
                 length,
                 prototype,
@@ -1161,3 +1197,9 @@ fn finish_constructor(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<DataViewAccessStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<DataViewConstructorStep>() <= 64);

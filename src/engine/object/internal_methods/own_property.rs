@@ -20,34 +20,28 @@ type Descriptor = Option<CompleteOrdinaryPropertyDescriptor>;
 
 pub(crate) enum ProxyOwnStep {
     Complete(NativeConversion<Descriptor>),
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: Value,
-        resume: ProxyOwnResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: ProxyOwnResume,
-    },
-    Descriptor {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: ProxyOwnResume,
-    },
-    Extensible {
-        object: ObjectRef,
-        resume: ProxyOwnResume,
-    },
-    Convert {
-        value: Value,
-        resume: ProxyOwnResume,
-    },
+    Read { resume: ProxyOwnResume },
+    Call { resume: ProxyOwnResume },
+    Descriptor { resume: ProxyOwnResume },
+    Extensible { resume: ProxyOwnResume },
+    Convert { resume: ProxyOwnResume },
 }
 
-pub(crate) struct ProxyOwnResume {
+pub(crate) struct ProxyOwnResume(Box<ProxyOwnResumeState>);
+impl std::ops::Deref for ProxyOwnResume {
+    type Target = ProxyOwnResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ProxyOwnResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ProxyOwnResume>() <= 8);
+pub(crate) struct ProxyOwnResumeState {
+    pending_effect: ProxyOwnStepPending,
     realm: ContextId,
     phase: Phase,
 }
@@ -100,43 +94,51 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyOwnStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Complete(NativeConversion::Throw(value)) => {
-            ProxyOwnStep::Complete(NativeConversion::Throw(value))
-        }
-        MethodStep::Complete(NativeConversion::Value((rooted, None))) => ProxyOwnStep::Descriptor {
-            object: rooted.target.clone(),
-            key,
-            resume: ProxyOwnResume {
-                realm,
-                phase: Phase::Forward { _rooted: rooted },
-            },
-        },
-        MethodStep::Complete(NativeConversion::Value((rooted, Some(target)))) => {
-            let key_value = runtime.property_key_value(&key)?;
-            ProxyOwnStep::Call {
-                target,
-                receiver: Value::Object(rooted.handler.clone()),
-                arguments: vec![Value::Object(rooted.target.clone()), key_value],
-                resume: ProxyOwnResume {
-                    realm,
-                    phase: Phase::Trap { rooted, key },
-                },
+        MethodStep::Throw(value) => ProxyOwnStep::Complete(NativeConversion::Throw(value)),
+        MethodStep::Complete { mut resume } => {
+            let rooted = resume.take_completed_rooted();
+            let target = resume.take_completed_target();
+            drop(resume);
+            match target {
+                None => ProxyOwnStep::request_descriptor(
+                    rooted.target.clone(),
+                    key,
+                    ProxyOwnResume(Box::new(ProxyOwnResumeState {
+                        pending_effect: ProxyOwnStepPending::default(),
+                        realm,
+                        phase: Phase::Forward { _rooted: rooted },
+                    })),
+                ),
+                Some(target) => {
+                    let key_value = runtime.property_key_value(&key)?;
+                    ProxyOwnStep::request_call(
+                        target,
+                        Value::Object(rooted.handler.clone()),
+                        vec![Value::Object(rooted.target.clone()), key_value],
+                        ProxyOwnResume(Box::new(ProxyOwnResumeState {
+                            pending_effect: ProxyOwnStepPending::default(),
+                            realm,
+                            phase: Phase::Trap { rooted, key },
+                        })),
+                    )
+                }
             }
         }
-        MethodStep::Read {
-            object,
-            key: method_key,
-            receiver,
-            resume,
-        } => ProxyOwnStep::Read {
-            object,
-            key: method_key,
-            receiver,
-            resume: ProxyOwnResume {
-                realm,
-                phase: Phase::Method { resume, key },
-            },
-        },
+        MethodStep::Read { mut resume } => {
+            let object = resume.take_read_object();
+            let method_key = resume.take_read_key();
+            let receiver = resume.take_read_receiver();
+            ProxyOwnStep::request_read(
+                object,
+                method_key,
+                receiver,
+                ProxyOwnResume(Box::new(ProxyOwnResumeState {
+                    pending_effect: ProxyOwnStepPending::default(),
+                    realm,
+                    phase: Phase::Method { resume, key },
+                })),
+            )
+        }
     })
 }
 
@@ -152,30 +154,32 @@ impl ProxyOwnResume {
             }
             Completion::Return(value) => value,
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Method { resume, key } => method(
                 runtime,
-                self.realm,
+                self.0.realm,
                 key,
                 resume.resume(runtime, Completion::Return(value))?,
             ),
             Phase::Trap { rooted, key } => {
                 if !matches!(value, Value::Undefined | Value::Object(_)) {
-                    return Ok(ProxyOwnStep::Complete(
-                        runtime.proxy_invariant_throw(self.realm, "getOwnPropertyDescriptor")?,
-                    ));
+                    return Ok(ProxyOwnStep::Complete(runtime.proxy_invariant_throw(
+                        self.0.realm,
+                        "getOwnPropertyDescriptor",
+                    )?));
                 }
-                Ok(ProxyOwnStep::Descriptor {
-                    object: rooted.target.clone(),
+                Ok(ProxyOwnStep::request_descriptor(
+                    rooted.target.clone(),
                     key,
-                    resume: Self {
-                        realm: self.realm,
+                    Self(Box::new(ProxyOwnResumeState {
+                        pending_effect: ProxyOwnStepPending::default(),
+                        realm: self.0.realm,
                         phase: Phase::Target {
                             rooted,
                             result: value,
                         },
-                    },
-                })
+                    })),
+                ))
             }
             _ => Err(RuntimeError::Invariant(
                 "Proxy descriptor continuation received a value reply",
@@ -194,7 +198,7 @@ impl ProxyOwnResume {
                 return Ok(ProxyOwnStep::Complete(NativeConversion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Forward { .. } => Ok(ProxyOwnStep::Complete(NativeConversion::Value(target))),
             Phase::Target { rooted, result } => {
                 if matches!(result, Value::Undefined) {
@@ -202,26 +206,27 @@ impl ProxyOwnResume {
                         && (!target.configurable()
                             || !runtime.raw_extensible_bit(&rooted.target)?)
                     {
-                        return Ok(ProxyOwnStep::Complete(
-                            runtime
-                                .proxy_invariant_throw(self.realm, "getOwnPropertyDescriptor")?,
-                        ));
+                        return Ok(ProxyOwnStep::Complete(runtime.proxy_invariant_throw(
+                            self.0.realm,
+                            "getOwnPropertyDescriptor",
+                        )?));
                     }
                     return Ok(ProxyOwnStep::Complete(NativeConversion::Value(None)));
                 }
                 // QuickJS queries target extensibility before reading any
                 // fields from the descriptor returned by the trap.
-                Ok(ProxyOwnStep::Extensible {
-                    object: rooted.target.clone(),
-                    resume: Self {
-                        realm: self.realm,
+                Ok(ProxyOwnStep::request_extensible(
+                    rooted.target.clone(),
+                    Self(Box::new(ProxyOwnResumeState {
+                        pending_effect: ProxyOwnStepPending::default(),
+                        realm: self.0.realm,
                         phase: Phase::Extensible {
                             rooted,
                             result,
                             target,
                         },
-                    },
-                })
+                    })),
+                ))
             }
             _ => Err(RuntimeError::Invariant(
                 "Proxy value continuation received a descriptor reply",
@@ -237,7 +242,7 @@ impl ProxyOwnResume {
             rooted,
             result: value,
             target,
-        } = self.phase
+        } = self.0.phase
         else {
             return Err(RuntimeError::Invariant(
                 "Proxy descriptor continuation received an extensibility reply",
@@ -247,17 +252,18 @@ impl ProxyOwnResume {
             NativeConversion::Throw(value) => {
                 Ok(ProxyOwnStep::Complete(NativeConversion::Throw(value)))
             }
-            NativeConversion::Value(extensible) => Ok(ProxyOwnStep::Convert {
+            NativeConversion::Value(extensible) => Ok(ProxyOwnStep::request_convert(
                 value,
-                resume: Self {
-                    realm: self.realm,
+                Self(Box::new(ProxyOwnResumeState {
+                    pending_effect: ProxyOwnStepPending::default(),
+                    realm: self.0.realm,
                     phase: Phase::Converted {
                         _rooted: rooted,
                         target,
                         extensible,
                     },
-                },
-            }),
+                })),
+            )),
         }
     }
 
@@ -270,7 +276,7 @@ impl ProxyOwnResume {
             _rooted,
             target,
             extensible,
-        } = self.phase
+        } = self.0.phase
         else {
             return Err(RuntimeError::Invariant(
                 "Proxy descriptor continuation received a conversion reply",
@@ -295,12 +301,144 @@ impl ProxyOwnResume {
         })?;
         let result = validation_record_to_complete(complete)?;
         if !proxy_gopd_descriptor_is_compatible(target.as_ref(), &result, extensible) {
-            return Ok(ProxyOwnStep::Complete(
-                runtime.proxy_invariant_throw(self.realm, "getOwnPropertyDescriptor")?,
-            ));
+            return Ok(ProxyOwnStep::Complete(runtime.proxy_invariant_throw(
+                self.0.realm,
+                "getOwnPropertyDescriptor",
+            )?));
         }
         Ok(ProxyOwnStep::Complete(NativeConversion::Value(Some(
             result,
         ))))
     }
 }
+
+#[derive(Default)]
+struct ProxyOwnStepPending {
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    read_receiver: Option<Value>,
+    call_target: Option<DirectCallTarget>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+    descriptor_object: Option<ObjectRef>,
+    descriptor_key: Option<PropertyKey>,
+    extensible_object: Option<ObjectRef>,
+    convert_value: Option<Value>,
+}
+impl ProxyOwnStep {
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        receiver: Value,
+        mut resume: ProxyOwnResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: ProxyOwnResume,
+    ) -> Self {
+        resume.0.pending_effect.call_target = Some(target);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_descriptor(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: ProxyOwnResume,
+    ) -> Self {
+        resume.0.pending_effect.descriptor_object = Some(object);
+        resume.0.pending_effect.descriptor_key = Some(key);
+        Self::Descriptor { resume }
+    }
+    pub(crate) fn request_extensible(object: ObjectRef, mut resume: ProxyOwnResume) -> Self {
+        resume.0.pending_effect.extensible_object = Some(object);
+        Self::Extensible { resume }
+    }
+    pub(crate) fn request_convert(value: Value, mut resume: ProxyOwnResume) -> Self {
+        resume.0.pending_effect.convert_value = Some(value);
+        Self::Convert { resume }
+    }
+}
+impl ProxyOwnResume {
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("ProxyOwnStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("ProxyOwnStep Read key")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("ProxyOwnStep Read receiver")
+    }
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .pending_effect
+            .call_target
+            .take()
+            .expect("ProxyOwnStep Call target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("ProxyOwnStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("ProxyOwnStep Call arguments")
+    }
+    pub(crate) fn take_descriptor_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .descriptor_object
+            .take()
+            .expect("ProxyOwnStep Descriptor object")
+    }
+    pub(crate) fn take_descriptor_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .descriptor_key
+            .take()
+            .expect("ProxyOwnStep Descriptor key")
+    }
+    pub(crate) fn take_extensible_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .extensible_object
+            .take()
+            .expect("ProxyOwnStep Extensible object")
+    }
+    pub(crate) fn take_convert_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .convert_value
+            .take()
+            .expect("ProxyOwnStep Convert value")
+    }
+}
+const _: () = assert!(std::mem::size_of::<ProxyOwnStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ProxyOwnStep>() <= 64);

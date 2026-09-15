@@ -87,11 +87,8 @@ impl ArrayNextStep {
     ) -> Result<Self, RuntimeError> {
         loop {
             self = match self {
-                Self::Read {
-                    object,
-                    key,
-                    resume,
-                } => {
+                Self::Read { mut resume } => {
+                    let (object, key) = resume.take_read();
                     // Move the existing read owner into its receiver wrapper;
                     // the resume independently retains the source across reads.
                     let receiver = Value::Object(object);
@@ -107,11 +104,14 @@ impl ArrayNextStep {
                         read => {
                             // Lookup may have materialized a lazy descriptor.
                             // Keep its selected getter/Proxy and never replay it.
-                            return Ok(Self::PreparedRead { read, key, resume });
+                            return Ok(resume.prepared(read, key));
                         }
                     }
                 }
-                Self::Number { value, resume } if !matches!(value, Value::Object(_)) => {
+                Self::Number { mut resume }
+                    if !matches!(resume.requested_value, Some(Value::Object(_))) =>
+                {
+                    let value = resume.take_number();
                     let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant(
@@ -154,6 +154,60 @@ mod dense_immediate_tests {
         drop(context);
         runtime.run_gc().unwrap();
         (iterator, source.unwrap(), kind)
+    }
+
+    #[test]
+    fn callback_requests_keep_the_same_array_next_resume_allocation() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let iterator = context.eval("Array.prototype.values.call({get length(){return {valueOf(){return 1}}},get 0(){return 7}})").unwrap();
+        let ArrayNextStep::PreparedRead { mut resume } = ArrayNextStep::start(
+            &runtime,
+            context.realm,
+            &NativeInvocation::Call {
+                this_value: iterator,
+            },
+        )
+        .unwrap() else {
+            panic!("length getter")
+        };
+        let address = &*resume.0 as *const ArrayNextResumeState;
+        let read = resume.take_prepared();
+        let key = resume.take_key();
+        let NativeConversion::Value(Some(value)) = runtime
+            .finish_prepared_read(context.realm, &key, read)
+            .unwrap()
+        else {
+            panic!("length")
+        };
+        let ArrayNextStep::Number { mut resume } =
+            resume.resume(&runtime, Completion::Return(value)).unwrap()
+        else {
+            panic!("number")
+        };
+        assert_eq!(&*resume.0 as *const ArrayNextResumeState, address);
+        let value = resume.take_number();
+        let result = runtime.native_to_number(context.realm, &value).unwrap();
+        let ArrayNextStep::PreparedRead { mut resume } = resume.number(&runtime, result).unwrap()
+        else {
+            panic!("element getter")
+        };
+        assert_eq!(&*resume.0 as *const ArrayNextResumeState, address);
+        let read = resume.take_prepared();
+        let key = resume.take_key();
+        let NativeConversion::Value(Some(value)) = runtime
+            .finish_prepared_read(context.realm, &key, read)
+            .unwrap()
+        else {
+            panic!("element")
+        };
+        assert!(matches!(
+            resume.resume(&runtime, Completion::Return(value)).unwrap(),
+            ArrayNextStep::Complete(NativeInvokeOutcome::IteratorNextRaw {
+                value: Value::Int(7),
+                done: false
+            })
+        ));
     }
 
     #[test]

@@ -177,15 +177,10 @@ impl Drop for Query {
 
 enum Next {
     Continue,
-    Invoke {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: Resume,
-    },
+    Invoke,
     Done(Progress),
     Call {
-        entry: super::frame::FrameEntry,
+        entry: Box<super::frame::FrameEntry>,
         pc: usize,
         resume: Resume,
     },
@@ -321,10 +316,10 @@ pub(super) fn start_owned_read(
     parent.property_generation = identity;
     let realm = parent.executable.realm;
     let step = Step::Read {
-        object: object.clone(),
-        key,
-        receiver,
-        resume: Resume::ReadOwner(object),
+        object: Some(object.clone()),
+        key: Some(key),
+        receiver: Some(receiver),
+        resume: Some(Resume::ReadOwner(object)),
     };
     let result = advance(
         runtime,
@@ -392,26 +387,34 @@ pub(super) fn start_boolean(
     parent.property_generation = identity;
     let realm = parent.executable.realm;
     let resume = Resume::BooleanResult {
-        _object: object.clone(),
-        _key: match &kind {
-            ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) => Some(key.clone()),
-            _ => None,
-        },
-        strict_delete,
+        payload: Box::new(request::BooleanResultPayload {
+            _object: object.clone(),
+            _key: match &kind {
+                ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) => Some(key.clone()),
+                _ => None,
+            },
+            strict_delete,
+        }),
     };
     let step = match kind {
         ProxyBooleanKind::Has(key) => Step::Has {
-            object,
-            key,
-            resume,
+            object: Some(object),
+            key: Some(key),
+            resume: Some(resume),
         },
         ProxyBooleanKind::Delete(key) => Step::Delete {
-            object,
-            key,
-            resume,
+            object: Some(object),
+            key: Some(key),
+            resume: Some(resume),
         },
-        ProxyBooleanKind::Extensible => Step::Extensible { object, resume },
-        ProxyBooleanKind::PreventExtensions => Step::PreventExtensions { object, resume },
+        ProxyBooleanKind::Extensible => Step::Extensible {
+            object: Some(object),
+            resume: Some(resume),
+        },
+        ProxyBooleanKind::PreventExtensions => Step::PreventExtensions {
+            object: Some(object),
+            resume: Some(resume),
+        },
     };
     let result = advance(
         runtime,
@@ -753,7 +756,8 @@ pub(super) fn start_waitable_native_call(
                         // Release the abandoned inner state while its outer
                         // activation still owns the protocol call. The reply
                         // resume is likewise consumed before the outer finish.
-                        records[0].step = Step::Complete(Completion::Return(Value::Undefined));
+                        records[0].step =
+                            Step::Complete(Some(Completion::Return(Value::Undefined)));
                         if let Some(mut parent) = parent.take() {
                             let outer = parent.call.take().expect("outer replace activation");
                             drop(parent);
@@ -781,7 +785,7 @@ pub(super) fn start_waitable_native_call(
                 native::install_waiting(&mut query, call, resume);
                 let step = std::mem::replace(
                     &mut records[0].step,
-                    Step::Complete(Completion::Return(Value::Undefined)),
+                    Step::Complete(Some(Completion::Return(Value::Undefined))),
                 );
                 execution.query_storage.recycle_native_wait(records);
                 #[cfg(feature = "profiling")]
@@ -878,10 +882,10 @@ pub(super) fn start_construct(
         execution,
         frame,
         Step::Construct {
-            target,
-            new_target: super::call::ConstructNewTarget::Raw(new_target),
-            arguments,
-            resume: Resume::Identity,
+            target: Some(target),
+            new_target: Some(super::call::ConstructNewTarget::Raw(new_target)),
+            arguments: Some(arguments),
+            resume: Some(Resume::Identity),
         },
         operand_count,
     );
@@ -963,10 +967,10 @@ fn start_owned_callback(
         identity,
         Vec::new(),
         Step::Call {
-            target: DirectCallTarget::Callable(callable),
-            receiver,
-            arguments,
-            resume: Resume::Identity,
+            target: Some(DirectCallTarget::Callable(callable)),
+            receiver: Some(receiver),
+            arguments: Some(arguments),
+            resume: Some(Resume::Identity),
         },
         finish,
     );
@@ -1215,7 +1219,7 @@ fn schedule_write_action(
         runtime,
         execution,
         frame,
-        Step::SetComplete(action),
+        Step::SetComplete(Some(action)),
         key,
         strict,
         depth,
@@ -1386,10 +1390,10 @@ pub(super) fn start_root(
             receiver,
             arguments,
         } => Step::Call {
-            target: DirectCallTarget::Callable(callable),
-            receiver,
-            arguments,
-            resume: Resume::Identity,
+            target: Some(DirectCallTarget::Callable(callable)),
+            receiver: Some(receiver),
+            arguments: Some(arguments),
+            resume: Some(Resume::Identity),
         },
         super::driver::RootOperation::Construct(normalized) => construct::prepared(
             runtime,
@@ -1404,25 +1408,25 @@ pub(super) fn start_root(
             key,
             receiver,
         } => Step::Read {
-            object,
-            key,
-            receiver,
-            resume: Resume::Identity,
+            object: Some(object),
+            key: Some(key),
+            receiver: Some(receiver),
+            resume: Some(Resume::Identity),
         },
         super::driver::RootOperation::Own { object, key } => Step::Descriptor {
-            object,
-            key,
-            resume: Resume::RootDescriptor,
+            object: Some(object),
+            key: Some(key),
+            resume: Some(Resume::RootDescriptor),
         },
         super::driver::RootOperation::Define {
             object,
             key,
             descriptor,
         } => Step::Define {
-            object,
-            key,
-            descriptor,
-            resume: Resume::RootDefine,
+            object: Some(object),
+            key: Some(key),
+            descriptor: Some(descriptor),
+            resume: Some(Resume::RootDefine),
         },
         super::driver::RootOperation::Set {
             object,
@@ -1430,11 +1434,11 @@ pub(super) fn start_root(
             value,
             receiver,
         } => Step::Set {
-            object,
-            key,
-            value,
-            receiver,
-            resume: Resume::RootSet,
+            object: Some(object),
+            key: Some(key),
+            value: Some(value),
+            receiver: Some(receiver),
+            resume: Some(Resume::RootSet),
         },
 
         super::driver::RootOperation::ModuleCallback(step) => step.into(),
@@ -1513,8 +1517,9 @@ fn drive_inner(
     owner: ReturnOwner,
     identity: u64,
     mut query: Query,
-    mut step: Result<Step, Error>,
+    step: Result<Step, Error>,
 ) -> Result<Progress, Error> {
+    let mut step = step.map_err(Some);
     #[cfg(feature = "profiling")]
     {
         use crate::engine::api::profiling::record_owned_execution_layout as layout;
@@ -1525,8 +1530,10 @@ fn drive_inner(
         layout::<super::frame::FrameCold>("FrameCold");
     }
     loop {
-        let result = step
-            .and_then(|step| advance_inner(runtime, execution, owner, identity, &mut query, step));
+        let result = match &mut step {
+            Ok(step) => advance_inner(runtime, execution, owner, identity, &mut query, step),
+            Err(error) => Err(error.take().expect("pending dispatch error")),
+        };
         match result {
             Ok(Next::Done(result)) => {
                 #[cfg(feature = "profiling")]
@@ -1556,7 +1563,7 @@ fn drive_inner(
                     size_of::<PendingProxyGet>(),
                 );
                 put_pending(execution, owner, pending)?;
-                match push_frame(execution, entry) {
+                match push_frame(execution, *entry) {
                     Ok(id) => {
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -1575,18 +1582,20 @@ fn drive_inner(
                         {
                             query.had_callback = had_callback;
                         }
-                        step = Err(error);
+                        step = Err(Some(error));
                     }
                 }
             }
-            Ok(Next::Continue | Next::Invoke { .. }) => {
+            Ok(Next::Continue | Next::Invoke) => {
                 return Err(Error::internal(
                     "query dispatch escaped without a terminal step",
                 ));
             }
             Err(error) if !query.natives.is_empty() => {
                 // The native frame and all argv roots are still owned here.
-                step = query.finish_native(runtime, &mut execution.slots, Err(error));
+                step = query
+                    .finish_native(runtime, &mut execution.slots, Err(error))
+                    .map_err(Some);
             }
             Err(error) => {
                 query.recycle(&mut execution.query_storage);
@@ -1602,7 +1611,7 @@ fn advance_inner(
     owner: ReturnOwner,
     identity: u64,
     query: &mut Query,
-    mut step: Step,
+    step: &mut Step,
 ) -> Result<Next, Error> {
     loop {
         // Keep domain dispatch frames bounded on the existing 256 KiB host stack.
@@ -1614,7 +1623,7 @@ fn advance_inner(
             u64,
             &mut Query,
             &mut Step,
-        ) -> Result<Next, Error> = match &step {
+        ) -> Result<Next, Error> = match &*step {
             Step::RootDescriptor(..)
             | Step::Complete { .. }
             | Step::ForInComplete { .. }
@@ -1700,25 +1709,35 @@ fn advance_inner(
             | Step::Descriptor { .. } => dispatch_read::get,
         };
         #[cfg(feature = "profiling")]
-        profiling::record_dispatch(&step);
-        let next = dispatch(runtime, execution, owner, identity, query, &mut step)?;
+        profiling::record_dispatch(step);
+        let next = dispatch(runtime, execution, owner, identity, query, step)?;
         let (target, receiver, arguments, resume) = match next {
             Next::Continue => {
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event("query_continue");
                 continue;
             }
-            Next::Invoke {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => (target, receiver, arguments, resume),
+            Next::Invoke => {
+                let Step::Call {
+                    target,
+                    receiver,
+                    arguments,
+                    resume,
+                } = step
+                else {
+                    return Err(Error::internal("invoke marker lost resident call request"));
+                };
+                (
+                    target.take().expect("selected call target"),
+                    receiver.take().expect("selected call receiver"),
+                    arguments.take().expect("selected call arguments"),
+                    resume.take().expect("selected call continuation"),
+                )
+            }
             next => return Ok(next),
         };
         match invoke(
-            runtime, execution, owner, identity, query, target, receiver, arguments, resume,
-            &mut step,
+            runtime, execution, owner, identity, query, target, receiver, arguments, resume, step,
         )? {
             Next::Continue => {}
             next => return Ok(next),
@@ -1911,7 +1930,7 @@ fn invoke(
                 resume
             };
             return Ok(Next::Call {
-                entry,
+                entry: Box::new(entry),
                 pc: 0,
                 resume,
             });
@@ -2322,7 +2341,7 @@ mod native_scope_tests {
         assert_eq!(query.realm, outer.realm);
         assert_eq!(query.continuation_depth(), 3);
         assert_eq!(runtime.0.state.borrow().active_frames.len(), 1);
-        let Step::Complete(Completion::Throw(Value::Object(error))) = step else {
+        let Step::Complete(Some(Completion::Throw(Value::Object(error)))) = step else {
             panic!("expected captured error")
         };
         assert_eq!(
@@ -2346,7 +2365,7 @@ mod native_scope_tests {
             )
             .unwrap();
         assert!(
-            matches!(step, Step::Complete(Completion::Throw(Value::Object(value))) if value == error)
+            matches!(step, Step::Complete(Some(Completion::Throw(Value::Object(value)))) if value == error)
         );
         assert_eq!(query.realm, caller.realm);
         assert_eq!(query.continuation_depth(), 1);
@@ -2366,9 +2385,9 @@ pub(super) fn start_iterator_read(
         execution,
         pending,
         Step::ReadValue {
-            receiver,
-            key,
-            resume: Resume::Identity,
+            receiver: Some(receiver),
+            key: Some(key),
+            resume: Some(Resume::Identity),
         },
         false,
     )
@@ -2385,10 +2404,10 @@ pub(super) fn start_iterator_call(
         execution,
         pending,
         Step::Call {
-            target: DirectCallTarget::Callable(callable),
-            receiver,
-            arguments: Vec::new(),
-            resume: Resume::Identity,
+            target: Some(DirectCallTarget::Callable(callable)),
+            receiver: Some(receiver),
+            arguments: Some(Vec::new()),
+            resume: Some(Resume::Identity),
         },
         false,
     )
@@ -2406,10 +2425,10 @@ pub(super) fn start_iterator_invoke(
         execution,
         pending,
         Step::Call {
-            target,
-            receiver,
-            arguments,
-            resume: Resume::Identity,
+            target: Some(target),
+            receiver: Some(receiver),
+            arguments: Some(arguments),
+            resume: Some(Resume::Identity),
         },
         false,
     )
@@ -2481,7 +2500,7 @@ pub(super) fn start_array_next_without_pending(
                 _ => return Err(Error::internal("iterator overflow did not throw")),
             })
         } else {
-            let mut waiting = Step::Complete(Completion::Return(Value::Undefined));
+            let mut waiting = Step::Complete(Some(Completion::Return(Value::Undefined)));
             let mut waiting_call = None;
             let result = native::compact_array_next_into(
                 runtime,
@@ -2583,7 +2602,7 @@ fn start_array_next_direct(
         if !execution.query_storage.reserve_cached_native_entry()? {
             return Err(Error::internal("direct native entry lost reserved storage"));
         }
-        let mut waiting = Step::Complete(Completion::Return(Value::Undefined));
+        let mut waiting = Step::Complete(Some(Completion::Return(Value::Undefined)));
         let mut waiting_call = None;
         let result = native::begin_into(
             runtime,
@@ -2917,27 +2936,27 @@ fn continue_iterator(
         }
         IteratorAction::Read(receiver, key) => (
             Step::ReadValue {
-                receiver,
-                key,
-                resume: Resume::Identity,
+                receiver: Some(receiver),
+                key: Some(key),
+                resume: Some(Resume::Identity),
             },
             false,
         ),
         IteratorAction::Call(callable, receiver) => (
             Step::Call {
-                target: DirectCallTarget::Callable(callable),
-                receiver,
-                arguments: Vec::new(),
-                resume: Resume::Identity,
+                target: Some(DirectCallTarget::Callable(callable)),
+                receiver: Some(receiver),
+                arguments: Some(Vec::new()),
+                resume: Some(Resume::Identity),
             },
             false,
         ),
         IteratorAction::Invoke(target, receiver, arguments) => (
             Step::Call {
-                target,
-                receiver,
-                arguments,
-                resume: Resume::Identity,
+                target: Some(target),
+                receiver: Some(receiver),
+                arguments: Some(arguments),
+                resume: Some(Resume::Identity),
             },
             false,
         ),
@@ -3027,11 +3046,13 @@ pub(super) fn start_class_parent(
     frame: FrameId,
 ) -> Result<CallStep, Error> {
     let step = Step::ReadValue {
-        receiver: Value::Object(parent),
-        key: runtime
-            .intern_property_key("prototype")
-            .map_err(|error| Error::internal(error.to_string()))?,
-        resume: Resume::Identity,
+        receiver: Some(Value::Object(parent)),
+        key: Some(
+            runtime
+                .intern_property_key("prototype")
+                .map_err(|error| Error::internal(error.to_string()))?,
+        ),
+        resume: Some(Resume::Identity),
     };
     start_instruction_query(
         runtime,
@@ -3053,10 +3074,10 @@ pub(super) fn start_public_field(
 ) -> Result<CallStep, Error> {
     let realm = execution.frames.current_mut(frame)?.executable.realm;
     let step = Step::Define {
-        object,
-        key,
-        descriptor: Runtime::public_class_field_descriptor(value),
-        resume: Resume::PublicField,
+        object: Some(object),
+        key: Some(key),
+        descriptor: Some(Runtime::public_class_field_descriptor(value)),
+        resume: Some(Resume::PublicField),
     };
     start_instruction_query(
         runtime,
@@ -3277,8 +3298,9 @@ mod iterator_resident_layout_tests {
         // completion enum with its operation-specific state.
         assert!(
             size_of::<super::Finish>()
-                < size_of::<super::super::iterator_driver::PendingIterator>()
+                < size_of::<super::super::iterator_driver::PendingIteratorState>()
         );
+        assert!(size_of::<super::super::iterator_driver::PendingIterator>() <= 8);
         println!(
             "Finish={} Query={} PendingIterator={} FrameRare={}",
             size_of::<super::Finish>(),

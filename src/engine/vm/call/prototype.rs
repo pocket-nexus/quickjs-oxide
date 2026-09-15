@@ -15,7 +15,20 @@ pub(crate) enum ProtoSourceStep {
         resume: ProtoSourceResume,
     },
 }
-pub(crate) struct ProtoSourceResume {
+pub(crate) struct ProtoSourceResume(Box<ProtoSourceResumeState>);
+impl std::ops::Deref for ProtoSourceResume {
+    type Target = ProtoSourceResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ProtoSourceResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ProtoSourceResume>() <= 8);
+pub(crate) struct ProtoSourceResumeState {
     realm: ContextId,
     new_target: Value,
 }
@@ -33,7 +46,7 @@ impl ProtoSourceStep {
         Ok(Self::ReadValue {
             receiver: new_target.clone(),
             key: runtime.intern_property_key("prototype")?,
-            resume: ProtoSourceResume { realm, new_target },
+            resume: ProtoSourceResume(Box::new(ProtoSourceResumeState { realm, new_target })),
         })
     }
 }
@@ -49,7 +62,7 @@ impl ProtoSourceResume {
                 NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype))
             }
             Completion::Return(_) => {
-                match runtime.function_realm_from_value(self.realm, &self.new_target)? {
+                match runtime.function_realm_from_value(self.0.realm, &self.0.new_target)? {
                     NativeConversion::Value(realm) => {
                         NativeConversion::Value(ConstructorPrototypeSource::Realm(realm))
                     }
@@ -79,3 +92,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ProtoSourceStep>() <= 64);

@@ -84,3 +84,6 @@ mod tests {
         }).unwrap().join().unwrap();
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<GeneratorStep>() <= 64);

@@ -32,7 +32,20 @@ pub(in crate::engine::vm) enum ForInStep {
         resume: ForInResume,
     },
 }
-pub(in crate::engine::vm) struct ForInResume {
+pub(in crate::engine::vm) struct ForInResume(Box<ForInResumeState>);
+impl std::ops::Deref for ForInResume {
+    type Target = ForInResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ForInResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ForInResume>() <= 8);
+pub(in crate::engine::vm) struct ForInResumeState {
     realm: ContextId,
     phase: Phase,
 }
@@ -166,10 +179,10 @@ fn snapshot(
 ) -> Result<ForInStep, RuntimeError> {
     Ok(ForInStep::Keys {
         object: object.clone(),
-        resume: ForInResume {
+        resume: ForInResume(Box::new(ForInResumeState {
             realm,
             phase: Phase::SnapshotKeys { object, after },
-        },
+        })),
     })
 }
 fn done() -> ForInStep {
@@ -196,25 +209,25 @@ fn advance(
                 let base = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
                 return Ok(ForInStep::Prototype {
                     object: base.clone(),
-                    resume: ForInResume {
+                    resume: ForInResume(Box::new(ForInResumeState {
                         realm,
                         phase: Phase::ProbePrototype(Probe {
                             iterator: iterator.clone(),
                             base,
                             fast_array,
                         }),
-                    },
+                    })),
                 });
             }
             ForInCandidate::LevelComplete(object) => {
                 return Ok(ForInStep::Prototype {
                     object: ObjectRef::from_borrowed_handle(runtime.clone(), object)?,
-                    resume: ForInResume {
+                    resume: ForInResume(Box::new(ForInResumeState {
                         realm,
                         phase: Phase::LevelPrototype {
                             iterator: iterator.clone(),
                         },
-                    },
+                    })),
                 });
             }
             ForInCandidate::ArrayIndex { object, index } => {
@@ -257,13 +270,13 @@ fn advance(
             return Ok(ForInStep::Own {
                 object,
                 key,
-                resume: ForInResume {
+                resume: ForInResume(Box::new(ForInResumeState {
                     realm,
                     phase: Phase::Candidate {
                         iterator: iterator.clone(),
                         name,
                     },
-                },
+                })),
             });
         }
         // The iterator's resident snapshot owns the current object. No callback
@@ -298,10 +311,10 @@ impl ForInResume {
             NativeConversion::Value(keys) => keys,
             NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::SnapshotKeys { object, after } => snapshot_next(
                 runtime,
-                self.realm,
+                self.0.realm,
                 Snapshot {
                     object,
                     after,
@@ -310,7 +323,7 @@ impl ForInResume {
                 },
             ),
             Phase::ProbeKeys { probe, prototype } => {
-                probe_keys(runtime, self.realm, probe, prototype, keys.into_iter())
+                probe_keys(runtime, self.0.realm, probe, prototype, keys.into_iter())
             }
             _ => Err(RuntimeError::Invariant("for-in keys reply has wrong phase")),
         }
@@ -324,7 +337,7 @@ impl ForInResume {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::SnapshotEnumerable { mut snapshot, name } => {
                 snapshot
                     .properties
@@ -334,7 +347,7 @@ impl ForInResume {
                     name,
                     enumerable: value,
                 });
-                snapshot_next(runtime, self.realm, snapshot)
+                snapshot_next(runtime, self.0.realm, snapshot)
             }
             Phase::ProbeEnumerable {
                 probe,
@@ -342,9 +355,9 @@ impl ForInResume {
                 keys,
             } => {
                 if value {
-                    enter_prototypes(runtime, self.realm, probe)
+                    enter_prototypes(runtime, self.0.realm, probe)
                 } else {
-                    probe_keys(runtime, self.realm, probe, prototype, keys)
+                    probe_keys(runtime, self.0.realm, probe, prototype, keys)
                 }
             }
             Phase::Candidate { iterator, name } => {
@@ -354,7 +367,7 @@ impl ForInResume {
                         done: Some(false),
                     })
                 } else {
-                    advance(runtime, self.realm, &iterator)
+                    advance(runtime, self.0.realm, &iterator)
                 }
             }
             _ => Err(RuntimeError::Invariant(
@@ -371,15 +384,15 @@ impl ForInResume {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::ProbePrototype(probe) => {
                 if let Some(prototype) = prototype {
                     Ok(ForInStep::Keys {
                         object: prototype.clone(),
-                        resume: Self {
-                            realm: self.realm,
+                        resume: Self(Box::new(ForInResumeState {
+                            realm: self.0.realm,
                             phase: Phase::ProbeKeys { probe, prototype },
-                        },
+                        })),
                     })
                 } else {
                     runtime.store_for_in_level(&probe.iterator, None, Vec::new())?;
@@ -388,7 +401,7 @@ impl ForInResume {
             }
             Phase::LevelPrototype { iterator } => {
                 if let Some(prototype) = prototype {
-                    snapshot(self.realm, prototype, AfterSnapshot::Level { iterator })
+                    snapshot(self.0.realm, prototype, AfterSnapshot::Level { iterator })
                 } else {
                     runtime.store_for_in_level(&iterator, None, Vec::new())?;
                     Ok(done())
@@ -437,13 +450,13 @@ fn snapshot_next(
         return Ok(ForInStep::Enumerable {
             object: pending.object.clone(),
             key,
-            resume: ForInResume {
+            resume: ForInResume(Box::new(ForInResumeState {
                 realm,
                 phase: Phase::SnapshotEnumerable {
                     snapshot: pending,
                     name,
                 },
-            },
+            })),
         });
     }
     match pending.after {
@@ -464,10 +477,10 @@ fn snapshot_next(
                 .enter_for_in_prototype_chain(iterator.object_id(), Some(pending.properties))?;
             Ok(ForInStep::Prototype {
                 object: pending.object,
-                resume: ForInResume {
+                resume: ForInResume(Box::new(ForInResumeState {
                     realm,
                     phase: Phase::LevelPrototype { iterator },
-                },
+                })),
             })
         }
         AfterSnapshot::Level { iterator } => {
@@ -514,22 +527,22 @@ fn probe_keys(
         return Ok(ForInStep::Enumerable {
             object: prototype.clone(),
             key,
-            resume: ForInResume {
+            resume: ForInResume(Box::new(ForInResumeState {
                 realm,
                 phase: Phase::ProbeEnumerable {
                     probe,
                     prototype,
                     keys,
                 },
-            },
+            })),
         });
     }
     Ok(ForInStep::Prototype {
         object: prototype,
-        resume: ForInResume {
+        resume: ForInResume(Box::new(ForInResumeState {
             realm,
             phase: Phase::ProbePrototype(probe),
-        },
+        })),
     })
 }
 fn enter_prototypes(
@@ -554,12 +567,12 @@ fn enter_prototypes(
             .enter_for_in_prototype_chain(probe.iterator.object_id(), None)?;
         Ok(ForInStep::Prototype {
             object: probe.base,
-            resume: ForInResume {
+            resume: ForInResume(Box::new(ForInResumeState {
                 realm,
                 phase: Phase::LevelPrototype {
                     iterator: probe.iterator,
                 },
-            },
+            })),
         })
     }
 }
@@ -759,3 +772,6 @@ mod tests {
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ForInStep>() <= 64);

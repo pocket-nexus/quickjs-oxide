@@ -12,21 +12,25 @@ use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyCallStep {
     Complete(Completion),
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: Value,
-        resume: ProxyCallResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: ProxyCallResume,
-    },
+    Read { resume: ProxyCallResume },
+    Call { resume: ProxyCallResume },
 }
 
-pub(crate) struct ProxyCallResume {
+pub(crate) struct ProxyCallResume(Box<ProxyCallResumeState>);
+impl std::ops::Deref for ProxyCallResume {
+    type Target = ProxyCallResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ProxyCallResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ProxyCallResume>() <= 8);
+pub(crate) struct ProxyCallResumeState {
+    pending_effect: ProxyCallStepPending,
     phase: Phase,
 }
 enum Phase {
@@ -101,17 +105,18 @@ impl Search {
             };
         }
         let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
-        Ok(ProxyCallStep::Read {
-            object: rooted.handler.clone(),
-            key: self.key.clone(),
-            receiver: Value::Object(rooted.handler.clone()),
-            resume: ProxyCallResume {
+        Ok(ProxyCallStep::request_read(
+            rooted.handler.clone(),
+            self.key.clone(),
+            Value::Object(rooted.handler.clone()),
+            ProxyCallResume(Box::new(ProxyCallResumeState {
+                pending_effect: ProxyCallStepPending::default(),
                 phase: Phase::Method {
                     rooted,
                     search: self,
                 },
-            },
-        })
+            })),
+        ))
     }
 }
 
@@ -121,7 +126,7 @@ impl ProxyCallResume {
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<ProxyCallStep, RuntimeError> {
-        let Phase::Method { rooted, mut search } = self.phase else {
+        let Phase::Method { rooted, mut search } = self.0.phase else {
             return Ok(ProxyCallStep::Complete(completion));
         };
         let method = match completion {
@@ -172,17 +177,18 @@ impl ProxyCallResume {
                 ],
             )
         };
-        Ok(ProxyCallStep::Call {
+        Ok(ProxyCallStep::request_call(
             target,
             receiver,
             arguments,
-            resume: Self {
+            Self(Box::new(ProxyCallResumeState {
+                pending_effect: ProxyCallStepPending::default(),
                 phase: Phase::Result {
                     _rooted: rooted,
                     _guard: search.guard,
                 },
-            },
-        })
+            })),
+        ))
     }
 }
 
@@ -246,3 +252,85 @@ mod tests {
         }
     }
 }
+
+#[derive(Default)]
+struct ProxyCallStepPending {
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    read_receiver: Option<Value>,
+    call_target: Option<DirectCallTarget>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+}
+impl ProxyCallStep {
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        receiver: Value,
+        mut resume: ProxyCallResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: ProxyCallResume,
+    ) -> Self {
+        resume.0.pending_effect.call_target = Some(target);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+}
+impl ProxyCallResume {
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("ProxyCallStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("ProxyCallStep Read key")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("ProxyCallStep Read receiver")
+    }
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .pending_effect
+            .call_target
+            .take()
+            .expect("ProxyCallStep Call target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("ProxyCallStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("ProxyCallStep Call arguments")
+    }
+}
+const _: () = assert!(std::mem::size_of::<ProxyCallStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ProxyCallStep>() <= 64);

@@ -37,7 +37,20 @@ pub(crate) enum GlobalStep {
     String { value: Value, resume: GlobalResume },
     Number { value: Value, resume: GlobalResume },
 }
-pub(crate) struct GlobalResume {
+pub(crate) struct GlobalResume(Box<GlobalResumeState>);
+impl std::ops::Deref for GlobalResume {
+    type Target = GlobalResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for GlobalResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<GlobalResume>() <= 8);
+pub(crate) struct GlobalResumeState {
     realm: ContextId,
     kind: GlobalKind,
     radix: Value,
@@ -63,7 +76,7 @@ impl GlobalStep {
             .ok_or(RuntimeError::Invariant(
                 "global builtin argv was not padded",
             ))?;
-        let resume = GlobalResume {
+        let resume = GlobalResume(Box::new(GlobalResumeState {
             realm,
             kind,
             radix: arguments
@@ -72,7 +85,7 @@ impl GlobalStep {
                 .cloned()
                 .unwrap_or(Value::Undefined),
             input: None,
-        };
+        }));
         Ok(if matches!(kind, GlobalKind::Predicate(_)) {
             Self::Number { value, resume }
         } else {
@@ -124,11 +137,11 @@ impl GlobalResume {
                 return Ok(GlobalStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.kind {
+        match self.0.kind {
             GlobalKind::Parse(NumberParseKind::ParseInt) => {
-                self.input = Some(input);
+                self.0.input = Some(input);
                 Ok(GlobalStep::Number {
-                    value: self.radix.clone(),
+                    value: self.0.radix.clone(),
                     resume: self,
                 })
             }
@@ -137,9 +150,11 @@ impl GlobalResume {
                     crate::engine::value::number_parse::parse_float(&input),
                 ))))
             }
-            GlobalKind::Uri(kind) => Ok(GlobalStep::Complete(
-                runtime.finish_global_uri_codec(self.realm, kind, input)?,
-            )),
+            GlobalKind::Uri(kind) => Ok(GlobalStep::Complete(runtime.finish_global_uri_codec(
+                self.0.realm,
+                kind,
+                input,
+            )?)),
             GlobalKind::SymbolFor => Ok(GlobalStep::Complete(Completion::Return(Value::Symbol(
                 runtime.symbol_for(&input)?,
             )))),
@@ -153,10 +168,11 @@ impl GlobalResume {
                 return Ok(GlobalStep::Complete(Completion::Throw(value)));
             }
         };
-        let value = match self.kind {
+        let value = match self.0.kind {
             GlobalKind::Parse(NumberParseKind::ParseInt) => {
                 Value::number(crate::engine::value::number_parse::parse_int(
                     &self
+                        .0
                         .input
                         .ok_or(RuntimeError::Invariant("parseInt converted input missing"))?,
                     crate::engine::value::number::to_int32(number),
@@ -188,3 +204,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<GlobalStep>() <= 64);

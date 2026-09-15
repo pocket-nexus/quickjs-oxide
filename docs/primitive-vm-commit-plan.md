@@ -751,6 +751,8 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 
 按[惰性帧计划](primitive-vm-lazy-frames-plan.md)分别提交 S10 惰性帧、S11 窄状态机、S12 属性位置 IC。用户最新授权覆盖旧阶段退出顺序与三轮测量：三阶段代码全部完成、额外覆盖 review 补齐后，最终代码统一单轮 benchmark/Profile，S0 复用旧数据。S10 认证缓存仅保留带发布失效机制的不可变事实；S12 明确允许带布局/原型失效机制的位置事实缓存，不缓存属性值。这两项为旧无缓存规则的已授权例外。S09 未达到性能退出条件的记录保留，不冒充已通过；旧退役阶段顺延 S13。
 
-状态：S10.1–S10.4 实现与 AU-1–AU-4 审计完成；独立 S10 库测试 2448 通过，另新增四项惰性观察反例通过（中段物化、Proxy 栈、挂起恢复 PC、host 重入和 panic 清理）。S10.5 性能验收待三阶段完成后统一单轮；S11 待实施，S12 AU-5 与独立基础已准备，未开始性能测量。
+状态：S10.1–S10.4 实现与 AU-1–AU-4 审计完成；独立 S10 库测试 2448 通过，另新增四项惰性观察反例通过（中段物化、Proxy 栈、挂起恢复 PC、host 重入和 panic 清理）。S10.5 性能验收待三阶段完成后统一单轮；S11 实现完成：单层冷分派、驻留中央 Step、宽 Resume/Frame/迭代转换状态及局部循环改造已落地，含尺寸断言的最终合并库测试 2486/2486 通过；S12 AU-5 与独立基础已准备，未开始性能测量。
 
 S10 证据：[认证/root 审计](reports/primitive-vm-s10-auth-audit.md)、[字段审计](reports/primitive-vm-s10-cold-audit.md)、[观察协议审计](reports/primitive-vm-s10-observation-audit.md)。发布代号复用不可变字节码 arena 的 index/generation；无可变重发布入口。无捕获事实从发布后的 opcode/local metadata 推导，属于同一不可变事实。冷观察点保守物化，普通 Call/Return 不注册。
+
+S11 证据：[冷分派与转换审计](reports/primitive-vm-s11-dispatch-audit.md)、[协议布局与交接清单](reports/primitive-vm-s11-protocol-layout.md)、[领域循环审计](reports/primitive-vm-s11-domain-layout-audit.md)。Frame 56 B，Resume ≤32 B，中央 Step 原地借用推进；额外发现的 Slice/ArrayNext/Set 本地宽循环已补齐。性能结论仍待三阶段统一验收。

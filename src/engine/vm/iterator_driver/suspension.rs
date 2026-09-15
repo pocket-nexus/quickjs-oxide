@@ -1,7 +1,7 @@
 //! Delegation and async iteration keep the compiler's explicit operand protocol.
 use super::{
-    Action, CallStep, Error, FrameId, Mode, PendingIterator, RunningExecution, Runtime, Stage,
-    callable, drive, runtime_error_to_vm_error,
+    Action, CallStep, Error, FrameId, Mode, PendingIteratorState, RunningExecution, Runtime, Stage,
+    callable, drive_local as drive, runtime_error_to_vm_error,
 };
 use crate::engine::api::ErrorKind;
 use crate::engine::code::bytecode::IteratorCallKind;
@@ -33,7 +33,7 @@ pub(super) fn start(
             asynchronous,
             delegating,
         } => {
-            let mut pending = PendingIterator::new(
+            let mut pending = PendingIteratorState::new(
                 frame,
                 id,
                 Mode::Start {
@@ -52,7 +52,7 @@ pub(super) fn start(
             } else {
                 Mode::Invoke
             };
-            let mut pending = PendingIterator::new(frame, id, mode)?;
+            let mut pending = PendingIteratorState::new(frame, id, mode)?;
             pending.iterator = iterator;
             pending.next = next;
             pending.argument = if matches!(op, Operation::Next) {
@@ -87,7 +87,7 @@ pub(super) fn start(
             } else {
                 Mode::Invoke
             };
-            let mut pending = PendingIterator::new(frame, id, mode)?;
+            let mut pending = PendingIteratorState::new(frame, id, mode)?;
             if matches!(op, Operation::Parse) {
                 pending.iterator = execution.slots.pop(&mut frame.window)?;
                 if !matches!(pending.iterator, Value::Object(_)) {
@@ -131,7 +131,12 @@ pub(super) fn start(
             };
             let receiver = pending.iterator.clone();
             return crate::engine::vm::proxy_get_driver::start_iterator_invoke(
-                runtime, execution, pending, target, receiver, arguments,
+                runtime,
+                execution,
+                pending.into_resident(),
+                target,
+                receiver,
+                arguments,
             );
         }
         Operation::Call(kind) => {
@@ -151,7 +156,11 @@ pub(super) fn start(
     };
     let receiver = pending.iterator.clone();
     crate::engine::vm::proxy_get_driver::start_iterator_read(
-        runtime, execution, pending, receiver, action,
+        runtime,
+        execution,
+        pending.into_resident(),
+        receiver,
+        action,
     )
 }
 
@@ -171,7 +180,7 @@ pub(super) fn enable(frame: &mut Frame, base: usize) -> Result<(), Error> {
     Ok(())
 }
 
-impl PendingIterator {
+impl PendingIteratorState {
     pub(super) fn advance_suspension(
         &mut self,
         runtime: &Runtime,

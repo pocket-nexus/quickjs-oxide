@@ -290,10 +290,10 @@ impl Runtime {
             AsyncFunctionResumeKind::Fulfill => VmActivationResume::AwaitFulfill(argument),
             AsyncFunctionResumeKind::Reject => VmActivationResume::AwaitReject(argument),
         };
-        Ok(AsyncStep::Run {
-            activation: Box::new(rooted),
-            input: resume,
-            resume: continuation,
-        })
+        Ok(AsyncStep::request_run(
+            Box::new(rooted),
+            resume,
+            continuation,
+        ))
     }
 }

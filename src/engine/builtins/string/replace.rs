@@ -19,28 +19,26 @@ use crate::engine::{
 
 pub(crate) enum StringReplaceStep {
     Complete(Completion),
-    PreparedRead {
-        read: crate::engine::object::OrdinaryRead,
-        key: PropertyKey,
-        resume: StringReplaceResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: StringReplaceResume,
-    },
-    Primitive {
-        value: Value,
-        resume: StringReplaceResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: StringReplaceResume,
-    },
+    PreparedRead { resume: StringReplaceResume },
+    Read { resume: StringReplaceResume },
+    Primitive { resume: StringReplaceResume },
+    Call { resume: StringReplaceResume },
 }
-pub(crate) struct StringReplaceResume {
+pub(crate) struct StringReplaceResume(Box<StringReplaceResumeState>);
+impl std::ops::Deref for StringReplaceResume {
+    type Target = StringReplaceResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for StringReplaceResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<StringReplaceResume>() <= 8);
+pub(crate) struct StringReplaceResumeState {
+    step_pending: StringReplaceStepPending,
     realm: ContextId,
     selector: StringReplaceKind,
     receiver: Value,
@@ -78,6 +76,10 @@ struct ReplaceLoop {
 enum StringReplaceAction {
     Complete(Completion),
     Read(PropertyKey),
+    PreparedRead {
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+    },
     Primitive(Value),
     Call {
         target: DirectCallTarget,
@@ -121,7 +123,8 @@ impl StringReplaceStep {
                 "String replace replacement argv was not padded",
             ))?
             .clone();
-        let mut resume = StringReplaceResume {
+        let mut resume = StringReplaceResumeState {
+            step_pending: StringReplaceStepPending::default(),
             realm,
             selector,
             receiver: this_value.clone(),
@@ -144,7 +147,15 @@ impl StringReplaceStep {
         } else {
             resume.source()
         };
-        resume.deliver(runtime, action)
+        let action = resume.advance_local(runtime, action)?;
+        if let StringReplaceAction::Complete(result) = action {
+            return Ok(Self::Complete(result));
+        }
+        #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "stringreplace_resident_allocated",
+        );
+        StringReplaceResume(Box::new(resume)).publish(action)
     }
 }
 impl StringReplaceResume {
@@ -152,9 +163,39 @@ impl StringReplaceResume {
     /// VM local native handoff; functional replacers remain real calls.
     #[cfg(feature = "stack-vm")]
     pub(crate) fn awaits_protocol_result(&self) -> bool {
-        matches!(self.phase, Phase::ProtocolResult)
+        matches!(self.0.phase, Phase::ProtocolResult)
     }
 
+    pub(crate) fn resume(
+        mut self,
+        runtime: &Runtime,
+        completion: Completion,
+    ) -> Result<StringReplaceStep, RuntimeError> {
+        let action = self.0.advance(runtime, completion)?;
+        let action = self.0.advance_local(runtime, action)?;
+        self.publish(action)
+    }
+    fn publish(self, action: StringReplaceAction) -> Result<StringReplaceStep, RuntimeError> {
+        Ok(match action {
+            StringReplaceAction::Complete(result) => StringReplaceStep::Complete(result),
+            StringReplaceAction::PreparedRead { read, key } => {
+                StringReplaceStep::make_preparedread(read, key, self)
+            }
+            StringReplaceAction::Primitive(value) => StringReplaceStep::make_primitive(value, self),
+            StringReplaceAction::Call {
+                target,
+                receiver,
+                arguments,
+            } => StringReplaceStep::make_call(target, receiver, arguments, self),
+            StringReplaceAction::Read(_) => {
+                return Err(RuntimeError::Invariant(
+                    "local replacement read was not selected",
+                ));
+            }
+        })
+    }
+}
+impl StringReplaceResumeState {
     fn method(&mut self, runtime: &Runtime) -> Result<StringReplaceAction, RuntimeError> {
         if !matches!(self.search_value, Value::Object(_)) {
             return Err(RuntimeError::Invariant(
@@ -172,15 +213,15 @@ impl StringReplaceResume {
         self.phase = Phase::Source;
         StringReplaceAction::Primitive(self.receiver.clone())
     }
-    fn deliver(
-        mut self,
+    fn advance_local(
+        &mut self,
         runtime: &Runtime,
         mut action: StringReplaceAction,
-    ) -> Result<StringReplaceStep, RuntimeError> {
+    ) -> Result<StringReplaceAction, RuntimeError> {
         loop {
             action = match action {
                 StringReplaceAction::Complete(result) => {
-                    return Ok(StringReplaceStep::Complete(result));
+                    return Ok(StringReplaceAction::Complete(result));
                 }
                 StringReplaceAction::Read(key) => {
                     let Value::Object(object) = &self.search_value else {
@@ -202,11 +243,7 @@ impl StringReplaceResume {
                             )?
                         }
                         read => {
-                            return Ok(StringReplaceStep::PreparedRead {
-                                read,
-                                key,
-                                resume: self,
-                            });
+                            return Ok(StringReplaceAction::PreparedRead { read, key });
                         }
                     }
                 }
@@ -217,34 +254,11 @@ impl StringReplaceResume {
                     );
                     self.advance(runtime, Completion::Return(value))?
                 }
-                StringReplaceAction::Primitive(value) => {
-                    return Ok(StringReplaceStep::Primitive {
-                        value,
-                        resume: self,
-                    });
-                }
-                StringReplaceAction::Call {
-                    target,
-                    receiver,
-                    arguments,
-                } => {
-                    return Ok(StringReplaceStep::Call {
-                        target,
-                        receiver,
-                        arguments,
-                        resume: self,
-                    });
-                }
+                action @ (StringReplaceAction::Primitive(_)
+                | StringReplaceAction::Call { .. }
+                | StringReplaceAction::PreparedRead { .. }) => return Ok(action),
             };
         }
-    }
-    pub(crate) fn resume(
-        mut self,
-        runtime: &Runtime,
-        completion: Completion,
-    ) -> Result<StringReplaceStep, RuntimeError> {
-        let action = self.advance(runtime, completion)?;
-        self.deliver(runtime, action)
     }
     fn advance(
         &mut self,
@@ -579,43 +593,50 @@ impl Runtime {
         loop {
             step = match step {
                 StringReplaceStep::Complete(result) => return Ok(result),
-                StringReplaceStep::PreparedRead { read, key, resume } => {
-                    let result = match self.finish_prepared_read(realm, &key, read)? {
-                        NativeConversion::Value(value) => {
-                            Completion::Return(value.unwrap_or(Value::Undefined))
-                        }
-                        NativeConversion::Throw(value) => Completion::Throw(value),
-                    };
-                    resume.resume(self, result)?
+                StringReplaceStep::PreparedRead { mut resume } => {
+                    let read = resume.take_preparedread_read();
+                    let key = resume.take_preparedread_key();
+                    {
+                        let result = match self.finish_prepared_read(realm, &key, read)? {
+                            NativeConversion::Value(value) => {
+                                Completion::Return(value.unwrap_or(Value::Undefined))
+                            }
+                            NativeConversion::Throw(value) => Completion::Throw(value),
+                        };
+                        resume.resume(self, result)?
+                    }
                 }
-                StringReplaceStep::Read {
-                    object,
-                    key,
-                    resume,
-                } => resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?,
-                StringReplaceStep::Primitive { value, resume } => {
-                    let result = if matches!(value, Value::Object(_)) {
-                        self.to_primitive(realm, value, ToPrimitiveHint::String)?
-                    } else {
-                        Completion::Return(value)
-                    };
-                    resume.resume(self, result)?
+                StringReplaceStep::Read { mut resume } => {
+                    let object = resume.take_read_object();
+                    let key = resume.take_read_key();
+                    resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
                 }
-                StringReplaceStep::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } => {
-                    let DirectCallTarget::Callable(callable) = target else {
-                        return Err(RuntimeError::Invariant(
-                            "String replacement requested an invalid call target",
-                        ));
-                    };
-                    resume.resume(
-                        self,
-                        self.call_internal(realm, &callable, receiver, &arguments)?,
-                    )?
+                StringReplaceStep::Primitive { mut resume } => {
+                    let value = resume.take_primitive_value();
+                    {
+                        let result = if matches!(value, Value::Object(_)) {
+                            self.to_primitive(realm, value, ToPrimitiveHint::String)?
+                        } else {
+                            Completion::Return(value)
+                        };
+                        resume.resume(self, result)?
+                    }
+                }
+                StringReplaceStep::Call { mut resume } => {
+                    let target = resume.take_call_target();
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    {
+                        let DirectCallTarget::Callable(callable) = target else {
+                            return Err(RuntimeError::Invariant(
+                                "String replacement requested an invalid call target",
+                            ));
+                        };
+                        resume.resume(
+                            self,
+                            self.call_internal(realm, &callable, receiver, &arguments)?,
+                        )?
+                    }
                 }
             };
         }
@@ -625,6 +646,44 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[test]
+    fn completed_string_replacement_never_allocates_a_resident_owner() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let invocation = NativeInvocation::Call {
+            this_value: Value::String(JsString::from_static("aba")),
+        };
+        let arguments = NativeArguments {
+            actual_arg_count: 2,
+            readable: vec![
+                Value::String(JsString::from_static("a")),
+                Value::String(JsString::from_static("$&x")),
+            ],
+        };
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let StringReplaceStep::Complete(Completion::Return(value)) = StringReplaceStep::start(
+            &runtime,
+            context.realm,
+            StringReplaceKind::ReplaceAll,
+            &invocation,
+            &arguments,
+        )
+        .unwrap() else {
+            panic!("primitive replace must complete locally")
+        };
+        assert_eq!(value, Value::String(JsString::from_static("axbax")));
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("stringreplace_resident_allocated")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+    }
+
     #[test]
     fn pending_replacer_roots_callback_and_receiver_until_abandonment() {
         let runtime = Runtime::new();
@@ -644,7 +703,7 @@ mod tests {
             actual_arg_count: 2,
             readable: vec![Value::String(JsString::from_static("a")), callback],
         };
-        let StringReplaceStep::Primitive { resume, .. } = StringReplaceStep::start(
+        let StringReplaceStep::Primitive { mut resume } = StringReplaceStep::start(
             &runtime,
             context.realm,
             StringReplaceKind::ReplaceAll,
@@ -654,11 +713,13 @@ mod tests {
         .unwrap() else {
             panic!("expected source conversion")
         };
+        drop(resume.take_primitive_value());
+        let address = (&*resume.0) as *const StringReplaceResumeState;
         drop(invocation);
         drop(arguments);
         // Source is a real Object conversion wait. Its primitive reply now
         // advances search conversion locally to the actual replacer callback.
-        let StringReplaceStep::Call { resume, .. } = resume
+        let StringReplaceStep::Call { mut resume } = resume
             .resume(
                 &runtime,
                 Completion::Return(Value::String(JsString::from_static("aa"))),
@@ -667,6 +728,10 @@ mod tests {
         else {
             panic!("expected replacer call")
         };
+        drop(resume.take_call_target());
+        drop(resume.take_call_receiver());
+        drop(resume.take_call_arguments());
+        assert_eq!((&*resume.0) as *const StringReplaceResumeState, address);
         runtime.run_gc().unwrap();
         for id in [receiver_id, callback_id] {
             assert!(runtime.0.state.borrow().heap.object(id).is_ok());
@@ -712,3 +777,115 @@ mod local_replace_tests {
         );
     }
 }
+
+#[derive(Default)]
+pub(crate) struct StringReplaceStepPending {
+    read: Option<crate::engine::object::OrdinaryRead>,
+    key: Option<PropertyKey>,
+    object: Option<ObjectRef>,
+    value: Option<Value>,
+    target: Option<DirectCallTarget>,
+    receiver: Option<Value>,
+    arguments: Option<Vec<Value>>,
+}
+impl StringReplaceStep {
+    pub(crate) fn make_preparedread(
+        read: crate::engine::object::OrdinaryRead,
+        key: PropertyKey,
+        mut resume: StringReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.read = Some(read);
+        resume.0.step_pending.key = Some(key);
+        Self::PreparedRead { resume }
+    }
+    pub(crate) fn make_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: StringReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.object = Some(object);
+        resume.0.step_pending.key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn make_primitive(value: Value, mut resume: StringReplaceResume) -> Self {
+        resume.0.step_pending.value = Some(value);
+        Self::Primitive { resume }
+    }
+    pub(crate) fn make_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: StringReplaceResume,
+    ) -> Self {
+        resume.0.step_pending.target = Some(target);
+        resume.0.step_pending.receiver = Some(receiver);
+        resume.0.step_pending.arguments = Some(arguments);
+        Self::Call { resume }
+    }
+}
+impl StringReplaceResume {
+    pub(crate) fn take_preparedread_read(&mut self) -> crate::engine::object::OrdinaryRead {
+        self.0
+            .step_pending
+            .read
+            .take()
+            .expect("StringReplaceStep::PreparedRead lost read")
+    }
+    pub(crate) fn take_preparedread_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("StringReplaceStep::PreparedRead lost key")
+    }
+
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .step_pending
+            .object
+            .take()
+            .expect("StringReplaceStep::Read lost object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .step_pending
+            .key
+            .take()
+            .expect("StringReplaceStep::Read lost key")
+    }
+
+    pub(crate) fn take_primitive_value(&mut self) -> Value {
+        self.0
+            .step_pending
+            .value
+            .take()
+            .expect("StringReplaceStep::Primitive lost value")
+    }
+
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .step_pending
+            .target
+            .take()
+            .expect("StringReplaceStep::Call lost target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .step_pending
+            .receiver
+            .take()
+            .expect("StringReplaceStep::Call lost receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .step_pending
+            .arguments
+            .take()
+            .expect("StringReplaceStep::Call lost arguments")
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<StringReplaceStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<StringReplaceStep>() <= 64);

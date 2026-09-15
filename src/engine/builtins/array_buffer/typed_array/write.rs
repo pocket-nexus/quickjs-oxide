@@ -16,7 +16,20 @@ pub(crate) enum TypedWriteStep {
         resume: TypedWriteResume,
     },
 }
-pub(crate) struct TypedWriteResume {
+pub(crate) struct TypedWriteResume(Box<TypedWriteResumeState>);
+impl std::ops::Deref for TypedWriteResume {
+    type Target = TypedWriteResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedWriteResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedWriteResume>() <= 8);
+pub(crate) struct TypedWriteResumeState {
     object: ObjectRef,
     index: Option<u64>,
     _value: Value,
@@ -32,11 +45,11 @@ impl TypedWriteStep {
         Ok(Self::Element {
             element,
             value: value.clone(),
-            resume: TypedWriteResume {
+            resume: TypedWriteResume(Box::new(TypedWriteResumeState {
                 object,
                 index,
                 _value: value,
-            },
+            })),
         })
     }
     /// Primitive Set performs the same conversion before reacquiring buffer
@@ -94,11 +107,11 @@ impl TypedWriteStep {
         Ok(Self::Element {
             element: state.snapshot.element,
             value: value.clone(),
-            resume: TypedWriteResume {
+            resume: TypedWriteResume(Box::new(TypedWriteResumeState {
                 object,
                 index: Some(index),
                 _value: value.clone(),
-            },
+            })),
         })
     }
     /// Advance only a primitive input through the shared conversion and write
@@ -160,8 +173,8 @@ impl TypedWriteResume {
     ) -> Result<TypedWriteStep, RuntimeError> {
         Ok(TypedWriteStep::Complete(finish_element(
             runtime,
-            &self.object,
-            self.index,
+            &self.0.object,
+            self.0.index,
             result,
         )?))
     }
@@ -396,3 +409,6 @@ mod tests {
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedWriteStep>() <= 64);

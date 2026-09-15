@@ -17,14 +17,23 @@ pub(crate) enum CallbackKind {
 }
 pub(crate) enum CallbackStep {
     Complete(Completion),
-    Call {
-        callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: CallbackResume,
-    },
+    Call { resume: CallbackResume },
 }
-pub(crate) struct CallbackResume {
+pub(crate) struct CallbackResume(Box<CallbackResumeState>);
+impl std::ops::Deref for CallbackResume {
+    type Target = CallbackResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for CallbackResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<CallbackResume>() <= 8);
+pub(crate) struct CallbackResumeState {
+    pending_effect: CallbackStepPending,
     phase: Phase,
     map: ObjectRef,
 }
@@ -76,15 +85,16 @@ impl CallbackStep {
                 )));
             }
             if let Some(callable) = callback {
-                return Ok(Self::Call {
+                return Ok(Self::request_call(
                     callable,
-                    receiver: Value::Undefined,
-                    arguments: vec![key.clone()],
-                    resume: CallbackResume {
+                    Value::Undefined,
+                    vec![key.clone()],
+                    CallbackResume(Box::new(CallbackResumeState {
+                        pending_effect: CallbackStepPending::default(),
                         map,
                         phase: Phase::Insert(key),
-                    },
-                });
+                    })),
+                ));
             }
             runtime.set_map_record(&map, key, second.clone())?;
             return Ok(Self::Complete(Completion::Return(second)));
@@ -96,7 +106,8 @@ impl CallbackStep {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-        CallbackResume {
+        CallbackResume(Box::new(CallbackResumeState {
+            pending_effect: CallbackStepPending::default(),
             map,
             phase: Phase::Each {
                 callback,
@@ -108,7 +119,7 @@ impl CallbackStep {
                 index: 0,
                 record: None,
             },
-        }
+        }))
         .next(runtime)
     }
 }
@@ -137,7 +148,7 @@ impl CallbackResume {
             receiver,
             index,
             record,
-        } = &mut self.phase
+        } = &mut self.0.phase
         else {
             return Err(RuntimeError::Invariant("Map callback next phase mismatch"));
         };
@@ -147,7 +158,7 @@ impl CallbackResume {
                 .state
                 .borrow()
                 .heap
-                .map_records(self.map.object_id())?
+                .map_records(self.0.map.object_id())?
                 .next_at_or_after(*index)
                 .map(|(id, entry)| (id, entry.key.clone(), entry.value.clone()))
         };
@@ -161,23 +172,23 @@ impl CallbackResume {
         let value = runtime.root_raw_value(&value)?;
         *record = Some(
             runtime.push_active_collection_record(ActiveCollectionRecord::Map {
-                object: self.map.object_id(),
+                object: self.0.map.object_id(),
                 index: record_index,
             }),
         );
-        Ok(CallbackStep::Call {
-            callable: callback.clone(),
-            receiver: receiver.clone(),
-            arguments: vec![value, key, Value::Object(self.map.clone())],
-            resume: self,
-        })
+        Ok(CallbackStep::request_call(
+            callback.clone(),
+            receiver.clone(),
+            vec![value, key, Value::Object(self.0.map.clone())],
+            self,
+        ))
     }
     pub(crate) fn resume(
         mut self,
         runtime: &Runtime,
         reply: Completion,
     ) -> Result<CallbackStep, RuntimeError> {
-        if let Phase::Each { record, .. } = &mut self.phase
+        if let Phase::Each { record, .. } = &mut self.0.phase
             && let Some(record) = record.take()
         {
             record.finish()?;
@@ -188,10 +199,10 @@ impl CallbackResume {
                 return Ok(CallbackStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Insert(key) => {
-                runtime.delete_map_record(&self.map, &key)?;
-                runtime.set_map_record(&self.map, key, value.clone())?;
+                runtime.delete_map_record(&self.0.map, &key)?;
+                runtime.set_map_record(&self.0.map, key, value.clone())?;
                 Ok(CallbackStep::Complete(Completion::Return(value)))
             }
             Phase::Each { .. } => self.next(runtime),
@@ -206,15 +217,15 @@ pub(crate) fn finish(
     loop {
         step = match step {
             CallbackStep::Complete(result) => return Ok(result),
-            CallbackStep::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, receiver, &arguments)?,
-            )?,
+            CallbackStep::Call { mut resume } => {
+                let callable = resume.take_call_callable();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                )?
+            }
         };
     }
 }
@@ -292,3 +303,50 @@ mod tests {
         assert!(weak.upgrade().is_none());
     }
 }
+
+#[derive(Default)]
+struct CallbackStepPending {
+    call_callable: Option<CallableRef>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+}
+impl CallbackStep {
+    pub(crate) fn request_call(
+        callable: CallableRef,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: CallbackResume,
+    ) -> Self {
+        resume.0.pending_effect.call_callable = Some(callable);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+}
+impl CallbackResume {
+    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
+        self.0
+            .pending_effect
+            .call_callable
+            .take()
+            .expect("CallbackStep Call callable")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("CallbackStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("CallbackStep Call arguments")
+    }
+}
+const _: () = assert!(std::mem::size_of::<CallbackStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CallbackStep>() <= 64);

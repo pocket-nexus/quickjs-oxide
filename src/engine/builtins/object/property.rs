@@ -71,63 +71,34 @@ impl PropertyKind {
     }
 }
 pub(crate) enum PropertyStep {
-    Keys {
-        object: ObjectRef,
-        resume: PropertyResume,
-    },
+    Keys { resume: PropertyResume },
     Complete(Completion),
-    Key {
-        value: Value,
-        resume: PropertyResume,
-    },
-    Convert {
-        value: Value,
-        resume: PropertyResume,
-    },
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: Value,
-        resume: PropertyResume,
-    },
-    Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        receiver: Value,
-        resume: PropertyResume,
-    },
-    Has {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: PropertyResume,
-    },
-    Delete {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: PropertyResume,
-    },
-    Define {
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
-        resume: PropertyResume,
-    },
-    Descriptor {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: PropertyResume,
-    },
-    Extensible {
-        object: ObjectRef,
-        resume: PropertyResume,
-    },
-    Prevent {
-        object: ObjectRef,
-        resume: PropertyResume,
-    },
+    Key { resume: PropertyResume },
+    Convert { resume: PropertyResume },
+    Read { resume: PropertyResume },
+    Set { resume: PropertyResume },
+    Has { resume: PropertyResume },
+    Delete { resume: PropertyResume },
+    Define { resume: PropertyResume },
+    Descriptor { resume: PropertyResume },
+    Extensible { resume: PropertyResume },
+    Prevent { resume: PropertyResume },
 }
-pub(crate) struct PropertyResume {
+pub(crate) struct PropertyResume(Box<PropertyResumeState>);
+impl std::ops::Deref for PropertyResume {
+    type Target = PropertyResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for PropertyResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<PropertyResume>() <= 8);
+pub(crate) struct PropertyResumeState {
+    pending_effect: PropertyStepPending,
     realm: ContextId,
     kind: PropertyKind,
     object: ObjectRef,
@@ -235,17 +206,18 @@ impl PropertyStep {
                 )));
             }
         };
-        let resume = PropertyResume {
+        let resume = PropertyResume(Box::new(PropertyResumeState {
+            pending_effect: PropertyStepPending::default(),
             realm,
             kind,
             object: object.clone(),
             phase: Phase::Result,
-        };
+        }));
         match kind {
             PropertyKind::Integrity(ObjectIntegrityKind::Seal | ObjectIntegrityKind::Freeze) => {
-                Ok(Self::Prevent { object, resume })
+                Ok(Self::request_prevent(object, resume))
             }
-            PropertyKind::Integrity(_) => Ok(Self::Keys { object, resume }),
+            PropertyKind::Integrity(_) => Ok(Self::request_keys(object, resume)),
             PropertyKind::Assign => {
                 let mut sources = Vec::new();
                 let count = arguments.actual_arg_count.saturating_sub(1);
@@ -258,12 +230,12 @@ impl PropertyStep {
             PropertyKind::Keys
             | PropertyKind::ObjectKeys(_)
             | PropertyKind::ObjectOwnKeys(_)
-            | PropertyKind::ObjectDescriptors => Ok(Self::Keys { object, resume }),
+            | PropertyKind::ObjectDescriptors => Ok(Self::request_keys(object, resume)),
             PropertyKind::Extensible | PropertyKind::ObjectExtensible => {
-                Ok(Self::Extensible { object, resume })
+                Ok(Self::request_extensible(object, resume))
             }
             PropertyKind::Prevent | PropertyKind::ObjectPrevent => {
-                Ok(Self::Prevent { object, resume })
+                Ok(Self::request_prevent(object, resume))
             }
             _ => {
                 let key = arguments
@@ -288,24 +260,23 @@ impl PropertyStep {
                     .get(2)
                     .cloned()
                     .unwrap_or(Value::Undefined);
-                Ok(Self::Key {
-                    value: key,
-                    resume: PropertyResume {
-                        phase: Phase::Key { value, receiver },
-                        ..resume
-                    },
-                })
+                Ok(Self::request_key(key, {
+                    let updated = Phase::Key { value, receiver };
+                    let mut resident = resume;
+                    resident.0.phase = updated;
+                    resident
+                }))
             }
         }
     }
 }
 impl PropertyResume {
     pub(crate) fn keys(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<PropertyStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Result | Phase::AssignKeys { .. }) {
+        if !matches!(self.0.phase, Phase::Result | Phase::AssignKeys { .. }) {
             return Err(RuntimeError::Invariant("key-list reply has wrong phase"));
         }
         let keys = match result {
@@ -318,7 +289,7 @@ impl PropertyResume {
             sources,
             source,
             snapshot,
-        } = self.phase
+        } = self.0.phase
         {
             let mut selected = Vec::new();
             selected
@@ -337,9 +308,11 @@ impl PropertyResume {
                 if snapshot {
                     // This branch was selected only for non-Proxy objects. It
                     // preserves QuickJS's shape-only ENUM_ONLY snapshot.
-                    match runtime
-                        .internal_snapshot_own_property_is_enumerable(self.realm, &source, &key)?
-                    {
+                    match runtime.internal_snapshot_own_property_is_enumerable(
+                        self.0.realm,
+                        &source,
+                        &key,
+                    )? {
                         NativeConversion::Throw(value) => {
                             return Ok(PropertyStep::Complete(Completion::Throw(value)));
                         }
@@ -349,9 +322,10 @@ impl PropertyResume {
                 }
                 selected.push(key);
             }
-            return Self {
-                phase: Phase::Result,
-                ..self
+            return {
+                let updated_0 = Phase::Result;
+                self.0.phase = updated_0;
+                self
             }
             .assign_next(
                 runtime,
@@ -363,7 +337,7 @@ impl PropertyResume {
                 },
             );
         }
-        match self.kind {
+        match self.0.kind {
             PropertyKind::Integrity(_) => self.integrity_next(runtime, keys.into_iter()),
             PropertyKind::Keys | PropertyKind::ObjectOwnKeys(_) => {
                 let mut values = Vec::new();
@@ -377,7 +351,7 @@ impl PropertyResume {
                         .borrow()
                         .atoms
                         .property_key_kind(key.atom())?;
-                    let include = match self.kind {
+                    let include = match self.0.kind {
                         PropertyKind::Keys => true,
                         PropertyKind::ObjectOwnKeys(ObjectOwnPropertyKeysKind::Names) => {
                             key_kind == PropertyKeyKind::String
@@ -392,14 +366,14 @@ impl PropertyResume {
                     }
                 }
                 Ok(PropertyStep::Complete(Completion::Return(Value::Object(
-                    runtime.new_array_from_values(self.realm, values)?,
+                    runtime.new_array_from_values(self.0.realm, values)?,
                 ))))
             }
             PropertyKind::ObjectKeys(_) | PropertyKind::ObjectDescriptors => {
-                let result = if matches!(self.kind, PropertyKind::ObjectDescriptors) {
-                    runtime.new_ordinary_object_in_realm(self.realm)?
+                let result = if matches!(self.0.kind, PropertyKind::ObjectDescriptors) {
+                    runtime.new_ordinary_object_in_realm(self.0.realm)?
                 } else {
-                    runtime.new_array(self.realm)?
+                    runtime.new_array(self.0.realm)?
                 };
                 self.enumerate(
                     runtime,
@@ -414,7 +388,7 @@ impl PropertyResume {
         }
     }
     fn integrity_next(
-        self,
+        mut self,
         runtime: &Runtime,
         mut remaining: std::vec::IntoIter<PropertyKey>,
     ) -> Result<PropertyStep, RuntimeError> {
@@ -428,34 +402,33 @@ impl PropertyResume {
             if !matches!(kind, PropertyKeyKind::String | PropertyKeyKind::Symbol) {
                 continue;
             }
-            return Ok(PropertyStep::Descriptor {
-                object: self.object.clone(),
-                key: key.clone(),
-                resume: Self {
-                    phase: Phase::IntegrityDescriptor { remaining, key },
-                    ..self
+            return Ok(PropertyStep::request_descriptor(
+                self.0.object.clone(),
+                key.clone(),
+                {
+                    let updated_0 = Phase::IntegrityDescriptor { remaining, key };
+                    self.0.phase = updated_0;
+                    self
                 },
-            });
+            ));
         }
         if matches!(
-            self.kind,
+            self.0.kind,
             PropertyKind::Integrity(ObjectIntegrityKind::Seal | ObjectIntegrityKind::Freeze)
         ) {
             Ok(PropertyStep::Complete(Completion::Return(Value::Object(
-                self.object,
+                self.0.object,
             ))))
         } else {
-            Ok(PropertyStep::Extensible {
-                object: self.object.clone(),
-                resume: Self {
-                    phase: Phase::Result,
-                    ..self
-                },
-            })
+            Ok(PropertyStep::request_extensible(self.0.object.clone(), {
+                let updated_0 = Phase::Result;
+                self.0.phase = updated_0;
+                self
+            }))
         }
     }
     fn assign_source(
-        self,
+        mut self,
         runtime: &Runtime,
         mut sources: std::vec::IntoIter<Value>,
     ) -> Result<PropertyStep, RuntimeError> {
@@ -463,7 +436,7 @@ impl PropertyResume {
             if matches!(value, Value::Null | Value::Undefined) {
                 continue;
             }
-            let source = match runtime.native_to_object(self.realm, value)? {
+            let source = match runtime.native_to_object(self.0.realm, value)? {
                 NativeConversion::Value(source) => source,
                 NativeConversion::Throw(_) => {
                     return Err(RuntimeError::Invariant(
@@ -472,24 +445,22 @@ impl PropertyResume {
                 }
             };
             let snapshot = !runtime.is_proxy_object(&source)?;
-            return Ok(PropertyStep::Keys {
-                object: source.clone(),
-                resume: Self {
-                    phase: Phase::AssignKeys {
-                        sources,
-                        source,
-                        snapshot,
-                    },
-                    ..self
-                },
-            });
+            return Ok(PropertyStep::request_keys(source.clone(), {
+                let updated_0 = Phase::AssignKeys {
+                    sources,
+                    source,
+                    snapshot,
+                };
+                self.0.phase = updated_0;
+                self
+            }));
         }
         Ok(PropertyStep::Complete(Completion::Return(Value::Object(
-            self.object,
+            self.0.object,
         ))))
     }
     fn assign_next(
-        self,
+        mut self,
         runtime: &Runtime,
         mut state: Assignment,
     ) -> Result<PropertyStep, RuntimeError> {
@@ -499,37 +470,39 @@ impl PropertyResume {
         if state.snapshot {
             return self.assign_read(state, key);
         }
-        Ok(PropertyStep::Descriptor {
-            object: state.source.clone(),
-            key: key.clone(),
-            resume: Self {
-                phase: Phase::AssignDescriptor { state, key },
-                ..self
+        Ok(PropertyStep::request_descriptor(
+            state.source.clone(),
+            key.clone(),
+            {
+                let updated_0 = Phase::AssignDescriptor { state, key };
+                self.0.phase = updated_0;
+                self
             },
-        })
+        ))
     }
     fn assign_read(
-        self,
+        mut self,
         state: Assignment,
         key: PropertyKey,
     ) -> Result<PropertyStep, RuntimeError> {
-        Ok(PropertyStep::Read {
-            object: state.source.clone(),
-            receiver: Value::Object(state.source.clone()),
-            key: key.clone(),
-            resume: Self {
-                phase: Phase::AssignRead { state, key },
-                ..self
+        Ok(PropertyStep::request_read(
+            state.source.clone(),
+            key.clone(),
+            Value::Object(state.source.clone()),
+            {
+                let updated_0 = Phase::AssignRead { state, key };
+                self.0.phase = updated_0;
+                self
             },
-        })
+        ))
     }
     fn enumerate(
-        self,
+        mut self,
         runtime: &Runtime,
         mut state: Enumeration,
     ) -> Result<PropertyStep, RuntimeError> {
         for key in state.remaining.by_ref() {
-            if matches!(self.kind, PropertyKind::ObjectKeys(_))
+            if matches!(self.0.kind, PropertyKind::ObjectKeys(_))
                 && runtime
                     .0
                     .state
@@ -540,14 +513,15 @@ impl PropertyResume {
             {
                 continue;
             }
-            return Ok(PropertyStep::Descriptor {
-                object: self.object.clone(),
-                key: key.clone(),
-                resume: Self {
-                    phase: Phase::Enumerate { state, key },
-                    ..self
+            return Ok(PropertyStep::request_descriptor(
+                self.0.object.clone(),
+                key.clone(),
+                {
+                    let updated_0 = Phase::Enumerate { state, key };
+                    self.0.phase = updated_0;
+                    self
                 },
-            });
+            ));
         }
         Ok(PropertyStep::Complete(Completion::Return(Value::Object(
             state.result,
@@ -574,7 +548,7 @@ impl PropertyResume {
         self.enumerate(runtime, state)
     }
     pub(crate) fn key(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<PropertyStep, RuntimeError> {
@@ -584,58 +558,39 @@ impl PropertyResume {
                 return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
         };
-        let key = match runtime.property_key_from_primitive(self.realm, value)? {
+        let key = match runtime.property_key_from_primitive(self.0.realm, value)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
                 return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
         };
-        let Phase::Key { value, receiver } = self.phase else {
+        let Phase::Key { value, receiver } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "property key reply has wrong phase",
             ));
         };
-        let object = self.object.clone();
-        let resume = Self {
-            phase: Phase::Result,
-            ..self
+        let object = self.0.object.clone();
+        let resume = {
+            let updated_0 = Phase::Result;
+            self.0.phase = updated_0;
+            self
         };
         Ok(match resume.kind {
-            PropertyKind::Get => PropertyStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            },
-            PropertyKind::Set => PropertyStep::Set {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            },
-            PropertyKind::Has => PropertyStep::Has {
-                object,
-                key,
-                resume,
-            },
-            PropertyKind::Delete => PropertyStep::Delete {
-                object,
-                key,
-                resume,
-            },
-            PropertyKind::Descriptor | PropertyKind::ObjectDescriptor => PropertyStep::Descriptor {
-                object,
-                key,
-                resume,
-            },
-            PropertyKind::Define | PropertyKind::ObjectDefine => PropertyStep::Convert {
-                value,
-                resume: Self {
-                    phase: Phase::Descriptor(key),
-                    ..resume
-                },
-            },
+            PropertyKind::Get => PropertyStep::request_read(object, key, receiver, resume),
+            PropertyKind::Set => PropertyStep::request_set(object, key, value, receiver, resume),
+            PropertyKind::Has => PropertyStep::request_has(object, key, resume),
+            PropertyKind::Delete => PropertyStep::request_delete(object, key, resume),
+            PropertyKind::Descriptor | PropertyKind::ObjectDescriptor => {
+                PropertyStep::request_descriptor(object, key, resume)
+            }
+            PropertyKind::Define | PropertyKind::ObjectDefine => {
+                PropertyStep::request_convert(value, {
+                    let updated = Phase::Descriptor(key);
+                    let mut resident = resume;
+                    resident.0.phase = updated;
+                    resident
+                })
+            }
             _ => {
                 return Err(RuntimeError::Invariant(
                     "property builtin does not accept a key",
@@ -644,54 +599,53 @@ impl PropertyResume {
         })
     }
     pub(crate) fn converted(
-        self,
+        mut self,
         result: NativeConversion<OrdinaryPropertyDescriptor>,
     ) -> Result<PropertyStep, RuntimeError> {
-        let Phase::Descriptor(key) = self.phase else {
+        let Phase::Descriptor(key) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "descriptor conversion reply has wrong phase",
             ));
         };
         Ok(match result {
             NativeConversion::Throw(value) => PropertyStep::Complete(Completion::Throw(value)),
-            NativeConversion::Value(descriptor) => PropertyStep::Define {
-                object: self.object.clone(),
-                key: key.clone(),
-                descriptor,
-                resume: Self {
-                    phase: Phase::Defined(key),
-                    ..self
-                },
-            },
+            NativeConversion::Value(descriptor) => {
+                PropertyStep::request_define(self.0.object.clone(), key.clone(), descriptor, {
+                    let updated_0 = Phase::Defined(key);
+                    self.0.phase = updated_0;
+                    self
+                })
+            }
         })
     }
     pub(crate) fn defined(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<PropertyStep, RuntimeError> {
-        if let Phase::IntegrityDefine { remaining, key } = self.phase {
+        if let Phase::IntegrityDefine { remaining, key } = self.0.phase {
             if let Some(value) =
-                runtime.finish_define_property_or_throw(self.realm, &key, result)?
+                runtime.finish_define_property_or_throw(self.0.realm, &key, result)?
             {
                 return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
-            return Self {
-                phase: Phase::Result,
-                ..self
+            return {
+                let updated_0 = Phase::Result;
+                self.0.phase = updated_0;
+                self
             }
             .integrity_next(runtime, remaining);
         }
-        let Phase::Defined(key) = self.phase else {
+        let Phase::Defined(key) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "property definition reply has wrong phase",
             ));
         };
         Ok(PropertyStep::Complete(
-            if matches!(self.kind, PropertyKind::ObjectDefine) {
-                match runtime.finish_define_property_or_throw(self.realm, &key, result)? {
+            if matches!(self.0.kind, PropertyKind::ObjectDefine) {
+                match runtime.finish_define_property_or_throw(self.0.realm, &key, result)? {
                     Some(value) => Completion::Throw(value),
-                    None => Completion::Return(Value::Object(self.object)),
+                    None => Completion::Return(Value::Object(self.0.object)),
                 }
             } else {
                 match result {
@@ -705,18 +659,18 @@ impl PropertyResume {
         ))
     }
     pub(crate) fn descriptor(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<PropertyStep, RuntimeError> {
-        if let Phase::IntegrityDescriptor { remaining, key } = self.phase {
+        if let Phase::IntegrityDescriptor { remaining, key } = self.0.phase {
             let current = match result {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
                     return Ok(PropertyStep::Complete(Completion::Throw(value)));
                 }
             };
-            let PropertyKind::Integrity(kind) = self.kind else {
+            let PropertyKind::Integrity(kind) = self.0.kind else {
                 return Err(RuntimeError::Invariant(
                     "integrity descriptor has wrong kind",
                 ));
@@ -740,9 +694,10 @@ impl PropertyResume {
                         false,
                     ))))
                 } else {
-                    Self {
-                        phase: Phase::Result,
-                        ..self
+                    {
+                        let updated_0 = Phase::Result;
+                        self.0.phase = updated_0;
+                        self
                     }
                     .integrity_next(runtime, remaining)
                 };
@@ -759,17 +714,18 @@ impl PropertyResume {
             {
                 descriptor.writable = crate::engine::object::DescriptorField::Present(false);
             }
-            return Ok(PropertyStep::Define {
-                object: self.object.clone(),
-                key: key.clone(),
+            return Ok(PropertyStep::request_define(
+                self.0.object.clone(),
+                key.clone(),
                 descriptor,
-                resume: Self {
-                    phase: Phase::IntegrityDefine { remaining, key },
-                    ..self
+                {
+                    let updated_0 = Phase::IntegrityDefine { remaining, key };
+                    self.0.phase = updated_0;
+                    self
                 },
-            });
+            ));
         }
-        if let Phase::AssignDescriptor { state, key } = self.phase {
+        if let Phase::AssignDescriptor { state, key } = self.0.phase {
             let enumerable = match result {
                 NativeConversion::Value(descriptor) => {
                     descriptor.is_some_and(|descriptor| descriptor.enumerable())
@@ -778,9 +734,10 @@ impl PropertyResume {
                     return Ok(PropertyStep::Complete(Completion::Throw(value)));
                 }
             };
-            let resume = Self {
-                phase: Phase::Result,
-                ..self
+            let resume = {
+                let updated_0 = Phase::Result;
+                self.0.phase = updated_0;
+                self
             };
             return if enumerable {
                 resume.assign_read(state, key)
@@ -788,10 +745,11 @@ impl PropertyResume {
                 resume.assign_next(runtime, state)
             };
         }
-        if let Phase::Enumerate { state, key } = self.phase {
-            let resume = Self {
-                phase: Phase::Result,
-                ..self
+        if let Phase::Enumerate { state, key } = self.0.phase {
+            let resume = {
+                let updated_0 = Phase::Result;
+                self.0.phase = updated_0;
+                self
             };
             let descriptor = match result {
                 NativeConversion::Throw(value) => {
@@ -832,20 +790,22 @@ impl PropertyResume {
             } else {
                 None
             };
-            return Ok(PropertyStep::Read {
-                object: resume.object.clone(),
-                receiver: Value::Object(resume.object.clone()),
+            return Ok(PropertyStep::request_read(
+                resume.object.clone(),
                 key,
-                resume: Self {
-                    phase: Phase::Entry { state, pair },
-                    ..resume
+                Value::Object(resume.object.clone()),
+                {
+                    let updated = Phase::Entry { state, pair };
+                    let mut resident = resume;
+                    resident.0.phase = updated;
+                    resident
                 },
-            });
+            ));
         }
         if !matches!(
-            self.kind,
+            self.0.kind,
             PropertyKind::Descriptor | PropertyKind::ObjectDescriptor
-        ) || !matches!(self.phase, Phase::Result)
+        ) || !matches!(self.0.phase, Phase::Result)
         {
             return Err(RuntimeError::Invariant(
                 "property descriptor reply has wrong phase",
@@ -855,7 +815,7 @@ impl PropertyResume {
             NativeConversion::Throw(value) => Completion::Throw(value),
             NativeConversion::Value(None) => Completion::Return(Value::Undefined),
             NativeConversion::Value(Some(descriptor)) => Completion::Return(Value::Object(
-                runtime.complete_descriptor_to_object(self.realm, descriptor)?,
+                runtime.complete_descriptor_to_object(self.0.realm, descriptor)?,
             )),
         }))
     }
@@ -864,8 +824,8 @@ impl PropertyResume {
         runtime: &Runtime,
         result: NativeConversion<bool>,
     ) -> Result<PropertyStep, RuntimeError> {
-        if let PropertyKind::Integrity(kind) = self.kind {
-            if !matches!(self.phase, Phase::Result) {
+        if let PropertyKind::Integrity(kind) = self.0.kind {
+            if !matches!(self.0.phase, Phase::Result) {
                 return Err(RuntimeError::Invariant(
                     "integrity boolean reply has wrong phase",
                 ));
@@ -886,21 +846,18 @@ impl PropertyResume {
             } else if !value {
                 Ok(PropertyStep::Complete(Completion::Throw(
                     runtime.new_native_error(
-                        self.realm,
+                        self.0.realm,
                         NativeErrorKind::Type,
                         "proxy preventExtensions handler returned false",
                     )?,
                 )))
             } else {
-                Ok(PropertyStep::Keys {
-                    object: self.object.clone(),
-                    resume: self,
-                })
+                Ok(PropertyStep::request_keys(self.0.object.clone(), self))
             };
         }
-        if !matches!(self.phase, Phase::Result)
+        if !matches!(self.0.phase, Phase::Result)
             || !matches!(
-                self.kind,
+                self.0.kind,
                 PropertyKind::Set
                     | PropertyKind::Has
                     | PropertyKind::Delete
@@ -915,13 +872,13 @@ impl PropertyResume {
         Ok(PropertyStep::Complete(match result {
             NativeConversion::Throw(value) => Completion::Throw(value),
             NativeConversion::Value(accepted)
-                if matches!(self.kind, PropertyKind::ObjectPrevent) =>
+                if matches!(self.0.kind, PropertyKind::ObjectPrevent) =>
             {
                 if accepted {
-                    Completion::Return(Value::Object(self.object))
+                    Completion::Return(Value::Object(self.0.object))
                 } else {
                     Completion::Throw(runtime.new_native_error(
-                        self.realm,
+                        self.0.realm,
                         NativeErrorKind::Type,
                         "proxy preventExtensions handler returned false",
                     )?)
@@ -931,21 +888,22 @@ impl PropertyResume {
         }))
     }
     pub(crate) fn set(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<PropertyStep, RuntimeError> {
-        if let Phase::AssignSet { state, key } = self.phase {
-            if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
+        if let Phase::AssignSet { state, key } = self.0.phase {
+            if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
                 return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
-            return Self {
-                phase: Phase::Result,
-                ..self
+            return {
+                let updated_0 = Phase::Result;
+                self.0.phase = updated_0;
+                self
             }
             .assign_next(runtime, state);
         }
-        if !matches!(self.kind, PropertyKind::Set) {
+        if !matches!(self.0.kind, PropertyKind::Set) {
             return Err(RuntimeError::Invariant("Set reply has wrong builtin"));
         }
         self.boolean(
@@ -959,29 +917,30 @@ impl PropertyResume {
         )
     }
     pub(crate) fn read(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<PropertyStep, RuntimeError> {
-        if let Phase::AssignRead { state, key } = self.phase {
+        if let Phase::AssignRead { state, key } = self.0.phase {
             let value = match result {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => {
                     return Ok(PropertyStep::Complete(Completion::Throw(value)));
                 }
             };
-            return Ok(PropertyStep::Set {
-                object: self.object.clone(),
-                receiver: Value::Object(self.object.clone()),
-                key: key.clone(),
+            return Ok(PropertyStep::request_set(
+                self.0.object.clone(),
+                key.clone(),
                 value,
-                resume: Self {
-                    phase: Phase::AssignSet { state, key },
-                    ..self
+                Value::Object(self.0.object.clone()),
+                {
+                    let updated_0 = Phase::AssignSet { state, key };
+                    self.0.phase = updated_0;
+                    self
                 },
-            });
+            ));
         }
-        if let Phase::Entry { state, pair } = self.phase {
+        if let Phase::Entry { state, pair } = self.0.phase {
             let value = match result {
                 Completion::Throw(value) => {
                     return Ok(PropertyStep::Complete(Completion::Throw(value)));
@@ -999,13 +958,14 @@ impl PropertyResume {
             } else {
                 value
             };
-            return Self {
-                phase: Phase::Result,
-                ..self
+            return {
+                let updated_0 = Phase::Result;
+                self.0.phase = updated_0;
+                self
             }
             .emit(runtime, state, value);
         }
-        if !matches!(self.kind, PropertyKind::Get) || !matches!(self.phase, Phase::Result) {
+        if !matches!(self.0.kind, PropertyKind::Get) || !matches!(self.0.phase, Phase::Result) {
             return Err(RuntimeError::Invariant("Get reply has wrong phase"));
         }
         Ok(PropertyStep::Complete(result))
@@ -1021,75 +981,88 @@ pub(in crate::engine::builtins) fn finish(
     loop {
         step = match step {
             PropertyStep::Complete(result) => return Ok(result),
-            PropertyStep::Keys { object, resume } => {
+            PropertyStep::Keys { mut resume } => {
+                let object = resume.take_keys_object();
                 resume.keys(runtime, runtime.internal_own_property_keys(realm, &object)?)?
             }
-            PropertyStep::Key { value, resume } => resume.key(
-                runtime,
-                runtime.to_primitive(realm, value, crate::engine::vm::ToPrimitiveHint::String)?,
-            )?,
-            PropertyStep::Convert { value, resume } => {
+            PropertyStep::Key { mut resume } => {
+                let value = resume.take_key_value();
+                resume.key(
+                    runtime,
+                    runtime.to_primitive(
+                        realm,
+                        value,
+                        crate::engine::vm::ToPrimitiveHint::String,
+                    )?,
+                )?
+            }
+            PropertyStep::Convert { mut resume } => {
+                let value = resume.take_convert_value();
                 resume.converted(runtime.native_to_property_descriptor(realm, value)?)?
             }
-            PropertyStep::Read {
-                object,
-                key,
-                receiver,
-                resume,
-            } => resume.read(
-                runtime,
-                runtime.internal_get(realm, &object, &key, receiver)?,
-            )?,
-            PropertyStep::Set {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            } => resume.set(
-                runtime,
-                runtime.internal_set(realm, &object, &key, value, receiver)?,
-            )?,
-            PropertyStep::Has {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_has_property(realm, &object, &key)?,
-            )?,
-            PropertyStep::Delete {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_delete_property(realm, &object, &key)?,
-            )?,
-            PropertyStep::Define {
-                object,
-                key,
-                descriptor,
-                resume,
-            } => resume.defined(
-                runtime,
-                runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
-            )?,
-            PropertyStep::Descriptor {
-                object,
-                key,
-                resume,
-            } => resume.descriptor(
-                runtime,
-                runtime.internal_get_own_property(realm, &object, &key)?,
-            )?,
-            PropertyStep::Extensible { object, resume } => {
+            PropertyStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                let receiver = resume.take_read_receiver();
+                resume.read(
+                    runtime,
+                    runtime.internal_get(realm, &object, &key, receiver)?,
+                )?
+            }
+            PropertyStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                let receiver = resume.take_set_receiver();
+                resume.set(
+                    runtime,
+                    runtime.internal_set(realm, &object, &key, value, receiver)?,
+                )?
+            }
+            PropertyStep::Has { mut resume } => {
+                let object = resume.take_has_object();
+                let key = resume.take_has_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_has_property(realm, &object, &key)?,
+                )?
+            }
+            PropertyStep::Delete { mut resume } => {
+                let object = resume.take_delete_object();
+                let key = resume.take_delete_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_delete_property(realm, &object, &key)?,
+                )?
+            }
+            PropertyStep::Define { mut resume } => {
+                let object = resume.take_define_object();
+                let key = resume.take_define_key();
+                let descriptor = resume.take_define_descriptor();
+                resume.defined(
+                    runtime,
+                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                )?
+            }
+            PropertyStep::Descriptor { mut resume } => {
+                let object = resume.take_descriptor_object();
+                let key = resume.take_descriptor_key();
+                resume.descriptor(
+                    runtime,
+                    runtime.internal_get_own_property(realm, &object, &key)?,
+                )?
+            }
+            PropertyStep::Extensible { mut resume } => {
+                let object = resume.take_extensible_object();
                 resume.boolean(runtime, runtime.internal_is_extensible(realm, &object)?)?
             }
-            PropertyStep::Prevent { object, resume } => resume.boolean(
-                runtime,
-                runtime.internal_prevent_extensions(realm, &object)?,
-            )?,
+            PropertyStep::Prevent { mut resume } => {
+                let object = resume.take_prevent_object();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_prevent_extensions(realm, &object)?,
+                )?
+            }
         };
     }
 }
@@ -1108,7 +1081,7 @@ mod tests {
             actual_arg_count: 1,
             readable: vec![Value::Object(target)],
         };
-        let PropertyStep::Keys { resume, .. } = PropertyStep::start(
+        let PropertyStep::Keys { mut resume } = PropertyStep::start(
             &runtime,
             context.realm,
             PropertyKind::ObjectKeys(ObjectKeysKind::Entries),
@@ -1117,15 +1090,20 @@ mod tests {
         .unwrap() else {
             panic!("expected key request")
         };
+        let _ = resume.take_keys_object();
+
         drop(arguments);
         let key = runtime.intern_property_key("x").unwrap();
-        let PropertyStep::Descriptor { resume, .. } = resume
+        let PropertyStep::Descriptor { mut resume } = resume
             .keys(&runtime, NativeConversion::Value(vec![key]))
             .unwrap()
         else {
             panic!("expected descriptor")
         };
-        let PropertyStep::Read { resume, .. } = resume
+        let _ = resume.take_descriptor_object();
+        let _ = resume.take_descriptor_key();
+
+        let PropertyStep::Read { mut resume } = resume
             .descriptor(
                 &runtime,
                 NativeConversion::Value(Some(CompleteOrdinaryPropertyDescriptor::Data {
@@ -1139,6 +1117,10 @@ mod tests {
         else {
             panic!("expected value request")
         };
+        let _ = resume.take_read_object();
+        let _ = resume.take_read_key();
+        let _ = resume.take_read_receiver();
+
         let Phase::Entry {
             state,
             pair: Some(pair),
@@ -1161,3 +1143,265 @@ mod tests {
         assert!(weak.upgrade().is_none());
     }
 }
+
+#[derive(Default)]
+struct PropertyStepPending {
+    keys_object: Option<ObjectRef>,
+    key_value: Option<Value>,
+    convert_value: Option<Value>,
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    read_receiver: Option<Value>,
+    set_object: Option<ObjectRef>,
+    set_key: Option<PropertyKey>,
+    set_value: Option<Value>,
+    set_receiver: Option<Value>,
+    has_object: Option<ObjectRef>,
+    has_key: Option<PropertyKey>,
+    delete_object: Option<ObjectRef>,
+    delete_key: Option<PropertyKey>,
+    define_object: Option<ObjectRef>,
+    define_key: Option<PropertyKey>,
+    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    descriptor_object: Option<ObjectRef>,
+    descriptor_key: Option<PropertyKey>,
+    extensible_object: Option<ObjectRef>,
+    prevent_object: Option<ObjectRef>,
+}
+impl PropertyStep {
+    pub(crate) fn request_keys(object: ObjectRef, mut resume: PropertyResume) -> Self {
+        resume.0.pending_effect.keys_object = Some(object);
+        Self::Keys { resume }
+    }
+    pub(crate) fn request_key(value: Value, mut resume: PropertyResume) -> Self {
+        resume.0.pending_effect.key_value = Some(value);
+        Self::Key { resume }
+    }
+    pub(crate) fn request_convert(value: Value, mut resume: PropertyResume) -> Self {
+        resume.0.pending_effect.convert_value = Some(value);
+        Self::Convert { resume }
+    }
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        receiver: Value,
+        mut resume: PropertyResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        receiver: Value,
+        mut resume: PropertyResume,
+    ) -> Self {
+        resume.0.pending_effect.set_object = Some(object);
+        resume.0.pending_effect.set_key = Some(key);
+        resume.0.pending_effect.set_value = Some(value);
+        resume.0.pending_effect.set_receiver = Some(receiver);
+        Self::Set { resume }
+    }
+    pub(crate) fn request_has(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: PropertyResume,
+    ) -> Self {
+        resume.0.pending_effect.has_object = Some(object);
+        resume.0.pending_effect.has_key = Some(key);
+        Self::Has { resume }
+    }
+    pub(crate) fn request_delete(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: PropertyResume,
+    ) -> Self {
+        resume.0.pending_effect.delete_object = Some(object);
+        resume.0.pending_effect.delete_key = Some(key);
+        Self::Delete { resume }
+    }
+    pub(crate) fn request_define(
+        object: ObjectRef,
+        key: PropertyKey,
+        descriptor: OrdinaryPropertyDescriptor,
+        mut resume: PropertyResume,
+    ) -> Self {
+        resume.0.pending_effect.define_object = Some(object);
+        resume.0.pending_effect.define_key = Some(key);
+        resume.0.pending_effect.define_descriptor = Some(descriptor);
+        Self::Define { resume }
+    }
+    pub(crate) fn request_descriptor(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: PropertyResume,
+    ) -> Self {
+        resume.0.pending_effect.descriptor_object = Some(object);
+        resume.0.pending_effect.descriptor_key = Some(key);
+        Self::Descriptor { resume }
+    }
+    pub(crate) fn request_extensible(object: ObjectRef, mut resume: PropertyResume) -> Self {
+        resume.0.pending_effect.extensible_object = Some(object);
+        Self::Extensible { resume }
+    }
+    pub(crate) fn request_prevent(object: ObjectRef, mut resume: PropertyResume) -> Self {
+        resume.0.pending_effect.prevent_object = Some(object);
+        Self::Prevent { resume }
+    }
+}
+impl PropertyResume {
+    pub(crate) fn take_keys_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .keys_object
+            .take()
+            .expect("PropertyStep Keys object")
+    }
+    pub(crate) fn take_key_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .key_value
+            .take()
+            .expect("PropertyStep Key value")
+    }
+    pub(crate) fn take_convert_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .convert_value
+            .take()
+            .expect("PropertyStep Convert value")
+    }
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("PropertyStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("PropertyStep Read key")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("PropertyStep Read receiver")
+    }
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .set_object
+            .take()
+            .expect("PropertyStep Set object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .set_key
+            .take()
+            .expect("PropertyStep Set key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .set_value
+            .take()
+            .expect("PropertyStep Set value")
+    }
+    pub(crate) fn take_set_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .set_receiver
+            .take()
+            .expect("PropertyStep Set receiver")
+    }
+    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .has_object
+            .take()
+            .expect("PropertyStep Has object")
+    }
+    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .has_key
+            .take()
+            .expect("PropertyStep Has key")
+    }
+    pub(crate) fn take_delete_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .delete_object
+            .take()
+            .expect("PropertyStep Delete object")
+    }
+    pub(crate) fn take_delete_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .delete_key
+            .take()
+            .expect("PropertyStep Delete key")
+    }
+    pub(crate) fn take_define_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .define_object
+            .take()
+            .expect("PropertyStep Define object")
+    }
+    pub(crate) fn take_define_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .define_key
+            .take()
+            .expect("PropertyStep Define key")
+    }
+    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+        self.0
+            .pending_effect
+            .define_descriptor
+            .take()
+            .expect("PropertyStep Define descriptor")
+    }
+    pub(crate) fn take_descriptor_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .descriptor_object
+            .take()
+            .expect("PropertyStep Descriptor object")
+    }
+    pub(crate) fn take_descriptor_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .descriptor_key
+            .take()
+            .expect("PropertyStep Descriptor key")
+    }
+    pub(crate) fn take_extensible_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .extensible_object
+            .take()
+            .expect("PropertyStep Extensible object")
+    }
+    pub(crate) fn take_prevent_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .prevent_object
+            .take()
+            .expect("PropertyStep Prevent object")
+    }
+}
+const _: () = assert!(std::mem::size_of::<PropertyStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<PropertyStep>() <= 64);

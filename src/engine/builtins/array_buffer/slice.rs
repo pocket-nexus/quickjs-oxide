@@ -31,7 +31,20 @@ pub(crate) enum BufferSliceStep {
         resume: BufferSliceResume,
     },
 }
-pub(crate) struct BufferSliceResume {
+pub(crate) struct BufferSliceResume(Box<BufferSliceResumeState>);
+impl std::ops::Deref for BufferSliceResume {
+    type Target = BufferSliceResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for BufferSliceResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<BufferSliceResume>() <= 8);
+pub(crate) struct BufferSliceResumeState {
     realm: ContextId,
     source: ObjectRef,
     length: i64,
@@ -93,19 +106,19 @@ impl BufferSliceStep {
                     "Buffer slice start argument was not padded",
                 ))?
                 .clone(),
-            resume: BufferSliceResume {
+            resume: BufferSliceResume(Box::new(BufferSliceResumeState {
                 realm,
                 source,
                 length,
                 kind,
                 phase: Phase::Start(end),
-            },
+            })),
         })
     }
 }
 impl BufferSliceResume {
     fn select(
-        self,
+        mut self,
         runtime: &Runtime,
         start: i64,
         end: i64,
@@ -113,11 +126,12 @@ impl BufferSliceResume {
         let count = u32::try_from((end - start).max(0))
             .map_err(|_| RuntimeError::Invariant("validated Buffer slice length overflowed u32"))?;
         Ok(BufferSliceStep::Read {
-            object: self.source.clone(),
+            object: self.0.source.clone(),
             key: runtime.intern_property_key("constructor")?,
-            resume: Self {
-                phase: Phase::Constructor { start, count },
-                ..self
+            resume: {
+                let updated_0 = Phase::Constructor { start, count };
+                self.0.phase = updated_0;
+                self
             },
         })
     }
@@ -127,10 +141,10 @@ impl BufferSliceResume {
         start: i64,
         count: u32,
     ) -> Result<BufferSliceStep, RuntimeError> {
-        let result = match self.kind {
-            BufferSliceKind::Array => runtime.allocate_array_buffer_slice(self.realm, count)?,
+        let result = match self.0.kind {
+            BufferSliceKind::Array => runtime.allocate_array_buffer_slice(self.0.realm, count)?,
             BufferSliceKind::Shared => {
-                runtime.allocate_shared_array_buffer_slice(self.realm, count)?
+                runtime.allocate_shared_array_buffer_slice(self.0.realm, count)?
             }
         };
         let target = match result {
@@ -148,13 +162,17 @@ impl BufferSliceResume {
         start: i64,
         count: u32,
     ) -> Result<BufferSliceStep, RuntimeError> {
-        Ok(BufferSliceStep::Complete(match self.kind {
-            BufferSliceKind::Array => {
-                runtime.finish_array_buffer_slice(self.realm, self.source, target, start, count)?
-            }
+        Ok(BufferSliceStep::Complete(match self.0.kind {
+            BufferSliceKind::Array => runtime.finish_array_buffer_slice(
+                self.0.realm,
+                self.0.source,
+                target,
+                start,
+                count,
+            )?,
             BufferSliceKind::Shared => runtime.finish_shared_array_buffer_slice(
-                self.realm,
-                self.source,
+                self.0.realm,
+                self.0.source,
                 target,
                 start,
                 count,
@@ -162,7 +180,7 @@ impl BufferSliceResume {
         }))
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<BufferSliceStep, RuntimeError> {
@@ -172,14 +190,14 @@ impl BufferSliceResume {
                 return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Start(ref end) => {
                 let start = match runtime.native_to_int64_clamp(
-                    self.realm,
+                    self.0.realm,
                     &value,
                     0,
-                    self.length,
-                    self.length,
+                    self.0.length,
+                    self.0.length,
                 )? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
@@ -189,23 +207,24 @@ impl BufferSliceResume {
                 if let Some(value) = end {
                     Ok(BufferSliceStep::Primitive {
                         value: value.clone(),
-                        resume: Self {
-                            phase: Phase::End(start),
-                            ..self
+                        resume: {
+                            let updated_0 = Phase::End(start);
+                            self.0.phase = updated_0;
+                            self
                         },
                     })
                 } else {
-                    let length = self.length;
+                    let length = self.0.length;
                     self.select(runtime, start, length)
                 }
             }
             Phase::End(start) => {
                 let end = match runtime.native_to_int64_clamp(
-                    self.realm,
+                    self.0.realm,
                     &value,
                     0,
-                    self.length,
-                    self.length,
+                    self.0.length,
+                    self.0.length,
                 )? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
@@ -221,7 +240,7 @@ impl BufferSliceResume {
                 let Value::Object(object) = value else {
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "not an object",
                         )?,
@@ -230,9 +249,10 @@ impl BufferSliceResume {
                 Ok(BufferSliceStep::Read {
                     object,
                     key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
-                    resume: Self {
-                        phase: Phase::Species { start, count },
-                        ..self
+                    resume: {
+                        let updated_0 = Phase::Species { start, count };
+                        self.0.phase = updated_0;
+                        self
                     },
                 })
             }
@@ -242,10 +262,10 @@ impl BufferSliceResume {
                 }
                 if !matches!(value, Value::Object(_)) {
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
-                        runtime.new_not_constructor_error(self.realm, &value)?,
+                        runtime.new_not_constructor_error(self.0.realm, &value)?,
                     )));
                 }
-                let constructor = match runtime.constructor_from_value(self.realm, value)? {
+                let constructor = match runtime.constructor_from_value(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
@@ -255,7 +275,7 @@ impl BufferSliceResume {
                 if arguments.try_reserve_exact(1).is_err() {
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Internal,
                             "out of memory",
                         )?,
@@ -267,9 +287,10 @@ impl BufferSliceResume {
                 Ok(BufferSliceStep::Construct {
                     constructor,
                     arguments,
-                    resume: Self {
-                        phase: Phase::Construct { start, count },
-                        ..self
+                    resume: {
+                        let updated_0 = Phase::Construct { start, count };
+                        self.0.phase = updated_0;
+                        self
                     },
                 })
             }
@@ -277,9 +298,9 @@ impl BufferSliceResume {
                 let Value::Object(target) = value else {
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
-                            match self.kind {
+                            match self.0.kind {
                                 BufferSliceKind::Array => "ArrayBuffer object expected",
                                 BufferSliceKind::Shared => "SharedArrayBuffer object expected",
                             },
@@ -331,3 +352,6 @@ pub(in crate::engine::builtins) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<BufferSliceStep>() <= 64);

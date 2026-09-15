@@ -41,27 +41,26 @@ impl SetOperation {
 }
 pub(crate) enum SetStep {
     Complete(Completion),
-    Read {
-        receiver: Value,
-        key: PropertyKey,
-        resume: SetResume,
-    },
-    Number {
-        value: Value,
-        resume: SetResume,
-    },
-    Call {
-        callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: SetResume,
-    },
-    Parse {
-        result: Completion,
-        resume: SetResume,
-    },
+    Read { resume: SetResume },
+    Number { resume: SetResume },
+    Call { resume: SetResume },
+    Parse { resume: SetResume },
 }
-pub(crate) struct SetResume {
+pub(crate) struct SetResume(Box<SetResumeState>);
+impl std::ops::Deref for SetResume {
+    type Target = SetResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for SetResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<SetResume>() <= 8);
+pub(crate) struct SetResumeState {
+    pending_effect: SetStepPending,
     phase: Phase,
     realm: ContextId,
     kind: SetOperation,
@@ -140,7 +139,8 @@ impl SetStep {
         } else {
             None
         };
-        let mut resume = SetResume {
+        let mut resume = SetResume(Box::new(SetResumeState {
+            pending_effect: SetStepPending::default(),
             realm,
             kind,
             set,
@@ -153,7 +153,7 @@ impl SetStep {
             iterator: Value::Undefined,
             next: Value::Undefined,
             phase: Phase::Size,
-        };
+        }));
         if let Some(size) = genuine_size {
             resume.size = i64::try_from(size).map_err(|_| {
                 RuntimeError::Invariant("genuine Set size exceeded signed 64-bit range")
@@ -166,19 +166,20 @@ impl SetStep {
 }
 impl SetResume {
     fn read(self, runtime: &Runtime, name: &str) -> Result<SetStep, RuntimeError> {
-        Ok(SetStep::Read {
-            receiver: self.target.clone(),
-            key: runtime.intern_property_key(name)?,
-            resume: self,
-        })
+        Ok(SetStep::request_read(
+            self.0.target.clone(),
+            runtime.intern_property_key(name)?,
+            self,
+        ))
     }
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
-        self.result
+        self.0
+            .result
             .clone()
             .ok_or(RuntimeError::Invariant("Set operation result missing"))
     }
     fn complete(self) -> Result<SetStep, RuntimeError> {
-        let value = match self.kind {
+        let value = match self.0.kind {
             SetOperation::Disjoint | SetOperation::Subset | SetOperation::Superset => {
                 Value::Bool(true)
             }
@@ -187,52 +188,53 @@ impl SetResume {
         Ok(SetStep::Complete(Completion::Return(value)))
     }
     fn selected(mut self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
-        if matches!(self.kind, SetOperation::Difference) {
-            self.result = Some(runtime.copy_set_in_realm(self.realm, &self.set)?);
+        if matches!(self.0.kind, SetOperation::Difference) {
+            self.0.result = Some(runtime.copy_set_in_realm(self.0.realm, &self.0.set)?);
         }
-        let size = i64::try_from(runtime.set_size_value(&self.set)?).unwrap_or(i64::MAX);
-        if matches!(self.kind, SetOperation::Subset) && size > self.size
-            || matches!(self.kind, SetOperation::Superset) && size < self.size
+        let size = i64::try_from(runtime.set_size_value(&self.0.set)?).unwrap_or(i64::MAX);
+        if matches!(self.0.kind, SetOperation::Subset) && size > self.0.size
+            || matches!(self.0.kind, SetOperation::Superset) && size < self.0.size
         {
             return Ok(SetStep::Complete(Completion::Return(Value::Bool(false))));
         }
-        let own = match self.kind {
+        let own = match self.0.kind {
             SetOperation::Subset => true,
             SetOperation::Disjoint | SetOperation::Intersection | SetOperation::Difference => {
-                size <= self.size
+                size <= self.0.size
             }
             _ => false,
         };
         if own {
-            if matches!(self.kind, SetOperation::Intersection) {
-                self.result = Some(runtime.new_set_in_realm(self.realm)?);
+            if matches!(self.0.kind, SetOperation::Intersection) {
+                self.0.result = Some(runtime.new_set_in_realm(self.0.realm)?);
             }
             return self.probe(runtime);
         }
         if matches!(
-            self.kind,
+            self.0.kind,
             SetOperation::SymmetricDifference | SetOperation::Union
         ) {
-            self.has = None;
+            self.0.has = None;
         }
-        self.phase = Phase::Iterator;
-        Ok(SetStep::Call {
-            callable: self
+        self.0.phase = Phase::Iterator;
+        Ok(SetStep::request_call(
+            self.0
                 .keys
                 .clone()
                 .ok_or(RuntimeError::Invariant("Set operation keys missing"))?,
-            receiver: self.target.clone(),
-            arguments: Vec::new(),
-            resume: self,
-        })
+            self.0.target.clone(),
+            Vec::new(),
+            self,
+        ))
     }
     fn probe(mut self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
-        let source = if matches!(self.kind, SetOperation::Difference) {
+        let source = if matches!(self.0.kind, SetOperation::Difference) {
             self.result()?
         } else {
-            self.set.clone()
+            self.0.set.clone()
         };
-        let Some((record_index, value)) = runtime.next_live_set_record(&source, &mut self.index)?
+        let Some((record_index, value)) =
+            runtime.next_live_set_record(&source, &mut self.0.index)?
         else {
             return self.complete();
         };
@@ -241,57 +243,54 @@ impl SetResume {
             index: record_index,
         });
         let arguments = vec![value.clone()];
-        self.phase = Phase::Probe {
+        self.0.phase = Phase::Probe {
             record: Some(record),
             value,
         };
-        Ok(SetStep::Call {
-            callable: self
+        Ok(SetStep::request_call(
+            self.0
                 .has
                 .clone()
                 .ok_or(RuntimeError::Invariant("Set operation has missing"))?,
-            receiver: self.target.clone(),
+            self.0.target.clone(),
             arguments,
-            resume: self,
-        })
+            self,
+        ))
     }
     fn next_step(mut self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
-        let callable = match &self.next {
+        let callable = match &self.0.next {
             Value::Object(object) => runtime.as_callable(object)?,
             _ => None,
         };
         let Some(callable) = callable else {
             return Ok(SetStep::Complete(Completion::Throw(
-                runtime.new_native_error(self.realm, NativeErrorKind::Type, "not a function")?,
+                runtime.new_native_error(self.0.realm, NativeErrorKind::Type, "not a function")?,
             )));
         };
-        self.phase = Phase::NextCall;
-        Ok(SetStep::Call {
+        self.0.phase = Phase::NextCall;
+        Ok(SetStep::request_call(
             callable,
-            receiver: self.iterator.clone(),
-            arguments: Vec::new(),
-            resume: self,
-        })
+            self.0.iterator.clone(),
+            Vec::new(),
+            self,
+        ))
     }
     pub(crate) fn resume(
         mut self,
         runtime: &Runtime,
         reply: Completion,
     ) -> Result<SetStep, RuntimeError> {
-        if matches!(self.phase, Phase::NextCall) {
-            self.phase = Phase::Parse;
-            return Ok(SetStep::Parse {
-                result: reply,
-                resume: self,
-            });
+        if matches!(self.0.phase, Phase::NextCall) {
+            self.0.phase = Phase::Parse;
+            return Ok(SetStep::request_parse(reply, self));
         }
-        if let Phase::Probe { record, .. } = &mut self.phase
+        if let Phase::Probe { record, .. } = &mut self.0.phase
             && let Some(record) = record.take()
         {
             record.finish()?;
         }
-        if matches!(self.phase, Phase::CloseCall)
-            || matches!(self.phase, Phase::CloseMethod) && matches!(reply, Completion::Throw(_))
+        if matches!(self.0.phase, Phase::CloseCall)
+            || matches!(self.0.phase, Phase::CloseMethod) && matches!(reply, Completion::Throw(_))
         {
             return Ok(SetStep::Complete(Completion::Return(Value::Bool(false))));
         }
@@ -299,13 +298,10 @@ impl SetResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(SetStep::Complete(Completion::Throw(value))),
         };
-        match std::mem::replace(&mut self.phase, Phase::Parse) {
+        match std::mem::replace(&mut self.0.phase, Phase::Parse) {
             Phase::Size => {
-                self.phase = Phase::Number;
-                Ok(SetStep::Number {
-                    value,
-                    resume: self,
-                })
+                self.0.phase = Phase::Number;
+                Ok(SetStep::request_number(value, self))
             }
             phase @ (Phase::Has | Phase::Keys) => {
                 let has = matches!(phase, Phase::Has);
@@ -313,7 +309,7 @@ impl SetResume {
                 if matches!(value, Value::Undefined) {
                     return Ok(SetStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             &format!(".{name} is undefined"),
                         )?,
@@ -326,18 +322,18 @@ impl SetResume {
                 let Some(callable) = callable else {
                     return Ok(SetStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             &format!(".{name} is not a function"),
                         )?,
                     )));
                 };
                 if has {
-                    self.has = Some(callable);
-                    self.phase = Phase::Keys;
+                    self.0.has = Some(callable);
+                    self.0.phase = Phase::Keys;
                     self.read(runtime, "keys")
                 } else {
-                    self.keys = Some(callable);
+                    self.0.keys = Some(callable);
                     self.selected(runtime)
                 }
             }
@@ -350,28 +346,28 @@ impl SetResume {
                     };
                     return Ok(SetStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             &format!("cannot read property 'next' of {base}"),
                         )?,
                     )));
                 }
-                self.iterator = value.clone();
-                self.phase = Phase::NextMethod;
-                Ok(SetStep::Read {
-                    receiver: value,
-                    key: runtime.intern_property_key("next")?,
-                    resume: self,
-                })
+                self.0.iterator = value.clone();
+                self.0.phase = Phase::NextMethod;
+                Ok(SetStep::request_read(
+                    value,
+                    runtime.intern_property_key("next")?,
+                    self,
+                ))
             }
             Phase::NextMethod => {
-                self.next = value;
-                match self.kind {
+                self.0.next = value;
+                match self.0.kind {
                     SetOperation::Intersection => {
-                        self.result = Some(runtime.new_set_in_realm(self.realm)?)
+                        self.0.result = Some(runtime.new_set_in_realm(self.0.realm)?)
                     }
                     SetOperation::SymmetricDifference | SetOperation::Union => {
-                        self.result = Some(runtime.copy_set_in_realm(self.realm, &self.set)?)
+                        self.0.result = Some(runtime.copy_set_in_realm(self.0.realm, &self.0.set)?)
                     }
                     _ => {}
                 }
@@ -379,7 +375,7 @@ impl SetResume {
             }
             Phase::Probe { value: item, .. } => {
                 let present = runtime.value_to_boolean(&value)?;
-                match self.kind {
+                match self.0.kind {
                     SetOperation::Disjoint if present => {
                         return Ok(SetStep::Complete(Completion::Return(Value::Bool(false))));
                     }
@@ -404,13 +400,13 @@ impl SetResume {
                 let Some(callable) = callable else {
                     return Ok(SetStep::Complete(Completion::Return(Value::Bool(false))));
                 };
-                self.phase = Phase::CloseCall;
-                Ok(SetStep::Call {
+                self.0.phase = Phase::CloseCall;
+                Ok(SetStep::request_call(
                     callable,
-                    receiver: self.iterator.clone(),
-                    arguments: Vec::new(),
-                    resume: self,
-                })
+                    self.0.iterator.clone(),
+                    Vec::new(),
+                    self,
+                ))
             }
             _ => Err(RuntimeError::Invariant(
                 "Set operation completion phase mismatch",
@@ -431,7 +427,7 @@ impl SetResume {
         if size.is_nan() {
             return Ok(SetStep::Complete(Completion::Throw(
                 runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Type,
                     ".size is not a number",
                 )?,
@@ -447,14 +443,14 @@ impl SetResume {
         if size < 0 {
             return Ok(SetStep::Complete(Completion::Throw(
                 runtime.new_native_error(
-                    self.realm,
+                    self.0.realm,
                     NativeErrorKind::Range,
                     ".size must be positive",
                 )?,
             )));
         }
-        self.size = size;
-        self.phase = Phase::Has;
+        self.0.size = size;
+        self.0.phase = Phase::Has;
         self.read(runtime, "has")
     }
     pub(crate) fn parsed(
@@ -470,21 +466,21 @@ impl SetResume {
             ObjectIteratorStep::Yield(value) => value,
         };
         let value = Runtime::normalized_set_key(value);
-        match self.kind {
+        match self.0.kind {
             SetOperation::Disjoint | SetOperation::Superset => {
-                let present = runtime.find_set_record(&self.set, &value)?.is_some();
+                let present = runtime.find_set_record(&self.0.set, &value)?.is_some();
                 drop(value);
-                if present == matches!(self.kind, SetOperation::Disjoint) {
-                    self.phase = Phase::CloseMethod;
-                    return Ok(SetStep::Read {
-                        receiver: self.iterator.clone(),
-                        key: runtime.intern_property_key("return")?,
-                        resume: self,
-                    });
+                if present == matches!(self.0.kind, SetOperation::Disjoint) {
+                    self.0.phase = Phase::CloseMethod;
+                    return Ok(SetStep::request_read(
+                        self.0.iterator.clone(),
+                        runtime.intern_property_key("return")?,
+                        self,
+                    ));
                 }
             }
             SetOperation::Intersection => {
-                if runtime.find_set_record(&self.set, &value)?.is_some() {
+                if runtime.find_set_record(&self.0.set, &value)?.is_some() {
                     runtime.insert_set_record(&self.result()?, value)?;
                 }
             }
@@ -492,7 +488,7 @@ impl SetResume {
                 runtime.delete_set_record(&self.result()?, &value)?;
             }
             SetOperation::SymmetricDifference => {
-                if runtime.find_set_record(&self.set, &value)?.is_some() {
+                if runtime.find_set_record(&self.0.set, &value)?.is_some() {
                     runtime.delete_set_record(&self.result()?, &value)?;
                 } else {
                     runtime.insert_set_record(&self.result()?, value)?;
@@ -516,34 +512,130 @@ pub(crate) fn finish(
     loop {
         step = match step {
             SetStep::Complete(result) => return Ok(result),
-            SetStep::Read {
-                receiver,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
-            )?,
-            SetStep::Number { value, resume } => {
+            SetStep::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                )?
+            }
+            SetStep::Number { mut resume } => {
+                let value = resume.take_number_value();
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
-            SetStep::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, receiver, &arguments)?,
-            )?,
-            SetStep::Parse { result, resume } => resume.parsed(
-                runtime,
-                finish_next(
+            SetStep::Call { mut resume } => {
+                let callable = resume.take_call_callable();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                resume.resume(
                     runtime,
-                    realm,
-                    NextStep::parse_result(runtime, realm, result)?,
-                )?,
-            )?,
+                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                )?
+            }
+            SetStep::Parse { mut resume } => {
+                let result = resume.take_parse_result();
+                resume.parsed(
+                    runtime,
+                    finish_next(
+                        runtime,
+                        realm,
+                        NextStep::parse_result(runtime, realm, result)?,
+                    )?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct SetStepPending {
+    read_receiver: Option<Value>,
+    read_key: Option<PropertyKey>,
+    number_value: Option<Value>,
+    call_callable: Option<CallableRef>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+    parse_result: Option<Completion>,
+}
+impl SetStep {
+    pub(crate) fn request_read(receiver: Value, key: PropertyKey, mut resume: SetResume) -> Self {
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_number(value: Value, mut resume: SetResume) -> Self {
+        resume.0.pending_effect.number_value = Some(value);
+        Self::Number { resume }
+    }
+    pub(crate) fn request_call(
+        callable: CallableRef,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: SetResume,
+    ) -> Self {
+        resume.0.pending_effect.call_callable = Some(callable);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_parse(result: Completion, mut resume: SetResume) -> Self {
+        resume.0.pending_effect.parse_result = Some(result);
+        Self::Parse { resume }
+    }
+}
+impl SetResume {
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("SetStep Read receiver")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("SetStep Read key")
+    }
+    pub(crate) fn take_number_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .number_value
+            .take()
+            .expect("SetStep Number value")
+    }
+    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
+        self.0
+            .pending_effect
+            .call_callable
+            .take()
+            .expect("SetStep Call callable")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("SetStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("SetStep Call arguments")
+    }
+    pub(crate) fn take_parse_result(&mut self) -> Completion {
+        self.0
+            .pending_effect
+            .parse_result
+            .take()
+            .expect("SetStep Parse result")
+    }
+}
+const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);

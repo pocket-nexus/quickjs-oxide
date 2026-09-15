@@ -16,25 +16,25 @@ use crate::engine::{
 };
 pub(crate) enum ProxyConstructStep {
     Complete(Completion),
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: ProxyConstructResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: ProxyConstructResume,
-    },
-    Construct {
-        target: ConstructorRef,
-        new_target: ConstructNewTarget,
-        arguments: Vec<Value>,
-        resume: ProxyConstructResume,
-    },
+    Read { resume: ProxyConstructResume },
+    Call { resume: ProxyConstructResume },
+    Construct { resume: ProxyConstructResume },
 }
-pub(crate) struct ProxyConstructResume {
+pub(crate) struct ProxyConstructResume(Box<ProxyConstructResumeState>);
+impl std::ops::Deref for ProxyConstructResume {
+    type Target = ProxyConstructResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ProxyConstructResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ProxyConstructResume>() <= 8);
+pub(crate) struct ProxyConstructResumeState {
+    pending_effect: ProxyConstructStepPending,
     phase: Phase,
 }
 enum Phase {
@@ -112,16 +112,17 @@ impl Search {
             };
         }
         let rooted = runtime.root_proxy_snapshot(proxy.as_object(), data)?;
-        Ok(ProxyConstructStep::Read {
-            object: rooted.handler.clone(),
-            key: self.key.clone(),
-            resume: ProxyConstructResume {
+        Ok(ProxyConstructStep::request_read(
+            rooted.handler.clone(),
+            self.key.clone(),
+            ProxyConstructResume(Box::new(ProxyConstructResumeState {
+                pending_effect: ProxyConstructStepPending::default(),
                 phase: Phase::Method {
                     rooted,
                     search: self,
                 },
-            },
-        })
+            })),
+        ))
     }
 }
 impl ProxyConstructResume {
@@ -130,7 +131,7 @@ impl ProxyConstructResume {
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<ProxyConstructStep, RuntimeError> {
-        let (rooted, mut search) = match self.phase {
+        let (rooted, mut search) = match self.0.phase {
             Phase::Method { rooted, search } => (rooted, search),
             Phase::Result { realm, trap, .. } => {
                 return Ok(ProxyConstructStep::Complete(match completion {
@@ -163,19 +164,20 @@ impl ProxyConstructResume {
                 search.depth = search.depth.saturating_add(1);
                 return search.read(runtime, target);
             }
-            return Ok(ProxyConstructStep::Construct {
+            return Ok(ProxyConstructStep::request_construct(
                 target,
-                new_target: search.new_target,
-                arguments: search.arguments,
-                resume: Self {
+                search.new_target,
+                search.arguments,
+                Self(Box::new(ProxyConstructResumeState {
+                    pending_effect: ProxyConstructStepPending::default(),
                     phase: Phase::Result {
                         realm: search.realm,
                         trap: false,
                         _rooted: rooted,
                         _guard: search.guard,
                     },
-                },
-            });
+                })),
+            ));
         }
         let array = runtime.new_array_from_values(search.realm, search.arguments)?;
         let method = match runtime.direct_call_target_from_value(method) {
@@ -191,23 +193,24 @@ impl ProxyConstructResume {
             }
             Err(error) => return Err(error),
         };
-        Ok(ProxyConstructStep::Call {
-            target: method,
-            receiver: Value::Object(rooted.handler.clone()),
-            arguments: vec![
+        Ok(ProxyConstructStep::request_call(
+            method,
+            Value::Object(rooted.handler.clone()),
+            vec![
                 Value::Object(rooted.target.clone()),
                 Value::Object(array),
                 search.new_target.value(),
             ],
-            resume: Self {
+            Self(Box::new(ProxyConstructResumeState {
+                pending_effect: ProxyConstructStepPending::default(),
                 phase: Phase::Result {
                     realm: search.realm,
                     trap: true,
                     _rooted: rooted,
                     _guard: search.guard,
                 },
-            },
-        })
+            })),
+        ))
     }
 }
 pub(super) fn finish(
@@ -218,40 +221,148 @@ pub(super) fn finish(
     loop {
         step = match step {
             ProxyConstructStep::Complete(result) => return Ok(result),
-            ProxyConstructStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.internal_get(realm, &object, &key, Value::Object(object.clone()))?,
-            )?,
-            ProxyConstructStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => {
-                let result = match target {
-                    DirectCallTarget::Callable(target) => {
-                        runtime.call_internal(realm, &target, receiver, &arguments)?
-                    }
-                    DirectCallTarget::NonCallableProxy(proxy) => {
-                        runtime.call_proxy(realm, &proxy, receiver, &arguments)?
-                    }
-                };
-                resume.resume(runtime, result)?
+            ProxyConstructStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.internal_get(realm, &object, &key, Value::Object(object.clone()))?,
+                )?
             }
-            ProxyConstructStep::Construct {
-                target,
-                new_target,
-                arguments,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime
-                    .construct_internal_with_new_target(realm, &target, new_target, &arguments)?,
-            )?,
+            ProxyConstructStep::Call { mut resume } => {
+                let target = resume.take_call_target();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                {
+                    let result = match target {
+                        DirectCallTarget::Callable(target) => {
+                            runtime.call_internal(realm, &target, receiver, &arguments)?
+                        }
+                        DirectCallTarget::NonCallableProxy(proxy) => {
+                            runtime.call_proxy(realm, &proxy, receiver, &arguments)?
+                        }
+                    };
+                    resume.resume(runtime, result)?
+                }
+            }
+            ProxyConstructStep::Construct { mut resume } => {
+                let target = resume.take_construct_target();
+                let new_target = resume.take_construct_new_target();
+                let arguments = resume.take_construct_arguments();
+                resume.resume(
+                    runtime,
+                    runtime.construct_internal_with_new_target(
+                        realm, &target, new_target, &arguments,
+                    )?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct ProxyConstructStepPending {
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    call_target: Option<DirectCallTarget>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+    construct_target: Option<ConstructorRef>,
+    construct_new_target: Option<ConstructNewTarget>,
+    construct_arguments: Option<Vec<Value>>,
+}
+impl ProxyConstructStep {
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: ProxyConstructResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: ProxyConstructResume,
+    ) -> Self {
+        resume.0.pending_effect.call_target = Some(target);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_construct(
+        target: ConstructorRef,
+        new_target: ConstructNewTarget,
+        arguments: Vec<Value>,
+        mut resume: ProxyConstructResume,
+    ) -> Self {
+        resume.0.pending_effect.construct_target = Some(target);
+        resume.0.pending_effect.construct_new_target = Some(new_target);
+        resume.0.pending_effect.construct_arguments = Some(arguments);
+        Self::Construct { resume }
+    }
+}
+impl ProxyConstructResume {
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("ProxyConstructStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("ProxyConstructStep Read key")
+    }
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .pending_effect
+            .call_target
+            .take()
+            .expect("ProxyConstructStep Call target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("ProxyConstructStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("ProxyConstructStep Call arguments")
+    }
+    pub(crate) fn take_construct_target(&mut self) -> ConstructorRef {
+        self.0
+            .pending_effect
+            .construct_target
+            .take()
+            .expect("ProxyConstructStep Construct target")
+    }
+    pub(crate) fn take_construct_new_target(&mut self) -> ConstructNewTarget {
+        self.0
+            .pending_effect
+            .construct_new_target
+            .take()
+            .expect("ProxyConstructStep Construct new_target")
+    }
+    pub(crate) fn take_construct_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .construct_arguments
+            .take()
+            .expect("ProxyConstructStep Construct arguments")
+    }
+}
+const _: () = assert!(std::mem::size_of::<ProxyConstructStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ProxyConstructStep>() <= 64);

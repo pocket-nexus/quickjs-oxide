@@ -8,31 +8,11 @@ use crate::engine::{
 };
 pub(crate) enum ReverseStep {
     Complete(Completion),
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: ReverseResume,
-    },
-    Number {
-        value: Value,
-        resume: ReverseResume,
-    },
-    Has {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: ReverseResume,
-    },
-    Set {
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        resume: ReverseResume,
-    },
-    Delete {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: ReverseResume,
-    },
+    Read { resume: ReverseResume },
+    Number { resume: ReverseResume },
+    Has { resume: ReverseResume },
+    Set { resume: ReverseResume },
+    Delete { resume: ReverseResume },
 }
 enum Phase {
     Length,
@@ -44,7 +24,22 @@ enum Phase {
     LowerWrite,
     UpperWrite,
 }
-pub(crate) struct ReverseResume {
+pub(crate) struct ReverseResume(Box<ReverseResumeState>);
+impl std::ops::Deref for ReverseResume {
+    type Target = ReverseResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ReverseResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<ReverseResume>() <= 8);
+pub(crate) struct ReverseResumeState {
+    pending_effect: ReverseStepPending,
+    scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
     object: ObjectRef,
     phase: Phase,
@@ -68,10 +63,12 @@ impl ReverseStep {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-        Ok(Self::Read {
-            object: object.clone(),
-            key: runtime.intern_property_key("length")?,
-            resume: ReverseResume {
+        Ok(Self::request_read(
+            object.clone(),
+            runtime.intern_property_key("length")?,
+            ReverseResume(Box::new(ReverseResumeState {
+                pending_effect: ReverseStepPending::default(),
+                scheduler_set_key: None,
                 realm,
                 object,
                 phase: Phase::Length,
@@ -79,11 +76,19 @@ impl ReverseStep {
                 upper: 0,
                 lower_value: None,
                 upper_value: None,
-            },
-        })
+            })),
+        ))
     }
 }
 impl ReverseResume {
+    pub(crate) fn with_scheduler_set_key(mut self, key: PropertyKey) -> Self {
+        self.0.scheduler_set_key = Some(key);
+        self
+    }
+    pub(crate) fn take_scheduler_set_key(&mut self) -> PropertyKey {
+        self.0.scheduler_set_key.take().expect("waiting Set key")
+    }
+
     pub(crate) fn resume(
         mut self,
         runtime: &Runtime,
@@ -93,20 +98,17 @@ impl ReverseResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(ReverseStep::Complete(Completion::Throw(value))),
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Length => {
-                self.phase = Phase::Number;
-                Ok(ReverseStep::Number {
-                    value,
-                    resume: self,
-                })
+                self.0.phase = Phase::Number;
+                Ok(ReverseStep::request_number(value, self))
             }
             Phase::LowerRead => {
-                self.lower_value = Some(value);
+                self.0.lower_value = Some(value);
                 self.upper(runtime)
             }
             Phase::UpperRead => {
-                self.upper_value = Some(value);
+                self.0.upper_value = Some(value);
                 self.write_lower(runtime)
             }
             _ => Err(RuntimeError::Invariant(
@@ -119,12 +121,12 @@ impl ReverseResume {
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<ReverseStep, RuntimeError> {
-        if !matches!(self.phase, Phase::Number) {
+        if !matches!(self.0.phase, Phase::Number) {
             return Err(RuntimeError::Invariant(
                 "Array reverse number phase mismatch",
             ));
         }
-        self.upper = match result {
+        self.0.upper = match result {
             NativeConversion::Value(value) => Runtime::length_from_number(value).saturating_sub(1),
             NativeConversion::Throw(value) => {
                 return Ok(ReverseStep::Complete(Completion::Throw(value)));
@@ -133,67 +135,67 @@ impl ReverseResume {
         self.next(runtime)
     }
     fn next(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
-        if self.lower >= self.upper {
+        if self.0.lower >= self.0.upper {
             return Ok(ReverseStep::Complete(Completion::Return(Value::Object(
-                self.object,
+                self.0.object,
             ))));
         }
-        self.phase = Phase::LowerHas;
-        self.lower_value = None;
-        self.upper_value = None;
-        Ok(ReverseStep::Has {
-            object: self.object.clone(),
-            key: runtime.property_key_for_index(self.lower)?,
-            resume: self,
-        })
+        self.0.phase = Phase::LowerHas;
+        self.0.lower_value = None;
+        self.0.upper_value = None;
+        Ok(ReverseStep::request_has(
+            self.0.object.clone(),
+            runtime.property_key_for_index(self.0.lower)?,
+            self,
+        ))
     }
     fn upper(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
-        self.phase = Phase::UpperHas;
-        Ok(ReverseStep::Has {
-            object: self.object.clone(),
-            key: runtime.property_key_for_index(self.upper)?,
-            resume: self,
-        })
+        self.0.phase = Phase::UpperHas;
+        Ok(ReverseStep::request_has(
+            self.0.object.clone(),
+            runtime.property_key_for_index(self.0.upper)?,
+            self,
+        ))
     }
     fn write_lower(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
-        self.phase = Phase::LowerWrite;
-        if let Some(value) = self.upper_value.take() {
-            Ok(ReverseStep::Set {
-                object: self.object.clone(),
-                key: runtime.property_key_for_index(self.lower)?,
+        self.0.phase = Phase::LowerWrite;
+        if let Some(value) = self.0.upper_value.take() {
+            Ok(ReverseStep::request_set(
+                self.0.object.clone(),
+                runtime.property_key_for_index(self.0.lower)?,
                 value,
-                resume: self,
-            })
-        } else if self.lower_value.is_some() {
-            Ok(ReverseStep::Delete {
-                object: self.object.clone(),
-                key: runtime.property_key_for_index(self.lower)?,
-                resume: self,
-            })
+                self,
+            ))
+        } else if self.0.lower_value.is_some() {
+            Ok(ReverseStep::request_delete(
+                self.0.object.clone(),
+                runtime.property_key_for_index(self.0.lower)?,
+                self,
+            ))
         } else {
             self.advance(runtime)
         }
     }
     fn write_upper(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
-        self.phase = Phase::UpperWrite;
-        if let Some(value) = self.lower_value.take() {
-            Ok(ReverseStep::Set {
-                object: self.object.clone(),
-                key: runtime.property_key_for_index(self.upper)?,
+        self.0.phase = Phase::UpperWrite;
+        if let Some(value) = self.0.lower_value.take() {
+            Ok(ReverseStep::request_set(
+                self.0.object.clone(),
+                runtime.property_key_for_index(self.0.upper)?,
                 value,
-                resume: self,
-            })
+                self,
+            ))
         } else {
-            Ok(ReverseStep::Delete {
-                object: self.object.clone(),
-                key: runtime.property_key_for_index(self.upper)?,
-                resume: self,
-            })
+            Ok(ReverseStep::request_delete(
+                self.0.object.clone(),
+                runtime.property_key_for_index(self.0.upper)?,
+                self,
+            ))
         }
     }
     fn advance(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
-        self.lower += 1;
-        self.upper -= 1;
+        self.0.lower += 1;
+        self.0.upper -= 1;
         self.next(runtime)
     }
     pub(crate) fn boolean(
@@ -207,24 +209,24 @@ impl ReverseResume {
                 return Ok(ReverseStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::LowerHas | Phase::UpperHas => {
-                let lower = matches!(self.phase, Phase::LowerHas);
+                let lower = matches!(self.0.phase, Phase::LowerHas);
                 if value {
-                    self.phase = if lower {
+                    self.0.phase = if lower {
                         Phase::LowerRead
                     } else {
                         Phase::UpperRead
                     };
-                    Ok(ReverseStep::Read {
-                        object: self.object.clone(),
-                        key: runtime.property_key_for_index(if lower {
-                            self.lower
+                    Ok(ReverseStep::request_read(
+                        self.0.object.clone(),
+                        runtime.property_key_for_index(if lower {
+                            self.0.lower
                         } else {
-                            self.upper
+                            self.0.upper
                         })?,
-                        resume: self,
-                    })
+                        self,
+                    ))
                 } else if lower {
                     self.upper(runtime)
                 } else {
@@ -235,13 +237,13 @@ impl ReverseResume {
                 if !value {
                     return Ok(ReverseStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "could not delete property",
                         )?,
                     )));
                 }
-                if matches!(self.phase, Phase::LowerWrite) {
+                if matches!(self.0.phase, Phase::LowerWrite) {
                     self.write_upper(runtime)
                 } else {
                     self.advance(runtime)
@@ -258,10 +260,10 @@ impl ReverseResume {
         key: PropertyKey,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ReverseStep, RuntimeError> {
-        if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
+        if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(ReverseStep::Complete(Completion::Throw(value)));
         }
-        match self.phase {
+        match self.0.phase {
             Phase::LowerWrite => self.write_upper(runtime),
             Phase::UpperWrite => self.advance(runtime),
             _ => Err(RuntimeError::Invariant("Array reverse set phase mismatch")),
@@ -276,48 +278,183 @@ pub(crate) fn finish(
     loop {
         step = match step {
             ReverseStep::Complete(result) => return Ok(result),
-            ReverseStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            ReverseStep::Number { value, resume } => {
+            ReverseStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
+                )?
+            }
+            ReverseStep::Number { mut resume } => {
+                let value = resume.take_number_value();
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
-            ReverseStep::Has {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_has_property(realm, &object, &key)?,
-            )?,
-            ReverseStep::Set {
-                object,
-                key,
-                value,
-                resume,
-            } => {
-                let result = runtime.internal_set(
-                    realm,
-                    &object,
-                    &key,
-                    value,
-                    Value::Object(object.clone()),
-                )?;
-                resume.set(runtime, key, result)?
+            ReverseStep::Has { mut resume } => {
+                let object = resume.take_has_object();
+                let key = resume.take_has_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_has_property(realm, &object, &key)?,
+                )?
             }
-            ReverseStep::Delete {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_delete_property(realm, &object, &key)?,
-            )?,
+            ReverseStep::Set { mut resume } => {
+                let object = resume.take_set_object();
+                let key = resume.take_set_key();
+                let value = resume.take_set_value();
+                {
+                    let result = runtime.internal_set(
+                        realm,
+                        &object,
+                        &key,
+                        value,
+                        Value::Object(object.clone()),
+                    )?;
+                    resume.set(runtime, key, result)?
+                }
+            }
+            ReverseStep::Delete { mut resume } => {
+                let object = resume.take_delete_object();
+                let key = resume.take_delete_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_delete_property(realm, &object, &key)?,
+                )?
+            }
         };
     }
 }
+
+#[derive(Default)]
+struct ReverseStepPending {
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    number_value: Option<Value>,
+    has_object: Option<ObjectRef>,
+    has_key: Option<PropertyKey>,
+    set_object: Option<ObjectRef>,
+    set_key: Option<PropertyKey>,
+    set_value: Option<Value>,
+    delete_object: Option<ObjectRef>,
+    delete_key: Option<PropertyKey>,
+}
+impl ReverseStep {
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: ReverseResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_number(value: Value, mut resume: ReverseResume) -> Self {
+        resume.0.pending_effect.number_value = Some(value);
+        Self::Number { resume }
+    }
+    pub(crate) fn request_has(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: ReverseResume,
+    ) -> Self {
+        resume.0.pending_effect.has_object = Some(object);
+        resume.0.pending_effect.has_key = Some(key);
+        Self::Has { resume }
+    }
+    pub(crate) fn request_set(
+        object: ObjectRef,
+        key: PropertyKey,
+        value: Value,
+        mut resume: ReverseResume,
+    ) -> Self {
+        resume.0.pending_effect.set_object = Some(object);
+        resume.0.pending_effect.set_key = Some(key);
+        resume.0.pending_effect.set_value = Some(value);
+        Self::Set { resume }
+    }
+    pub(crate) fn request_delete(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: ReverseResume,
+    ) -> Self {
+        resume.0.pending_effect.delete_object = Some(object);
+        resume.0.pending_effect.delete_key = Some(key);
+        Self::Delete { resume }
+    }
+}
+impl ReverseResume {
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("ReverseStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("ReverseStep Read key")
+    }
+    pub(crate) fn take_number_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .number_value
+            .take()
+            .expect("ReverseStep Number value")
+    }
+    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .has_object
+            .take()
+            .expect("ReverseStep Has object")
+    }
+    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .has_key
+            .take()
+            .expect("ReverseStep Has key")
+    }
+    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .set_object
+            .take()
+            .expect("ReverseStep Set object")
+    }
+    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .set_key
+            .take()
+            .expect("ReverseStep Set key")
+    }
+    pub(crate) fn take_set_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .set_value
+            .take()
+            .expect("ReverseStep Set value")
+    }
+    pub(crate) fn take_delete_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .delete_object
+            .take()
+            .expect("ReverseStep Delete object")
+    }
+    pub(crate) fn take_delete_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .delete_key
+            .take()
+            .expect("ReverseStep Delete key")
+    }
+}
+const _: () = assert!(std::mem::size_of::<ReverseStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ReverseStep>() <= 64);

@@ -107,7 +107,7 @@ pub(super) fn record_dispatch(step: &Step) {
         | Step::String { resume, .. }
         | Step::Call { resume, .. }
         | Step::Native { resume, .. }
-        | Step::RegExpExec { resume, .. } => Some(resume),
+        | Step::RegExpExec { resume, .. } => resume.as_ref(),
         _ => None,
     };
     // This is the immediate continuation owner, not a reconstructed call stack.

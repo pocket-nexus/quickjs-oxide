@@ -20,7 +20,20 @@ pub(crate) enum WeakConstructorStep {
         resume: WeakConstructorResume,
     },
 }
-pub(crate) struct WeakConstructorResume {
+pub(crate) struct WeakConstructorResume(Box<WeakConstructorResumeState>);
+impl std::ops::Deref for WeakConstructorResume {
+    type Target = WeakConstructorResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for WeakConstructorResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<WeakConstructorResume>() <= 8);
+pub(crate) struct WeakConstructorResumeState {
     realm: ContextId,
     input: Input,
 }
@@ -92,7 +105,7 @@ impl WeakConstructorStep {
         };
         Ok(Self::Prototype {
             new_target: new_target.clone(),
-            resume: WeakConstructorResume { realm, input },
+            resume: WeakConstructorResume(Box::new(WeakConstructorResumeState { realm, input })),
         })
     }
 }
@@ -108,7 +121,7 @@ impl WeakConstructorResume {
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => prototype,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {
-                let kind = match &self.input {
+                let kind = match &self.0.input {
                     Input::WeakRef { .. } => WeakIntrinsicKind::WeakRef,
                     Input::FinalizationRegistry(_) => WeakIntrinsicKind::FinalizationRegistry,
                 };
@@ -118,10 +131,10 @@ impl WeakConstructorResume {
                 )?
             }
         };
-        let object = match self.input {
+        let object = match self.0.input {
             Input::WeakRef { _value, key } => runtime.new_weak_ref_object(&prototype, key)?,
             Input::FinalizationRegistry(callback) => {
-                runtime.new_finalization_registry_object(&prototype, &callback, self.realm)?
+                runtime.new_finalization_registry_object(&prototype, &callback, self.0.realm)?
             }
         };
         Ok(WeakConstructorStep::Complete(Completion::Return(
@@ -148,3 +161,6 @@ pub(super) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<WeakConstructorStep>() <= 64);

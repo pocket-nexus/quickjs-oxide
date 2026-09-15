@@ -50,16 +50,22 @@ impl PromiseStep {
                     "Promise.then reject argv was not padded",
                 ))?,
         ]);
-        Ok(Self::Read {
-            receiver: Value::Object(promise.clone()),
-            key: runtime.intern_property_key("constructor")?,
-            resume: Box::new(PromiseResume {
+        Ok({
+            let __pending_field_receiver = Value::Object(promise.clone());
+            let __pending_field_key = runtime.intern_property_key("constructor")?;
+            let __pending_field_resume = Box::new(PromiseResume {
+                pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::ThenConstructor {
                     promise: promise.clone(),
                     handlers,
                 },
-            }),
+            });
+            Self::request_read(
+                __pending_field_receiver,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         })
     }
 }
@@ -73,17 +79,25 @@ pub(super) fn constructor(
     match result {
         Completion::Throw(value) => Ok(PromiseStep::Complete(Completion::Throw(value))),
         Completion::Return(Value::Undefined) => Box::new(PromiseResume {
+            pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: Phase::ThenCapability { promise, handlers },
         })
         .capability(runtime, None),
-        Completion::Return(Value::Object(constructor)) => Ok(PromiseStep::Read {
-            receiver: Value::Object(constructor),
-            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
-            resume: Box::new(PromiseResume {
+        Completion::Return(Value::Object(constructor)) => Ok({
+            let __pending_field_receiver = Value::Object(constructor);
+            let __pending_field_key =
+                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
+            let __pending_field_resume = Box::new(PromiseResume {
+                pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::ThenSpecies { promise, handlers },
-            }),
+            });
+            PromiseStep::request_read(
+                __pending_field_receiver,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         }),
         Completion::Return(_) => super::capability::error(runtime, realm, "not an object"),
     }
@@ -106,6 +120,7 @@ pub(super) fn species(
         },
     };
     Box::new(PromiseResume {
+        pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: Phase::ThenCapability { promise, handlers },
     })
@@ -173,13 +188,19 @@ impl PromiseStep {
         promise: ObjectRef,
         handlers: ThenHandlers,
     ) -> Result<Self, RuntimeError> {
-        Ok(Self::Read {
-            receiver: Value::Object(promise.clone()),
-            key: runtime.intern_property_key("constructor")?,
-            resume: Box::new(PromiseResume {
+        Ok({
+            let __pending_field_receiver = Value::Object(promise.clone());
+            let __pending_field_key = runtime.intern_property_key("constructor")?;
+            let __pending_field_resume = Box::new(PromiseResume {
+                pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::ThenConstructor { promise, handlers },
-            }),
+            });
+            Self::request_read(
+                __pending_field_receiver,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         })
     }
 }

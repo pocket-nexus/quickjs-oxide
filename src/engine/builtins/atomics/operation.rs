@@ -23,7 +23,20 @@ enum Phase {
     Timeout,
     Count,
 }
-pub(crate) struct AtomicsResume {
+pub(crate) struct AtomicsResume(Box<AtomicsResumeState>);
+impl std::ops::Deref for AtomicsResume {
+    type Target = AtomicsResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for AtomicsResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<AtomicsResume>() <= 8);
+pub(crate) struct AtomicsResumeState {
     realm: ContextId,
     kind: AtomicsNativeKind,
     arguments: Vec<Value>,
@@ -44,7 +57,7 @@ impl AtomicsStep {
                 runtime.call_atomics_pause(realm, arguments)?,
             ));
         }
-        let mut resume = AtomicsResume {
+        let mut resume = AtomicsResume(Box::new(AtomicsResumeState {
             realm,
             kind,
             arguments: arguments.readable.clone(),
@@ -52,7 +65,7 @@ impl AtomicsStep {
             access: None,
             operand: [0; 8],
             phase: Phase::Index,
-        };
+        }));
         if kind == AtomicsNativeKind::IsLockFree {
             resume.phase = Phase::Size;
             return Ok(Self::Number {
@@ -74,20 +87,21 @@ impl AtomicsStep {
 }
 impl AtomicsResume {
     fn mode(&self) -> AtomicAccessMode {
-        match self.kind {
+        match self.0.kind {
             AtomicsNativeKind::Wait => AtomicAccessMode::Wait,
             AtomicsNativeKind::Notify => AtomicAccessMode::Notify,
             _ => AtomicAccessMode::Operation,
         }
     }
     fn argument(&self, index: usize, message: &'static str) -> Result<Value, RuntimeError> {
-        self.arguments
+        self.0
+            .arguments
             .get(index)
             .cloned()
             .ok_or(RuntimeError::Invariant(message))
     }
     fn access(&self) -> Result<&AtomicAccess, RuntimeError> {
-        self.access.as_ref().ok_or(RuntimeError::Invariant(
+        self.0.access.as_ref().ok_or(RuntimeError::Invariant(
             "Atomics conversion lost its access",
         ))
     }
@@ -101,12 +115,12 @@ impl AtomicsResume {
         replacement: Option<[u8; 8]>,
     ) -> Result<AtomicsStep, RuntimeError> {
         let access = self.access()?;
-        match runtime.atomics_revalidate_after_value(self.realm, access)? {
+        match runtime.atomics_revalidate_after_value(self.0.realm, access)? {
             NativeConversion::Value(()) => {}
             NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
         }
         Ok(AtomicsStep::Complete(Completion::Return(
-            runtime.atomics_modify(access, operation, self.operand, replacement)?,
+            runtime.atomics_modify(access, operation, self.0.operand, replacement)?,
         )))
     }
     pub(crate) fn resume(
@@ -123,54 +137,59 @@ impl AtomicsResume {
                 "Atomics primitive conversion returned an object",
             ));
         }
-        match self.phase {
+        match self.0.phase {
             Phase::Index => {
-                let index = match runtime.native_to_index(self.realm, &value)? {
+                let index = match runtime.native_to_index(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
                 };
-                let prepared = self.prepared.take().ok_or(RuntimeError::Invariant(
+                let prepared = self.0.prepared.take().ok_or(RuntimeError::Invariant(
                     "Atomics index lost validation snapshot",
                 ))?;
-                self.access = Some(
-                    match runtime.atomics_finish_access(self.realm, prepared, index, self.mode())? {
+                self.0.access = Some(
+                    match runtime.atomics_finish_access(
+                        self.0.realm,
+                        prepared,
+                        index,
+                        self.mode(),
+                    )? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
                     },
                 );
-                if self.kind == AtomicsNativeKind::Operation(AtomicsOperationKind::Load) {
+                if self.0.kind == AtomicsNativeKind::Operation(AtomicsOperationKind::Load) {
                     return Ok(AtomicsStep::Complete(Completion::Return(
                         runtime.atomics_load(self.access()?)?,
                     )));
                 }
-                if self.kind == AtomicsNativeKind::Notify {
+                if self.0.kind == AtomicsNativeKind::Notify {
                     let value = self.argument(2, "Atomics.notify count was not readable")?;
                     if matches!(value, Value::Undefined) {
                         return Ok(AtomicsStep::Complete(
                             runtime.atomics_notify_converted(self.access()?, i32::MAX)?,
                         ));
                     }
-                    self.phase = Phase::Count;
+                    self.0.phase = Phase::Count;
                     return Ok(AtomicsStep::Number {
                         value,
                         resume: self,
                     });
                 }
-                self.phase = Phase::Operand;
+                self.0.phase = Phase::Operand;
                 Ok(AtomicsStep::Primitive {
                     value: self.argument(2, "Atomics operand was not readable")?,
                     resume: self,
                 })
             }
-            Phase::Operand if self.kind == AtomicsNativeKind::Store => {
+            Phase::Operand if self.0.kind == AtomicsNativeKind::Store => {
                 let access = self.access()?;
                 let stored = if access.snapshot.element.is_bigint() {
-                    match runtime.native_to_bigint(self.realm, &value)? {
+                    match runtime.native_to_bigint(self.0.realm, &value)? {
                         NativeConversion::Value(value) => Value::BigInt(value),
                         NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
                     }
                 } else {
-                    let number = match runtime.native_to_number(self.realm, &value)? {
+                    let number = match runtime.native_to_number(self.0.realm, &value)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
                     };
@@ -183,7 +202,7 @@ impl AtomicsResume {
                     Value::number(integer)
                 };
                 let bytes = match runtime.typed_array_convert_element(
-                    self.realm,
+                    self.0.realm,
                     access.snapshot.element,
                     &stored,
                 )? {
@@ -194,7 +213,7 @@ impl AtomicsResume {
                         ));
                     }
                 };
-                match runtime.atomics_revalidate_after_value(self.realm, access)? {
+                match runtime.atomics_revalidate_after_value(self.0.realm, access)? {
                     NativeConversion::Value(()) => {}
                     NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
                 }
@@ -203,17 +222,17 @@ impl AtomicsResume {
                 ))
             }
             Phase::Operand => {
-                self.operand = match runtime.typed_array_convert_element(
-                    self.realm,
+                self.0.operand = match runtime.typed_array_convert_element(
+                    self.0.realm,
                     self.access()?.snapshot.element,
                     &value,
                 )? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
                 };
-                match self.kind {
+                match self.0.kind {
                     AtomicsNativeKind::Operation(AtomicsOperationKind::CompareExchange) => {
-                        self.phase = Phase::Replacement;
+                        self.0.phase = Phase::Replacement;
                         Ok(AtomicsStep::Primitive {
                             value: self.argument(3, "Atomics replacement was not readable")?,
                             resume: self,
@@ -223,7 +242,7 @@ impl AtomicsResume {
                         self.modify(runtime, operation, None)
                     }
                     AtomicsNativeKind::Wait => {
-                        self.phase = Phase::Timeout;
+                        self.0.phase = Phase::Timeout;
                         Ok(AtomicsStep::Number {
                             value: self.argument(3, "Atomics.wait timeout was not readable")?,
                             resume: self,
@@ -236,7 +255,7 @@ impl AtomicsResume {
             }
             Phase::Replacement => {
                 let replacement = match runtime.typed_array_convert_element(
-                    self.realm,
+                    self.0.realm,
                     self.access()?.snapshot.element,
                     &value,
                 )? {
@@ -261,15 +280,15 @@ impl AtomicsResume {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
         };
-        Ok(AtomicsStep::Complete(match self.phase {
+        Ok(AtomicsStep::Complete(match self.0.phase {
             Phase::Size => Completion::Return(Value::Bool(matches!(
                 atomic_to_int32_sat(number),
                 1 | 2 | 4 | 8
             ))),
             Phase::Timeout => runtime.atomics_wait_converted(
-                self.realm,
+                self.0.realm,
                 self.access()?,
-                self.operand,
+                self.0.operand,
                 atomic_wait_timeout(number),
             )?,
             Phase::Count => runtime.atomics_notify_converted(
@@ -298,3 +317,6 @@ pub(crate) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<AtomicsStep>() <= 64);

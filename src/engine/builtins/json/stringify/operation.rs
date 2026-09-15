@@ -15,37 +15,29 @@ use crate::engine::{
 
 pub(crate) enum StringifyStep {
     Complete(Completion),
-    Read {
-        receiver: Value,
-        key: PropertyKey,
-        resume: StringifyResume,
-    },
-    String {
-        value: Value,
-        resume: StringifyResume,
-    },
-    Number {
-        value: Value,
-        resume: StringifyResume,
-    },
-    Keys {
-        object: ObjectRef,
-        resume: StringifyResume,
-    },
-    Enumerable {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: StringifyResume,
-    },
-    Call {
-        callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: StringifyResume,
-    },
+    Read { resume: StringifyResume },
+    String { resume: StringifyResume },
+    Number { resume: StringifyResume },
+    Keys { resume: StringifyResume },
+    Enumerable { resume: StringifyResume },
+    Call { resume: StringifyResume },
 }
-pub(crate) struct StringifyResume {
-    state: Box<State>,
+pub(crate) struct StringifyResume(Box<StringifyResumeState>);
+impl std::ops::Deref for StringifyResume {
+    type Target = StringifyResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for StringifyResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<StringifyResume>() <= 8);
+pub(crate) struct StringifyResumeState {
+    pending_effect: StringifyStepPending,
+    state: State,
     phase: Phase,
 }
 struct List {
@@ -132,17 +124,21 @@ impl StringifyStep {
                 Value::Object(object) => runtime.as_callable(object)?,
                 _ => None,
             };
-            let state = Box::new(State {
-                realm,
-                replacer,
-                property_list: None,
-                gap: JsString::from_static(""),
-                to_json_key: None,
-                stack: Vec::new(),
-                output: JsStringBuilder::new(0),
-                tasks: Vec::new(),
-                root: arguments.readable[0].clone(),
-                space: arguments.readable[2].clone(),
+            let state = Box::new(StringifyResumeState {
+                pending_effect: Default::default(),
+                phase: Phase::GapString,
+                state: State {
+                    realm,
+                    replacer,
+                    property_list: None,
+                    gap: JsString::from_static(""),
+                    to_json_key: None,
+                    stack: Vec::new(),
+                    output: JsStringBuilder::new(0),
+                    tasks: Vec::new(),
+                    root: arguments.readable[0].clone(),
+                    space: arguments.readable[2].clone(),
+                },
             });
             if state.replacer.is_none()
                 && let Value::Object(object) = replacer_value
@@ -159,7 +155,7 @@ impl StringifyStep {
         })())
     }
 }
-impl State {
+impl StringifyResumeState {
     fn read(
         self: Box<Self>,
         runtime: &Runtime,
@@ -167,11 +163,16 @@ impl State {
         key: &str,
         phase: Phase,
     ) -> JsonStringifyResult<StringifyStep> {
-        Ok(StringifyStep::Read {
-            receiver: Value::Object(object),
-            key: runtime.intern_property_key(key)?,
-            resume: StringifyResume { state: self, phase },
-        })
+        Ok(StringifyStep::request_read(
+            Value::Object(object),
+            runtime.intern_property_key(key)?,
+            {
+                let phase = phase;
+                let mut owner = self;
+                owner.phase = phase;
+                StringifyResume(owner)
+            },
+        ))
     }
     fn list(
         mut self: Box<Self>,
@@ -183,35 +184,35 @@ impl State {
             return self.gap(runtime);
         }
         let key = runtime.intern_property_key(&list.index.to_string())?;
-        Ok(StringifyStep::Read {
-            receiver: Value::Object(list.object.clone()),
+        Ok(StringifyStep::request_read(
+            Value::Object(list.object.clone()),
             key,
-            resume: StringifyResume {
-                state: self,
-                phase: Phase::ListItem(list),
+            {
+                let phase = Phase::ListItem(list);
+                let mut owner = self;
+                owner.phase = phase;
+                StringifyResume(owner)
             },
-        })
+        ))
     }
     fn gap(self: Box<Self>, runtime: &Runtime) -> JsonStringifyResult<StringifyStep> {
         match &self.space {
             Value::Object(object) => match runtime.json_wrapper_kind(object)? {
                 JsonWrapperKind::String => {
-                    return Ok(StringifyStep::String {
-                        value: self.space.clone(),
-                        resume: StringifyResume {
-                            state: self,
-                            phase: Phase::GapString,
-                        },
-                    });
+                    return Ok(StringifyStep::request_string(self.space.clone(), {
+                        let phase = Phase::GapString;
+                        let mut owner = self;
+                        owner.phase = phase;
+                        StringifyResume(owner)
+                    }));
                 }
                 JsonWrapperKind::Number => {
-                    return Ok(StringifyStep::Number {
-                        value: self.space.clone(),
-                        resume: StringifyResume {
-                            state: self,
-                            phase: Phase::GapNumber,
-                        },
-                    });
+                    return Ok(StringifyStep::request_number(self.space.clone(), {
+                        let phase = Phase::GapNumber;
+                        let mut owner = self;
+                        owner.phase = phase;
+                        StringifyResume(owner)
+                    }));
                 }
                 _ => {}
             },
@@ -288,17 +289,18 @@ impl State {
         check: Check,
     ) -> JsonStringifyResult<StringifyStep> {
         if matches!(check.value, Value::Object(_) | Value::BigInt(_)) {
-            Ok(StringifyStep::Read {
-                receiver: check.value.clone(),
-                key: self
-                    .to_json_key
+            Ok(StringifyStep::request_read(
+                check.value.clone(),
+                self.to_json_key
                     .clone()
                     .ok_or(RuntimeError::Invariant("JSON stringify lost toJSON key"))?,
-                resume: StringifyResume {
-                    state: self,
-                    phase: Phase::ToJson(check),
+                {
+                    let phase = Phase::ToJson(check);
+                    let mut owner = self;
+                    owner.phase = phase;
+                    StringifyResume(owner)
                 },
-            })
+            ))
         } else {
             self.replacer(runtime, check)
         }
@@ -319,15 +321,17 @@ impl State {
             }
             arguments.push(Value::String(check.key.clone()));
             arguments.push(check.value.clone());
-            return Ok(StringifyStep::Call {
-                callable: callable.clone(),
-                receiver: Value::Object(check.holder.clone()),
+            return Ok(StringifyStep::request_call(
+                callable.clone(),
+                Value::Object(check.holder.clone()),
                 arguments,
-                resume: StringifyResume {
-                    state: self,
-                    phase: Phase::Replacer(check),
+                {
+                    let phase = Phase::Replacer(check);
+                    let mut owner = self;
+                    owner.phase = phase;
+                    StringifyResume(owner)
                 },
-            });
+            ));
         }
         self.checked(runtime, check)
     }
@@ -445,22 +449,26 @@ impl State {
                             }
                             match runtime.json_wrapper_kind(&object)? {
                                 JsonWrapperKind::String => {
-                                    return Ok(StringifyStep::String {
-                                        value: Value::Object(object),
-                                        resume: StringifyResume {
-                                            state: self,
-                                            phase: Phase::WrapperString,
+                                    return Ok(StringifyStep::request_string(
+                                        Value::Object(object),
+                                        {
+                                            let phase = Phase::WrapperString;
+                                            let mut owner = self;
+                                            owner.phase = phase;
+                                            StringifyResume(owner)
                                         },
-                                    });
+                                    ));
                                 }
                                 JsonWrapperKind::Number => {
-                                    return Ok(StringifyStep::Number {
-                                        value: Value::Object(object),
-                                        resume: StringifyResume {
-                                            state: self,
-                                            phase: Phase::WrapperNumber(indent),
+                                    return Ok(StringifyStep::request_number(
+                                        Value::Object(object),
+                                        {
+                                            let phase = Phase::WrapperNumber(indent);
+                                            let mut owner = self;
+                                            owner.phase = phase;
+                                            StringifyResume(owner)
                                         },
-                                    });
+                                    ));
                                 }
                                 JsonWrapperKind::Boolean(boolean) => value = Value::Bool(boolean),
                                 JsonWrapperKind::BigInt(bigint) => value = Value::BigInt(bigint),
@@ -501,18 +509,20 @@ impl State {
                         indent,
                         next_indent,
                     });
-                    return Ok(StringifyStep::Read {
-                        receiver: Value::Object(array.clone()),
+                    return Ok(StringifyStep::request_read(
+                        Value::Object(array.clone()),
                         key,
-                        resume: StringifyResume {
-                            state: self,
-                            phase: Phase::ReadCheck {
+                        {
+                            let phase = Phase::ReadCheck {
                                 holder: array,
                                 key: JsString::try_from_utf8(&name)?,
                                 destination,
-                            },
+                            };
+                            let mut owner = self;
+                            owner.phase = phase;
+                            StringifyResume(owner)
                         },
-                    });
+                    ));
                 }
                 Task::ObjectProperty {
                     object,
@@ -540,23 +550,25 @@ impl State {
                         indent,
                         next_indent,
                     });
-                    return Ok(StringifyStep::Read {
-                        receiver: Value::Object(object.clone()),
+                    return Ok(StringifyStep::request_read(
+                        Value::Object(object.clone()),
                         key,
-                        resume: StringifyResume {
-                            state: self,
-                            phase: Phase::ReadCheck {
+                        {
+                            let phase = Phase::ReadCheck {
                                 holder: object,
                                 key: name,
                                 destination,
-                            },
+                            };
+                            let mut owner = self;
+                            owner.phase = phase;
+                            StringifyResume(owner)
                         },
-                    });
+                    ));
                 }
             }
         }
         Ok(StringifyStep::Complete(Completion::Return(Value::String(
-            self.output.finish()?,
+            self.state.output.finish()?,
         ))))
     }
     fn begin(
@@ -586,13 +598,12 @@ impl State {
             let keys = keys.clone();
             return self.object_ready(runtime, start, keys);
         }
-        Ok(StringifyStep::Keys {
-            object,
-            resume: StringifyResume {
-                state: self,
-                phase: Phase::ObjectKeys(start),
-            },
-        })
+        Ok(StringifyStep::request_keys(object, {
+            let phase = Phase::ObjectKeys(start);
+            let mut owner = self;
+            owner.phase = phase;
+            StringifyResume(owner)
+        }))
     }
     fn enumerate(
         self: Box<Self>,
@@ -612,19 +623,21 @@ impl State {
             {
                 continue;
             }
-            return Ok(StringifyStep::Enumerable {
-                object: start.object.clone(),
-                key: key.clone(),
-                resume: StringifyResume {
-                    state: self,
-                    phase: Phase::Enumerable {
+            return Ok(StringifyStep::request_enumerable(
+                start.object.clone(),
+                key.clone(),
+                {
+                    let phase = Phase::Enumerable {
                         start,
                         remaining,
                         keys,
                         key,
-                    },
+                    };
+                    let mut owner = self;
+                    owner.phase = phase;
+                    StringifyResume(owner)
                 },
-            });
+            ));
         }
         self.object_ready(runtime, start, keys)
     }
@@ -654,17 +667,17 @@ impl StringifyResume {
     ) -> Result<StringifyStep, RuntimeError> {
         result(self.value(runtime, reply))
     }
-    fn value(self, runtime: &Runtime, reply: Completion) -> JsonStringifyResult<StringifyStep> {
+    fn value(mut self, runtime: &Runtime, reply: Completion) -> JsonStringifyResult<StringifyStep> {
         let value = returned(reply)?;
-        let state = self.state;
-        match self.phase {
-            Phase::ListLength(object) => Ok(StringifyStep::Number {
-                value,
-                resume: Self {
-                    state,
-                    phase: Phase::ListNumber(object),
-                },
-            }),
+        let phase = std::mem::replace(&mut self.0.phase, Phase::GapString);
+        let state = self.0;
+        match phase {
+            Phase::ListLength(object) => Ok(StringifyStep::request_number(value, {
+                let phase = Phase::ListNumber(object);
+                let mut owner = state;
+                owner.phase = phase;
+                StringifyResume(owner)
+            })),
             Phase::ListItem(mut list) => {
                 let string = match &value {
                     Value::String(_) | Value::Int(_) | Value::Float(_) => true,
@@ -675,13 +688,12 @@ impl StringifyResume {
                     _ => false,
                 };
                 if string {
-                    Ok(StringifyStep::String {
-                        value,
-                        resume: Self {
-                            state,
-                            phase: Phase::ListString(list),
-                        },
-                    })
+                    Ok(StringifyStep::request_string(value, {
+                        let phase = Phase::ListString(list);
+                        let mut owner = state;
+                        owner.phase = phase;
+                        StringifyResume(owner)
+                    }))
                 } else {
                     list.index += 1;
                     state.list(runtime, list)
@@ -713,15 +725,17 @@ impl StringifyResume {
                         )?));
                     }
                     arguments.push(Value::String(check.key.clone()));
-                    Ok(StringifyStep::Call {
+                    Ok(StringifyStep::request_call(
                         callable,
-                        receiver: check.value.clone(),
+                        check.value.clone(),
                         arguments,
-                        resume: Self {
-                            state,
-                            phase: Phase::ToJsonCall(check),
+                        {
+                            let phase = Phase::ToJsonCall(check);
+                            let mut owner = state;
+                            owner.phase = phase;
+                            StringifyResume(owner)
                         },
-                    })
+                    ))
                 } else {
                     state.replacer(runtime, check)
                 }
@@ -745,37 +759,36 @@ impl StringifyResume {
                 state.output.push_js_string(&source)?;
                 state.advance(runtime)
             }
-            Phase::ArrayLength(start) => Ok(StringifyStep::Number {
-                value,
-                resume: Self {
-                    state,
-                    phase: Phase::ArrayNumber(start),
-                },
-            }),
+            Phase::ArrayLength(start) => Ok(StringifyStep::request_number(value, {
+                let phase = Phase::ArrayNumber(start);
+                let mut owner = state;
+                owner.phase = phase;
+                StringifyResume(owner)
+            })),
             _ => Err(RuntimeError::Invariant("JSON stringify unexpected value reply").into()),
         }
     }
     pub(crate) fn string(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: NativeConversion<JsString>,
     ) -> Result<StringifyStep, RuntimeError> {
         result((|| {
             let value = converted(reply)?;
-            match self.phase {
+            match std::mem::replace(&mut self.0.phase, Phase::GapString) {
                 Phase::ListString(mut list) => {
                     if !list.items.iter().any(|item| item == &value) {
                         list.items.push(value);
                     }
                     list.index += 1;
-                    self.state.list(runtime, list)
+                    self.0.list(runtime, list)
                 }
                 Phase::GapString => {
                     let gap = value.sub_string(0, value.len().min(10));
-                    self.state.root(runtime, gap)
+                    self.0.root(runtime, gap)
                 }
                 Phase::WrapperString => {
-                    let mut state = self.state;
+                    let mut state = self.0;
                     state.append_quoted(&value)?;
                     state.advance(runtime)
                 }
@@ -784,14 +797,15 @@ impl StringifyResume {
         })())
     }
     pub(crate) fn number(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: NativeConversion<f64>,
     ) -> Result<StringifyStep, RuntimeError> {
         result((|| {
             let value = converted(reply)?;
-            let mut state = self.state;
-            match self.phase {
+            let phase = std::mem::replace(&mut self.0.phase, Phase::GapString);
+            let mut state = self.0;
+            match phase {
                 Phase::ListNumber(object) => state.list(
                     runtime,
                     List {
@@ -825,21 +839,22 @@ impl StringifyResume {
         })())
     }
     pub(crate) fn keys(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<StringifyStep, RuntimeError> {
         result((|| {
             let keys = converted(reply)?;
-            let Phase::ObjectKeys(start) = self.phase else {
+            let Phase::ObjectKeys(start) = std::mem::replace(&mut self.0.phase, Phase::GapString)
+            else {
                 return Err(RuntimeError::Invariant("JSON stringify unexpected keys reply").into());
             };
-            self.state
+            self.0
                 .enumerate(runtime, start, keys.into_iter(), Vec::new())
         })())
     }
     pub(crate) fn boolean(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: NativeConversion<bool>,
     ) -> Result<StringifyStep, RuntimeError> {
@@ -850,7 +865,7 @@ impl StringifyResume {
                 remaining,
                 mut keys,
                 key,
-            } = self.phase
+            } = std::mem::replace(&mut self.0.phase, Phase::GapString)
             else {
                 return Err(
                     RuntimeError::Invariant("JSON stringify unexpected boolean reply").into(),
@@ -859,7 +874,7 @@ impl StringifyResume {
             if value {
                 keys.push(runtime.0.state.borrow().atoms.to_js_string(key.atom())?);
             }
-            self.state.enumerate(runtime, start, remaining, keys)
+            self.0.enumerate(runtime, start, remaining, keys)
         })())
     }
 }
@@ -871,40 +886,43 @@ pub(super) fn finish(
     loop {
         step = match step {
             StringifyStep::Complete(result) => return Ok(result),
-            StringifyStep::Read {
-                receiver,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
-            )?,
-            StringifyStep::String { value, resume } => {
+            StringifyStep::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                )?
+            }
+            StringifyStep::String { mut resume } => {
+                let value = resume.take_string_value();
                 resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
             }
-            StringifyStep::Number { value, resume } => {
+            StringifyStep::Number { mut resume } => {
+                let value = resume.take_number_value();
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
-            StringifyStep::Keys { object, resume } => {
+            StringifyStep::Keys { mut resume } => {
+                let object = resume.take_keys_object();
                 resume.keys(runtime, runtime.internal_own_property_keys(realm, &object)?)?
             }
-            StringifyStep::Enumerable {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_own_property_is_enumerable(realm, &object, &key)?,
-            )?,
-            StringifyStep::Call {
-                callable,
-                receiver,
-                arguments,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, receiver, &arguments)?,
-            )?,
+            StringifyStep::Enumerable { mut resume } => {
+                let object = resume.take_enumerable_object();
+                let key = resume.take_enumerable_key();
+                resume.boolean(
+                    runtime,
+                    runtime.internal_own_property_is_enumerable(realm, &object, &key)?,
+                )?
+            }
+            StringifyStep::Call { mut resume } => {
+                let callable = resume.take_call_callable();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                )?
+            }
         };
     }
 }
@@ -932,45 +950,55 @@ mod ownership_tests {
             actual_arg_count: 2,
             readable: vec![root, replacer, Value::Undefined],
         };
-        let StringifyStep::Read { resume, .. } =
+        let StringifyStep::Read { mut resume } =
             StringifyStep::start(&runtime, context.realm, &arguments).unwrap()
         else {
             panic!("expected root toJSON lookup");
         };
+        let _ = resume.take_read_receiver();
+        let _ = resume.take_read_key();
+
+        let resident_owner = (&*resume.0) as *const StringifyResumeState;
         drop(arguments);
-        let StringifyStep::Call {
-            arguments, resume, ..
-        } = resume
+        let StringifyStep::Call { mut resume } = resume
             .resume(&runtime, Completion::Return(Value::Undefined))
             .unwrap()
         else {
             panic!("expected root replacer");
         };
+        let _ = resume.take_call_callable();
+        let _ = resume.take_call_receiver();
+        let arguments = resume.take_call_arguments();
+        assert_eq!(resident_owner, (&*resume.0) as *const StringifyResumeState);
         let root = arguments[1].clone();
         drop(arguments);
-        let StringifyStep::Keys { object, resume } =
+        let StringifyStep::Keys { mut resume } =
             resume.resume(&runtime, Completion::Return(root)).unwrap()
         else {
             panic!("expected object keys");
         };
+        let object = resume.take_keys_object();
         let keys = runtime
             .internal_own_property_keys(context.realm, &object)
             .unwrap();
         let root_id = object.object_id();
         drop(object);
-        let StringifyStep::Enumerable { resume, .. } = resume.keys(&runtime, keys).unwrap() else {
+        let StringifyStep::Enumerable { mut resume } = resume.keys(&runtime, keys).unwrap() else {
             panic!("expected enumerable check");
         };
-        let StringifyStep::Read {
-            receiver: Value::Object(root),
-            key,
-            resume,
-        } = resume
+        let _ = resume.take_enumerable_object();
+        let _ = resume.take_enumerable_key();
+
+        let StringifyStep::Read { mut resume } = resume
             .boolean(&runtime, NativeConversion::Value(true))
             .unwrap()
         else {
             panic!("expected property read");
         };
+        let Value::Object(root) = resume.take_read_receiver() else {
+            panic!("expected payload");
+        };
+        let key = resume.take_read_key();
         let child = runtime
             .get_property_in_realm(context.realm, &root, &key)
             .unwrap();
@@ -983,9 +1011,12 @@ mod ownership_tests {
             .unwrap();
         drop(root);
         drop(key);
-        let StringifyStep::Read { resume, .. } = resume.resume(&runtime, child).unwrap() else {
+        let StringifyStep::Read { mut resume } = resume.resume(&runtime, child).unwrap() else {
             panic!("expected child toJSON lookup");
         };
+        let _ = resume.take_read_receiver();
+        let _ = resume.take_read_key();
+
         let step = resume
             .resume(&runtime, Completion::Return(to_json))
             .unwrap();
@@ -1005,3 +1036,148 @@ mod ownership_tests {
         assert!(weak.upgrade().is_none());
     }
 }
+
+#[derive(Default)]
+struct StringifyStepPending {
+    read_receiver: Option<Value>,
+    read_key: Option<PropertyKey>,
+    string_value: Option<Value>,
+    number_value: Option<Value>,
+    keys_object: Option<ObjectRef>,
+    enumerable_object: Option<ObjectRef>,
+    enumerable_key: Option<PropertyKey>,
+    call_callable: Option<CallableRef>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+}
+impl StringifyStep {
+    pub(crate) fn request_read(
+        receiver: Value,
+        key: PropertyKey,
+        mut resume: StringifyResume,
+    ) -> Self {
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_string(value: Value, mut resume: StringifyResume) -> Self {
+        resume.0.pending_effect.string_value = Some(value);
+        Self::String { resume }
+    }
+    pub(crate) fn request_number(value: Value, mut resume: StringifyResume) -> Self {
+        resume.0.pending_effect.number_value = Some(value);
+        Self::Number { resume }
+    }
+    pub(crate) fn request_keys(object: ObjectRef, mut resume: StringifyResume) -> Self {
+        resume.0.pending_effect.keys_object = Some(object);
+        Self::Keys { resume }
+    }
+    pub(crate) fn request_enumerable(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: StringifyResume,
+    ) -> Self {
+        resume.0.pending_effect.enumerable_object = Some(object);
+        resume.0.pending_effect.enumerable_key = Some(key);
+        Self::Enumerable { resume }
+    }
+    pub(crate) fn request_call(
+        callable: CallableRef,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: StringifyResume,
+    ) -> Self {
+        resume.0.pending_effect.call_callable = Some(callable);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+}
+impl StringifyResume {
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("StringifyStep Read receiver")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("StringifyStep Read key")
+    }
+    pub(crate) fn take_string_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .string_value
+            .take()
+            .expect("StringifyStep String value")
+    }
+    pub(crate) fn take_number_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .number_value
+            .take()
+            .expect("StringifyStep Number value")
+    }
+    pub(crate) fn take_keys_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .keys_object
+            .take()
+            .expect("StringifyStep Keys object")
+    }
+    pub(crate) fn take_enumerable_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .enumerable_object
+            .take()
+            .expect("StringifyStep Enumerable object")
+    }
+    pub(crate) fn take_enumerable_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .enumerable_key
+            .take()
+            .expect("StringifyStep Enumerable key")
+    }
+    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
+        self.0
+            .pending_effect
+            .call_callable
+            .take()
+            .expect("StringifyStep Call callable")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("StringifyStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("StringifyStep Call arguments")
+    }
+}
+const _: () = assert!(std::mem::size_of::<StringifyStep>() <= 64);
+
+impl std::ops::Deref for StringifyResumeState {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.state
+    }
+}
+impl std::ops::DerefMut for StringifyResumeState {
+    fn deref_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
+}
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<StringifyStep>() <= 64);

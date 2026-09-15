@@ -9,17 +9,24 @@ use crate::engine::{
 };
 pub(crate) enum FunctionTextStep {
     Complete(Completion),
-    Read {
-        object: ObjectRef,
-        key: PropertyKey,
-        resume: FunctionTextResume,
-    },
-    String {
-        value: Value,
-        resume: FunctionTextResume,
-    },
+    Read { resume: FunctionTextResume },
+    String { resume: FunctionTextResume },
 }
-pub(crate) struct FunctionTextResume {
+pub(crate) struct FunctionTextResume(Box<FunctionTextResumeState>);
+impl std::ops::Deref for FunctionTextResume {
+    type Target = FunctionTextResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for FunctionTextResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<FunctionTextResume>() <= 8);
+pub(crate) struct FunctionTextResumeState {
+    pending_effect: FunctionTextStepPending,
     function: ObjectRef,
     kind: FunctionKind,
     converted: bool,
@@ -106,14 +113,20 @@ impl FunctionTextStep {
             ))));
         }
 
-        Ok(Self::Read {
-            object: function.clone(),
-            key: runtime.intern_property_key("name")?,
-            resume: FunctionTextResume {
+        Ok({
+            let __pending_field_object = function.clone();
+            let __pending_field_key = runtime.intern_property_key("name")?;
+            let __pending_field_resume = FunctionTextResume(Box::new(FunctionTextResumeState {
+                pending_effect: FunctionTextStepPending::default(),
                 function,
                 kind: function_kind,
                 converted: false,
-            },
+            }));
+            Self::request_read(
+                __pending_field_object,
+                __pending_field_key,
+                __pending_field_resume,
+            )
         })
     }
 }
@@ -132,9 +145,10 @@ impl FunctionTextResume {
         if matches!(value, Value::Undefined) {
             self.string(NativeConversion::Value(JsString::from_static("")))
         } else {
-            Ok(FunctionTextStep::String {
-                value,
-                resume: self,
+            Ok({
+                let __pending_field_value = value;
+                let __pending_field_resume = self;
+                FunctionTextStep::request_string(__pending_field_value, __pending_field_resume)
             })
         }
     }
@@ -160,7 +174,7 @@ impl FunctionTextResume {
         let value = JsString::from_static(prefix)
             .try_concat(&name)?
             .try_concat(&JsString::from_static("() {\n    [native code]\n}"))?;
-        drop(self.function);
+        drop(self.0.function);
         Ok(FunctionTextStep::Complete(Completion::Return(
             Value::String(value),
         )))
@@ -174,14 +188,64 @@ pub(crate) fn finish(
     loop {
         step = match step {
             FunctionTextStep::Complete(result) => return Ok(result),
-            FunctionTextStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(runtime.get_property_in_realm(realm, &object, &key)?)?,
-            FunctionTextStep::String { value, resume } => {
+            FunctionTextStep::Read { mut resume } => {
+                let object = resume.take_read_object();
+                let key = resume.take_read_key();
+                resume.resume(runtime.get_property_in_realm(realm, &object, &key)?)?
+            }
+            FunctionTextStep::String { mut resume } => {
+                let value = resume.take_string_value();
                 resume.string(runtime.native_to_js_string(realm, &value)?)?
             }
         };
     }
 }
+
+#[derive(Default)]
+struct FunctionTextStepPending {
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    string_value: Option<Value>,
+}
+impl FunctionTextStep {
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: FunctionTextResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_string(value: Value, mut resume: FunctionTextResume) -> Self {
+        resume.0.pending_effect.string_value = Some(value);
+        Self::String { resume }
+    }
+}
+impl FunctionTextResume {
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("FunctionTextStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("FunctionTextStep Read key")
+    }
+    pub(crate) fn take_string_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .string_value
+            .take()
+            .expect("FunctionTextStep String value")
+    }
+}
+const _: () = assert!(std::mem::size_of::<FunctionTextStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<FunctionTextStep>() <= 64);

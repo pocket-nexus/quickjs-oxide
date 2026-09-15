@@ -1,7 +1,7 @@
 //! One executable owner and one exclusive storage window per running frame.
 
 mod storage;
-pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame};
+pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame, FrameBody};
 
 use crate::engine::api::error::Error;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
@@ -10,7 +10,7 @@ use crate::engine::object::ObjectRef;
 use crate::engine::value::Value;
 use crate::engine::vm::CallInput;
 use crate::engine::vm::frames::{ActiveFrameGuard, ActiveFrameToken};
-use crate::engine::vm::stack::{FrameStorage, FrameWindow};
+use crate::engine::vm::stack::FrameStorage;
 
 #[derive(Clone, Copy)]
 pub(super) enum ReturnValue {
@@ -96,18 +96,33 @@ pub(super) struct FrameEntry {
     pub storage: FrameStorage,
 }
 
+/// Only the dispatch header moves on frame-stack push/pop. The executable and
+/// affine window live in the already pooled cold allocation, whose address is
+/// stable across vector growth and reuse. No extra per-call allocation exists.
 pub(super) struct Frame {
     pub property_generation: u64,
     pub iterator_generation: u64,
     pub caller_realm: ContextId,
     pub active_frame: ActiveFrameToken,
 
-    pub executable: PublishedFunctionSnapshot,
-    pub window: FrameWindow,
     pub fault_pc: usize,
     pub resume_pc: usize,
     pub cold: ColdFrame,
 }
+impl std::ops::Deref for Frame {
+    type Target = storage::FrameBody;
+    fn deref(&self) -> &storage::FrameBody {
+        &self.cold
+    }
+}
+impl std::ops::DerefMut for Frame {
+    fn deref_mut(&mut self) -> &mut storage::FrameBody {
+        &mut self.cold
+    }
+}
+const _: () = assert!(size_of::<Frame>() <= 64);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(size_of::<Frame>() == 56);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FrameId {
@@ -463,28 +478,23 @@ mod tests {
         let weak = std::rc::Rc::downgrade(&runtime.0);
         let mut cache = CallStorage::default();
         cache.reserve().unwrap();
-        let (mut first, first_slots) = frame(&runtime, context.realm);
+        let (mut first, mut first_slots) = frame(&runtime, context.realm);
         first.cold.reusable_captured_locals = vec![true; 23];
-        let address = &*first.cold as *const FrameCold;
+        let address = &*first.cold as *const FrameBody;
+        first_slots.clear_frame(first.window.take()).unwrap();
         cache.recycle(first.cold);
         let (flags, grown) = cache.capture_flags(23).unwrap();
         assert_eq!(grown, 0);
         assert_eq!(flags, vec![false; 23]);
-        let (second, second_slots) = frame(&runtime, context.realm);
+        let (mut second, mut second_slots) = frame(&runtime, context.realm);
+        second_slots.clear_frame(second.window.take()).unwrap();
         let mut contents = second.cold.into_inner();
         contents.reusable_captured_locals = flags;
         let (cold, allocated) = cache.install(contents);
         assert_eq!(allocated, 0);
-        assert_eq!(&*cold as *const FrameCold, address);
+        assert_eq!(&*cold as *const FrameBody, address);
         cache.recycle(cold);
-        drop((
-            first.executable,
-            second.executable,
-            first_slots,
-            second_slots,
-            context,
-            runtime,
-        ));
+        drop((first_slots, second_slots, context, runtime));
         assert!(weak.upgrade().is_none());
         drop(cache);
     }
@@ -504,7 +514,7 @@ mod tests {
             )
             .unwrap();
         let function = runtime.new_object(None).unwrap();
-        let cold = super::ColdFrame::new(FrameCold {
+        let mut cold = super::ColdFrame::new(FrameCold {
             rare: std::cell::OnceCell::new(),
             return_to: None,
             entry_guard: None,
@@ -518,6 +528,8 @@ mod tests {
             closure_slots: Default::default(),
             reusable_captured_locals: Vec::new(),
         });
+        cold.executable = executable.into();
+        cold.window = window.into();
         (
             Frame {
                 property_generation: 0,
@@ -525,8 +537,6 @@ mod tests {
                 caller_realm: realm,
                 active_frame: ActiveFrameToken(0),
 
-                executable,
-                window,
                 fault_pc: 0,
                 resume_pc: 0,
                 cold,
@@ -588,14 +598,14 @@ mod tests {
         assert!(runtime.0.state.borrow().heap.object(object).is_err());
     }
     fn entry(runtime: &Runtime, realm: ContextId) -> FrameEntry {
-        let (frame, _slots) = frame(runtime, realm);
+        let (mut frame, _slots) = frame(runtime, realm);
         FrameEntry {
             initialize_bindings: false,
             property_generation: frame.property_generation,
             iterator_generation: frame.iterator_generation,
             caller_realm: frame.caller_realm,
             active_frame: frame.active_frame,
-            executable: frame.executable,
+            executable: frame.executable.take(),
             cold: frame.cold,
             storage: FrameStorage {
                 original_arguments: Vec::new(),
@@ -652,8 +662,8 @@ mod tests {
             execution.frames.limit = 2;
             execution.frames.next_generation = generation;
             let replacement = push_frame(&mut execution, entry(&runtime, context.realm)).unwrap();
-            let frame = execution.frames.pop(replacement).unwrap();
-            execution.slots.clear_frame(frame.window).unwrap();
+            let mut frame = execution.frames.pop(replacement).unwrap();
+            execution.slots.clear_frame(frame.window.take()).unwrap();
             let parent = execution.frames.current_mut(parent).unwrap();
             assert_eq!(
                 execution.slots.binding_counts(&parent.window).unwrap(),

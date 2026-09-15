@@ -349,7 +349,20 @@ pub(crate) enum RegExpPresentationStep {
         resume: RegExpPresentationResume,
     },
 }
-pub(crate) struct RegExpPresentationResume {
+pub(crate) struct RegExpPresentationResume(Box<RegExpPresentationResumeState>);
+impl std::ops::Deref for RegExpPresentationResume {
+    type Target = RegExpPresentationResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for RegExpPresentationResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<RegExpPresentationResume>() <= 8);
+pub(crate) struct RegExpPresentationResumeState {
     realm: ContextId,
     object: ObjectRef,
     phase: PresentationPhase,
@@ -409,17 +422,17 @@ impl RegExpPresentationStep {
         Ok(Self::Read {
             object: object.clone(),
             key: runtime.intern_property_key(name)?,
-            resume: RegExpPresentationResume {
+            resume: RegExpPresentationResume(Box::new(RegExpPresentationResumeState {
                 realm,
                 object: object.clone(),
                 phase,
-            },
+            })),
         })
     }
 }
 impl RegExpPresentationResume {
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<RegExpPresentationStep, RuntimeError> {
@@ -429,19 +442,21 @@ impl RegExpPresentationResume {
                 return Ok(RegExpPresentationStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             PresentationPhase::Source => Ok(RegExpPresentationStep::Primitive {
                 value,
-                resume: Self {
-                    phase: PresentationPhase::SourceString,
-                    ..self
+                resume: {
+                    let updated_0 = PresentationPhase::SourceString;
+                    self.0.phase = updated_0;
+                    self
                 },
             }),
             PresentationPhase::Flags(output) => Ok(RegExpPresentationStep::Primitive {
                 value,
-                resume: Self {
-                    phase: PresentationPhase::FlagsString(output),
-                    ..self
+                resume: {
+                    let updated_0 = PresentationPhase::FlagsString(output);
+                    self.0.phase = updated_0;
+                    self
                 },
             }),
             PresentationPhase::SourceString => {
@@ -450,7 +465,7 @@ impl RegExpPresentationResume {
                         "RegExp source conversion returned an object",
                     ));
                 }
-                let source = match runtime.native_to_js_string(self.realm, &value)? {
+                let source = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpPresentationStep::Complete(Completion::Throw(value)));
@@ -461,11 +476,12 @@ impl RegExpPresentationResume {
                 output.push_js_string(&source)?;
                 output.push_utf8("/")?;
                 Ok(RegExpPresentationStep::Read {
-                    object: self.object.clone(),
+                    object: self.0.object.clone(),
                     key: runtime.intern_property_key("flags")?,
-                    resume: Self {
-                        phase: PresentationPhase::Flags(output),
-                        ..self
+                    resume: {
+                        let updated_0 = PresentationPhase::Flags(output);
+                        self.0.phase = updated_0;
+                        self
                     },
                 })
             }
@@ -475,7 +491,7 @@ impl RegExpPresentationResume {
                         "RegExp flags conversion returned an object",
                     ));
                 }
-                let flags = match runtime.native_to_js_string(self.realm, &value)? {
+                let flags = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpPresentationStep::Complete(Completion::Throw(value)));
@@ -497,11 +513,12 @@ impl RegExpPresentationResume {
                     )));
                 }
                 Ok(RegExpPresentationStep::Read {
-                    object: self.object.clone(),
+                    object: self.0.object.clone(),
                     key: runtime.intern_property_key(FLAG_PROPERTIES[index].0)?,
-                    resume: Self {
-                        phase: PresentationPhase::Flag { index, output },
-                        ..self
+                    resume: {
+                        let updated_0 = PresentationPhase::Flag { index, output };
+                        self.0.phase = updated_0;
+                        self
                     },
                 })
             }
@@ -535,3 +552,6 @@ fn finish_presentation(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<RegExpPresentationStep>() <= 64);

@@ -76,7 +76,20 @@ pub(crate) enum RegExpCompileStep {
         resume: RegExpCompileResume,
     },
 }
-pub(crate) struct RegExpCompileResume {
+pub(crate) struct RegExpCompileResume(Box<RegExpCompileResumeState>);
+impl std::ops::Deref for RegExpCompileResume {
+    type Target = RegExpCompileResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for RegExpCompileResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<RegExpCompileResume>() <= 8);
+pub(crate) struct RegExpCompileResumeState {
     realm: ContextId,
     regexp: ObjectRef,
     flags: Value,
@@ -131,12 +144,12 @@ impl RegExpCompileStep {
                 genuine.program,
             )?));
         }
-        let resume = RegExpCompileResume {
+        let resume = RegExpCompileResume(Box::new(RegExpCompileResumeState {
             realm,
             regexp: regexp.clone(),
             flags: flags.clone(),
             phase: CompilePhase::Pattern,
-        };
+        }));
         if matches!(pattern, Value::Undefined) {
             resume.pattern(runtime, JsString::from_static(""))
         } else {
@@ -149,24 +162,25 @@ impl RegExpCompileStep {
 }
 impl RegExpCompileResume {
     fn pattern(
-        self,
+        mut self,
         runtime: &Runtime,
         pattern: JsString,
     ) -> Result<RegExpCompileStep, RuntimeError> {
-        if matches!(self.flags, Value::Undefined) {
+        if matches!(self.0.flags, Value::Undefined) {
             let program = Runtime::compile_regexp_program(&pattern, &JsString::from_static(""))?;
             Ok(RegExpCompileStep::Complete(runtime.finish_regexp_compile(
-                self.realm,
-                &self.regexp,
+                self.0.realm,
+                &self.0.regexp,
                 pattern,
                 program,
             )?))
         } else {
             Ok(RegExpCompileStep::Primitive {
-                value: self.flags.clone(),
-                resume: Self {
-                    phase: CompilePhase::Flags(pattern),
-                    ..self
+                value: self.0.flags.clone(),
+                resume: {
+                    let updated_0 = CompilePhase::Flags(pattern);
+                    self.0.phase = updated_0;
+                    self
                 },
             })
         }
@@ -187,19 +201,19 @@ impl RegExpCompileResume {
                 "RegExp compile conversion returned an object",
             ));
         }
-        let value = match runtime.native_to_js_string(self.realm, &value)? {
+        let value = match runtime.native_to_js_string(self.0.realm, &value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(RegExpCompileStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             CompilePhase::Pattern => self.pattern(runtime, value),
             CompilePhase::Flags(pattern) => {
                 let program = Runtime::compile_regexp_program(&pattern, &value)?;
                 Ok(RegExpCompileStep::Complete(runtime.finish_regexp_compile(
-                    self.realm,
-                    &self.regexp,
+                    self.0.realm,
+                    &self.0.regexp,
                     pattern,
                     program,
                 )?))
@@ -207,3 +221,6 @@ impl RegExpCompileResume {
         }
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<RegExpCompileStep>() <= 64);

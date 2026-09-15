@@ -314,3 +314,6 @@ pub(super) fn finish(runtime: &Runtime, mut step: LinkStep) -> Result<(), Runtim
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<LinkStep>() <= 64);

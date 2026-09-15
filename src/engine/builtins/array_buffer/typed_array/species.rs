@@ -252,7 +252,20 @@ pub(crate) enum TypedSpeciesStep {
         resume: TypedSpeciesResume,
     },
 }
-pub(crate) struct TypedSpeciesResume {
+pub(crate) struct TypedSpeciesResume(Box<TypedSpeciesResumeState>);
+impl std::ops::Deref for TypedSpeciesResume {
+    type Target = TypedSpeciesResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedSpeciesResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedSpeciesResume>() <= 8);
+pub(crate) struct TypedSpeciesResumeState {
     realm: ContextId,
     phase: SpeciesPhase,
 }
@@ -323,10 +336,10 @@ impl TypedSpeciesStep {
         Ok(Self::Read {
             object: input.source.clone(),
             key: runtime.intern_property_key("constructor")?,
-            resume: TypedSpeciesResume {
+            resume: TypedSpeciesResume(Box::new(TypedSpeciesResumeState {
                 realm,
                 phase: SpeciesPhase::Constructor(input),
-            },
+            })),
         })
     }
     pub(crate) fn create(
@@ -355,10 +368,10 @@ impl TypedSpeciesStep {
         Ok(Self::Construct {
             constructor,
             arguments,
-            resume: TypedSpeciesResume {
+            resume: TypedSpeciesResume(Box::new(TypedSpeciesResumeState {
                 realm,
                 phase: SpeciesPhase::Constructed(minimum_length),
-            },
+            })),
         })
     }
 }
@@ -433,15 +446,15 @@ impl TypedSpeciesResume {
                 return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             SpeciesPhase::Constructor(input) => {
                 if matches!(value, Value::Undefined) {
-                    return Self::selected(runtime, self.realm, input, Value::Undefined);
+                    return Self::selected(runtime, self.0.realm, input, Value::Undefined);
                 }
                 let Value::Object(object) = value else {
                     return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Type,
                             "not an object",
                         )?,
@@ -450,16 +463,16 @@ impl TypedSpeciesResume {
                 Ok(TypedSpeciesStep::Read {
                     object,
                     key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
-                    resume: Self {
-                        realm: self.realm,
+                    resume: Self(Box::new(TypedSpeciesResumeState {
+                        realm: self.0.realm,
                         phase: SpeciesPhase::Species(input),
-                    },
+                    })),
                 })
             }
-            SpeciesPhase::Species(input) => Self::selected(runtime, self.realm, input, value),
+            SpeciesPhase::Species(input) => Self::selected(runtime, self.0.realm, input, value),
             SpeciesPhase::Constructed(minimum) => Ok(TypedSpeciesStep::Complete(
                 runtime.validate_typed_array_construction(
-                    self.realm,
+                    self.0.realm,
                     Completion::Return(value),
                     minimum,
                 )?,
@@ -499,3 +512,6 @@ fn finish_species(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedSpeciesStep>() <= 64);

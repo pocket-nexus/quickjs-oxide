@@ -42,7 +42,7 @@ impl OwnedSuspension {
             ));
         }
         let mut frame = execution.frames.pop(id)?;
-        let storage = execution.slots.take_frame(frame.window)?;
+        let storage = execution.slots.take_frame(frame.window.take())?;
         if let Some(guard) = frame.cold.entry_guard.take() {
             guard
                 .finish()
@@ -57,7 +57,7 @@ impl OwnedSuspension {
                 iterator_generation: frame.iterator_generation,
                 caller_realm: frame.caller_realm,
                 active_frame: frame.active_frame,
-                executable: frame.executable,
+                executable: frame.executable.take(),
                 cold: frame.cold,
                 storage,
             },

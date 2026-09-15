@@ -30,10 +30,7 @@ pub(super) fn run(
     loop {
         let result = super::run(execution, id);
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(match &result {
-            Ok(exit) => exit.diagnostic_name(),
-            Err(_) => "run_exit.EngineError",
-        });
+        record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations
         // may allocate an error, release an observable owner or invoke code.
         if !matches!(&result, Ok(RunExit::Call { .. } | RunExit::Complete)) {
@@ -46,7 +43,7 @@ pub(super) fn run(
                 let thrown = execution
                     .pending
                     .take()
-                    .ok_or_else(|| Error::internal("resident arithmetic lost its exception"))?;
+                    .ok_or_else(|| invariant("resident arithmetic lost its exception"))?;
                 return Ok(Boundary::Complete(Completion::Throw(thrown)));
             }
             RunExit::Call {
@@ -68,7 +65,7 @@ pub(super) fn run(
             }
             RunExit::ReplaceBinding { .. } | RunExit::ReleaseOperand { .. } => {
                 if !crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)? {
-                    return Err(Error::internal(
+                    return Err(invariant(
                         "direct slot completion changed its frame protocol",
                     ));
                 }
@@ -86,16 +83,14 @@ pub(super) fn run(
                 match progress {
                     NumericProgress::Completed => {
                         #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "numeric_completed_in_same_frame",
-                        );
+                        record_event("numeric_completed_in_same_frame");
                     }
                     NumericProgress::Deferred(CallStep::Entered) => return Ok(Boundary::Entered),
                     NumericProgress::Deferred(CallStep::Complete(completion)) => {
                         return Ok(Boundary::Complete(completion));
                     }
                     NumericProgress::Deferred(CallStep::Bridge) => {
-                        return Err(Error::internal("numeric operation attempted replay"));
+                        return Err(invariant("numeric operation attempted replay"));
                     }
                 }
             }
@@ -111,7 +106,7 @@ pub(super) fn run(
                     PrimitiveCompletion::Throw(value) => {
                         return Ok(Boundary::Complete(Completion::Throw(value)));
                     }
-                    _ => return Err(Error::internal("local addition lost its primitive guard")),
+                    _ => return Err(invariant("local addition lost its primitive guard")),
                 }
             }
             RunExit::ConvertPlus | RunExit::ConvertAdd => {
@@ -276,4 +271,29 @@ fn enter_call(
             }
         },
     )
+}
+
+/// Error allocation and diagnostic-only dispatch must not widen the ordinary
+/// ready loop. Profiling helpers are absent from the ordinary build.
+#[cold]
+#[inline(never)]
+fn invariant(message: &'static str) -> Error {
+    Error::internal(message)
+}
+
+#[cfg(feature = "profiling")]
+#[cold]
+#[inline(never)]
+fn record_exit(result: &Result<RunExit, Error>) {
+    record_event(match result {
+        Ok(exit) => exit.diagnostic_name(),
+        Err(_) => "run_exit.EngineError",
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[cold]
+#[inline(never)]
+fn record_event(event: &'static str) {
+    crate::engine::api::profiling::record_owned_execution_event(event);
 }

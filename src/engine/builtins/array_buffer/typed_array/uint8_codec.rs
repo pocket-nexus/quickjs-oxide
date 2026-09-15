@@ -1046,7 +1046,20 @@ pub(crate) enum Uint8CodecStep {
         resume: Uint8CodecResume,
     },
 }
-pub(crate) struct Uint8CodecResume {
+pub(crate) struct Uint8CodecResume(Box<Uint8CodecResumeState>);
+impl std::ops::Deref for Uint8CodecResume {
+    type Target = Uint8CodecResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for Uint8CodecResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<Uint8CodecResume>() <= 8);
+pub(crate) struct Uint8CodecResumeState {
     realm: ContextId,
     mode: CodecMode,
     source: Vec<u8>,
@@ -1123,13 +1136,13 @@ impl Uint8CodecStep {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-        let resume = Uint8CodecResume {
+        let resume = Uint8CodecResume(Box::new(Uint8CodecResumeState {
             realm,
             mode,
             source,
             options,
             alphabet: None,
-        };
+        }));
         if let Some(object) = &resume.options {
             Ok(Self::Read {
                 object: object.clone(),
@@ -1158,22 +1171,23 @@ impl Uint8CodecResume {
                 return Ok(Uint8CodecStep::Complete(Completion::Throw(value)));
             }
         };
-        let Some(alphabet) = self.alphabet else {
-            self.alphabet = Some(
-                match runtime.uint8_codec_alphabet_value(self.realm, value)? {
+        let Some(alphabet) = self.0.alphabet else {
+            self.0.alphabet = Some(
+                match runtime.uint8_codec_alphabet_value(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(Uint8CodecStep::Complete(Completion::Throw(value)));
                     }
                 },
             );
-            let name = if matches!(self.mode, CodecMode::To(_)) {
+            let name = if matches!(self.0.mode, CodecMode::To(_)) {
                 "omitPadding"
             } else {
                 "lastChunkHandling"
             };
             return Ok(Uint8CodecStep::Read {
                 object: self
+                    .0
                     .options
                     .clone()
                     .ok_or(RuntimeError::Invariant("Uint8 codec lost options"))?,
@@ -1181,7 +1195,7 @@ impl Uint8CodecResume {
                 resume: self,
             });
         };
-        if matches!(self.mode, CodecMode::To(_)) {
+        if matches!(self.0.mode, CodecMode::To(_)) {
             self.complete(
                 runtime,
                 alphabet,
@@ -1189,7 +1203,7 @@ impl Uint8CodecResume {
                 runtime.value_to_boolean(&value)?,
             )
         } else {
-            let last = match runtime.uint8_codec_last_chunk_value(self.realm, value)? {
+            let last = match runtime.uint8_codec_last_chunk_value(self.0.realm, value)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
                     return Ok(Uint8CodecStep::Complete(Completion::Throw(value)));
@@ -1205,19 +1219,19 @@ impl Uint8CodecResume {
         last: LastChunkHandling,
         omit: bool,
     ) -> Result<Uint8CodecStep, RuntimeError> {
-        let result = match self.mode {
+        let result = match self.0.mode {
             CodecMode::From => {
-                runtime.finish_uint8_array_from_base64(self.realm, self.source, alphabet, last)
+                runtime.finish_uint8_array_from_base64(self.0.realm, self.0.source, alphabet, last)
             }
             CodecMode::Set(target) => runtime.finish_uint8_array_set_from_base64(
-                self.realm,
+                self.0.realm,
                 target,
-                self.source,
+                self.0.source,
                 alphabet,
                 last,
             ),
             CodecMode::To(target) => {
-                runtime.finish_uint8_array_to_base64(self.realm, target, alphabet, omit)
+                runtime.finish_uint8_array_to_base64(self.0.realm, target, alphabet, omit)
             }
         }?;
         Ok(Uint8CodecStep::Complete(result))
@@ -1242,3 +1256,6 @@ fn codec_finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<Uint8CodecStep>() <= 64);

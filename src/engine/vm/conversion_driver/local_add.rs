@@ -26,7 +26,7 @@ pub(in crate::engine::vm) fn complete_local_add(
     let (left, right) = (*left, *right);
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
-    let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
+    let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
     // All preflight remains non-mutating; checked/captured/TDZ fallbacks retain
     // the canonical first GetLocal PC and original operand stack.
     if transaction

@@ -42,7 +42,20 @@ pub(crate) enum StringSearchStep {
         resume: StringSearchResume,
     },
 }
-pub(crate) struct StringSearchResume {
+pub(crate) struct StringSearchResume(Box<StringSearchResumeState>);
+impl std::ops::Deref for StringSearchResume {
+    type Target = StringSearchResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for StringSearchResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<StringSearchResume>() <= 8);
+pub(crate) struct StringSearchResumeState {
     realm: ContextId,
     kind: StringSearchKind,
     first: Value,
@@ -83,7 +96,7 @@ impl StringSearchStep {
         Ok(Self::Primitive {
             value: this_value.clone(),
             hint: ToPrimitiveHint::String,
-            resume: StringSearchResume {
+            resume: StringSearchResume(Box::new(StringSearchResumeState {
                 realm,
                 kind,
                 first: arguments
@@ -100,13 +113,13 @@ impl StringSearchStep {
                     .unwrap_or(Value::Undefined),
                 actual: arguments.actual_arg_count,
                 phase: SearchPhase::Source,
-            },
+            })),
         })
     }
 }
 impl StringSearchResume {
     fn primitive(
-        self,
+        mut self,
         value: Value,
         hint: ToPrimitiveHint,
         phase: SearchPhase,
@@ -114,11 +127,15 @@ impl StringSearchResume {
         StringSearchStep::Primitive {
             value,
             hint,
-            resume: Self { phase, ..self },
+            resume: {
+                let updated_0 = phase;
+                self.0.phase = updated_0;
+                self
+            },
         }
     }
     fn needle(self, source: JsString) -> StringSearchStep {
-        let value = self.first.clone();
+        let value = self.0.first.clone();
         self.primitive(value, ToPrimitiveHint::String, SearchPhase::Needle(source))
     }
     fn finish_search(
@@ -128,7 +145,7 @@ impl StringSearchResume {
         needle: JsString,
         position: Option<f64>,
     ) -> Result<StringSearchStep, RuntimeError> {
-        Ok(StringSearchStep::Complete(match self.kind {
+        Ok(StringSearchStep::Complete(match self.0.kind {
             StringSearchKind::Index(kind) => {
                 runtime.finish_string_index_of(kind, source, needle, position)?
             }
@@ -143,7 +160,7 @@ impl StringSearchResume {
         }))
     }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<StringSearchStep, RuntimeError> {
@@ -153,8 +170,8 @@ impl StringSearchResume {
                 return Ok(StringSearchStep::Complete(Completion::Throw(value)));
             }
         };
-        let realm = self.realm;
-        match self.phase {
+        let realm = self.0.realm;
+        match self.0.phase {
             SearchPhase::Source => {
                 let source = match string_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
@@ -162,14 +179,14 @@ impl StringSearchResume {
                         return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
-                match self.kind {
+                match self.0.kind {
                     StringSearchKind::Subrange(_) => {
                         i32::try_from(source.len()).map_err(|_| {
                             RuntimeError::Invariant(
                                 "String length exceeded QuickJS's signed index range",
                             )
                         })?;
-                        let value = self.first.clone();
+                        let value = self.0.first.clone();
                         Ok(self.primitive(
                             value,
                             ToPrimitiveHint::Number,
@@ -177,15 +194,16 @@ impl StringSearchResume {
                         ))
                     }
                     StringSearchKind::Includes(_) => {
-                        if let Value::Object(object) = &self.first {
+                        if let Value::Object(object) = &self.0.first {
                             Ok(StringSearchStep::Read {
                                 object: object.clone(),
                                 key: PropertyKey::from(
                                     runtime.well_known_symbol(WellKnownSymbol::Match),
                                 ),
-                                resume: Self {
-                                    phase: SearchPhase::Regexp(source),
-                                    ..self
+                                resume: {
+                                    let updated_0 = SearchPhase::Regexp(source);
+                                    self.0.phase = updated_0;
+                                    self
                                 },
                             })
                         } else {
@@ -196,7 +214,7 @@ impl StringSearchResume {
                 }
             }
             SearchPhase::Regexp(source) => {
-                let Value::Object(object) = &self.first else {
+                let Value::Object(object) = &self.0.first else {
                     return Err(RuntimeError::Invariant("String IsRegExp lost its object"));
                 };
                 let regexp = runtime.is_regexp_from_match(object, &value)?;
@@ -209,9 +227,10 @@ impl StringSearchResume {
                         )?,
                     )));
                 }
-                Ok(Self {
-                    phase: SearchPhase::Source,
-                    ..self
+                Ok({
+                    let updated_0 = SearchPhase::Source;
+                    self.0.phase = updated_0;
+                    self
                 }
                 .needle(source))
             }
@@ -230,9 +249,10 @@ impl StringSearchResume {
                         "String search length exceeded QuickJS's signed index range",
                     )
                 })?;
-                let next = Self {
-                    phase: SearchPhase::Source,
-                    ..self
+                let next = {
+                    let updated_0 = SearchPhase::Source;
+                    self.0.phase = updated_0;
+                    self
                 };
                 if next.actual > 1
                     && !(matches!(next.kind, StringSearchKind::Includes(_))
@@ -255,9 +275,10 @@ impl StringSearchResume {
                         return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
-                Self {
-                    phase: SearchPhase::Source,
-                    ..self
+                {
+                    let updated_0 = SearchPhase::Source;
+                    self.0.phase = updated_0;
+                    self
                 }
                 .finish_search(runtime, source, needle, Some(position))
             }
@@ -268,9 +289,10 @@ impl StringSearchResume {
                         return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
-                let next = Self {
-                    phase: SearchPhase::Source,
-                    ..self
+                let next = {
+                    let updated_0 = SearchPhase::Source;
+                    self.0.phase = updated_0;
+                    self
                 };
                 if matches!(next.second, Value::Undefined) {
                     let StringSearchKind::Subrange(kind) = next.kind else {
@@ -295,7 +317,7 @@ impl StringSearchResume {
                         return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
-                let StringSearchKind::Subrange(kind) = self.kind else {
+                let StringSearchKind::Subrange(kind) = self.0.kind else {
                     return Err(RuntimeError::Invariant("String end reply lost its kind"));
                 };
                 Ok(StringSearchStep::Complete(runtime.finish_string_subrange(
@@ -363,3 +385,6 @@ pub(super) fn finish(
         };
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<StringSearchStep>() <= 64);

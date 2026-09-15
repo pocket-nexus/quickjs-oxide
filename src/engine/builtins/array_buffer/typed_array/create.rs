@@ -15,47 +15,30 @@ use crate::engine::{
 };
 pub(crate) enum TypedCreateStep {
     Complete(Completion),
-    Primitive {
-        value: Value,
-        resume: TypedCreateResume,
-    },
-    Prototype {
-        new_target: Value,
-        resume: TypedCreateResume,
-    },
-    Read {
-        receiver: Value,
-        key: PropertyKey,
-        resume: TypedCreateResume,
-    },
-    Method {
-        source: Value,
-        resume: TypedCreateResume,
-    },
-    Collect {
-        source: Value,
-        method: CallableRef,
-        element: TypedArrayElementKind,
-        resume: TypedCreateResume,
-    },
-    Create {
-        constructor: Value,
-        length: u64,
-        resume: TypedCreateResume,
-    },
-    Call {
-        target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
-        resume: TypedCreateResume,
-    },
-    Element {
-        element: TypedArrayElementKind,
-        value: Value,
-        resume: TypedCreateResume,
-    },
+    Primitive { resume: TypedCreateResume },
+    Prototype { resume: TypedCreateResume },
+    Read { resume: TypedCreateResume },
+    Method { resume: TypedCreateResume },
+    Collect { resume: TypedCreateResume },
+    Create { resume: TypedCreateResume },
+    Call { resume: TypedCreateResume },
+    Element { resume: TypedCreateResume },
 }
-pub(crate) struct TypedCreateResume {
+pub(crate) struct TypedCreateResume(Box<TypedCreateResumeState>);
+impl std::ops::Deref for TypedCreateResume {
+    type Target = TypedCreateResumeState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TypedCreateResume {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedCreateResume>() <= 8);
+pub(crate) struct TypedCreateResumeState {
+    pending_effect: TypedCreateStepPending,
     realm: ContextId,
     phase: Phase,
 }
@@ -211,13 +194,14 @@ impl TypedCreateStep {
             };
             ProtoPurpose::Length(length)
         };
-        Ok(Self::Prototype {
-            new_target: new_target.clone(),
-            resume: TypedCreateResume {
+        Ok(Self::request_prototype(
+            new_target.clone(),
+            TypedCreateResume(Box::new(TypedCreateResumeState {
+                pending_effect: TypedCreateStepPending::default(),
                 realm,
                 phase: Phase::Prototype { element, purpose },
-            },
-        })
+            })),
+        ))
     }
     pub(crate) fn from(
         runtime: &Runtime,
@@ -324,13 +308,14 @@ impl TypedCreateResume {
         source: Value,
         factory: Factory,
     ) -> Result<TypedCreateStep, RuntimeError> {
-        Ok(TypedCreateStep::Method {
-            source: source.clone(),
-            resume: Self {
+        Ok(TypedCreateStep::request_method(
+            source.clone(),
+            Self(Box::new(TypedCreateResumeState {
+                pending_effect: TypedCreateStepPending::default(),
                 realm,
                 phase: Phase::Iterator { source, factory },
-            },
-        })
+            })),
+        ))
     }
     pub(crate) fn method(
         self,
@@ -343,7 +328,7 @@ impl TypedCreateResume {
                 return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
-        let Phase::Iterator { source, factory } = self.phase else {
+        let Phase::Iterator { source, factory } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "TypedArray iterator method reply in wrong phase",
             ));
@@ -353,30 +338,32 @@ impl TypedCreateResume {
                 Allocation::Intrinsic { element, .. } => *element,
                 Allocation::Static(_) => TypedArrayElementKind::Uint8,
             };
-            Ok(TypedCreateStep::Collect {
+            Ok(TypedCreateStep::request_collect(
                 source,
                 method,
                 element,
-                resume: Self {
-                    realm: self.realm,
+                Self(Box::new(TypedCreateResumeState {
+                    pending_effect: TypedCreateStepPending::default(),
+                    realm: self.0.realm,
                     phase: Phase::Collect(factory),
-                },
-            })
+                })),
+            ))
         } else {
-            let source = match runtime.native_to_object(self.realm, source)? {
+            let source = match runtime.native_to_object(self.0.realm, source)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
                     return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                 }
             };
-            Ok(TypedCreateStep::Read {
-                receiver: Value::Object(source.clone()),
-                key: runtime.intern_property_key("length")?,
-                resume: Self {
-                    realm: self.realm,
+            Ok(TypedCreateStep::request_read(
+                Value::Object(source.clone()),
+                runtime.intern_property_key("length")?,
+                Self(Box::new(TypedCreateResumeState {
+                    pending_effect: TypedCreateStepPending::default(),
+                    realm: self.0.realm,
                     phase: Phase::Length { source, factory },
-                },
-            })
+                })),
+            ))
         }
     }
 
@@ -385,7 +372,7 @@ impl TypedCreateResume {
         runtime: &Runtime,
         result: NativeConversion<ConstructorPrototypeSource>,
     ) -> Result<TypedCreateStep, RuntimeError> {
-        let Phase::Prototype { element, purpose } = self.phase else {
+        let Phase::Prototype { element, purpose } = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "TypedArray create prototype reply in wrong phase",
             ));
@@ -400,18 +387,26 @@ impl TypedCreateResume {
             }
         };
         match purpose {
-            ProtoPurpose::Length(length) => complete_object(
-                runtime.new_typed_array_for_length(self.realm, &prototype, element, length)?,
-            ),
+            ProtoPurpose::Length(length) => complete_object(runtime.new_typed_array_for_length(
+                self.0.realm,
+                &prototype,
+                element,
+                length,
+            )?),
             ProtoPurpose::Typed { source, length } => {
                 let snapshot = runtime.typed_array_snapshot(&source)?;
                 complete_object(runtime.typed_array_copy_into_new(
-                    self.realm, &prototype, element, &source, snapshot, length,
+                    self.0.realm,
+                    &prototype,
+                    element,
+                    &source,
+                    snapshot,
+                    length,
                 )?)
             }
             ProtoPurpose::Object(source) => Self::iterator(
                 runtime,
-                self.realm,
+                self.0.realm,
                 Value::Object(source),
                 Factory {
                     allocation: Allocation::Intrinsic { prototype, element },
@@ -424,17 +419,18 @@ impl TypedCreateResume {
                 offset,
                 length,
             } => {
-                let resume = Self {
-                    realm: self.realm,
+                let resume = Self(Box::new(TypedCreateResumeState {
+                    pending_effect: TypedCreateStepPending::default(),
+                    realm: self.0.realm,
                     phase: Phase::Offset {
                         prototype,
                         element,
                         source,
                         length,
                     },
-                };
+                }));
                 if let Some(value) = offset {
-                    Ok(TypedCreateStep::Primitive { value, resume })
+                    Ok(TypedCreateStep::request_primitive(value, resume))
                 } else {
                     resume.resume(runtime, Completion::Return(Value::Int(0)))
                 }
@@ -452,14 +448,20 @@ impl TypedCreateResume {
                 return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
-        let Phase::Collect(factory) = self.phase else {
+        let Phase::Collect(factory) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "TypedArray collected reply in wrong phase",
             ));
         };
         let length = u64::try_from(values.len())
             .map_err(|_| RuntimeError::Invariant("TypedArray iterable length overflowed u64"))?;
-        Self::allocate(runtime, self.realm, Input::Values(values), factory, length)
+        Self::allocate(
+            runtime,
+            self.0.realm,
+            Input::Values(values),
+            factory,
+            length,
+        )
     }
     fn allocate(
         runtime: &Runtime,
@@ -493,18 +495,19 @@ impl TypedCreateResume {
                         runtime.new_native_error(realm, NativeErrorKind::Type, "not a function")?,
                     )));
                 }
-                Ok(TypedCreateStep::Create {
-                    constructor: constructor.clone(),
+                Ok(TypedCreateStep::request_create(
+                    constructor.clone(),
                     length,
-                    resume: Self {
+                    Self(Box::new(TypedCreateResumeState {
+                        pending_effect: TypedCreateStepPending::default(),
                         realm,
                         phase: Phase::Create {
                             source,
                             factory,
                             length,
                         },
-                    },
-                })
+                    })),
+                ))
             }
         }
     }
@@ -523,7 +526,7 @@ impl TypedCreateResume {
             source,
             factory,
             length,
-        } = self.phase
+        } = self.0.phase
         else {
             return Err(RuntimeError::Invariant(
                 "TypedArray create reply in wrong phase",
@@ -537,7 +540,7 @@ impl TypedCreateResume {
             length,
             index: 0,
         }
-        .next(runtime, self.realm)
+        .next(runtime, self.0.realm)
     }
     pub(crate) fn element(
         self,
@@ -550,14 +553,14 @@ impl TypedCreateResume {
                 return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
-        let Phase::Element(mut population) = self.phase else {
+        let Phase::Element(mut population) = self.0.phase else {
             return Err(RuntimeError::Invariant(
                 "TypedArray create element reply in wrong phase",
             ));
         };
         runtime.typed_array_write_converted_index(&population.target, population.index, &bytes)?;
         population.index += 1;
-        population.next(runtime, self.realm)
+        population.next(runtime, self.0.realm)
     }
     pub(crate) fn resume(
         self,
@@ -570,14 +573,14 @@ impl TypedCreateResume {
                 return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.phase {
+        match self.0.phase {
             Phase::Offset {
                 prototype,
                 element,
                 source,
                 length,
             } => {
-                let offset = match runtime.native_to_index(self.realm, &value)? {
+                let offset = match runtime.native_to_index(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
@@ -586,28 +589,34 @@ impl TypedCreateResume {
                 if offset % u64::from(element.byte_length()) != 0 {
                     return Ok(TypedCreateStep::Complete(Completion::Throw(
                         runtime.new_native_error(
-                            self.realm,
+                            self.0.realm,
                             NativeErrorKind::Range,
                             "invalid offset",
                         )?,
                     )));
                 }
                 if let Some(value) = length {
-                    Ok(TypedCreateStep::Primitive {
+                    Ok(TypedCreateStep::request_primitive(
                         value,
-                        resume: Self {
-                            realm: self.realm,
+                        Self(Box::new(TypedCreateResumeState {
+                            pending_effect: TypedCreateStepPending::default(),
+                            realm: self.0.realm,
                             phase: Phase::BufferLength {
                                 prototype,
                                 element,
                                 source,
                                 offset,
                             },
-                        },
-                    })
+                        })),
+                    ))
                 } else {
                     complete_object(runtime.new_typed_array_constructor_view_from_coerced(
-                        self.realm, &prototype, element, &source, offset, None,
+                        self.0.realm,
+                        &prototype,
+                        element,
+                        &source,
+                        offset,
+                        None,
                     )?)
                 }
             }
@@ -617,14 +626,14 @@ impl TypedCreateResume {
                 source,
                 offset,
             } => {
-                let length = match runtime.native_to_index(self.realm, &value)? {
+                let length = match runtime.native_to_index(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                     }
                 };
                 complete_object(runtime.new_typed_array_constructor_view_from_coerced(
-                    self.realm,
+                    self.0.realm,
                     &prototype,
                     element,
                     &source,
@@ -632,24 +641,31 @@ impl TypedCreateResume {
                     Some(length),
                 )?)
             }
-            Phase::Length { source, factory } => Ok(TypedCreateStep::Primitive {
+            Phase::Length { source, factory } => Ok(TypedCreateStep::request_primitive(
                 value,
-                resume: Self {
-                    realm: self.realm,
+                Self(Box::new(TypedCreateResumeState {
+                    pending_effect: TypedCreateStepPending::default(),
+                    realm: self.0.realm,
                     phase: Phase::LengthPrimitive { source, factory },
-                },
-            }),
+                })),
+            )),
             Phase::LengthPrimitive { source, factory } => {
-                let length = match runtime.native_to_length(self.realm, &value)? {
+                let length = match runtime.native_to_length(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                     }
                 };
-                Self::allocate(runtime, self.realm, Input::Object(source), factory, length)
+                Self::allocate(
+                    runtime,
+                    self.0.realm,
+                    Input::Object(source),
+                    factory,
+                    length,
+                )
             }
-            Phase::Index(population) => population.map(runtime, self.realm, value),
-            Phase::Mapped(population) => population.convert(runtime, self.realm, value),
+            Phase::Index(population) => population.map(runtime, self.0.realm, value),
+            Phase::Mapped(population) => population.convert(runtime, self.0.realm, value),
             _ => Err(RuntimeError::Invariant(
                 "TypedArray create value reply in wrong phase",
             )),
@@ -664,14 +680,15 @@ impl Population {
             )));
         }
         match &self.source {
-            Input::Object(source) => Ok(TypedCreateStep::Read {
-                receiver: Value::Object(source.clone()),
-                key: runtime.property_key_for_index(self.index)?,
-                resume: TypedCreateResume {
+            Input::Object(source) => Ok(TypedCreateStep::request_read(
+                Value::Object(source.clone()),
+                runtime.property_key_for_index(self.index)?,
+                TypedCreateResume(Box::new(TypedCreateResumeState {
+                    pending_effect: TypedCreateStepPending::default(),
                     realm,
                     phase: Phase::Index(self),
-                },
-            }),
+                })),
+            )),
             Input::Values(values) => {
                 let value = values[usize::try_from(self.index).map_err(|_| {
                     RuntimeError::Invariant("TypedArray materialized index overflowed usize")
@@ -694,15 +711,16 @@ impl Population {
             }
             arguments.push(value);
             arguments.push(Value::number(self.index as f64));
-            Ok(TypedCreateStep::Call {
-                target: DirectCallTarget::Callable(mapper.clone()),
-                receiver: self.this_arg.clone(),
+            Ok(TypedCreateStep::request_call(
+                DirectCallTarget::Callable(mapper.clone()),
+                self.this_arg.clone(),
                 arguments,
-                resume: TypedCreateResume {
+                TypedCreateResume(Box::new(TypedCreateResumeState {
+                    pending_effect: TypedCreateStepPending::default(),
                     realm,
                     phase: Phase::Mapped(self),
-                },
-            })
+                })),
+            ))
         } else {
             self.convert(runtime, realm, value)
         }
@@ -714,14 +732,15 @@ impl Population {
         value: Value,
     ) -> Result<TypedCreateStep, RuntimeError> {
         let element = runtime.typed_array_snapshot(&self.target)?.element;
-        Ok(TypedCreateStep::Element {
+        Ok(TypedCreateStep::request_element(
             element,
             value,
-            resume: TypedCreateResume {
+            TypedCreateResume(Box::new(TypedCreateResumeState {
+                pending_effect: TypedCreateStepPending::default(),
                 realm,
                 phase: Phase::Element(self),
-            },
-        })
+            })),
+        ))
     }
 }
 fn complete_object(result: NativeConversion<ObjectRef>) -> Result<TypedCreateStep, RuntimeError> {
@@ -743,74 +762,85 @@ pub(super) fn finish(
     loop {
         step = match step {
             TypedCreateStep::Complete(result) => return Ok(result),
-            TypedCreateStep::Primitive { value, resume } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::Number)?
-                } else {
-                    Completion::Return(value)
-                };
-                resume.resume(runtime, result)?
+            TypedCreateStep::Primitive { mut resume } => {
+                let value = resume.take_primitive_value();
+                {
+                    let result = if matches!(value, Value::Object(_)) {
+                        runtime.to_primitive(realm, value, ToPrimitiveHint::Number)?
+                    } else {
+                        Completion::Return(value)
+                    };
+                    resume.resume(runtime, result)?
+                }
             }
-            TypedCreateStep::Prototype { new_target, resume } => resume.prototype(
-                runtime,
-                finish_source(
+            TypedCreateStep::Prototype { mut resume } => {
+                let new_target = resume.take_prototype_new_target();
+                resume.prototype(
                     runtime,
-                    realm,
-                    ProtoSourceStep::start(runtime, realm, new_target)?,
-                )?,
-            )?,
-            TypedCreateStep::Read {
-                receiver,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
-            )?,
-            TypedCreateStep::Method { source, resume } => {
-                resume.method(runtime, runtime.typed_array_iterator_method(realm, source)?)?
-            }
-            TypedCreateStep::Collect {
-                source,
-                method,
-                element,
-                resume,
-            } => resume.collected(
-                runtime,
-                runtime.collect_typed_array_iterator(realm, source, &method, element)?,
-            )?,
-            TypedCreateStep::Create {
-                constructor,
-                length,
-                resume,
-            } => resume.created(
-                runtime,
-                runtime.typed_array_create_from_static_constructor(realm, constructor, length)?,
-            )?,
-            TypedCreateStep::Call {
-                target,
-                receiver,
-                arguments,
-                resume,
-            } => {
-                let DirectCallTarget::Callable(callable) = target else {
-                    return Err(RuntimeError::Invariant(
-                        "TypedArray create invalid call target",
-                    ));
-                };
-                resume.resume(
-                    runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    finish_source(
+                        runtime,
+                        realm,
+                        ProtoSourceStep::start(runtime, realm, new_target)?,
+                    )?,
                 )?
             }
-            TypedCreateStep::Element {
-                element,
-                value,
-                resume,
-            } => resume.element(
-                runtime,
-                runtime.typed_array_convert_element(realm, element, &value)?,
-            )?,
+            TypedCreateStep::Read { mut resume } => {
+                let receiver = resume.take_read_receiver();
+                let key = resume.take_read_key();
+                resume.resume(
+                    runtime,
+                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                )?
+            }
+            TypedCreateStep::Method { mut resume } => {
+                let source = resume.take_method_source();
+                resume.method(runtime, runtime.typed_array_iterator_method(realm, source)?)?
+            }
+            TypedCreateStep::Collect { mut resume } => {
+                let source = resume.take_collect_source();
+                let method = resume.take_collect_method();
+                let element = resume.take_collect_element();
+                resume.collected(
+                    runtime,
+                    runtime.collect_typed_array_iterator(realm, source, &method, element)?,
+                )?
+            }
+            TypedCreateStep::Create { mut resume } => {
+                let constructor = resume.take_create_constructor();
+                let length = resume.take_create_length();
+                resume.created(
+                    runtime,
+                    runtime.typed_array_create_from_static_constructor(
+                        realm,
+                        constructor,
+                        length,
+                    )?,
+                )?
+            }
+            TypedCreateStep::Call { mut resume } => {
+                let target = resume.take_call_target();
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                {
+                    let DirectCallTarget::Callable(callable) = target else {
+                        return Err(RuntimeError::Invariant(
+                            "TypedArray create invalid call target",
+                        ));
+                    };
+                    resume.resume(
+                        runtime,
+                        runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    )?
+                }
+            }
+            TypedCreateStep::Element { mut resume } => {
+                let element = resume.take_element_element();
+                let value = resume.take_element_value();
+                resume.element(
+                    runtime,
+                    runtime.typed_array_convert_element(realm, element, &value)?,
+                )?
+            }
         };
     }
 }
@@ -841,10 +871,12 @@ mod tests {
             length: 2,
             index: 0,
         };
-        let TypedCreateStep::Element { resume, .. } = population.next(&runtime, realm).unwrap()
+        let TypedCreateStep::Element { mut resume } = population.next(&runtime, realm).unwrap()
         else {
             panic!("expected first conversion");
         };
+        let _ = resume.take_element_element();
+        drop(resume.take_element_value());
         let step = resume
             .element(&runtime, NativeConversion::Value([0; 8]))
             .unwrap();
@@ -863,3 +895,196 @@ mod tests {
         assert!(weak.upgrade().is_none());
     }
 }
+
+#[derive(Default)]
+struct TypedCreateStepPending {
+    primitive_value: Option<Value>,
+    prototype_new_target: Option<Value>,
+    read_receiver: Option<Value>,
+    read_key: Option<PropertyKey>,
+    method_source: Option<Value>,
+    collect_source: Option<Value>,
+    collect_method: Option<CallableRef>,
+    collect_element: Option<TypedArrayElementKind>,
+    create_constructor: Option<Value>,
+    create_length: Option<u64>,
+    call_target: Option<DirectCallTarget>,
+    call_receiver: Option<Value>,
+    call_arguments: Option<Vec<Value>>,
+    element_element: Option<TypedArrayElementKind>,
+    element_value: Option<Value>,
+}
+impl TypedCreateStep {
+    pub(crate) fn request_primitive(value: Value, mut resume: TypedCreateResume) -> Self {
+        resume.0.pending_effect.primitive_value = Some(value);
+        Self::Primitive { resume }
+    }
+    pub(crate) fn request_prototype(new_target: Value, mut resume: TypedCreateResume) -> Self {
+        resume.0.pending_effect.prototype_new_target = Some(new_target);
+        Self::Prototype { resume }
+    }
+    pub(crate) fn request_read(
+        receiver: Value,
+        key: PropertyKey,
+        mut resume: TypedCreateResume,
+    ) -> Self {
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        resume.0.pending_effect.read_key = Some(key);
+        Self::Read { resume }
+    }
+    pub(crate) fn request_method(source: Value, mut resume: TypedCreateResume) -> Self {
+        resume.0.pending_effect.method_source = Some(source);
+        Self::Method { resume }
+    }
+    pub(crate) fn request_collect(
+        source: Value,
+        method: CallableRef,
+        element: TypedArrayElementKind,
+        mut resume: TypedCreateResume,
+    ) -> Self {
+        resume.0.pending_effect.collect_source = Some(source);
+        resume.0.pending_effect.collect_method = Some(method);
+        resume.0.pending_effect.collect_element = Some(element);
+        Self::Collect { resume }
+    }
+    pub(crate) fn request_create(
+        constructor: Value,
+        length: u64,
+        mut resume: TypedCreateResume,
+    ) -> Self {
+        resume.0.pending_effect.create_constructor = Some(constructor);
+        resume.0.pending_effect.create_length = Some(length);
+        Self::Create { resume }
+    }
+    pub(crate) fn request_call(
+        target: DirectCallTarget,
+        receiver: Value,
+        arguments: Vec<Value>,
+        mut resume: TypedCreateResume,
+    ) -> Self {
+        resume.0.pending_effect.call_target = Some(target);
+        resume.0.pending_effect.call_receiver = Some(receiver);
+        resume.0.pending_effect.call_arguments = Some(arguments);
+        Self::Call { resume }
+    }
+    pub(crate) fn request_element(
+        element: TypedArrayElementKind,
+        value: Value,
+        mut resume: TypedCreateResume,
+    ) -> Self {
+        resume.0.pending_effect.element_element = Some(element);
+        resume.0.pending_effect.element_value = Some(value);
+        Self::Element { resume }
+    }
+}
+impl TypedCreateResume {
+    pub(crate) fn take_primitive_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .primitive_value
+            .take()
+            .expect("TypedCreateStep Primitive value")
+    }
+    pub(crate) fn take_prototype_new_target(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .prototype_new_target
+            .take()
+            .expect("TypedCreateStep Prototype new_target")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("TypedCreateStep Read receiver")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("TypedCreateStep Read key")
+    }
+    pub(crate) fn take_method_source(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .method_source
+            .take()
+            .expect("TypedCreateStep Method source")
+    }
+    pub(crate) fn take_collect_source(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .collect_source
+            .take()
+            .expect("TypedCreateStep Collect source")
+    }
+    pub(crate) fn take_collect_method(&mut self) -> CallableRef {
+        self.0
+            .pending_effect
+            .collect_method
+            .take()
+            .expect("TypedCreateStep Collect method")
+    }
+    pub(crate) fn take_collect_element(&mut self) -> TypedArrayElementKind {
+        self.0
+            .pending_effect
+            .collect_element
+            .take()
+            .expect("TypedCreateStep Collect element")
+    }
+    pub(crate) fn take_create_constructor(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .create_constructor
+            .take()
+            .expect("TypedCreateStep Create constructor")
+    }
+    pub(crate) fn take_create_length(&mut self) -> u64 {
+        self.0
+            .pending_effect
+            .create_length
+            .take()
+            .expect("TypedCreateStep Create length")
+    }
+    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
+        self.0
+            .pending_effect
+            .call_target
+            .take()
+            .expect("TypedCreateStep Call target")
+    }
+    pub(crate) fn take_call_receiver(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .call_receiver
+            .take()
+            .expect("TypedCreateStep Call receiver")
+    }
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+        self.0
+            .pending_effect
+            .call_arguments
+            .take()
+            .expect("TypedCreateStep Call arguments")
+    }
+    pub(crate) fn take_element_element(&mut self) -> TypedArrayElementKind {
+        self.0
+            .pending_effect
+            .element_element
+            .take()
+            .expect("TypedCreateStep Element element")
+    }
+    pub(crate) fn take_element_value(&mut self) -> Value {
+        self.0
+            .pending_effect
+            .element_value
+            .take()
+            .expect("TypedCreateStep Element value")
+    }
+}
+const _: () = assert!(std::mem::size_of::<TypedCreateStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedCreateStep>() <= 64);

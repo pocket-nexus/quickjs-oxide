@@ -173,3 +173,6 @@ fn inspect_sync(runtime: &Runtime, completion: Completion) -> Result<Completion,
         )),
     }
 }
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<BodyStep>() <= 64);
