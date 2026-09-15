@@ -15,7 +15,7 @@ fn assert_ascii_number(text: &str, expected: f64) {
     let compact = JsString::try_from_utf8(text).unwrap();
     assert!(matches!(&*compact.0, StringRepr::Latin1(_)));
     let wide = JsString(Rc::new(StringRepr::Utf16(
-        text.encode_utf16().collect::<Vec<_>>().into_boxed_slice(),
+        text.encode_utf16().collect::<Vec<_>>(),
     )));
     assert_number(string_to_number(&compact), expected, text);
     assert_number(string_to_number(&wide), expected, text);

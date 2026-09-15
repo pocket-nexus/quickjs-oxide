@@ -478,9 +478,11 @@ impl Runtime {
                             )
                         }
                     })?;
-                Ok(Completion::Return(Value::String(JsString::try_from_utf8(
-                    &formatted,
-                )?)))
+                JsString::checked_length(0, formatted.len())?;
+                debug_assert!(formatted.is_ascii());
+                Ok(Completion::Return(Value::String(
+                    JsString::from_owned_latin1(formatted.into_bytes()),
+                )))
             }
             (PrimitiveKind::String, Value::String(value)) => {
                 Ok(Completion::Return(Value::String(value)))
@@ -504,9 +506,11 @@ impl Runtime {
                 let text = value
                     .to_string_radix(radix)
                     .map_err(|_| RuntimeError::Invariant("validated BigInt radix was rejected"))?;
-                Ok(Completion::Return(Value::String(JsString::try_from_utf8(
-                    &text,
-                )?)))
+                JsString::checked_length(0, text.len())?;
+                debug_assert!(text.is_ascii());
+                Ok(Completion::Return(Value::String(
+                    JsString::from_owned_latin1(text.into_bytes()),
+                )))
             }
             _ => Err(RuntimeError::Invariant(
                 "unimplemented primitive toString reached native dispatch",
@@ -540,9 +544,13 @@ impl Runtime {
         result: Result<String, crate::engine::value::number::NumberFormatError>,
     ) -> Result<Completion, RuntimeError> {
         match result {
-            Ok(value) => Ok(Completion::Return(Value::String(JsString::try_from_utf8(
-                &value,
-            )?))),
+            Ok(value) => {
+                JsString::checked_length(0, value.len())?;
+                debug_assert!(value.is_ascii());
+                Ok(Completion::Return(Value::String(
+                    JsString::from_owned_latin1(value.into_bytes()),
+                )))
+            }
             Err(crate::engine::value::number::NumberFormatError::InvalidDigits) => {
                 Ok(Completion::Throw(self.new_native_error(
                     realm,

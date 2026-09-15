@@ -141,10 +141,13 @@ pub(super) fn complete_primitives(
         // Preserve left-to-right domain validation, including checking a later
         // malformed slot after an earlier invalid domain, before identity issue.
         let mut invalid = false;
+        let mut has_object = false;
         for offset in (0..=usize::from(addition)).rev() {
+            let value = slots.peek(offset)?;
             invalid |= runtime
-                .validate_value_domain(slots.peek(offset)?, "conversion operand")
+                .validate_value_domain(value, "conversion operand")
                 .is_err();
+            has_object |= matches!(value, Value::Object(_));
         }
         if invalid {
             return Ok(PrimitiveCompletion::InvalidDomain);
@@ -160,31 +163,21 @@ pub(super) fn complete_primitives(
                     | Instruction::PutLocalCheck(index)
                     | Instruction::SetLocal(index)
                     | Instruction::SetLocalCheck(index),
-                ) if matches!(
-                    slots.local(*index)?,
-                    super::bindings::FrameBinding::Direct(_)
-                ) =>
-                {
-                    Some((
+                ) => match slots.local(*index)? {
+                    super::bindings::FrameBinding::Direct(value) => Some((
                         *index,
                         executable.fusion.add_store_span(frame.fault_pc),
-                        matches!(
-                            slots.local(*index)?,
-                            super::bindings::FrameBinding::Direct(
-                                Value::Object(_) | Value::Symbol(_)
-                            )
-                        ),
-                    ))
-                }
+                        matches!(value, Value::Object(_) | Value::Symbol(_)),
+                    )),
+                    _ => None,
+                },
                 _ => None,
             }
         } else {
             None
         };
-        for offset in 0..=usize::from(addition) {
-            if matches!(slots.peek(offset)?, Value::Object(_)) {
-                return Ok(PrimitiveCompletion::Declined);
-            }
+        if has_object {
+            return Ok(PrimitiveCompletion::Declined);
         }
         let right = slots.pop().expect("validated primitive conversion operand");
         let left = if addition {

@@ -140,15 +140,20 @@ impl FusionPlan {
             let local_add = match rest {
                 [
                     Instruction::GetLocal(left) | Instruction::GetLocalCheck(left),
-                    Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
+                    right,
                     Instruction::Add,
                     store,
                     ..,
-                ] if [left, right].iter().all(|index| {
-                    locals
-                        .get(usize::from(**index))
-                        .is_some_and(|d| d.kind == ClosureVariableKind::Normal)
-                }) && locals.get(usize::from(*left)).is_some_and(|d| !d.is_const) =>
+                ] if locals
+                    .get(usize::from(*left))
+                    .is_some_and(|d| d.kind == ClosureVariableKind::Normal && !d.is_const)
+                    && match right {
+                        Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => locals
+                            .get(usize::from(*index))
+                            .is_some_and(|d| d.kind == ClosureVariableKind::Normal),
+                        Instruction::PushConst(_) => true,
+                        _ => false,
+                    } =>
                 {
                     match store {
                         Instruction::PutLocal(index) | Instruction::PutLocalCheck(index)

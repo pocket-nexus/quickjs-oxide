@@ -17,92 +17,140 @@ pub(in crate::engine::vm) fn complete_local_add(
         .ok_or_else(|| Error::internal("local addition lost authenticated span"))?;
     let [
         Instruction::GetLocal(left) | Instruction::GetLocalCheck(left),
-        Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
+        right,
         ..,
     ] = &frame.executable.code[start..]
     else {
         return Err(Error::internal("local addition span lost local reads"));
     };
-    let (left, right) = (*left, *right);
+    enum Right {
+        Local(u16),
+        Constant(Value),
+    }
+    let left = *left;
+    let right = match right {
+        Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => Right::Local(*index),
+        Instruction::PushConst(index) => {
+            use crate::engine::heap::{BytecodeConstant, RawValue};
+            let Some(BytecodeConstant::Value(RawValue::String(value))) =
+                frame.executable.constant(*index)
+            else {
+                return Ok(PrimitiveCompletion::Declined);
+            };
+            Right::Constant(Value::String(value.clone()))
+        }
+        _ => return Err(Error::internal("local addition span lost RHS")),
+    };
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
     let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
     // All preflight remains non-mutating; checked/captured/TDZ fallbacks retain
     // the canonical first GetLocal PC and original operand stack.
-    if transaction
-        .with_local_add_inputs(left, right, |_, _| ())?
-        .is_none()
-    {
-        return Ok(PrimitiveCompletion::Declined);
+    enum PreparedAdd {
+        Exhausted(Value, Value),
+        Result(Result<Value, Error>),
+        Appended,
     }
-    frame.fault_pc = start + 2;
-    frame.resume_pc = frame.fault_pc;
-    runtime
-        .update_active_bytecode_pc(
-            frame.active_frame,
-            super::super::BytecodePc::new(frame.fault_pc),
-        )
-        .map_err(runtime_error_to_vm_error)?;
-    #[cfg(feature = "profiling")]
-    {
-        crate::engine::api::profiling::record_owned_instruction(depth);
-        crate::engine::api::profiling::record_owned_instruction(depth + 1);
-    }
-    let Some(next) = next_operation.checked_add(1) else {
-        // The canonical GetLocal instructions have completed before identity
-        // admission at Add. Reconstruct their operands only on this cold error.
-        let (left, right) = transaction
-            .with_local_add_inputs(left, right, |left, right| (left.clone(), right.clone()))?
-            .ok_or_else(|| Error::internal("local addition inputs changed without callback"))?;
-        let mut slots = transaction.slots();
-        slots.push(left)?;
-        slots.push(right)?;
-        return Err(Error::internal("conversion identity exhausted"));
-    };
-    *next_operation = next;
-    let result = transaction
-        .with_local_add_inputs(left, right, super::super::numeric::add_primitives_ref)?
-        .ok_or_else(|| Error::internal("local addition inputs changed without callback"))?;
-    let value = match result {
-        Ok(value) => value,
-        Err(error) => {
-            let Some(kind) =
-                crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
-            else {
-                return Err(error);
+    let consume = |left: &mut Value, right: &Value| {
+        frame.fault_pc = start + 2;
+        frame.resume_pc = frame.fault_pc;
+        runtime
+            .update_active_bytecode_pc(
+                frame.active_frame,
+                super::super::BytecodePc::new(frame.fault_pc),
+            )
+            .map_err(runtime_error_to_vm_error)?;
+        #[cfg(feature = "profiling")]
+        {
+            crate::engine::api::profiling::record_owned_instruction(depth);
+            crate::engine::api::profiling::record_owned_instruction(depth + 1);
+        }
+        let Some(next) = next_operation.checked_add(1) else {
+            // Reconstruct canonical GetLocal operands only on this cold error.
+            return Ok::<_, Error>(PreparedAdd::Exhausted(left.clone(), right.clone()));
+        };
+        *next_operation = next;
+        if let Value::String(string) = left {
+            let suffix = match right {
+                Value::String(value) => std::borrow::Cow::Borrowed(value),
+                value => match value.to_js_string() {
+                    Ok(value) => std::borrow::Cow::Owned(value),
+                    Err(error) => return Ok(PreparedAdd::Result(Err(error))),
+                },
             };
-            return Ok(PrimitiveCompletion::Throw(
+            match string.try_concat_in_place(&suffix) {
+                Ok(true) => return Ok(PreparedAdd::Appended),
+                Err(error) => return Ok(PreparedAdd::Result(Err(error.into()))),
+                Ok(false) => {}
+            }
+        }
+        Ok(PreparedAdd::Result(
+            super::super::numeric::add_primitives_ref(left, right),
+        ))
+    };
+    let prepared = match right {
+        Right::Local(right) => transaction.with_local_add_inputs(left, right, consume)?,
+        Right::Constant(ref right) => transaction.with_local_add_constant(left, right, consume)?,
+    };
+    let Some(prepared) = prepared else {
+        return Ok(PrimitiveCompletion::Declined);
+    };
+    let result = match prepared? {
+        PreparedAdd::Exhausted(left, right) => {
+            let mut slots = transaction.slots();
+            slots.push(left)?;
+            slots.push(right)?;
+            return Err(Error::internal("conversion identity exhausted"));
+        }
+        PreparedAdd::Result(result) => Some(result),
+        PreparedAdd::Appended => {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("local_add_in_place");
+            None
+        }
+    };
+    if let Some(result) = result {
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                let Some(kind) =
+                    crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
+                else {
+                    return Err(error);
+                };
+                return Ok(PrimitiveCompletion::Throw(
+                    runtime
+                        .new_native_error_from_error(frame.executable.realm, kind, &error)
+                        .map_err(runtime_error_to_vm_error)?,
+                ));
+            }
+        };
+        // Successful primitive addition proves the old local is neither Object
+        // nor Symbol. Replacing it only releases scalar/Rc String/BigInt storage;
+        // it cannot drain runtime roots, call JS or observe the active frame. Keep
+        // the Add publication for the whole transaction and commit frame PCs once.
+        let mut pending = Some(super::super::bindings::FrameBinding::Direct(value));
+        let old = {
+            let mut slots = transaction.slots();
+            slots.replace_local_pending(left, &mut pending)
+        };
+        let old = match old {
+            Ok(old) => old,
+            Err(error) => {
+                (frame.fault_pc, frame.resume_pc) = (start + 3, start + 3);
+                // An invariant error still identifies the canonical store, and the
+                // pending output is released only after its active PC is published.
                 runtime
-                    .new_native_error_from_error(frame.executable.realm, kind, &error)
-                    .map_err(runtime_error_to_vm_error)?,
-            ));
-        }
-    };
-    // Successful primitive addition proves the old local is neither Object
-    // nor Symbol. Replacing it only releases scalar/Rc String/BigInt storage;
-    // it cannot drain runtime roots, call JS or observe the active frame. Keep
-    // the Add publication for the whole transaction and commit frame PCs once.
-    let mut pending = Some(super::super::bindings::FrameBinding::Direct(value));
-    let old = {
-        let mut slots = transaction.slots();
-        slots.replace_local_pending(left, &mut pending)
-    };
-    let old = match old {
-        Ok(old) => old,
-        Err(error) => {
-            (frame.fault_pc, frame.resume_pc) = (start + 3, start + 3);
-            // An invariant error still identifies the canonical store, and the
-            // pending output is released only after its active PC is published.
-            runtime
-                .update_active_bytecode_pc(
-                    frame.active_frame,
-                    super::super::BytecodePc::new(frame.fault_pc),
-                )
-                .map_err(runtime_error_to_vm_error)?;
-            return Err(error);
-        }
-    };
-    drop(old);
+                    .update_active_bytecode_pc(
+                        frame.active_frame,
+                        super::super::BytecodePc::new(frame.fault_pc),
+                    )
+                    .map_err(runtime_error_to_vm_error)?;
+                return Err(error);
+            }
+        };
+        drop(old);
+    }
     (frame.fault_pc, frame.resume_pc) = (start + span - 1, start + span);
     #[cfg(feature = "profiling")]
     {
@@ -124,6 +172,39 @@ pub(in crate::engine::vm) fn complete_local_add(
 #[cfg(test)]
 mod tests {
     use crate::engine::api::{Runtime, Value};
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn local_string_append_reaches_unique_storage_and_preserves_failure_binding() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(context.eval("(()=>{let r='start',s='xy';for(let i=0;i<100;i++)r+=s;return r==='start'+'xy'.repeat(100);})()").unwrap(), Value::Bool(true));
+        assert_eq!(context.eval("(()=>{let r='start';for(let i=0;i<100;i++)r+='xy';return r==='start'+'xy'.repeat(100);})()").unwrap(), Value::Bool(true));
+        let costs = profile.snapshot();
+        assert!(
+            costs
+                .owned_execution_events
+                .get("local_add_in_place")
+                .copied()
+                .unwrap_or(0)
+                >= 198,
+            "{costs:?}"
+        );
+        drop(profile);
+        let callable = runtime.callable_from_value(context.eval("(function pcAppend(){\nlet r='start'.slice(0,4),s='xy';\ntry { r+=s; } catch(e) { return r==='star' && e.stack.includes(':3:'); } return false;})").unwrap()).unwrap();
+        crate::engine::value::fail_next_concat_reservation_for_test();
+        let completion = runtime
+            .call_internal(context.realm, &callable, Value::Undefined, &[])
+            .unwrap();
+        assert!(
+            matches!(
+                completion,
+                crate::engine::vm::Completion::Return(Value::Bool(true))
+            ),
+            "{completion:?}"
+        );
+    }
 
     #[test]
     fn local_add_identity_exhaustion_retains_canonical_operands_and_add_pc() {

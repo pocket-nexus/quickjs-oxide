@@ -1161,13 +1161,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
                 if executable.fusion.local_add_span(pc.fault).is_some() {
-                    if let Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) =
-                        executable.code.get(pc.fault + 1)
-                    {
-                        if slots.local_add_supported(runtime, *index, *right)? {
-                            return Ok(RunExit::AddLocal);
-                        }
-                    }
+                    let supported = match executable.code.get(pc.fault + 1) {
+                        Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) =>
+                            slots.local_add_supported(runtime, *index, *right)?,
+                        Some(Instruction::PushConst(constant))
+                            if matches!(executable.constant(*constant), Some(BytecodeConstant::Value(RawValue::String(_)))) =>
+                            slots.local_add_constant_supported(runtime, *index)?,
+                        _ => false,
+                    };
+                    if supported { return Ok(RunExit::AddLocal); }
+
                 }
                 if let Some(update) = executable.fusion.update(pc.fault) {
                     if fusion::update_local(&mut slots, *index, update)? {

@@ -12,8 +12,9 @@ pub(in crate::engine::vm) enum LinkedReadCompletion {
 /// borrows. The store and window cannot be pushed, popped or replaced while this
 /// transaction exists. Allocation/release may happen between `slots()` borrows;
 /// ordinary completion carries no slot reference then. The dedicated primitive
-/// local callback may borrow immutable roots while allocating, but cannot expose
-/// those references, execute JS, mutate this execution or bypass domain checks.
+/// local callback may borrow primitive locals while allocating and commit a
+/// uniquely owned String append after successful reservation. It cannot expose
+/// references, execute JS, mutate other execution state or bypass domain checks.
 pub(in crate::engine::vm) struct FrameTransaction<'a> {
     store: &'a mut SlotStore,
     window: &'a mut FrameWindow,
@@ -45,18 +46,70 @@ impl FrameTransaction<'_> {
             .take_native_call_operands_current(self.window, count, method)
     }
 
-    /// The callback may allocate primitive storage but cannot access this
-    /// transaction or execute JS. Borrowed inputs cannot escape its result.
+    /// The callback may allocate primitive storage and commit a unique String
+    /// append after reservation. It cannot execute JS or let input references
+    /// escape. Aliasing locals get a temporary RHS owner, preventing mutation of
+    /// the value that must also remain the original RHS.
     pub(in crate::engine::vm) fn with_local_add_inputs<T>(
-        &self,
+        &mut self,
         left: u16,
         right: u16,
-        consume: impl FnOnce(&Value, &Value) -> T,
+        consume: impl FnOnce(&mut Value, &Value) -> T,
     ) -> Result<Option<T>, Error> {
-        let FrameBinding::Direct(left) = self.store.local_current(self.window, left)? else {
+        let (left, right) = (usize::from(left), usize::from(right));
+        let locals = &mut self.store.slots[self.window.locals()];
+        if left >= locals.len() || right >= locals.len() {
+            return Err(Error::internal("owned local index is out of bounds"));
+        }
+        if left == right {
+            let binding = locals[left]
+                .as_mut()
+                .ok_or_else(|| Error::internal("owned local is vacant"))?;
+            let FrameBinding::Direct(value) = binding else {
+                return Ok(None);
+            };
+            if !local_add_values(value, value) {
+                return Ok(None);
+            }
+            let right = value.clone();
+            return Ok(Some(consume(value, &right)));
+        }
+        let (left, right) = if left < right {
+            let (before, after) = locals.split_at_mut(right);
+            (&mut before[left], &after[0])
+        } else {
+            let (before, after) = locals.split_at_mut(left);
+            (&mut after[0], &before[right])
+        };
+        let left = left
+            .as_mut()
+            .ok_or_else(|| Error::internal("owned local is vacant"))?;
+        let FrameBinding::Direct(left) = left else {
             return Ok(None);
         };
-        let FrameBinding::Direct(right) = self.store.local_current(self.window, right)? else {
+        let right = right
+            .as_ref()
+            .ok_or_else(|| Error::internal("owned local is vacant"))?;
+        let FrameBinding::Direct(right) = right else {
+            return Ok(None);
+        };
+        if !local_add_values(left, right) {
+            return Ok(None);
+        }
+        Ok(Some(consume(left, right)))
+    }
+    pub(in crate::engine::vm) fn with_local_add_constant<T>(
+        &mut self,
+        left: u16,
+        right: &Value,
+        consume: impl FnOnce(&mut Value, &Value) -> T,
+    ) -> Result<Option<T>, Error> {
+        let local = self.store.slots[self.window.locals()]
+            .get_mut(usize::from(left))
+            .ok_or_else(|| Error::internal("owned local index is out of bounds"))?
+            .as_mut()
+            .ok_or_else(|| Error::internal("owned local is vacant"))?;
+        let FrameBinding::Direct(left) = local else {
             return Ok(None);
         };
         if !local_add_values(left, right) {
@@ -233,6 +286,27 @@ impl RunSlots<'_> {
         self.store.pop_current(self.window)
     }
 
+    pub(in crate::engine::vm) fn local_add_constant_supported(
+        &self,
+        runtime: &Runtime,
+        left: u16,
+    ) -> Result<bool, Error> {
+        if self
+            .window
+            .depth
+            .checked_add(2)
+            .is_none_or(|depth| depth > self.window.end - self.window.locals_end)
+        {
+            return Ok(false);
+        }
+        let FrameBinding::Direct(left) = self.local(left)? else {
+            return Ok(false);
+        };
+        Ok(!matches!(left, Value::Object(_))
+            && runtime
+                .validate_value_domain(left, "local addition operand")
+                .is_ok())
+    }
     pub(in crate::engine::vm) fn local_add_supported(
         &self,
         runtime: &Runtime,

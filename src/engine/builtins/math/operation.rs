@@ -86,12 +86,12 @@ impl MathStep {
             .ok_or(RuntimeError::Invariant("Math argv was not padded"))?;
         #[cfg(feature = "stack-vm")]
         {
-            let mut resume = MathResume(Box::new(MathResumeState {
+            let mut resume = MathResumeState {
                 kind,
                 arguments: Vec::new().into_iter(),
                 result: None,
                 count,
-            }));
+            };
             for (index, value) in values.iter().enumerate() {
                 if matches!(value, Value::Object(_)) {
                     // The native activation owns original argv. A suspended
@@ -101,7 +101,7 @@ impl MathStep {
                     crate::engine::api::profiling::record_owned_execution_event(
                         "math_remaining_arguments_owned",
                     );
-                    return resume.next();
+                    return MathResume(Box::new(resume)).next();
                 }
                 // Object arguments above retain the shared waiting protocol.
                 // NativeActivation already owns this primitive: borrow it in
@@ -119,7 +119,7 @@ impl MathStep {
             crate::engine::api::profiling::record_owned_execution_event(
                 "math_completed_without_argument_storage",
             );
-            resume.next()
+            resume.finish()
         }
         #[cfg(not(feature = "stack-vm"))]
         {
@@ -142,29 +142,7 @@ impl MathResume {
                 resume: self,
             });
         }
-        let value = match self.0.kind {
-            MathKind::MinMax(kind) if self.0.result.is_none() => {
-                return Ok(MathStep::Complete(Completion::Return(Value::Float(
-                    match kind {
-                        MathMinMaxKind::Min => f64::INFINITY,
-                        MathMinMaxKind::Max => f64::NEG_INFINITY,
-                    },
-                ))));
-            }
-            MathKind::Hypot if self.0.count == 0 => {
-                return Ok(MathStep::Complete(Completion::Return(Value::Int(0))));
-            }
-            MathKind::Hypot if self.0.count == 1 => self
-                .0
-                .result
-                .ok_or(RuntimeError::Invariant("Math hypot result missing"))?
-                .abs(),
-            _ => self
-                .0
-                .result
-                .ok_or(RuntimeError::Invariant("Math result missing"))?,
-        };
-        Ok(MathStep::Complete(Completion::Return(Value::number(value))))
+        self.0.finish()
     }
     pub(crate) fn number(
         mut self,
@@ -176,7 +154,31 @@ impl MathResume {
             self.next()
         }
     }
-
+}
+impl MathResumeState {
+    fn finish(self) -> Result<MathStep, RuntimeError> {
+        let value = match self.kind {
+            MathKind::MinMax(kind) if self.result.is_none() => {
+                return Ok(MathStep::Complete(Completion::Return(Value::Float(
+                    match kind {
+                        MathMinMaxKind::Min => f64::INFINITY,
+                        MathMinMaxKind::Max => f64::NEG_INFINITY,
+                    },
+                ))));
+            }
+            MathKind::Hypot if self.count == 0 => {
+                return Ok(MathStep::Complete(Completion::Return(Value::Int(0))));
+            }
+            MathKind::Hypot if self.count == 1 => self
+                .result
+                .ok_or(RuntimeError::Invariant("Math hypot result missing"))?
+                .abs(),
+            _ => self
+                .result
+                .ok_or(RuntimeError::Invariant("Math result missing"))?,
+        };
+        Ok(MathStep::Complete(Completion::Return(Value::number(value))))
+    }
     /// One numerical accumulation kernel for immediate and suspended inputs.
     fn accept_number(
         &mut self,
@@ -188,7 +190,7 @@ impl MathResume {
                 return Ok(Some(Completion::Throw(value)));
             }
         };
-        self.0.result = Some(match self.0.kind {
+        self.result = Some(match self.kind {
             MathKind::Unary(kind) => quickjs_unary(kind, value),
             MathKind::Clz32 => {
                 return Ok(Some(Completion::Return(Value::Int(
@@ -196,14 +198,14 @@ impl MathResume {
                 ))));
             }
             MathKind::Binary(kind) => {
-                if let Some(left) = self.0.result {
+                if let Some(left) = self.result {
                     quickjs_binary(kind, left, value)
                 } else {
                     value
                 }
             }
             MathKind::Imul => {
-                if let Some(left) = self.0.result {
+                if let Some(left) = self.result {
                     let product = Runtime::to_uint32_number(left)
                         .wrapping_mul(Runtime::to_uint32_number(value));
                     return Ok(Some(Completion::Return(Value::Int(i32::from_ne_bytes(
@@ -214,7 +216,7 @@ impl MathResume {
                 }
             }
             MathKind::MinMax(kind) => {
-                if let Some(left) = self.0.result {
+                if let Some(left) = self.result {
                     if left.is_nan() {
                         left
                     } else if value.is_nan() {
@@ -230,7 +232,7 @@ impl MathResume {
                 }
             }
             MathKind::Hypot => {
-                if let Some(left) = self.0.result {
+                if let Some(left) = self.result {
                     left.hypot(value)
                 } else {
                     value

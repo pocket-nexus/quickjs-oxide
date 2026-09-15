@@ -162,7 +162,9 @@ impl Value {
                 ));
             }
         };
-        Ok(JsString::try_from_utf8(&text)?)
+        JsString::checked_length(0, text.len())?;
+        debug_assert!(text.is_ascii());
+        Ok(JsString::from_owned_latin1(text.into_bytes()))
     }
 
     #[must_use]

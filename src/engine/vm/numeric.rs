@@ -1,6 +1,4 @@
 pub(super) mod operation;
-#[cfg(test)]
-use super::{Completion, ToPrimitiveHint, VmHost};
 use crate::engine::{
     api::{Error, ErrorKind},
     value::{
@@ -14,21 +12,6 @@ use num_traits::FromPrimitive;
 pub(in crate::engine::vm) enum NumericValue {
     Number(f64),
     BigInt(JsBigInt),
-}
-
-/// Apply ToPrimitive at the VM boundary. Primitive operands keep their exact
-/// representation and need no host services; only objects can execute user code.
-#[cfg(test)]
-#[inline]
-pub(in crate::engine::vm) fn to_primitive(
-    host: &mut impl VmHost,
-    value: Value,
-    hint: ToPrimitiveHint,
-) -> Result<Completion, Error> {
-    match value {
-        Value::Object(_) => host.to_primitive(value, hint),
-        primitive => Ok(Completion::Return(primitive)),
-    }
 }
 
 pub(in crate::engine::vm) fn to_numeric_primitive(value: Value) -> Result<NumericValue, Error> {
@@ -107,6 +90,17 @@ pub(in crate::engine::vm) fn bigint_error(error: BigIntError) -> Error {
 
 /// Addition after both operands have completed ToPrimitive, in order.
 pub(in crate::engine::vm) fn add_primitives(left: Value, right: Value) -> Result<Value, Error> {
+    if matches!(left, Value::String(_)) || matches!(right, Value::String(_)) {
+        let left = match left {
+            Value::String(value) => value,
+            value => value.to_js_string()?,
+        };
+        let right = match right {
+            Value::String(value) => value,
+            value => value.to_js_string()?,
+        };
+        return Ok(Value::String(left.concat_owned(&right)?));
+    }
     add_primitives_ref(&left, &right)
 }
 
