@@ -136,7 +136,7 @@ impl SliceStep {
         };
         Self::make_read(
             object.clone(),
-            runtime.intern_property_key("length")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             SliceResume(Box::new(SliceResumeState {
                 scheduler_set_key: None,
                 pending: SlicePending::default(),
@@ -248,6 +248,18 @@ impl SliceResume {
                         "ArraySpeciesCreate returned primitive",
                     ));
                 };
+                if matches!(self.0.kind, SliceKind::Slice)
+                    && runtime.try_copy_dense_slice(
+                        &self.0.object,
+                        &object,
+                        self.0.start,
+                        self.0.count,
+                    )?
+                {
+                    return Ok(SliceStep::complete(Completion::Return(Value::Object(
+                        object,
+                    ))));
+                }
                 self.0.result = Some(object);
                 self.collect(runtime)
             }
@@ -404,7 +416,7 @@ impl SliceResume {
                 self.0.phase = Phase::ResultLength;
                 return Ok(SliceStep::make_set(
                     self.result()?,
-                    runtime.intern_property_key("length")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                     Value::number(self.0.count as f64),
                     self,
                 ));
@@ -597,7 +609,7 @@ impl SliceResume {
         self.0.phase = Phase::FinalLength;
         Ok(SliceStep::make_set(
             self.0.object.clone(),
-            runtime.intern_property_key("length")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             Value::number(self.0.new_length as f64),
             self,
         ))
@@ -973,3 +985,93 @@ impl SliceResume {
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<SliceStep>() <= 64);
+
+impl Runtime {
+    /// Species selection and argument coercion have already run. The source
+    /// range must be entirely own dense data; target definitions must be plain
+    /// writable Array storage. No prototype query is needed for present cells.
+    fn try_copy_dense_slice(
+        &self,
+        source: &ObjectRef,
+        target: &ObjectRef,
+        start: u64,
+        count: u64,
+    ) -> Result<bool, RuntimeError> {
+        use crate::engine::heap::{ObjectPayload, PropertySlot, RawValue};
+        let mut state = self.0.state.borrow_mut();
+        let values = {
+            let source = state.heap.object(source.object_id())?;
+            let ObjectPayload::Array {
+                dense: Some(values),
+            } = &source.payload
+            else {
+                return Ok(false);
+            };
+            let Some(end) = start.checked_add(count) else {
+                return Ok(false);
+            };
+            if end > values.len() as u64 {
+                return Ok(false);
+            }
+            let object = state.heap.object(target.object_id())?;
+            let ObjectPayload::Array { dense: Some(dense) } = &object.payload else {
+                return Ok(false);
+            };
+            let shape = state.heap.shape(object.shape)?;
+            if !object.extensible
+                || !dense.is_empty()
+                || shape.entries().len() != 1
+                || !shape.entries()[0].flags.writable
+            {
+                return Ok(false);
+            }
+            let length = match object.slots.first() {
+                Some(PropertySlot::Data(RawValue::Int(n))) => *n as f64,
+                Some(PropertySlot::Data(RawValue::Float(n))) => *n,
+                _ => return Ok(false),
+            };
+            if length != count as f64 {
+                return Ok(false);
+            }
+            values[start as usize..end as usize].to_vec()
+        };
+        let atoms = state.retain_raw_value_atoms(values.iter())?;
+        if let Err(error) = state
+            .heap
+            .fill_empty_array_dense(target.object_id(), values)
+        {
+            state.release_atoms(atoms)?;
+            return Err(error.into());
+        }
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod dense_slice_tests {
+    use crate::engine::{api::runtime::Runtime, value::Value};
+    #[test]
+    fn dense_slice_preserves_species_holes_descriptors_and_owned_cells() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context.eval(r#"(() => {
+            let x = {}, sym = Symbol();
+            let dense = [x, sym, 3].slice(0, 2);
+            if (dense[0] !== x || dense[1] !== sym || dense.length !== 2) return false;
+            let calls = 0;
+            let source = [1, , 3];
+            Object.defineProperty(Array.prototype, '1', {get() { calls++; return 7; }, configurable:true});
+            let inherited;
+            try { inherited = source.slice(); } finally { delete Array.prototype[1]; }
+            if (calls !== 1 || inherited[1] !== 7) return false;
+            let target = [];
+            source = [4, 5];
+            source.constructor = {[Symbol.species]: function(n) { target.length = n; return target; }};
+            if (source.slice() !== target || target.join(',') !== '4,5') return false;
+            source.constructor = {[Symbol.species]: function() { return Object.preventExtensions([]); }};
+            try { source.slice(); return false; } catch(e) { if (!(e instanceof TypeError)) return false; }
+            return true;
+        })()"#).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+}

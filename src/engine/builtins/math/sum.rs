@@ -157,7 +157,7 @@ impl SumResume {
                 self.0.phase = Phase::NextMethod;
                 Ok({
                     let __pending_field_receiver = Value::Object(iterator);
-                    let __pending_field_key = runtime.intern_property_key("next")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                     let __pending_field_resume = self;
                     SumStep::request_read(
                         __pending_field_receiver,

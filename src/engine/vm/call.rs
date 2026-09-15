@@ -648,7 +648,7 @@ impl Runtime {
         let reply = if matches!(new_target, Value::Undefined) {
             Completion::Return(Value::Undefined)
         } else {
-            let key = self.intern_property_key("prototype")?;
+            let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
             self.get_value_property_in_realm(caller_realm, new_target.clone(), &key)?
         };
         self.create_from_constructor_prototype_reply(caller_realm, new_target, reply)

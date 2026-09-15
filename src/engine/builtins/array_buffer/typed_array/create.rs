@@ -357,7 +357,7 @@ impl TypedCreateResume {
             };
             Ok(TypedCreateStep::request_read(
                 Value::Object(source.clone()),
-                runtime.intern_property_key("length")?,
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 Self(Box::new(TypedCreateResumeState {
                     pending_effect: TypedCreateStepPending::default(),
                     realm: self.0.realm,

@@ -620,7 +620,7 @@ fn take_error_message(
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("pending exception was not an Error object");
     };
-    let message = runtime.intern_property_key("message").unwrap();
+    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
     let Value::String(message) = context.get_property(&error, &message).unwrap() else {
         panic!("Error.message was not a string");
     };
@@ -634,8 +634,8 @@ fn take_error_name_and_message(
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("pending exception was not an Error object");
     };
-    let name = runtime.intern_property_key("name").unwrap();
-    let message = runtime.intern_property_key("message").unwrap();
+    let name = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap();
+    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
     let Value::String(name) = context.get_property(&error, &name).unwrap() else {
         panic!("Error.name was not a string");
     };

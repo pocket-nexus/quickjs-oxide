@@ -803,7 +803,7 @@ impl Runtime {
         realm: ContextId,
         promise: &ObjectRef,
     ) -> Result<NativeConversion<Option<ConstructorRef>>, RuntimeError> {
-        let constructor_key = self.intern_property_key("constructor")?;
+        let constructor_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
         let constructor = match self.get_property_in_realm(realm, promise, &constructor_key)? {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),

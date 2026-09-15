@@ -305,7 +305,7 @@ impl BuildResume {
         self.0.phase = Phase::LengthSet;
         Ok(BuildStep::request_set(
             self.result()?,
-            runtime.intern_property_key("length")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             Value::number(length as f64),
             self,
         ))
@@ -369,7 +369,7 @@ impl BuildResume {
                     self.0.phase = Phase::Length;
                     return Ok(BuildStep::request_read(
                         Value::Object(source),
-                        runtime.intern_property_key("length")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                         self,
                     ));
                 }
@@ -436,7 +436,7 @@ impl BuildResume {
                 self.0.phase = Phase::NextMethod;
                 Ok(BuildStep::request_read(
                     Value::Object(iterator),
-                    runtime.intern_property_key("next")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
                     self,
                 ))
             }

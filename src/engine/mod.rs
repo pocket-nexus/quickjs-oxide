@@ -12,3 +12,5 @@ pub(crate) mod object;
 pub(crate) mod realm;
 pub(crate) mod value;
 pub(crate) mod vm;
+
+pub(crate) mod hash;

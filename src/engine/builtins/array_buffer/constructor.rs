@@ -150,7 +150,7 @@ impl BufferConstructorResume {
                 if let Some(options) = &self.0.options {
                     Ok(BufferConstructorStep::Read {
                         object: options.clone(),
-                        key: runtime.intern_property_key("maxByteLength")?,
+                        key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::MaxByteLength)?,
                         resume: {
                             let updated_0 = ConstructorPhase::Maximum(length);
                             self.0.phase = updated_0;

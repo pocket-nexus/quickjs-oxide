@@ -430,7 +430,7 @@ impl Runtime {
             .heap
             .initialize_math_random_state(realm, seed)?;
 
-        let key = self.intern_property_key("Math")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Math)?;
         self.store_property_slot(
             global_object,
             &key,

@@ -157,7 +157,7 @@ impl Runtime {
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("RegExp prototype"));
         }
-        let last_index = self.intern_property_key("lastIndex")?;
+        let last_index = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let entries = [ShapeEntry {
             atom: last_index.atom(),
             flags: PropertyFlags::data(true, false, false),
@@ -357,7 +357,7 @@ impl RegExpConstructorResume {
                 };
                 return Ok(RegExpConstructorStep::Read {
                     object: object.clone(),
-                    key: runtime.intern_property_key("constructor")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
                     resume: {
                         let updated_0 = RegExpConstructorPhase::Identity(active);
                         self.0.phase = updated_0;
@@ -386,7 +386,7 @@ impl RegExpConstructorResume {
             };
             Ok(RegExpConstructorStep::Read {
                 object: object.clone(),
-                key: runtime.intern_property_key("source")?,
+                key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Source)?,
                 resume: {
                     let updated_0 = RegExpConstructorPhase::Source;
                     self.0.phase = updated_0;
@@ -532,7 +532,7 @@ impl RegExpConstructorResume {
                     };
                     Ok(RegExpConstructorStep::Read {
                         object: object.clone(),
-                        key: runtime.intern_property_key("flags")?,
+                        key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                         resume: {
                             let updated_0 = RegExpConstructorPhase::SourceFlags(value);
                             self.0.phase = updated_0;

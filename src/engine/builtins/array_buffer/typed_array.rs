@@ -429,7 +429,7 @@ impl Runtime {
             let id = self.0.state.borrow().heap.context(realm)?.array_prototype;
             ObjectRef::from_borrowed_handle(self.clone(), id)?
         };
-        let to_string_key = self.intern_property_key("toString")?;
+        let to_string_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?;
         let to_string = match self.get_property_in_realm(realm, &array_prototype, &to_string_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) | Completion::Throw(_) => {
@@ -454,7 +454,7 @@ impl Runtime {
             ));
         }
 
-        let values_key = self.intern_property_key("values")?;
+        let values_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, &base_prototype, &values_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) | Completion::Throw(_) => {

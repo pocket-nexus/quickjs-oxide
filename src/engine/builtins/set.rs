@@ -96,7 +96,7 @@ impl Runtime {
         )?;
         // QuickJS installs both aliases from the exact values-function object,
         // before `entries`; preserving that order is observable in ownKeys.
-        let values_key = self.intern_property_key("values")?;
+        let values_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, &set_prototype, &values_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) => {
@@ -110,7 +110,7 @@ impl Runtime {
                 ));
             }
         };
-        let keys_key = self.intern_property_key("keys")?;
+        let keys_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Keys)?;
         self.define_set_alias(&set_prototype, &keys_key, values.clone())?;
         let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
         self.define_set_alias(&set_prototype, &iterator_key, values)?;

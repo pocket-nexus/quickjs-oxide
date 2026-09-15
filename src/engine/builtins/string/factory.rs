@@ -127,7 +127,7 @@ impl StringFactoryStep {
                 resume.phase = Phase::Raw;
                 Ok(Self::Read {
                     object: cooked,
-                    key: runtime.intern_property_key("raw")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Raw)?,
                     resume,
                 })
             }
@@ -323,7 +323,7 @@ impl StringFactoryResume {
                 self.0.phase = Phase::Length;
                 Ok(StringFactoryStep::Read {
                     object: raw,
-                    key: runtime.intern_property_key("length")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                     resume: self,
                 })
             }

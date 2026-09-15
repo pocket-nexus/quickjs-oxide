@@ -123,14 +123,14 @@ impl RegExpMatchResume {
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpMatchStep, RuntimeError> {
-        let key = runtime.intern_property_key("lastIndex")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
         }
         match self.0.phase {
             MatchPhase::InitialSet { input, unicode } => {
                 let matches = runtime.new_array(self.0.realm)?;
-                let zero = runtime.intern_property_key("0")?;
+                let zero = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?;
                 Ok({
                     let updated_0 = MatchPhase::Single;
                     self.0.phase = updated_0;
@@ -176,7 +176,7 @@ impl RegExpMatchResume {
                 };
                 Ok(RegExpMatchStep::make_read(
                     self.0.regexp.clone(),
-                    runtime.intern_property_key("flags")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                     {
                         let updated_0 = MatchPhase::Flags(input);
                         self.0.phase = updated_0;
@@ -216,7 +216,7 @@ impl RegExpMatchResume {
                     .any(|unit| unit == u16::from(b'u') || unit == u16::from(b'v'));
                 Ok(RegExpMatchStep::make_set(
                     self.0.regexp.clone(),
-                    runtime.intern_property_key("lastIndex")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     Value::Int(0),
                     {
                         let updated_0 = MatchPhase::InitialSet { input, unicode };
@@ -289,7 +289,7 @@ impl RegExpMatchResume {
                 if empty {
                     Ok(RegExpMatchStep::make_read(
                         self.0.regexp.clone(),
-                        runtime.intern_property_key("lastIndex")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                         {
                             let updated_0 = MatchPhase::LastIndex(state);
                             self.0.phase = updated_0;
@@ -329,7 +329,7 @@ impl RegExpMatchResume {
                 let next = advance_string_index(&state.input, current, state.unicode);
                 Ok(RegExpMatchStep::make_set(
                     self.0.regexp.clone(),
-                    runtime.intern_property_key("lastIndex")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     Value::number(next as f64),
                     {
                         let updated_0 = MatchPhase::AdvancedSet(state);

@@ -356,7 +356,7 @@ impl SetResume {
                 self.0.phase = Phase::NextMethod;
                 Ok(SetStep::request_read(
                     value,
-                    runtime.intern_property_key("next")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
                     self,
                 ))
             }
@@ -474,7 +474,7 @@ impl SetResume {
                     self.0.phase = Phase::CloseMethod;
                     return Ok(SetStep::request_read(
                         self.0.iterator.clone(),
-                        runtime.intern_property_key("return")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?,
                         self,
                     ));
                 }

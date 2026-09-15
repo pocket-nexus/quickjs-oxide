@@ -131,7 +131,7 @@ pub(super) fn ready(
 ) -> Result<PromiseStep, RuntimeError> {
     Ok({
         let __pending_field_receiver = Value::Object(constructor.clone());
-        let __pending_field_key = runtime.intern_property_key("resolve")?;
+        let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Resolve)?;
         let __pending_field_resume = continuation(
             realm,
             Phase::Resolve(Acquire {
@@ -219,7 +219,7 @@ pub(super) fn resume(
             };
             Ok({
                 let __pending_field_receiver = Value::Object(iterator.clone());
-                let __pending_field_key = runtime.intern_property_key("next")?;
+                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                 let __pending_field_resume = continuation(
                     realm,
                     Phase::NextMethod {

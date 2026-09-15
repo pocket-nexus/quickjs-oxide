@@ -80,7 +80,7 @@ impl Runtime {
         };
         let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
         let object = self.new_error_object(&prototype)?;
-        let key = self.intern_property_key("message")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)?;
         let defined = self.define_own_property(
             &object,
             &key,

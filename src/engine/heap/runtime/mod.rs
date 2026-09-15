@@ -90,6 +90,7 @@ impl Drop for RuntimeOperation<'_> {
 
 pub(crate) struct RuntimeState {
     pub(crate) atoms: AtomTable,
+    pub(crate) pinned_atoms: crate::engine::atom::pinned::PinnedAtoms,
     pub(crate) heap: Heap,
     /// Runtime-owned pending JavaScript exception. Object and Symbol payloads
     /// carry one manually retained root; no public `Value::Exception` sentinel
@@ -105,6 +106,8 @@ pub(crate) struct RuntimeState {
     /// weak and are validated before reuse.
     pub(crate) shape_cache: HashMap<ShapeFingerprint, ShapeId>,
     pub(crate) shape_fingerprints: HashMap<ShapeId, ShapeFingerprint>,
+    pub(crate) shape_transitions: HashMap<ShapeId, HashMap<ShapeEntry, ShapeId>>,
+    pub(crate) shape_transition_parents: HashMap<ShapeId, Vec<(ShapeId, ShapeEntry)>>,
     pub(crate) well_known_symbols: HashMap<WellKnownSymbol, Atom>,
     /// Unified QuickJS-style execution-frame chain. Records contain only raw
     /// stable identities and diagnostic state; the corresponding stack-local
@@ -284,6 +287,46 @@ impl RuntimeState {
         Ok(shape)
     }
 
+    /// Append-only edges borrow both shapes; collection/mutation unlinks them.
+    pub(crate) fn append_transition(&mut self, parent: ShapeId, entry: ShapeEntry) -> Result<ShapeId, RuntimeError> {
+        if let Some(&target) = self.shape_transitions.get(&parent).and_then(|edges| edges.get(&entry)) {
+            if self.heap.shape(target).is_ok() {
+                self.heap.retain_shape(target)?;
+                return Ok(target);
+            }
+            // A weak target may have entered zero-queue before its cleanup was
+            // delivered to the runtime. Never revive a stale location blindly.
+            self.unlink_shape_transitions(target);
+        }
+        let source = self.heap.shape(parent)?;
+        let prototype = source.prototype();
+        let mut entries = source.entries().to_vec();
+        entries.push(entry);
+        let target = self.get_or_create_shape(prototype, &entries)?;
+        self.shape_transitions.entry(parent).or_default().insert(entry, target);
+        self.shape_transition_parents.entry(target).or_default().push((parent, entry));
+        Ok(target)
+    }
+
+    pub(crate) fn unlink_shape_transitions(&mut self, shape: ShapeId) {
+        if let Some(edges) = self.shape_transitions.remove(&shape) {
+            for (entry, target) in edges {
+                if let Some(parents) = self.shape_transition_parents.get_mut(&target) {
+                    parents.retain(|pair| *pair != (shape, entry));
+                    if parents.is_empty() { self.shape_transition_parents.remove(&target); }
+                }
+            }
+        }
+        if let Some(parents) = self.shape_transition_parents.remove(&shape) {
+            for (parent, entry) in parents {
+                if let Some(edges) = self.shape_transitions.get_mut(&parent) {
+                    edges.remove(&entry);
+                    if edges.is_empty() { self.shape_transitions.remove(&parent); }
+                }
+            }
+        }
+    }
+
     pub(crate) fn retain_shape_atoms(
         &mut self,
         entries: &[ShapeEntry],
@@ -362,7 +405,17 @@ impl RuntimeState {
         {
             return self.replace_dictionary_layout(object, prototype, entries, slots);
         }
-        let shape = self.get_or_create_shape(prototype, entries)?;
+        let previous = self.heap.object(object)?.shape;
+        let source = self.heap.shape(previous)?;
+        let appended = entries.len() == source.entries().len() + 1
+            && prototype == source.prototype()
+            && entries[..source.entries().len()] == *source.entries();
+        let shape = if appended {
+            self.append_transition(previous, *entries.last().expect("append entry"))?
+        } else {
+            self.unlink_shape_transitions(previous);
+            self.get_or_create_shape(prototype, entries)?
+        };
         self.replace_layout_with_owned_shape(object, shape, slots)
     }
 
@@ -449,6 +502,7 @@ impl RuntimeState {
 
     pub(crate) fn unlink_finalized_shapes(&mut self, shapes: impl IntoIterator<Item = ShapeId>) {
         for shape in shapes {
+            self.unlink_shape_transitions(shape);
             let Some(fingerprint) = self.shape_fingerprints.remove(&shape) else {
                 continue;
             };

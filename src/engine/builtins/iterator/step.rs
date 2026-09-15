@@ -167,7 +167,7 @@ impl NextResume {
                 };
                 Ok(NextStep::Read {
                     object: object.clone(),
-                    key: runtime.intern_property_key("done")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?,
                     resume: Self(Box::new(NextResumeState {
                         realm,
                         phase: NextPhase::Done(object),
@@ -180,7 +180,7 @@ impl NextResume {
                 }
                 Ok(NextStep::Read {
                     object,
-                    key: runtime.intern_property_key("value")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?,
                     resume: Self(Box::new(NextResumeState {
                         realm,
                         phase: NextPhase::Value,
@@ -272,7 +272,7 @@ impl CloseStep {
     ) -> Result<Self, RuntimeError> {
         Ok(Self::Read {
             object: iterator.clone(),
-            key: runtime.intern_property_key("return")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?,
             resume: CloseResume(Box::new(CloseResumeState {
                 realm,
                 iterator,

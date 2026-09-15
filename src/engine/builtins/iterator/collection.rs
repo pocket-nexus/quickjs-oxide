@@ -329,7 +329,7 @@ impl CollectionResume {
                 self.0.phase = Phase::NextMethod;
                 Ok({
                     let __pending_field_receiver = Value::Object(iterator);
-                    let __pending_field_key = runtime.intern_property_key("next")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                     let __pending_field_resume = self;
                     CollectionStep::request_read(
                         __pending_field_receiver,
@@ -349,7 +349,7 @@ impl CollectionResume {
                 };
                 Ok({
                     let __pending_field_receiver = Value::Object(item);
-                    let __pending_field_key = runtime.intern_property_key("1")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)?;
                     let __pending_field_resume = self;
                     CollectionStep::request_read(
                         __pending_field_receiver,
@@ -426,7 +426,7 @@ impl CollectionResume {
         self.0.phase = Phase::Key(item.clone());
         Ok({
             let __pending_field_receiver = Value::Object(item);
-            let __pending_field_key = runtime.intern_property_key("0")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?;
             let __pending_field_resume = self;
             CollectionStep::request_read(
                 __pending_field_receiver,
@@ -547,7 +547,7 @@ mod owned_tests {
                 let exception = context.take_exception().unwrap();
                 let message = match &exception {
                     Some(Value::Object(object)) => context
-                        .get_property(object, &runtime.intern_property_key("message").unwrap())
+                        .get_property(object, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
                         .unwrap(),
                     _ => Value::Undefined,
                 };

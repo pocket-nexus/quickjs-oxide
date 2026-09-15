@@ -253,7 +253,7 @@ impl StringifyResumeState {
     ) -> JsonStringifyResult<StringifyStep> {
         self.gap = gap;
         let holder = runtime.new_ordinary_object_in_realm(self.realm)?;
-        let key = runtime.intern_property_key("")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal0)?;
         if !runtime.define_own_property(
             &holder,
             &key,
@@ -270,7 +270,7 @@ impl StringifyResumeState {
             )
             .into());
         }
-        self.to_json_key = Some(runtime.intern_property_key("toJSON")?);
+        self.to_json_key = Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToJSON)?);
         self.output = JsStringBuilder::new(256);
         let value = std::mem::replace(&mut self.root, Value::Undefined);
         self.check(

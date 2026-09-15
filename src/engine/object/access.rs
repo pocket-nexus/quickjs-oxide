@@ -41,7 +41,7 @@ impl Runtime {
                 let indexed = index.is_some_and(|index| {
                     usize::try_from(index).is_ok_and(|index| index < string.len())
                 });
-                !indexed && key != &self.intern_property_key("length")?
+                !indexed && key != &self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?
             }
             _ => true,
         })
@@ -97,7 +97,7 @@ impl Runtime {
                 JsString::from_code_unit(unit),
             ))));
         }
-        let length = self.intern_property_key("length")?;
+        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         if key == &length {
             let length = i32::try_from(string.len())
                 .map(Value::Int)

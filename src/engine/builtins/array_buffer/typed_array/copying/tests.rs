@@ -344,7 +344,7 @@ fn copying_methods_use_the_method_defining_realm() {
         Some(defining_uint8.clone()),
         "with did not use the method defining realm",
     );
-    let buffer_key = runtime.intern_property_key("buffer").unwrap();
+    let buffer_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Buffer).unwrap();
     let Value::Object(with_buffer) = caller.get_property(&with_result, &buffer_key).unwrap() else {
         panic!("cross-realm with result buffer was not an Object");
     };

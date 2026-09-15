@@ -71,7 +71,7 @@ impl Runtime {
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Array prototype"));
         }
-        let length = self.intern_property_key("length")?;
+        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         let entries = [ShapeEntry {
             atom: length.atom(),
             flags: PropertyFlags::data(true, false, false),
@@ -328,7 +328,7 @@ impl Runtime {
             let length = i32::try_from(length)
                 .map(Value::Int)
                 .unwrap_or_else(|_| Value::number(length as f64));
-            let key = self.intern_property_key("length")?;
+            let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
             let defined = self.define_own_property(
                 &object,
                 &key,

@@ -46,7 +46,7 @@ fn global_reflect_is_realm_aware_lazy_and_complete() {
     let mut second = runtime.new_context();
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
-    let key = runtime.intern_property_key("Reflect").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Reflect).unwrap();
 
     for (global, realm) in [(&first_global, first.realm), (&second_global, second.realm)] {
         let state = runtime.0.state.borrow();
@@ -270,11 +270,11 @@ fn detached_reflect_method_retains_then_releases_its_defining_realm() {
     let mut defining = runtime.new_context();
     let defining_realm = defining.realm;
     let global = defining.global_object().unwrap();
-    let reflect_key = runtime.intern_property_key("Reflect").unwrap();
+    let reflect_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Reflect).unwrap();
     let Value::Object(reflect) = defining.get_property(&global, &reflect_key).unwrap() else {
         panic!("defining realm Reflect did not materialize to an object");
     };
-    let get_key = runtime.intern_property_key("get").unwrap();
+    let get_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Get).unwrap();
     let Value::Object(get_object) = defining.get_property(&reflect, &get_key).unwrap() else {
         panic!("Reflect.get did not materialize to an object");
     };
@@ -301,7 +301,7 @@ fn detached_reflect_method_retains_then_releases_its_defining_realm() {
 
     let mut caller = runtime.new_context();
     let target = caller.new_object().unwrap();
-    let answer_key = runtime.intern_property_key("answer").unwrap();
+    let answer_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Answer).unwrap();
     assert!(
         caller
             .set_property(&target, &answer_key, Value::Int(42))
@@ -342,7 +342,7 @@ fn deleting_lazy_global_reflect_releases_its_realm_edge() {
     let runtime = Runtime::new();
     let context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key("Reflect").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Reflect).unwrap();
     let count_before = runtime
         .0
         .state

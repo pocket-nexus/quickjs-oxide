@@ -91,7 +91,7 @@ impl SortStep {
         };
         Ok(Self::request_read(
             object.clone(),
-            runtime.intern_property_key("length")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             SortResume(Box::new(SortResumeState {
                 pending_effect: SortStepPending::default(),
                 scheduler_set_key: None,

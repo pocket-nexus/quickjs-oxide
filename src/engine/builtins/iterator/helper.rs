@@ -232,7 +232,7 @@ impl HelperResume {
         } else {
             Ok({
                 let __pending_field_object = self.0.source.clone();
-                let __pending_field_key = runtime.intern_property_key("return")?;
+                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?;
                 let __pending_field_resume = self;
                 HelperResumeStep::request_read(
                     __pending_field_object,

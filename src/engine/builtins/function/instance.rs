@@ -136,7 +136,7 @@ impl InstanceStep {
         }
         Ok({
             let __pending_field_object = target.as_object().clone();
-            let __pending_field_key = runtime.intern_property_key("prototype")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
             let __pending_field_resume = InstanceResume(Box::new(InstanceResumeState {
                 pending_effect: InstanceStepPending::default(),
                 realm,

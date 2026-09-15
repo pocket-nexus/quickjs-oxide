@@ -120,7 +120,7 @@ impl ArrayNextStep {
             };
             return resume.drive(runtime, action);
         }
-        let key = runtime.intern_property_key("length")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         resume.drive(runtime, NextAction::Read(key))
     }
     fn wrong_receiver(runtime: &Runtime, realm: ContextId) -> Result<Self, RuntimeError> {

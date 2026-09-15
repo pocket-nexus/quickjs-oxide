@@ -87,7 +87,7 @@ impl FlattenStep {
         };
         Ok(Self::request_read(
             source.clone(),
-            runtime.intern_property_key("length")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             FlattenResume(Box::new(FlattenResumeState {
                 pending_effect: FlattenStepPending::default(),
                 realm,
@@ -369,7 +369,7 @@ impl FlattenResume {
             self.0.phase = Phase::NestedLength;
             return Ok(FlattenStep::request_read(
                 object,
-                runtime.intern_property_key("length")?,
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 self,
             ));
         }

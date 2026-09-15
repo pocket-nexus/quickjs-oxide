@@ -59,7 +59,7 @@ fn builtin_batch_preserves_order_flags_metadata_and_lazy_identity() {
             );
         }
     }
-    let key = runtime.intern_property_key("batch_first").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::BatchFirst).unwrap();
     let first = context.get_property(&object, &key).unwrap();
     assert!(matches!(first, Value::Object(_)));
     assert_eq!(first, context.get_property(&object, &key).unwrap());
@@ -70,7 +70,7 @@ fn builtin_batch_preserves_order_flags_metadata_and_lazy_identity() {
     let Value::Object(function) = first else {
         unreachable!()
     };
-    let length = runtime.intern_property_key("length").unwrap();
+    let length = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length).unwrap();
     assert_eq!(
         context.get_property(&function, &length).unwrap(),
         Value::Int(2)
@@ -223,7 +223,7 @@ fn builtin_batch_keeps_context_functions_separate_on_a_shared_shape() {
         .define_native_builtin_auto_init_batch(&b, second.realm, [method("batch_realm")])
         .unwrap();
     assert_eq!(layout(&runtime, &a).0, layout(&runtime, &b).0);
-    let key = runtime.intern_property_key("batch_realm").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::BatchRealm).unwrap();
     let a_function = first.get_property(&a, &key).unwrap();
     let b_function = second.get_property(&b, &key).unwrap();
     assert_ne!(a_function, b_function);

@@ -210,7 +210,7 @@ impl TypedCollectResume {
                 self.0.phase = Phase::NextMethod;
                 Ok(TypedCollectStep::Read {
                     object: iterator,
-                    key: runtime.intern_property_key("next")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
                     resume: self,
                 })
             }
@@ -223,8 +223,8 @@ impl TypedCollectResume {
                     return self.fail(runtime, "not a function");
                 };
                 self.0.next = Some(next);
-                self.0.done_key = Some(runtime.intern_property_key("done")?);
-                self.0.value_key = Some(runtime.intern_property_key("value")?);
+                self.0.done_key = Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?);
+                self.0.value_key = Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?);
                 self.next()
             }
             Phase::NextResult => {

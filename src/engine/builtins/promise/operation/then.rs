@@ -52,7 +52,7 @@ impl PromiseStep {
         ]);
         Ok({
             let __pending_field_receiver = Value::Object(promise.clone());
-            let __pending_field_key = runtime.intern_property_key("constructor")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
             let __pending_field_resume = Box::new(PromiseResume {
                 pending_effect: super::PromiseStepPending::default(),
                 realm,
@@ -190,7 +190,7 @@ impl PromiseStep {
     ) -> Result<Self, RuntimeError> {
         Ok({
             let __pending_field_receiver = Value::Object(promise.clone());
-            let __pending_field_key = runtime.intern_property_key("constructor")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
             let __pending_field_resume = Box::new(PromiseResume {
                 pending_effect: super::PromiseStepPending::default(),
                 realm,

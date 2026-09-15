@@ -58,7 +58,7 @@ impl Runtime {
                 }
                 Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
             };
-            let next_key = self.intern_property_key("next")?;
+            let next_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
             let next = match self.get_property_in_realm(realm, &sync_iterator, &next_key)? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
@@ -86,7 +86,7 @@ impl Runtime {
             }
         };
 
-        let next_key = self.intern_property_key("next")?;
+        let next_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
         let next = match self.get_value_property_in_realm(realm, iterator.clone(), &next_key)? {
             Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),

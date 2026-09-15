@@ -73,7 +73,7 @@ impl ProxyCallStep {
         let guard = ProxyMethodStackGuard::enter(runtime);
         Search {
             realm,
-            key: runtime.intern_property_key("apply")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Apply)?,
             limit: runtime.proxy_method_chain_limit("apply"),
             depth: 0,
             guard,

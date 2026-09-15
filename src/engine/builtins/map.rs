@@ -97,7 +97,7 @@ impl Runtime {
         }
 
         // QuickJS's alias table preserves the exact entries-function identity.
-        let entries_key = self.intern_property_key("entries")?;
+        let entries_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Entries)?;
         let entries = match self.get_property_in_realm(realm, &map_prototype, &entries_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) => {
@@ -409,10 +409,10 @@ impl Runtime {
         self.validate_value_domain(&key, "Map key")?;
         self.validate_value_domain(&value, "Map value")?;
         let key = Self::normalized_map_key(key);
-        let existing = self.find_map_record(map, &key)?.map(|(index, _)| index);
         let raw_key = self.raw_property_value(&key)?;
         let raw_value = self.raw_property_value(&value)?;
         let mut state = self.0.state.borrow_mut();
+        let existing = state.heap.map_find_record(map.object_id(), &raw_key)?;
         let retained = if existing.is_some() {
             state.retain_raw_value_atoms([&raw_value])?
         } else {

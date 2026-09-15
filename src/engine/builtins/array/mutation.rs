@@ -188,7 +188,7 @@ impl MutationStep {
                 return Ok(Self::Complete(Completion::Return(value)));
             }
         }
-        let action = MutationAction::Read(runtime.intern_property_key("length")?);
+        let action = MutationAction::Read(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?);
         MutationResume(Box::new(MutationResumeState {
             pending_effect: MutationStepPending::default(),
             scheduler_set_key: None,
@@ -352,7 +352,7 @@ impl MutationResume {
     fn write_length(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
         self.0.phase = Phase::LengthWrite;
         Ok(MutationAction::Set {
-            key: runtime.intern_property_key("length")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             value: Value::number(self.0.new_length as f64),
         })
     }

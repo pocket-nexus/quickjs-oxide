@@ -283,7 +283,7 @@ impl StringProtocolResume {
                 if regexp {
                     Ok(StringProtocolStep::make_read(
                         object.clone(),
-                        runtime.intern_property_key("flags")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                         {
                             let updated_0 = ProtocolPhase::Flags(method);
                             self.0.phase = updated_0;

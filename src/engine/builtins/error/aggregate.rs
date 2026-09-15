@@ -149,7 +149,7 @@ impl AggregateResume {
                 self.0.phase = Phase::NextMethod;
                 Ok(AggregateStep::Read {
                     receiver: Value::Object(iterator),
-                    key: runtime.intern_property_key("next")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
                     resume: self,
                 })
             }

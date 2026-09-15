@@ -56,7 +56,7 @@ impl Runtime {
         realm: ContextId,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let key = self.intern_property_key("Atomics")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Atomics)?;
         self.store_property_slot(
             global_object,
             &key,

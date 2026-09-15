@@ -121,7 +121,7 @@ impl RegExpMatchAllResume {
         };
         Ok(RegExpMatchAllStep::make_read(
             self.0.regexp.clone(),
-            runtime.intern_property_key("flags")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
             {
                 let updated_0 = Phase::Flags { input, constructor };
                 self.0.phase = updated_0;
@@ -134,7 +134,7 @@ impl RegExpMatchAllResume {
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpMatchAllStep, RuntimeError> {
-        let key = runtime.intern_property_key("lastIndex")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let completion = match runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             Some(value) => Completion::Throw(value),
             None => Completion::Return(Value::Undefined),
@@ -212,7 +212,7 @@ impl RegExpMatchAllResume {
                 };
                 Ok(RegExpMatchAllStep::make_read(
                     self.0.regexp.clone(),
-                    runtime.intern_property_key("lastIndex")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     {
                         let updated_0 = Phase::LastIndex {
                             input,
@@ -254,7 +254,7 @@ impl RegExpMatchAllResume {
                 };
                 Ok(RegExpMatchAllStep::make_set(
                     matcher.clone(),
-                    runtime.intern_property_key("lastIndex")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     Value::number(length as f64),
                     {
                         let updated_0 = Phase::Set {

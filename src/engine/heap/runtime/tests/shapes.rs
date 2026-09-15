@@ -212,3 +212,33 @@ fn failed_unique_shape_append_restores_cache_and_atom_ownership() {
     assert_eq!(state.shape_fingerprints.get(&shape), Some(&fingerprint));
     assert_eq!(state.shape_cache.get(&fingerprint), Some(&shape));
 }
+
+#[test]
+fn append_edges_are_weak_and_unlinked_on_mutation_and_collection() {
+    let runtime = Runtime::new();
+    let mut state = runtime.0.state.borrow_mut();
+    let atom = state.atoms.intern_static("transition-key").unwrap();
+    let parent = state.get_or_create_shape(None, &[]).unwrap();
+    let entry = crate::engine::object::shape::ShapeEntry {
+        atom,
+        flags: crate::engine::object::shape::PropertyFlags::data(true, true, true),
+    };
+    let first = state.append_transition(parent, entry).unwrap();
+    let second = state.append_transition(parent, entry).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(state.shape_transitions[&parent].len(), 1);
+    for shape in [first, second] {
+        let cleanup = state.heap.release_shape(shape).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+    }
+    assert!(!state.shape_transitions.contains_key(&parent));
+    assert!(state.shape_transition_parents.is_empty());
+    let successor = state.append_transition(parent, entry).unwrap();
+    state.unlink_shape_transitions(parent);
+    assert!(state.shape_transitions.is_empty());
+    assert!(state.shape_transition_parents.is_empty());
+    for shape in [successor, parent] {
+        let cleanup = state.heap.release_shape(shape).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+    }
+}

@@ -167,14 +167,14 @@ impl Runtime {
             )
         };
 
-        let length_key = self.intern_property_key("length")?;
+        let length_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         layout.push(
             length_key,
             PropertyFlags::data(true, false, true),
             PropertySlot::Data(self.raw_property_value(&Self::array_length_value(length))?),
         );
 
-        let callee = self.intern_property_key("callee")?;
+        let callee = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Callee)?;
         let (flags, slot) = if let Some(function) = current_function {
             (
                 PropertyFlags::data(true, false, true),

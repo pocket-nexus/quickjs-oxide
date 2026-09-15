@@ -56,7 +56,7 @@ impl MethodStep {
             return overflow(runtime, realm);
         }
         let guard = ProxyMethodStackGuard::enter(runtime);
-        let key = runtime.intern_property_key(name)?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::proxy_method(name))?;
         Search {
             realm,
             key,

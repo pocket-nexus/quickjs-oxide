@@ -1178,7 +1178,7 @@ impl Runtime {
             NativeConversion::Value(InternalSetResult::Rejected(
                 PropertySetRejection::ArrayLengthReadOnly,
             )) => {
-                let length = self.intern_property_key("length")?;
+                let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                 let error =
                     self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?;
                 Err(error.into())

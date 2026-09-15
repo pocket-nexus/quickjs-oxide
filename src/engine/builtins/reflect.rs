@@ -184,7 +184,7 @@ impl Runtime {
         realm: ContextId,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let key = self.intern_property_key("Reflect")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Reflect)?;
         self.store_property_slot(
             global_object,
             &key,
@@ -277,7 +277,7 @@ impl Runtime {
         if !array {
             return Ok(None);
         }
-        let key = self.intern_property_key("length")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         let Some(crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data { value, .. }) =
             self.get_own_property(object, &key)?
         else {

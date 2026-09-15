@@ -361,7 +361,7 @@ impl ConcatStep {
             resume.phase = ConcatPhase::ReturnMethod(iterator.clone());
             return Ok({
                 let __pending_field_object = iterator;
-                let __pending_field_key = runtime.intern_property_key("return")?;
+                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?;
                 let __pending_field_resume = resume;
                 Self::request_read(
                     __pending_field_object,
@@ -498,7 +498,7 @@ impl ConcatResume {
             self.0.phase = ConcatPhase::Method(iterator.clone());
             return Ok({
                 let __pending_field_object = iterator;
-                let __pending_field_key = runtime.intern_property_key("next")?;
+                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                 let __pending_field_resume = self;
                 ConcatStep::request_read(
                     __pending_field_object,

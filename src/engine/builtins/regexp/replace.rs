@@ -59,11 +59,11 @@ impl Runtime {
         &self,
         regexp: &ObjectRef,
     ) -> Result<Option<StandardRegExpReplace>, RuntimeError> {
-        let last_index = self.intern_property_key("lastIndex")?;
-        let exec = self.intern_property_key("exec")?;
-        let flags = self.intern_property_key("flags")?;
-        let global = self.intern_property_key("global")?;
-        let unicode = self.intern_property_key("unicode")?;
+        let last_index = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let exec = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Exec)?;
+        let flags = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?;
+        let global = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Global)?;
+        let unicode = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Unicode)?;
         let state = self.0.state.borrow();
         let object = state.heap.object(regexp.object_id())?;
         let ObjectPayload::RegExp(RegExpObjectData::Compiled { program, .. }) = &object.payload
@@ -766,7 +766,7 @@ impl RegExpReplaceResume {
         value: Value,
         initial: bool,
     ) -> Result<ReplaceAction, RuntimeError> {
-        let key = runtime.intern_property_key("lastIndex")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.0.phase = if initial {
             ReplacePhase::InitialSet
         } else {
@@ -795,13 +795,13 @@ impl RegExpReplaceResume {
         }
         Ok(self.read(
             ReadTarget::RegExp,
-            runtime.intern_property_key("flags")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
             ReplacePhase::Flags,
         ))
     }
     fn execute(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
         if self.0.state.zero.is_none() {
-            self.0.state.zero = Some(runtime.intern_property_key("0")?);
+            self.0.state.zero = Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?);
         }
         self.0.phase = ReplacePhase::Exec;
         Ok(ReplaceAction::Exec)
@@ -810,9 +810,9 @@ impl RegExpReplaceResume {
         let results = std::mem::take(&mut self.0.state.results).into_iter();
         self.0.result = Some(ResultCursor {
             results,
-            length_key: runtime.intern_property_key("length")?,
-            index_key: runtime.intern_property_key("index")?,
-            groups_key: runtime.intern_property_key("groups")?,
+            length_key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+            index_key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Index)?,
+            groups_key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Groups)?,
             next_source: 0,
         });
         self.next_result(runtime)
@@ -997,7 +997,7 @@ impl RegExpReplaceResume {
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ReplaceAction, RuntimeError> {
-        let key = runtime.intern_property_key("lastIndex")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(ReplaceAction::Complete(Completion::Throw(value)));
         }
@@ -1130,7 +1130,7 @@ impl RegExpReplaceResume {
                 if matched.is_empty() {
                     Ok(self.read(
                         ReadTarget::RegExp,
-                        runtime.intern_property_key("lastIndex")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                         ReplacePhase::LastIndex,
                     ))
                 } else {

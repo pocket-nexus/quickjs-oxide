@@ -63,7 +63,7 @@ impl Runtime {
         // QuickJS allocates the null-prototype branded object only after the
         // complete strict parse succeeds.
         let object = self.new_raw_json_object()?;
-        let raw_json = self.intern_property_key("rawJSON")?;
+        let raw_json = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::RawJSON)?;
         if !self.define_own_property(
             &object,
             &raw_json,

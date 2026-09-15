@@ -158,7 +158,7 @@ impl ConcatResume {
                     self.0.phase = Phase::Length;
                     Ok(ConcatStep::request_read(
                         self.object()?,
-                        runtime.intern_property_key("length")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                         self,
                     ))
                 } else {
@@ -178,7 +178,7 @@ impl ConcatResume {
             self.0.phase = Phase::Set;
             return Ok(ConcatStep::request_set(
                 self.result()?,
-                runtime.intern_property_key("length")?,
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 Value::number(self.0.next_index as f64),
                 self,
             ));

@@ -189,7 +189,7 @@ impl TypedStringResume {
                     self.0.index += 1;
                 }
                 ArrayJoinKind::ToLocaleString => {
-                    let key = runtime.intern_property_key("toLocaleString")?;
+                    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToLocaleString)?;
                     self.0.phase = Phase::LocaleMethod(element.clone());
                     return Ok(TypedStringStep::request_read(element, key, self));
                 }

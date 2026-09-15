@@ -49,11 +49,19 @@ static NEXT_ATOM_TABLE_ID: AtomicU64 = AtomicU64::new(1);
 /// Copying a table-backed atom does *not* retain it; callers which create a new
 /// owning reference must call [`AtomTable::retain`], mirroring `QuickJS`'s
 /// `JS_DupAtom` contract.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Atom {
     raw: u32,
     generation: u32,
     table_id: u64,
+}
+
+impl std::hash::Hash for Atom {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Runtime-local maps have one domain. Equality still checks table_id;
+        // different domains may collide but can never compare equal.
+        state.write_u64((u64::from(self.generation) << 32) | u64::from(self.raw));
+    }
 }
 
 impl Atom {
@@ -1353,3 +1361,5 @@ mod tests {
 }
 
 pub(crate) mod runtime;
+
+pub(crate) mod pinned;

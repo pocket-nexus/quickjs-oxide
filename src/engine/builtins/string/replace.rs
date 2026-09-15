@@ -282,7 +282,7 @@ impl StringReplaceResumeState {
                 if runtime.is_regexp_from_match(object, &value)? {
                     self.phase = Phase::Flags;
                     Ok(StringReplaceAction::Read(
-                        runtime.intern_property_key("flags")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                     ))
                 } else {
                     self.method(runtime)

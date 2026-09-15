@@ -130,11 +130,11 @@ impl PrimitiveResume {
     ) -> Result<PrimitiveStep, RuntimeError> {
         let string_first = matches!(self.0.hint, ToPrimitiveHint::String);
         let name = if string_first != second {
-            "toString"
+            crate::engine::atom::pinned::PinnedAtom::ToString
         } else {
-            "valueOf"
+            crate::engine::atom::pinned::PinnedAtom::ValueOf
         };
-        let key = runtime.intern_property_key(name)?;
+        let key = runtime.pinned_property_key(name)?;
         self.0.phase = Phase::OrdinaryMethod(second);
         let object = self.0.object.clone();
         Ok(self.get(object, key))

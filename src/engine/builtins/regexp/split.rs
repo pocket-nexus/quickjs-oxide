@@ -174,7 +174,7 @@ impl SplitState {
         })?);
         Ok(RegExpSplitStep::make_set(
             self.splitter.clone(),
-            runtime.intern_property_key("lastIndex")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
             value,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
                 step_pending: RegExpSplitStepPending::default(),
@@ -295,7 +295,7 @@ impl RegExpSplitResume {
         };
         Ok(RegExpSplitStep::make_read(
             regexp.clone(),
-            runtime.intern_property_key("flags")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
             Self(Box::new(RegExpSplitResumeState {
                 step_pending: RegExpSplitStepPending::default(),
                 realm: self.0.realm,
@@ -313,7 +313,7 @@ impl RegExpSplitResume {
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpSplitStep, RuntimeError> {
-        let key = runtime.intern_property_key("lastIndex")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let result = match runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             Some(value) => Completion::Throw(value),
             None => Completion::Return(Value::Undefined),
@@ -484,7 +484,7 @@ impl RegExpSplitResume {
                 }
                 Value::Object(matched) => Ok(RegExpSplitStep::make_read(
                     state.splitter.clone(),
-                    runtime.intern_property_key("lastIndex")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     Self(Box::new(RegExpSplitResumeState {
                         step_pending: RegExpSplitStepPending::default(),
                         realm,
@@ -525,7 +525,7 @@ impl RegExpSplitResume {
                 state.p = end;
                 Ok(RegExpSplitStep::make_read(
                     matched.clone(),
-                    runtime.intern_property_key("length")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                     Self(Box::new(RegExpSplitResumeState {
                         step_pending: RegExpSplitStepPending::default(),
                         realm,
@@ -580,8 +580,8 @@ impl RegExpSplitResume {
             return Ok(state.execute(realm, true));
         }
         // Preserve key allocation before the first observable splitter write.
-        runtime.intern_property_key("lastIndex")?;
-        runtime.intern_property_key("length")?;
+        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         state.next(runtime, realm)
     }
 }

@@ -19,7 +19,7 @@ pub struct MapRecord {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CollectionRecords {
-    entries: HashMap<usize, MapRecord>,
+    entries: HashMap<usize, (MapRecord, u64)>,
     order: BTreeSet<usize>,
     key_index: CollectionIndex,
     next_id: usize,
@@ -41,19 +41,19 @@ impl CollectionRecords {
     }
 
     pub fn get(&self, id: usize) -> Option<&MapRecord> {
-        self.entries.get(&id)
+        self.entries.get(&id).map(|entry| &entry.0)
     }
 
     #[cfg(test)]
     pub(super) fn get_mut(&mut self, id: usize) -> Option<&mut MapRecord> {
-        self.entries.get_mut(&id)
+        self.entries.get_mut(&id).map(|entry| &mut entry.0)
     }
 
     /// Value replacement cannot invalidate either key or insertion indexes.
     pub(super) fn replace_value(&mut self, id: usize, value: RawValue) -> Option<RawValue> {
         self.entries
             .get_mut(&id)
-            .map(|record| std::mem::replace(&mut record.value, value))
+            .map(|record| std::mem::replace(&mut record.0.value, value))
     }
 
     pub fn ids(&self) -> impl DoubleEndedIterator<Item = usize> + ExactSizeIterator + '_ {
@@ -61,12 +61,12 @@ impl CollectionRecords {
     }
 
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &MapRecord> + ExactSizeIterator {
-        self.order.iter().map(|id| &self.entries[id])
+        self.order.iter().map(|id| &self.entries[id].0)
     }
 
     pub fn next_at_or_after(&self, cursor: usize) -> Option<(usize, &MapRecord)> {
         let &id = self.order.range(cursor..).next()?;
-        Some((id, &self.entries[&id]))
+        Some((id, &self.entries[&id].0))
     }
 
     pub(super) fn find(&self, key: &RawValue) -> Option<usize> {
@@ -88,9 +88,9 @@ impl CollectionRecords {
             .checked_add(1)
             .expect("collection insertion was preflighted");
         let key = &record.key;
-        self.key_index.insert(key, id);
+        let hash = self.key_index.insert(key, id);
         assert!(
-            self.entries.insert(id, record).is_none(),
+            self.entries.insert(id, (record, hash)).is_none(),
             "collection record ID was reused"
         );
         assert!(self.order.insert(id), "collection ordered ID was reused");
@@ -98,8 +98,8 @@ impl CollectionRecords {
     }
 
     pub(super) fn remove(&mut self, id: usize) -> Option<MapRecord> {
-        let record = self.entries.remove(&id)?;
-        self.key_index.remove(&record.key, id);
+        let (record, hash) = self.entries.remove(&id)?;
+        self.key_index.remove_hashed(hash, id);
         assert!(
             self.order.remove(&id),
             "live collection record has no ordered ID"
@@ -140,7 +140,7 @@ impl CollectionRecords {
 
 /// Ordered ownership transfer for clear; no record snapshot.
 pub struct CollectionRecordsIntoIter {
-    entries: HashMap<usize, MapRecord>,
+    entries: HashMap<usize, (MapRecord, u64)>,
     order: btree_set::IntoIter<usize>,
 }
 
@@ -152,7 +152,8 @@ impl Iterator for CollectionRecordsIntoIter {
         Some(
             self.entries
                 .remove(&id)
-                .expect("ordered collection record exists"),
+                .expect("ordered collection record exists")
+                .0,
         )
     }
 

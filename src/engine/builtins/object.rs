@@ -212,7 +212,7 @@ impl Runtime {
             "set __proto__",
             1,
         )?;
-        let proto = self.intern_property_key("__proto__")?;
+        let proto = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Proto)?;
         if !self.define_own_property(
             object_prototype,
             &proto,
@@ -706,7 +706,7 @@ impl Runtime {
         if let ArrayOwnKey::Index(index) = self.array_own_key(object, key)? {
             let (length, writable) = self.array_length_state(object)?;
             if index >= length && !writable {
-                let length = self.intern_property_key("length")?;
+                let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                 let error =
                     self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?;
                 return self.new_native_error_from_error(realm, NativeErrorKind::Type, &error);

@@ -193,7 +193,7 @@ impl Runtime {
         function: &ObjectRef,
         realm: ContextId,
     ) -> Result<(), RuntimeError> {
-        let key = self.intern_property_key("prototype")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
         let mut state = self.0.state.borrow_mut();
         state.heap.context(realm)?;
         let object_id = function.object_id();
@@ -392,7 +392,7 @@ impl Runtime {
         let Value::Object(object) = value else {
             return Ok(());
         };
-        let key = self.intern_property_key("name")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
         let should_define = match self.get_own_property(object, &key)? {
             None => true,
             Some(CompleteOrdinaryPropertyDescriptor::Data {

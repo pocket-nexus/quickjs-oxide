@@ -25,47 +25,6 @@ impl FusionPlan {
         let _timer = crate::engine::api::profiling::PhaseTimer::start(
             crate::engine::api::profiling::CompilePhase::Fusion,
         );
-        // Allocate nothing for the common small leaf without a candidate.
-        if !code.windows(2).enumerate().any(|(pc, pair)| {
-            if method_call_count(&code[pc..]).is_some() {
-                return true;
-            }
-            if matches!(
-                pair,
-                [
-                    Instruction::Add,
-                    Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                ]
-            ) && matches!(code.get(pc + 2), Some(Instruction::Drop))
-            {
-                return true;
-            }
-            matches!(
-                pair,
-                [
-                    Instruction::Add,
-                    Instruction::PutLocal(_) | Instruction::PutLocalCheck(_)
-                ] | [
-                    Instruction::GetLocal(_) | Instruction::GetLocalCheck(_),
-                    Instruction::Inc
-                        | Instruction::Dec
-                        | Instruction::PostInc
-                        | Instruction::PostDec
-                ] | [
-                    Instruction::Lt
-                        | Instruction::Lte
-                        | Instruction::Gt
-                        | Instruction::Gte
-                        | Instruction::Eq
-                        | Instruction::Neq
-                        | Instruction::StrictEq
-                        | Instruction::StrictNeq,
-                    Instruction::IfTrue(_) | Instruction::IfFalse(_)
-                ]
-            )
-        }) {
-            return Self::default();
-        }
         let mut entries = vec![false; code.len()];
         for (pc, instruction) in code.iter().enumerate() {
             let control = instruction.control_effect();
@@ -80,7 +39,7 @@ impl FusionPlan {
                 }
             }
         }
-        let mut flags = vec![0; code.len()];
+        let mut flags = Vec::new();
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_compiler_storage(
             crate::engine::api::profiling::CompilePhase::Fusion,
@@ -210,6 +169,9 @@ impl FusionPlan {
             });
             if let Some((flag, length)) = candidate {
                 if !entries[pc + 1..pc + length].iter().any(|v| *v) {
+                    if flags.is_empty() {
+                        flags.resize(code.len(), 0);
+                    }
                     flags[pc] = flag;
                     any = true;
                 }

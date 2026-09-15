@@ -601,7 +601,7 @@ impl Runtime {
         &self,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let key = self.intern_property_key("globalThis")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::GlobalThis)?;
         let defined = self.define_own_property(
             global_object,
             &key,

@@ -45,7 +45,7 @@ impl RegExpSpeciesStep {
         )?);
         Ok(Self::Read {
             object: regexp,
-            key: runtime.intern_property_key("constructor")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
             resume: RegExpSpeciesResume(Box::new(RegExpSpeciesResumeState {
                 realm,
                 default,

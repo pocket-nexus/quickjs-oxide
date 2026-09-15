@@ -463,6 +463,14 @@ impl RuntimeState {
                 replacement,
             );
         }
+        if existing.is_none() && !dictionary {
+            let target = state.append_transition(shape_id, ShapeEntry { atom, flags })?;
+            let mut slots = state.heap.object(object_id)?.slots.clone();
+            slots.push(replacement);
+            return state.replace_layout_with_owned_shape(object_id, target, slots);
+        }
+        // Reconfiguration does not inherit append-only facts.
+        state.unlink_shape_transitions(shape_id);
         let (prototype, mut entries, mut slots) = {
             let object_data = state.heap.object(object_id)?;
             let shape = state.heap.shape(object_data.shape)?;

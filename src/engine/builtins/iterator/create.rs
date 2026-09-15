@@ -104,7 +104,7 @@ impl CreateResume {
     fn read(self, runtime: &Runtime) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Read {
             object: self.0.source.clone(),
-            key: runtime.intern_property_key("next")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
             resume: self,
         })
     }

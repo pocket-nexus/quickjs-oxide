@@ -238,7 +238,7 @@ impl TypedIterationResume {
             ),
             IterationPhase::FilterSpecies(selected) => Ok(TypedIterationStep::request_read(
                 target.clone(),
-                runtime.intern_property_key("set")?,
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Set)?,
                 Self(Box::new(TypedIterationResumeState {
                     pending_effect: TypedIterationStepPending::default(),
                     realm: self.0.realm,

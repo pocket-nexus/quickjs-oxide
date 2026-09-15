@@ -126,7 +126,7 @@ impl ConsumeStep {
         };
         Ok({
             let __pending_field_object = source.clone();
-            let __pending_field_key = runtime.intern_property_key("next")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
             let __pending_field_resume = ConsumeResume(Box::new(ConsumeResumeState {
                 pending_effect: ConsumeStepPending::default(),
                 realm,

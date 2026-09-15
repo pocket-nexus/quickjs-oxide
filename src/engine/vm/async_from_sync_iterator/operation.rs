@@ -381,7 +381,7 @@ impl FromSyncResume {
                 };
                 Ok({
                     let __pending_field_receiver = Value::Object(result.clone());
-                    let __pending_field_key = runtime.intern_property_key("done")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?;
                     let __pending_field_resume = self.continue_with(Phase::Done { state, result });
                     FromSyncStep::request_read(
                         __pending_field_receiver,
@@ -394,7 +394,7 @@ impl FromSyncResume {
                 let done = runtime.value_to_boolean(&value)?;
                 Ok({
                     let __pending_field_receiver = Value::Object(result);
-                    let __pending_field_key = runtime.intern_property_key("value")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?;
                     let __pending_field_resume = self.continue_with(Phase::Value { state, done });
                     FromSyncStep::request_read(
                         __pending_field_receiver,

@@ -60,7 +60,7 @@ impl ArgumentsStep {
         }
         Ok(Self::Read {
             object: carrier.clone(),
-            key: runtime.intern_property_key("length")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             resume: ArgumentsResume(Box::new(ArgumentsResumeState {
                 realm,
                 carrier,

@@ -234,7 +234,7 @@ impl KeysResume {
             }
             Phase::Trap(rooted) => Ok(KeysStep::request_read(
                 value.clone(),
-                runtime.intern_property_key("length")?,
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 Self(Box::new(KeysResumeState {
                     pending_effect: KeysStepPending::default(),
                     realm,

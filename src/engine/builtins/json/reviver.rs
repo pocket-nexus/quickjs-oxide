@@ -331,7 +331,7 @@ impl ParseResume {
         let Some(root) = root else {
             return Ok(ParseStep::Complete(Completion::Return(parsed)));
         };
-        let key = runtime.intern_property_key("")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal0)?;
         match runtime.define_json_reviver_property(state.realm, &root, &key, parsed)? {
             PropertyDefineOutcome::Defined(true) => {}
             PropertyDefineOutcome::Defined(false) => {
@@ -376,7 +376,7 @@ impl ParseResume {
                     if array {
                         Ok(ParseStep::request_read(
                             object,
-                            runtime.intern_property_key("length")?,
+                            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                             {
                                 let phase = Phase::Length;
                                 let mut owner = self.0;
@@ -400,7 +400,7 @@ impl ParseResume {
                     {
                         let context = node.context.clone().unwrap();
                         let source = Value::String(self.0.source.sub_string(start, end));
-                        let key = runtime.intern_property_key("source")?;
+                        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Source)?;
                         match runtime.define_json_reviver_property(realm, &context, &key, source)? {
                             PropertyDefineOutcome::Defined(true) => {}
                             PropertyDefineOutcome::Defined(false) => {

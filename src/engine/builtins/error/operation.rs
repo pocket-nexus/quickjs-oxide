@@ -102,7 +102,7 @@ impl ErrorStep {
                 };
                 Ok({
                     let __pending_field_receiver = resume.new_target.clone();
-                    let __pending_field_key = runtime.intern_property_key("prototype")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
                     let __pending_field_resume = resume;
                     Self::request_read(
                         __pending_field_receiver,
@@ -126,7 +126,7 @@ impl ErrorStep {
                 resume.phase = Phase::NameRead;
                 Ok({
                     let __pending_field_receiver = this_value.clone();
-                    let __pending_field_key = runtime.intern_property_key("name")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
                     let __pending_field_resume = resume;
                     Self::request_read(
                         __pending_field_receiver,
@@ -310,7 +310,7 @@ impl ErrorResume {
         self.0.phase = Phase::TextRead;
         Ok({
             let __pending_field_receiver = Value::Object(self.object()?);
-            let __pending_field_key = runtime.intern_property_key("message")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)?;
             let __pending_field_resume = self;
             ErrorStep::request_read(
                 __pending_field_receiver,
@@ -328,7 +328,7 @@ impl ErrorResume {
             self.0.phase = Phase::CauseHas;
             return Ok({
                 let __pending_field_object = object;
-                let __pending_field_key = runtime.intern_property_key("cause")?;
+                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Cause)?;
                 let __pending_field_resume = self;
                 ErrorStep::request_has(
                     __pending_field_object,
@@ -362,7 +362,7 @@ impl ErrorResume {
         self.0.phase = Phase::Cause;
         Ok({
             let __pending_field_receiver = receiver;
-            let __pending_field_key = runtime.intern_property_key("cause")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Cause)?;
             let __pending_field_resume = self;
             ErrorStep::request_read(
                 __pending_field_receiver,

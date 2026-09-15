@@ -84,7 +84,7 @@ impl WrapStep {
         match mode {
             IteratorResumeKind::Return => Ok({
                 let __pending_field_receiver = source;
-                let __pending_field_key = runtime.intern_property_key("return")?;
+                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?;
                 let __pending_field_resume = resume;
                 Self::request_read(
                     __pending_field_receiver,

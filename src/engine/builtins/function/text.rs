@@ -115,7 +115,7 @@ impl FunctionTextStep {
 
         Ok({
             let __pending_field_object = function.clone();
-            let __pending_field_key = runtime.intern_property_key("name")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
             let __pending_field_resume = FunctionTextResume(Box::new(FunctionTextResumeState {
                 pending_effect: FunctionTextStepPending::default(),
                 function,

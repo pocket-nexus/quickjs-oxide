@@ -1393,7 +1393,7 @@ fn prototype_set_handles_array_like_order_overlap_and_reentrant_bounds() {
 fn context_free_host_definition_converts_primitive_typed_array_values() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    let key = runtime.intern_property_key("0").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap();
 
     let Value::Object(number_array) = context.eval("new Uint8Array(1)").unwrap() else {
         panic!("Uint8Array construction did not return an object");

@@ -119,7 +119,7 @@ impl ObjectStringStep {
                 }
                 Ok(Self::request_read(
                     this_value.clone(),
-                    runtime.intern_property_key("toString")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?,
                     ObjectStringResume(Box::new(ObjectStringResumeState {
                         pending_effect: ObjectStringStepPending::default(),
                         realm,

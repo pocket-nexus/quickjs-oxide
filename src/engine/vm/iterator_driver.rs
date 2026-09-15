@@ -727,9 +727,13 @@ impl PendingIteratorState {
         Ok(pending)
     }
 
-    fn key(&self, runtime: &Runtime, name: &str) -> Result<PropertyKey, Error> {
+    fn key(
+        &self,
+        runtime: &Runtime,
+        name: crate::engine::atom::pinned::PinnedAtom,
+    ) -> Result<PropertyKey, Error> {
         runtime
-            .intern_property_key(name)
+            .pinned_property_key(name)
             .map_err(|e| Error::internal(e.to_string()))
     }
 
@@ -750,7 +754,7 @@ impl PendingIteratorState {
                 self.stage = Stage::ReturnMethod;
                 return Ok(Action::Read(
                     self.iterator.clone(),
-                    self.key(runtime, "return")?,
+                    self.key(runtime, crate::engine::atom::pinned::PinnedAtom::Return)?,
                 ));
             }
             Some(Completion::Return(value)) => value,
@@ -763,7 +767,7 @@ impl PendingIteratorState {
                 self.stage = Stage::ReturnMethod;
                 Ok(Action::Read(
                     self.iterator.clone(),
-                    self.key(runtime, "return")?,
+                    self.key(runtime, crate::engine::atom::pinned::PinnedAtom::Return)?,
                 ))
             }
             Stage::AsyncMethod
@@ -837,7 +841,7 @@ impl PendingIteratorState {
                 self.stage = Stage::NextMethod;
                 Ok(Action::Read(
                     self.iterator.clone(),
-                    self.key(runtime, "next")?,
+                    self.key(runtime, crate::engine::atom::pinned::PinnedAtom::Next)?,
                 ))
             }
             Stage::NextMethod if self.sync_fallback => {
@@ -852,7 +856,7 @@ impl PendingIteratorState {
                 self.sync_fallback = false;
                 Ok(Action::Read(
                     self.iterator.clone(),
-                    self.key(runtime, "next")?,
+                    self.key(runtime, crate::engine::atom::pinned::PinnedAtom::Next)?,
                 ))
             }
             Stage::NextMethod => {
@@ -890,7 +894,7 @@ impl PendingIteratorState {
                     return Ok(Action::Finish);
                 }
                 let key = runtime
-                    .intern_property_key(&self.position.to_string())
+                    .property_key_for_index(self.position as u64)
                     .map_err(|e| Error::internal(e.to_string()))?;
                 let outcome = runtime
                     .define_own_property_in_realm(

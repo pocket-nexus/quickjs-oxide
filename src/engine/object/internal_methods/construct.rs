@@ -76,7 +76,7 @@ impl ProxyConstructStep {
         }
         Search {
             realm,
-            key: runtime.intern_property_key("construct")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Construct)?,
             limit: runtime.proxy_method_chain_limit("construct"),
             depth: 0,
             guard: ProxyMethodStackGuard::enter(runtime),

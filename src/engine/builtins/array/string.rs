@@ -160,7 +160,7 @@ impl ArrayStringResume {
                     self.0.phase = Phase::LocaleMethod;
                     return Ok({
                         let __pending_field_receiver = value;
-                        let __pending_field_key = runtime.intern_property_key("toLocaleString")?;
+                        let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToLocaleString)?;
                         let __pending_field_resume = self;
                         ArrayStringStep::request_read(
                             __pending_field_receiver,

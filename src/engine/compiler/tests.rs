@@ -73,8 +73,8 @@ fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (Js
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("source did not throw an Error object: {source}");
     };
-    let name = runtime.intern_property_key("name").unwrap();
-    let message = runtime.intern_property_key("message").unwrap();
+    let name = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap();
+    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
     let Value::String(name) = context.get_property(&error, &name).unwrap() else {
         panic!("Error.name was not a string: {source}");
     };
@@ -90,7 +90,7 @@ fn evaluate_function_name(source: &str) -> (JsString, bool, bool, bool) {
     let Value::Object(function) = context.eval(source).unwrap() else {
         panic!("source did not evaluate to a function object");
     };
-    let name = runtime.intern_property_key("name").unwrap();
+    let name = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap();
     let CompleteOrdinaryPropertyDescriptor::Data {
         value: Value::String(value),
         writable,

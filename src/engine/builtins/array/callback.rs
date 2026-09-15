@@ -119,7 +119,7 @@ impl CallbackStep {
         };
         Ok(Self::request_read(
             object.clone(),
-            runtime.intern_property_key("length")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             CallbackResume(Box::new(CallbackResumeState {
                 pending_effect: CallbackStepPending::default(),
                 realm,

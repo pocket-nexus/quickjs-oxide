@@ -28,7 +28,7 @@ impl Runtime {
 
         let template = self.new_array(realm)?;
         let raw_array = self.new_array(realm)?;
-        let raw_key = self.intern_property_key("raw")?;
+        let raw_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Raw)?;
         if !self.define_own_property(
             &template,
             &raw_key,
@@ -99,7 +99,7 @@ impl Runtime {
     }
 
     fn seal_template_array(&self, array: &ObjectRef) -> Result<(), RuntimeError> {
-        let length = self.intern_property_key("length")?;
+        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         if !self.define_own_property(
             array,
             &length,

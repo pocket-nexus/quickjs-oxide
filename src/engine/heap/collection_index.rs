@@ -14,15 +14,15 @@ use crate::engine::value::{JsString, WeakJsString, collection_key};
 
 #[derive(Clone, Default)]
 pub struct CollectionIndex {
-    buckets: HashMap<u64, Vec<usize>>,
-    // Allocate the cache header only for long string keys. It is scoped to
-    // this index's hasher seed and keeps no String payload alive.
+    buckets: HashMap<u64, Vec<usize>, crate::engine::hash::IdentityBuildHasher>,
+    key_hasher: std::collections::hash_map::RandomState,
+    // Bounded weak representation cache, scoped to the key hasher seed.
+    // Short and long string keys share it without keeping payloads alive.
     string_hashes: RefCell<Option<Box<StringHashCache>>>,
     #[cfg(test)]
     hash_computations: std::cell::Cell<usize>,
 }
 
-const MIN_CACHED_STRING_UNITS: usize = 256;
 const STRING_HASH_CACHE_SIZE: usize = 8;
 
 #[derive(Clone)]
@@ -77,9 +77,6 @@ impl CollectionIndex {
         let RawValue::String(string) = key else {
             return self.hash_uncached(key);
         };
-        if string.len() < MIN_CACHED_STRING_UNITS {
-            return self.hash_uncached(key);
-        }
         if let Some(hash) = self
             .string_hashes
             .borrow()
@@ -99,7 +96,7 @@ impl CollectionIndex {
     fn hash_uncached(&self, key: &RawValue) -> u64 {
         #[cfg(test)]
         self.hash_computations.set(self.hash_computations.get() + 1);
-        let mut hasher = self.buckets.hasher().build_hasher();
+        let mut hasher = self.key_hasher.build_hasher();
         collection_key::hash(key, &mut hasher);
         hasher.finish()
     }
@@ -117,12 +114,18 @@ impl CollectionIndex {
             })
     }
 
-    pub(super) fn insert(&mut self, key: &RawValue, index: usize) {
-        self.buckets.entry(self.hash(key)).or_default().push(index);
+    pub(super) fn insert(&mut self, key: &RawValue, index: usize) -> u64 {
+        let hash = self.hash(key);
+        self.buckets.entry(hash).or_default().push(index);
+        hash
     }
 
+    #[cfg(test)]
     pub(super) fn remove(&mut self, key: &RawValue, index: usize) {
-        let hash = self.hash(key);
+        self.remove_hashed(self.hash(key), index);
+    }
+
+    pub(super) fn remove_hashed(&mut self, hash: u64, index: usize) {
         let bucket = self
             .buckets
             .get_mut(&hash)
@@ -201,6 +204,17 @@ mod tests {
         records
     }
     use crate::engine::value::{JsString, bigint::JsBigInt};
+
+    #[test]
+    fn short_string_hash_is_memoized_without_owning_the_key() {
+        let index=CollectionIndex::default();
+        let key=JsString::try_from_utf8("short").unwrap();
+        let weak=key.downgrade();
+        for _ in 0..3 {index.hash(&RawValue::String(key.clone()));}
+        assert_eq!(index.hash_computations.get(),1);
+        drop(key);
+        assert!(weak.upgrade().is_none());
+    }
 
     #[test]
     fn long_string_hash_memo_is_bounded_and_does_not_own_keys() {

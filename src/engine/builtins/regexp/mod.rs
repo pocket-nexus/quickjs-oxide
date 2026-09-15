@@ -271,7 +271,7 @@ impl Runtime {
         // QuickJS retains a realm-local canonical shape for literal-created
         // RegExp objects.  Constructors with a custom derived prototype use a
         // shape with the same property layout but that explicit prototype.
-        let last_index = self.intern_property_key("lastIndex")?;
+        let last_index = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let entries = [ShapeEntry {
             atom: last_index.atom(),
             flags: PropertyFlags::data(true, false, false),

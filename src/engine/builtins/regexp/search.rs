@@ -101,7 +101,7 @@ impl RegExpSearchResume {
             )))),
             Value::Object(result) => Ok(RegExpSearchStep::make_read(
                 result,
-                runtime.intern_property_key("index")?,
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Index)?,
                 {
                     let updated_0 = SearchPhase::Index;
                     self.0.phase = updated_0;
@@ -140,7 +140,7 @@ impl RegExpSearchResume {
                 };
                 Ok(RegExpSearchStep::make_read(
                     self.0.regexp.clone(),
-                    runtime.intern_property_key("lastIndex")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     {
                         let updated_0 = SearchPhase::Previous(input);
                         self.0.phase = updated_0;
@@ -159,7 +159,7 @@ impl RegExpSearchResume {
                 } else {
                     Ok(RegExpSearchStep::make_set(
                         self.0.regexp.clone(),
-                        runtime.intern_property_key("lastIndex")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                         Value::Int(0),
                         {
                             let updated_0 = SearchPhase::InitialSet {
@@ -174,7 +174,7 @@ impl RegExpSearchResume {
             }
             SearchPhase::Exec(previous) => Ok(RegExpSearchStep::make_read(
                 self.0.regexp.clone(),
-                runtime.intern_property_key("lastIndex")?,
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                 {
                     let updated_0 = SearchPhase::Current {
                         previous,
@@ -195,7 +195,7 @@ impl RegExpSearchResume {
                 } else {
                     Ok(RegExpSearchStep::make_set(
                         self.0.regexp.clone(),
-                        runtime.intern_property_key("lastIndex")?,
+                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                         previous,
                         {
                             let updated_0 = SearchPhase::Restored(result);
@@ -216,7 +216,7 @@ impl RegExpSearchResume {
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpSearchStep, RuntimeError> {
-        let key = runtime.intern_property_key("lastIndex")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(RegExpSearchStep::Complete(Completion::Throw(value)));
         }

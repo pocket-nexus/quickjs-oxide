@@ -206,7 +206,7 @@ impl PrimitiveConstructorResume {
         self.0.phase = Phase::Prototype;
         Ok({
             let __pending_field_receiver = self.0.new_target.clone();
-            let __pending_field_key = runtime.intern_property_key("prototype")?;
+            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
             let __pending_field_resume = self;
             PrimitiveConstructorStep::request_read(
                 __pending_field_receiver,

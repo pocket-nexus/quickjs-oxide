@@ -119,10 +119,10 @@ impl Runtime {
         value: &Value,
         output: &mut Vec<u8>,
     ) -> Result<(), RuntimeError> {
-        let length = self.intern_property_key("length")?;
-        let name = self.intern_property_key("name")?;
-        let message = self.intern_property_key("message")?;
-        let stack = self.intern_property_key("stack")?;
+        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+        let name = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
+        let message = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)?;
+        let stack = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Stack)?;
         let mut printer = QjsValuePrinter {
             runtime: self,
             output,

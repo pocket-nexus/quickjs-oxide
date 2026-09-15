@@ -46,6 +46,7 @@ impl Runtime {
         assert_ne!(domain_id, 0, "runtime domain ID space exhausted");
         let mut atoms = AtomTable::with_static_atoms(vm_host::TYPEOF_STATIC_ATOMS)
             .expect("fixed typeof atom set fits the atom table");
+        let pinned_atoms = crate::engine::atom::pinned::PinnedAtoms::new(&mut atoms).expect("static property atoms fit");
         let mut well_known_symbols = HashMap::new();
         for symbol in WellKnownSymbol::ALL {
             let atom = atoms
@@ -57,6 +58,7 @@ impl Runtime {
         Self(Rc::new(RuntimeInner {
             state: RefCell::new(RuntimeState {
                 atoms,
+                pinned_atoms,
                 heap: {
                     #[cfg(feature = "profiling")]
                     {
@@ -70,6 +72,8 @@ impl Runtime {
                 debug_info_mode: DebugInfoMode::Full,
                 shape_cache: HashMap::new(),
                 shape_fingerprints: HashMap::new(),
+                shape_transitions: HashMap::new(),
+                shape_transition_parents: HashMap::new(),
                 well_known_symbols,
                 active_frames: crate::engine::vm::frames::ActiveFrames::with_depth(
                     active_frame_depth.clone(),

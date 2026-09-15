@@ -39,7 +39,7 @@ impl SpeciesStep {
             NativeConversion::Value(false) => allocate(runtime, realm, length),
             NativeConversion::Value(true) => Ok(Self::Read {
                 object: source.clone(),
-                key: runtime.intern_property_key("constructor")?,
+                key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
                 resume: SpeciesResume {
                     realm,
                     length,

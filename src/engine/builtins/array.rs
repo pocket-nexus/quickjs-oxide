@@ -419,7 +419,7 @@ impl Runtime {
             ));
         }
 
-        let values = self.intern_property_key("values")?;
+        let values = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, array_prototype, &values)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) => {
@@ -652,7 +652,7 @@ impl Runtime {
                         false
                     };
                 let error = if array_length_read_only {
-                    let length = self.intern_property_key("length")?;
+                    let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                     self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?
                 } else if !self.has_own_property(&target, &key)? && !self.is_extensible(&target)? {
                     Error::new(ErrorKind::Type, "object is not extensible")
@@ -744,7 +744,7 @@ impl Runtime {
                 ArrayLengthConversion::Length(length) => length,
                 ArrayLengthConversion::Throw(value) => return Ok(Completion::Throw(value)),
             };
-            let key = self.intern_property_key("length")?;
+            let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
             match self.define_own_property_in_realm(
                 Some(realm),
                 &array,

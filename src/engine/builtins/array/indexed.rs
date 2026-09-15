@@ -101,7 +101,7 @@ impl IndexedStep {
         };
         Ok(Self::request_read(
             object.clone(),
-            runtime.intern_property_key("length")?,
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             IndexedResume(Box::new(IndexedResumeState {
                 pending_effect: IndexedStepPending::default(),
                 scheduler_set_key: None,

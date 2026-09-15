@@ -343,6 +343,21 @@ impl Heap {
         }
     }
 
+    /// Publish a complete dense payload into a prevalidated empty Array.
+    pub(crate) fn fill_empty_array_dense(&mut self, id: ObjectId, values: Vec<RawValue>) -> Result<(), HeapError> {
+        let ObjectPayload::Array { dense: Some(dense) } = &self.object(id)?.payload else {
+            return Err(HeapError::Invariant("dense fill requires fast Array"));
+        };
+        if !dense.is_empty() { return Err(HeapError::Invariant("dense fill requires empty payload")); }
+        let edges = values.iter().flat_map(raw_value_edges).collect::<Vec<_>>();
+        self.retain_edges_transactionally(&edges)?;
+        let ObjectPayload::Array { dense: Some(dense) } = &mut self.object_mut(id)?.payload else { unreachable!() };
+        *dense = values;
+        #[cfg(feature = "stack-vm")]
+        self.invalidate_property_layout(id);
+        Ok(())
+    }
+
     /// Append one consecutive C/W/E element to a fast Array. Object edges are
     /// retained before publication. A Symbol atom must already be owned by the
     /// caller and transfers to the Array only when this operation succeeds.

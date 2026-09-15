@@ -29,7 +29,7 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("backtrace Error object"));
         }
 
-        let stack_key = self.intern_property_key("stack")?;
+        let stack_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Stack)?;
         let needs_backtrace = {
             let state = self.0.state.borrow();
             let data = state.heap.object(object.object_id())?;
@@ -47,7 +47,7 @@ impl Runtime {
             return Ok(());
         }
 
-        let name_key = self.intern_property_key("name")?;
+        let name_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
         let stack = match self.build_backtrace_string(
             name_key.atom(),
             skip_first_frame,

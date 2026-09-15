@@ -132,7 +132,7 @@ impl Runtime {
     }
 
     fn regexp_last_index_value(&self, object: &ObjectRef) -> Result<Value, RuntimeError> {
-        let key = self.intern_property_key("lastIndex")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let descriptor = self
             .get_own_property(object, &key)?
             .ok_or(RuntimeError::Invariant(
@@ -152,7 +152,7 @@ impl Runtime {
         object: &ObjectRef,
         value: i32,
     ) -> Result<Option<Value>, RuntimeError> {
-        let key = self.intern_property_key("lastIndex")?;
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.set_property_or_throw(realm, object, &key, Value::Int(value))
     }
 }
@@ -244,7 +244,7 @@ impl RegExpExecStep {
         input: Value,
         test: bool,
     ) -> Result<Self, RuntimeError> {
-        let key = runtime.intern_property_key("exec")?;
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Exec)?;
         if matches!(regexp, Value::Null | Value::Undefined) {
             let base = if matches!(regexp, Value::Null) {
                 "null"

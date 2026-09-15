@@ -267,7 +267,7 @@ impl IterationResume {
                 self.0.phase = Phase::EntryKey(item.clone());
                 Ok(IterationStep::request_read(
                     Value::Object(item),
-                    runtime.intern_property_key("0")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?,
                     self,
                 ))
             }
@@ -335,7 +335,7 @@ impl IterationResume {
                 self.0.phase = Phase::NextMethod;
                 Ok(IterationStep::request_read(
                     Value::Object(iterator),
-                    runtime.intern_property_key("next")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
                     self,
                 ))
             }
@@ -354,7 +354,7 @@ impl IterationResume {
                 self.0.phase = Phase::EntryValue(value);
                 Ok(IterationStep::request_read(
                     Value::Object(item),
-                    runtime.intern_property_key("1")?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)?,
                     self,
                 ))
             }

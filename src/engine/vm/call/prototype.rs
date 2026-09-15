@@ -45,7 +45,7 @@ impl ProtoSourceStep {
         }
         Ok(Self::ReadValue {
             receiver: new_target.clone(),
-            key: runtime.intern_property_key("prototype")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?,
             resume: ProtoSourceResume(Box::new(ProtoSourceResumeState { realm, new_target })),
         })
     }

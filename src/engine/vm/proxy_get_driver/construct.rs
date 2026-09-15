@@ -127,7 +127,7 @@ pub(super) fn prepared(
                     receiver: Some(request.new_target.clone()),
                     key: Some(
                         runtime
-                            .intern_property_key("prototype")
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)
                             .map_err(|error| Error::internal(error.to_string()))?,
                     ),
                     resume: Some(Resume::ConstructorPrototype {

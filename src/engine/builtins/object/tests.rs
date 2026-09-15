@@ -100,7 +100,7 @@ fn object_keys_family_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -138,7 +138,7 @@ fn object_extensibility_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -229,7 +229,7 @@ fn object_descriptor_statics_autoinit_preserve_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -280,13 +280,13 @@ fn object_is_autoinit_and_same_value_semantics_match_pinned_quickjs() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let key = runtime.intern_property_key("is").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Is).unwrap();
     {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(object_constructor.object_id()).unwrap();
@@ -339,13 +339,13 @@ fn object_assign_autoinit_and_ordinary_snapshot_semantics_match_pinned_quickjs()
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let key = runtime.intern_property_key("assign").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Assign).unwrap();
     {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(object_constructor.object_id()).unwrap();
@@ -475,13 +475,13 @@ fn object_from_entries_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let key = runtime.intern_property_key("fromEntries").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::FromEntries).unwrap();
     let state = runtime.0.state.borrow();
     let object = state.heap.object(object_constructor.object_id()).unwrap();
     let shape = state.heap.shape(object.shape).unwrap();
@@ -507,13 +507,13 @@ fn object_has_own_autoinit_preserves_pinned_metadata_and_presence_is_non_materia
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let has_own_key = runtime.intern_property_key("hasOwn").unwrap();
+    let has_own_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::HasOwn).unwrap();
     {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(object_constructor.object_id()).unwrap();
@@ -539,7 +539,7 @@ fn object_has_own_autoinit_preserves_pinned_metadata_and_presence_is_non_materia
         context.eval("Object.hasOwn(Object,'keys')").unwrap(),
         Value::Bool(true),
     );
-    let keys_key = runtime.intern_property_key("keys").unwrap();
+    let keys_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Keys).unwrap();
     let state = runtime.0.state.borrow();
     let object = state.heap.object(object_constructor.object_id()).unwrap();
     let shape = state.heap.shape(object.shape).unwrap();
@@ -739,7 +739,7 @@ fn object_integrity_autoinit_materializes_and_tightens_in_pinned_order() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -829,8 +829,8 @@ fn object_is_sealed_scans_descriptors_before_extensibility_and_short_circuits_au
     let object_constructor = eval_object(&mut context, "Object");
     let is_sealed = eval_object(&mut context, "Object.isSealed");
     let is_sealed = runtime.as_callable(&is_sealed).unwrap().unwrap();
-    let create = runtime.intern_property_key("create").unwrap();
-    let get_prototype_of = runtime.intern_property_key("getPrototypeOf").unwrap();
+    let create = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Create).unwrap();
+    let get_prototype_of = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::GetPrototypeOf).unwrap();
 
     for key in [&create, &get_prototype_of] {
         let state = runtime.0.state.borrow();
@@ -1206,7 +1206,7 @@ fn object_keys_descriptor_recheck_materializes_non_enumerable_autoinits() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.intern_property_key("Object").unwrap();
+    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -1373,7 +1373,7 @@ fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
         runtime.get_prototype_of(&result).unwrap(),
         Some(defining_array_prototype.clone()),
     );
-    let zero = runtime.intern_property_key("0").unwrap();
+    let zero = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap();
     let Value::Object(entry) = caller_context.get_property(&result, &zero).unwrap() else {
         panic!("borrowed Object.entries result did not contain an entry pair");
     };

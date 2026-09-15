@@ -180,14 +180,14 @@ impl CopyResume {
             {
                 continue;
             }
-            let key_copy = clone_copy_key(&key);
+
             #[cfg(all(feature = "profiling", feature = "stack-vm"))]
             if self.0.key.is_some() {
                 crate::engine::api::profiling::record_owned_execution_event(
                     "copy_cursor_key_owner_replaced",
                 );
             }
-            self.0.key = Some(key_copy);
+
             #[cfg(feature = "stack-vm")]
             if self.0.snapshot {
                 #[cfg(all(feature = "profiling", feature = "stack-vm"))]
@@ -196,6 +196,7 @@ impl CopyResume {
                     runtime.prepare_ordinary_read_borrowed(&self.0.source, &key, &receiver)?;
                 match read {
                     crate::engine::object::OrdinaryRead::Complete(value) => {
+                        self.0.key = Some(key);
                         self.define_value(runtime, value.unwrap_or(Value::Undefined))?;
                         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -204,6 +205,7 @@ impl CopyResume {
                         continue;
                     }
                     read => {
+                        self.0.key = Some(clone_copy_key(&key));
                         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "copy_selected_read_publish",
@@ -216,6 +218,7 @@ impl CopyResume {
                     }
                 }
             }
+            self.0.key = Some(clone_copy_key(&key));
             return Ok(if self.0.snapshot {
                 CopyStep::Read {
                     object: clone_copy_object(&self.0.source),

@@ -120,7 +120,7 @@ pub struct Shape {
     layout_revision: u64,
     prototype: Option<ObjectId>,
     entries: Vec<ShapeEntry>,
-    lookup: HashMap<Atom, u32>,
+    lookup: HashMap<Atom, u32, crate::engine::hash::FxBuildHasher>,
     /// Present only for dynamic layouts; shared shapes pay one optional pointer.
     dictionary_order: Option<Box<DictionaryOrder>>,
 }
@@ -149,7 +149,7 @@ impl Shape {
         let iterator = entries.into_iter();
         let (lower_bound, _) = iterator.size_hint();
         let mut ordered = Vec::with_capacity(lower_bound);
-        let mut lookup = HashMap::with_capacity(lower_bound);
+        let mut lookup = HashMap::with_hasher(crate::engine::hash::FxBuildHasher::default());
 
         for entry in iterator {
             if entry.atom.is_null() {
@@ -157,10 +157,21 @@ impl Shape {
             }
             let index =
                 u32::try_from(ordered.len()).map_err(|_| ShapeError::PropertyIndexOverflow)?;
-            if lookup.insert(entry.atom, index).is_some() {
+            if if ordered.len() <= 8 {
+                ordered
+                    .iter()
+                    .any(|old: &ShapeEntry| old.atom == entry.atom)
+            } else {
+                lookup.contains_key(&entry.atom)
+            } {
                 return Err(ShapeError::DuplicateAtom(entry.atom));
             }
             ordered.push(entry);
+            if ordered.len() == 9 {
+                lookup.extend(ordered.iter().enumerate().map(|(i, e)| (e.atom, i as u32)));
+            } else if ordered.len() > 9 {
+                lookup.insert(entry.atom, index);
+            }
         }
 
         Ok(Self {
@@ -214,7 +225,7 @@ impl Shape {
     pub(crate) fn dictionary_layout_is_valid(&self) -> bool {
         self.dictionary_order.as_ref().is_none_or(|order| {
             order.is_valid(self.entries.len())
-                && self.lookup.len() == self.entries.len()
+                && (self.entries.len() <= 8 || self.lookup.len() == self.entries.len())
                 && self
                     .entries
                     .iter()
@@ -233,9 +244,13 @@ impl Shape {
             .expect("dictionary removal requires dictionary metadata")
             .swap_remove(index);
         let removed = self.entries.swap_remove(index);
-        self.lookup.remove(&atom);
-        if let Some(moved) = self.entries.get(index) {
-            self.lookup.insert(moved.atom, index as u32);
+        if self.entries.len() <= 8 {
+            self.lookup.clear();
+        } else {
+            self.lookup.remove(&atom);
+            if let Some(moved) = self.entries.get(index) {
+                self.lookup.insert(moved.atom, index as u32);
+            }
         }
         let len = self.entries.len();
         if self.entries.capacity() > len.saturating_mul(4).saturating_add(16) {
@@ -257,7 +272,14 @@ impl Shape {
     /// Find a property and return its parallel payload-slot index.
     #[must_use]
     pub fn find(&self, atom: Atom) -> Option<u32> {
-        self.lookup.get(&atom).copied()
+        if self.entries.len() <= 8 {
+            self.entries
+                .iter()
+                .position(|entry| entry.atom == atom)
+                .map(|index| index as u32)
+        } else {
+            self.lookup.get(&atom).copied()
+        }
     }
 
     /// Derive the shape produced by appending a new property.
@@ -270,7 +292,7 @@ impl Shape {
         if atom.is_null() {
             return Err(ShapeError::NullAtom);
         }
-        if self.lookup.contains_key(&atom) {
+        if self.find(atom).is_some() {
             return Err(ShapeError::DuplicateAtom(atom));
         }
 
@@ -291,7 +313,7 @@ impl Shape {
         if atom.is_null() {
             return Err(ShapeError::NullAtom);
         }
-        if self.lookup.contains_key(&atom) {
+        if self.find(atom).is_some() {
             return Err(ShapeError::DuplicateAtom(atom));
         }
         u32::try_from(self.entries.len()).map_err(|_| ShapeError::PropertyIndexOverflow)
@@ -299,9 +321,18 @@ impl Shape {
 
     pub(crate) fn append_unique_property(&mut self, atom: Atom, flags: PropertyFlags, index: u32) {
         debug_assert_eq!(usize::try_from(index), Ok(self.entries.len()));
-        debug_assert!(!atom.is_null() && !self.lookup.contains_key(&atom));
+        debug_assert!(!atom.is_null() && !self.find(atom).is_some());
         self.entries.push(ShapeEntry { atom, flags });
-        self.lookup.insert(atom, index);
+        if self.entries.len() == 9 {
+            self.lookup.extend(
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| (e.atom, i as u32)),
+            );
+        } else if self.entries.len() > 9 {
+            self.lookup.insert(atom, index);
+        }
         if let Some(order) = &mut self.dictionary_order {
             order.append();
         }
@@ -364,7 +395,7 @@ impl Shape {
     /// the supplied runtime-local table.
     pub fn ordered_own_keys(&self, atoms: &AtomTable) -> Result<Vec<Atom>, AtomError> {
         let mut indices = Vec::new();
-        let mut strings = Vec::new();
+        let mut strings = Vec::with_capacity(self.entries.len());
         let mut symbols = Vec::new();
 
         for (insertion_index, slot) in self.ordered_indices().enumerate() {
@@ -538,5 +569,17 @@ mod tests {
             shape.ordered_own_keys(&foreign),
             Err(AtomError::UnknownAtom(atom)) if atom == key
         ));
+    }
+    #[test]
+    fn small_shape_lookup_allocates_only_above_eight_entries() {
+        let atoms=(1..=9).map(|n|Atom::from_immediate_integer(n).unwrap()).collect::<Vec<_>>();
+        let small=Shape::new(None,atoms[..8].iter().copied().map(entry)).unwrap();
+        assert_eq!(small.lookup.capacity(),0);
+        for (index,atom) in atoms[..8].iter().enumerate(){assert_eq!(small.find(*atom),Some(index as u32));}
+        let large=small.derive_add(atoms[8],DEFAULT_DATA).unwrap();
+        assert!(large.lookup.capacity()>=9);
+        assert_eq!(large.find(atoms[8]),Some(8));
+        let small=large.derive_delete(atoms[8]).unwrap();
+        assert_eq!(small.lookup.capacity(),0);
     }
 }

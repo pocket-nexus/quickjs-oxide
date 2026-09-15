@@ -138,7 +138,7 @@ pub(super) fn step(
                         .map_err(runtime_error_to_vm_error)?
                 } else {
                     let key = runtime
-                        .intern_property_key("[unsupported type]")
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::UnsupportedType)
                         .map_err(|error| Error::internal(error.to_string()))?;
                     runtime
                         .has_own_property(&receiver, &key)
@@ -180,7 +180,7 @@ pub(super) fn step(
                     .map_err(runtime_error_to_vm_error)?
             } else {
                 let key = runtime
-                    .intern_property_key("[unsupported type]")
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::UnsupportedType)
                     .map_err(|error| Error::internal(error.to_string()))?;
                 runtime
                     .has_own_property(&receiver, &key)

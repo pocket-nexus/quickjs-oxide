@@ -142,15 +142,15 @@ pub(super) fn start(
         Operation::Call(kind) => {
             pending.stage = Stage::DelegateMethod;
             let name = if kind == IteratorCallKind::ThrowWithValue {
-                "throw"
+                crate::engine::atom::pinned::PinnedAtom::Throw
             } else {
-                "return"
+                crate::engine::atom::pinned::PinnedAtom::Return
             };
             pending.key(runtime, name)?
         }
         Operation::Parse => {
             pending.stage = Stage::DoneProperty;
-            pending.key(runtime, "done")?
+            pending.key(runtime, crate::engine::atom::pinned::PinnedAtom::Done)?
         }
         Operation::Start { .. } => unreachable!(),
     };
@@ -235,7 +235,7 @@ impl PendingIteratorState {
                 // Unlike sync ForOfNext, value is read even when done is true.
                 Ok(Action::Read(
                     self.iterator.clone(),
-                    self.key(runtime, "value")?,
+                    self.key(runtime, crate::engine::atom::pinned::PinnedAtom::Value)?,
                 ))
             }
             _ => Err(Error::internal("unexpected suspension iterator reply")),

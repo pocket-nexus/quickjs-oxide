@@ -24,7 +24,7 @@ fn global_json_is_realm_aware_lazy_and_reserves_the_pinned_table_order() {
     let second = runtime.new_context();
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
-    let key = runtime.intern_property_key("JSON").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::JSON).unwrap();
 
     for (global, realm) in [(&first_global, first.realm), (&second_global, second.realm)] {
         let state = runtime.0.state.borrow();
@@ -88,7 +88,7 @@ fn deleting_lazy_global_json_releases_its_realm_edge() {
     let runtime = Runtime::new();
     let context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key("JSON").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::JSON).unwrap();
     let before = runtime
         .0
         .state
@@ -123,7 +123,7 @@ fn json_module_parser_returns_the_strict_json_value() {
     else {
         panic!("strict JSON module text did not return its object value");
     };
-    let answer = runtime.intern_property_key("answer").unwrap();
+    let answer = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Answer).unwrap();
     assert_eq!(
         context.get_property(&value, &answer).unwrap(),
         Value::Int(42)
@@ -160,7 +160,7 @@ fn quickjs_extended_json_module_parser_is_host_selected_and_keeps_strict_json_st
         panic!("QuickJS extended JSON did not return its object value");
     };
     let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key("__json5Value").unwrap();
+    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Json5Value).unwrap();
     assert!(
         context
             .set_property(&global, &key, Value::Object(value))
@@ -191,7 +191,7 @@ fn quickjs_extended_json_module_parser_is_host_selected_and_keeps_strict_json_st
     else {
         panic!("strict JSON unexpectedly accepted QuickJS extended JSON");
     };
-    let message = runtime.intern_property_key("message").unwrap();
+    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
     assert_eq!(
         context.get_property(&error, &message).unwrap(),
         Value::String(JsString::from_static("unexpected token: '/'"))
@@ -204,7 +204,7 @@ fn quickjs_extended_json_module_parser_is_host_selected_and_keeps_strict_json_st
     else {
         panic!("extended JSON line comment did not consume its Unicode terminator");
     };
-    let answer = runtime.intern_property_key("answer").unwrap();
+    let answer = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Answer).unwrap();
     assert_eq!(
         context.get_property(&value, &answer).unwrap(),
         Value::Int(42)
@@ -280,7 +280,7 @@ fn json_parse_prepends_pinned_input_location_to_the_active_backtrace() {
         assert_eq!(context.get_property(&result, &key).unwrap(), expected);
     }
 
-    let stack_key = runtime.intern_property_key("5").unwrap();
+    let stack_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal5).unwrap();
     let Value::String(stack) = context.get_property(&result, &stack_key).unwrap() else {
         panic!("JSON.parse SyntaxError stack was not a string");
     };

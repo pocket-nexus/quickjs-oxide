@@ -159,7 +159,7 @@ impl ImportResume {
                 };
                 Ok(ImportStep::Read {
                     object,
-                    key: runtime.intern_property_key("with")?,
+                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::With)?,
                     resume: self,
                 })
             }

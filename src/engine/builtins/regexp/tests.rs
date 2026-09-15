@@ -82,7 +82,7 @@ fn direct_replace_uses_a_second_buffer_while_generic_replace_keeps_the_outer_err
     else {
         panic!("replacement buffer exception was not an Error object");
     };
-    let message = runtime.intern_property_key("message").unwrap();
+    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
     let Value::String(message) = context.get_property(&error, &message).unwrap() else {
         panic!("replacement buffer Error message was not a String");
     };

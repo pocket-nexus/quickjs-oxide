@@ -7,6 +7,14 @@ use crate::engine::object::{PropertyKey, SymbolRef, WellKnownSymbol};
 use crate::engine::value::{JsString, Value};
 
 impl Runtime {
+    pub(crate) fn pinned_property_key(
+        &self,
+        key: super::pinned::PinnedAtom,
+    ) -> Result<PropertyKey, AtomError> {
+        let atom = self.0.state.borrow().pinned_atoms.get(key);
+        Ok(PropertyKey::from_owned_atom(self.clone(), atom))
+    }
+
     /// Intern an exact ECMAScript string as a runtime-owned property key.
     pub fn intern_property_key_js_string(&self, text: &JsString) -> Result<PropertyKey, AtomError> {
         let _operation = self.operation();

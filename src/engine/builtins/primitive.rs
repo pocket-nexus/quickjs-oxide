@@ -50,7 +50,7 @@ impl Runtime {
         let name = if let Value::Object(object) = target
             && self.as_callable(object)?.is_some()
         {
-            let name = self.intern_property_key("name")?;
+            let name = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
             raw_string_property_one_level(&self.0.state.borrow(), object.object_id(), name.atom())?
                 .filter(JsString::is_flat)
         } else {

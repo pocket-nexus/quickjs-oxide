@@ -33,12 +33,12 @@ use crate::engine::object::{
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, Value};
 
-/// Keep common small layouts canonical so separately constructed objects can
-/// converge through the weak shape cache before large unique objects switch
-/// to amortized-linear append storage.
-pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 8;
+/// Empty layouts stay canonical. After the first property, exclusively owned
+/// layouts append in place; shared layouts converge through weak transitions.
+pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
 
 impl RuntimeState {
+    #[cfg(test)]
     pub(crate) fn append_unique_layout(
         &mut self,
         object: ObjectId,
@@ -88,6 +88,7 @@ impl RuntimeState {
             }
         };
 
+        self.unlink_shape_transitions(shape);
         let unlinked = self.shape_fingerprints.remove(&shape).map(|fingerprint| {
             let owned_cache_entry = self.shape_cache.get(&fingerprint) == Some(&shape);
             if owned_cache_entry {
@@ -876,7 +877,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
     ) -> Result<Option<(u32, bool)>, RuntimeError> {
-        let length = self.intern_property_key("length")?;
+        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         let state = self.0.state.borrow();
         Self::array_length_state_in_heap(&state.heap, object.object_id(), length.atom())
     }
@@ -1014,7 +1015,7 @@ impl Runtime {
         if index < old_length {
             return Ok(());
         }
-        let length = self.intern_property_key("length")?;
+        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         let next_length = index
             .checked_add(1)
             .ok_or(RuntimeError::Invariant("Array index exceeded Uint32 range"))?;
@@ -1110,7 +1111,7 @@ impl Runtime {
             return Ok(PropertyDefineOutcome::Defined(true));
         }
 
-        let length = self.intern_property_key("length")?;
+        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         let next_length = index
             .checked_add(1)
             .ok_or(RuntimeError::Invariant("Array index exceeded Uint32 range"))?;
@@ -1732,7 +1733,13 @@ impl Runtime {
             }
             (atoms, dense_array_len)
         };
-        let mut keys = Vec::new();
+        let mut keys = Vec::with_capacity(
+            atoms
+                .len()
+                .saturating_add(string_length.unwrap_or(0))
+                .saturating_add(dense_array_len.unwrap_or(0) as usize)
+                .saturating_add(typed_array_length.unwrap_or(0) as usize),
+        );
         if let Some(length) = string_length {
             let length = u32::try_from(length).map_err(|_| {
                 RuntimeError::Invariant("String wrapper length exceeded QuickJS index space")

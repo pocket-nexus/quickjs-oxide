@@ -444,7 +444,7 @@ pub(in crate::engine::vm) fn lexical_uninitialized_error(
     // `this`, while this typed compiler uses the unspellable `<this>` name
     // to keep it distinct from authored bindings.
     let hidden_this = runtime
-        .intern_property_key("<this>")
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::This)
         .map_err(|error| Error::internal(error.to_string()))?;
     if hidden_this.atom() == name {
         return Ok(Error::new(ErrorKind::Reference, "this is not initialized"));

@@ -131,7 +131,7 @@ impl Runtime {
         &self,
         constructor: &ObjectRef,
     ) -> Result<ObjectRef, RuntimeError> {
-        let prototype_key = self.intern_property_key("prototype")?;
+        let prototype_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
         let Some(CompleteOrdinaryPropertyDescriptor::Data {
             value: Value::Object(prototype),
             writable: false,
@@ -160,7 +160,7 @@ impl Runtime {
                 "class initializer prototype disagrees with its constructor",
             ));
         }
-        let constructor_key = self.intern_property_key("constructor")?;
+        let constructor_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
         if !matches!(
             self.get_own_property(prototype, &constructor_key)?,
             Some(CompleteOrdinaryPropertyDescriptor::Data {

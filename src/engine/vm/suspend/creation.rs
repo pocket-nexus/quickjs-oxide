@@ -55,7 +55,7 @@ impl GeneratorCreation {
         }
         Ok(CreationStep::Read {
             object: self.callable.as_object().clone(),
-            key: runtime.intern_property_key("prototype")?,
+            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?,
             resume: Box::new(GeneratorPrototype {
                 creation: self,
                 activation,

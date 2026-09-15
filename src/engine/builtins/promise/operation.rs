@@ -163,7 +163,7 @@ impl PromiseStep {
                         ))?;
                 Ok({
                     let __pending_field_receiver = this_value.clone();
-                    let __pending_field_key = runtime.intern_property_key("then")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
                         pending_effect: PromiseStepPending::default(),
                         realm,
@@ -298,7 +298,7 @@ impl PromiseStep {
             } else {
                 return Ok({
                     let __pending_field_receiver = Value::Object(object.clone());
-                    let __pending_field_key = runtime.intern_property_key("then")?;
+                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
                         pending_effect: PromiseStepPending::default(),
                         realm,
