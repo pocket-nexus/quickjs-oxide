@@ -13,6 +13,8 @@ pub struct RegExpRealmData {
     /// intrinsic and inheriting from this realm's `%IteratorPrototype%`.
     pub string_iterator_prototype: ObjectId,
     pub object_shape: ShapeId,
+    /// Result, result-with-indices, and indices-array final layouts.
+    pub result_shapes: Option<[ShapeId; 3]>,
 }
 
 /// Realm-owned identities required to allocate genuine Map objects and their
@@ -281,6 +283,7 @@ pub struct ContextData {
     pub global_objects: Vec<ObjectId>,
     pub intrinsics: Vec<RawValue>,
     pub initial_shapes: Vec<ShapeId>,
+    pub(crate) regexp_group_shapes: std::collections::HashMap<Vec<Atom>, ShapeId>,
     /// Context-local `JSModuleDef` ownership, matching QuickJS's
     /// `JSContext.loaded_modules` rather than a Rust-side parallel graph.
     pub(crate) loaded_modules: LoadedModuleCache,
@@ -343,6 +346,7 @@ impl ContextData {
             global_objects: Vec::new(),
             intrinsics: Vec::new(),
             initial_shapes: Vec::new(),
+            regexp_group_shapes: std::collections::HashMap::new(),
             loaded_modules: LoadedModuleCache::new(),
         }
     }

@@ -1,6 +1,45 @@
 use super::*;
 
 impl Heap {
+    pub(crate) fn cache_regexp_group_shape(
+        &mut self,
+        realm: ContextId,
+        names: Vec<Atom>,
+        shape: ShapeId,
+    ) -> Result<Option<ShapeId>, HeapError> {
+        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
+        else {
+            unreachable!()
+        };
+        context
+            .regexp_group_shapes
+            .try_reserve(1)
+            .map_err(|_| HeapError::Allocation {
+                operation: "caching RegExp group layout",
+            })?;
+        self.retain_shape(shape)?;
+        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
+        else {
+            unreachable!()
+        };
+        // Bound retained pattern layouts. Eviction transfers its owned edge
+        // to the caller, which releases it through the runtime cleanup path.
+        let evicted = if context.regexp_group_shapes.len() >= 64 {
+            let key = context
+                .regexp_group_shapes
+                .keys()
+                .next()
+                .cloned()
+                .expect("full cache");
+            context.regexp_group_shapes.remove(&key)
+        } else {
+            None
+        };
+        let previous = context.regexp_group_shapes.insert(names, shape);
+        debug_assert!(previous.is_none());
+        Ok(evicted)
+    }
+
     /// Deliberately corrupt only native realm metadata for rejection-order tests.
     /// Tests must restore the returned realm before releasing the native owner;
     /// this does not alter the retained realm edge or any production capability.
@@ -382,12 +421,13 @@ impl Heap {
             ));
         }
 
-        let edges = [
+        let mut edges = vec![
             RawId::Object(regexp.prototype),
             RawId::Object(regexp.constructor),
             RawId::Object(regexp.string_iterator_prototype),
             RawId::Shape(regexp.object_shape),
         ];
+        edges.extend(regexp.result_shapes.into_iter().flatten().map(RawId::Shape));
         self.retain_edges_transactionally(&edges)?;
 
         let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data

@@ -19,7 +19,13 @@ const MAX_GROUP_NESTING: usize = 256;
 
 /// One runtime-independent compiled regular-expression program.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompiledRegExp {
+pub struct ValidatedProgram(Program);
+
+/// Compiled programs are structurally certified before publication.
+pub type CompiledRegExp = ValidatedProgram;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Program {
     flags: RegExpFlags,
     capture_count: u8,
     register_count: u8,
@@ -38,13 +44,13 @@ impl CompiledRegExp {
         register_count: u8,
         instructions: Vec<Instruction>,
     ) -> Self {
-        Self {
+        Self(Program {
             flags,
             capture_count,
             register_count,
             instructions: instructions.into_boxed_slice(),
             group_names: None,
-        }
+        })
     }
 
     fn from_compiled_parts(
@@ -53,51 +59,58 @@ impl CompiledRegExp {
         register_count: u8,
         instructions: Vec<Instruction>,
         group_names: Option<Box<[Option<JsString>]>>,
-    ) -> Self {
+    ) -> Result<Self, CompileError> {
         debug_assert!(group_names.as_ref().is_none_or(|names| {
             names.len() == usize::from(capture_count).saturating_sub(1)
                 && names.iter().any(Option::is_some)
         }));
-        Self {
+        let program = Self(Program {
             flags,
             capture_count,
             register_count,
             instructions: instructions.into_boxed_slice(),
             group_names,
-        }
+        });
+        super::executor::validate_program(&program).map_err(|error| CompileError {
+            kind: CompileErrorKind::Internal,
+            source: CompileErrorSource::Pattern,
+            position: 0,
+            message: error.to_string(),
+        })?;
+        Ok(program)
     }
 
     #[must_use]
     pub const fn flags(&self) -> RegExpFlags {
-        self.flags
+        self.0.flags
     }
 
     /// Capture zero is the complete match, matching QuickJS's bytecode header.
     #[must_use]
     pub const fn capture_count(&self) -> u8 {
-        self.capture_count
+        self.0.capture_count
     }
 
     #[must_use]
     pub const fn register_count(&self) -> u8 {
-        self.register_count
+        self.0.register_count
     }
 
     #[must_use]
     pub fn instructions(&self) -> &[Instruction] {
-        &self.instructions
+        &self.0.instructions
     }
 
     /// Names aligned to captures 1..N, or `None` when this program has no
     /// named captures. Capture `i` corresponds to `names[i - 1]`.
     #[must_use]
     pub fn group_names(&self) -> Option<&[Option<JsString>]> {
-        self.group_names.as_deref()
+        self.0.group_names.as_deref()
     }
 
     #[must_use]
     pub const fn has_named_captures(&self) -> bool {
-        self.group_names.is_some()
+        self.0.group_names.is_some()
     }
 }
 
@@ -109,6 +122,7 @@ pub enum CompileErrorSource {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompileErrorKind {
+    Internal,
     Syntax,
     TooManyCaptures,
     TooManyRegisters,
@@ -2266,13 +2280,13 @@ pub(super) fn compile_units(
         flags.insert(RegExpFlags::NAMED_GROUPS);
     }
     let (instructions, register_count) = CodeBuilder::new(flags).compile(&expression)?;
-    Ok(CompiledRegExp::from_compiled_parts(
+    CompiledRegExp::from_compiled_parts(
         flags,
         capture_count,
         register_count,
         instructions,
         group_names,
-    ))
+    )
 }
 
 fn digit_ranges() -> Vec<CharacterRange> {

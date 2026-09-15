@@ -1833,6 +1833,7 @@ pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
         edges.push(RawId::Object(regexp.constructor));
         edges.push(RawId::Object(regexp.string_iterator_prototype));
         edges.push(RawId::Shape(regexp.object_shape));
+        edges.extend(regexp.result_shapes.into_iter().flatten().map(RawId::Shape));
     }
     if let Some(map) = context.map {
         edges.push(RawId::Object(map.prototype));
@@ -1910,6 +1911,7 @@ pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
         edges.extend(raw_value_edges(value));
     }
     edges.extend(context.initial_shapes.iter().copied().map(RawId::Shape));
+    edges.extend(context.regexp_group_shapes.values().copied().map(RawId::Shape));
     for record in context.loaded_modules.records.iter().flatten() {
         edges.extend(raw_module_record_edges(record));
     }

@@ -178,11 +178,31 @@ pub fn execute_with_interrupt<F>(
     program: &CompiledRegExp,
     input: &[u16],
     start: usize,
-    mut interrupted: F,
+    interrupted: F,
 ) -> Result<Option<RegExpMatch>, ExecError>
 where
     F: FnMut() -> bool,
 {
+    execute_units(program, input, start, interrupted)
+}
+
+/// Execute a borrowed Latin-1 leaf directly; offsets remain UTF-16 units.
+pub fn execute_latin1_with_interrupt<F: FnMut() -> bool>(
+    program: &CompiledRegExp,
+    input: &[u8],
+    start: usize,
+    interrupted: F,
+) -> Result<Option<RegExpMatch>, ExecError> {
+    execute_units(program, input, start, interrupted)
+}
+
+fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
+    program: &CompiledRegExp,
+    input: &[T],
+    start: usize,
+    mut interrupted: F,
+) -> Result<Option<RegExpMatch>, ExecError> {
+    #[cfg(test)]
     validate_program(program)?;
     if start > input.len() {
         return Err(ExecError::StartOutOfBounds {
@@ -197,8 +217,11 @@ where
     let mut candidate = normalize_start(input, start, unicode);
     let mut poller = Poller::new(&mut interrupted);
 
+    let mut state =
+        AttemptState::new(program.capture_count(), program.register_count(), candidate)?;
     loop {
-        if let Some(result) = run_attempt(program, input, candidate, unicode, &mut poller)? {
+        state.reset(candidate);
+        if let Some(result) = run_attempt(program, input, unicode, &mut poller, &mut state)? {
             return Ok(Some(result));
         }
         if sticky || candidate == input.len() {
@@ -208,7 +231,7 @@ where
     }
 }
 
-fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError> {
+pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError> {
     const NO_ASSERTION_SCOPE: usize = usize::MAX;
 
     let instructions = program.instructions();
@@ -450,6 +473,15 @@ struct AttemptState {
 }
 
 impl AttemptState {
+    fn reset(&mut self, position: usize) {
+        self.pc = 0;
+        self.position = position;
+        self.captures.fill(None);
+        self.registers.fill(RegisterValue::Unset);
+        self.undo.clear();
+        self.controls.clear();
+    }
+
     fn new(capture_count: u8, register_count: u8, position: usize) -> Result<Self, ExecError> {
         let mut captures = Vec::new();
         let capture_slots = usize::from(capture_count) * 2;
@@ -690,18 +722,17 @@ impl AttemptState {
     }
 }
 
-fn run_attempt<F>(
+fn run_attempt<T: Copy + Into<u16>, F>(
     program: &CompiledRegExp,
-    input: &[u16],
-    start: usize,
+    input: &[T],
     unicode: bool,
     poller: &mut Poller<'_, F>,
+    state: &mut AttemptState,
 ) -> Result<Option<RegExpMatch>, ExecError>
 where
     F: FnMut() -> bool,
 {
     let instructions = program.instructions();
-    let mut state = AttemptState::new(program.capture_count(), program.register_count(), start)?;
 
     macro_rules! fail_branch {
         () => {{
@@ -933,12 +964,12 @@ where
     }
 }
 
-fn normalize_start(input: &[u16], start: usize, unicode: bool) -> usize {
+fn normalize_start<T: Copy + Into<u16>>(input: &[T], start: usize, unicode: bool) -> usize {
     if unicode
         && start > 0
         && start < input.len()
-        && is_low_surrogate(input[start])
-        && is_high_surrogate(input[start - 1])
+        && is_low_surrogate(input[start].into())
+        && is_high_surrogate(input[start - 1].into())
     {
         start - 1
     } else {
@@ -946,17 +977,21 @@ fn normalize_start(input: &[u16], start: usize, unicode: bool) -> usize {
     }
 }
 
-fn advance_string_index(input: &[u16], position: usize, unicode: bool) -> usize {
+fn advance_string_index<T: Copy + Into<u16>>(input: &[T], position: usize, unicode: bool) -> usize {
     read_character(input, position, unicode)
         .map(|(_, next)| next)
         .unwrap_or(input.len())
 }
 
-fn read_character(input: &[u16], position: usize, unicode: bool) -> Option<(u32, usize)> {
-    let first = *input.get(position)?;
+fn read_character<T: Copy + Into<u16>>(
+    input: &[T],
+    position: usize,
+    unicode: bool,
+) -> Option<(u32, usize)> {
+    let first: u16 = (*input.get(position)?).into();
     if unicode
         && is_high_surrogate(first)
-        && let Some(second) = input.get(position + 1).copied()
+        && let Some(second) = input.get(position + 1).copied().map(Into::into)
         && is_low_surrogate(second)
     {
         let code_point =
@@ -966,8 +1001,8 @@ fn read_character(input: &[u16], position: usize, unicode: bool) -> Option<(u32,
     Some((u32::from(first), position + 1))
 }
 
-fn match_back_reference(
-    input: &[u16],
+fn match_back_reference<T: Copy + Into<u16>>(
+    input: &[T],
     capture_start: usize,
     capture_end: usize,
     input_start: usize,
@@ -994,8 +1029,8 @@ fn match_back_reference(
     Some(input_position)
 }
 
-fn match_backward_back_reference(
-    input: &[u16],
+fn match_backward_back_reference<T: Copy + Into<u16>>(
+    input: &[T],
     capture_start: usize,
     capture_end: usize,
     input_end: usize,
@@ -1022,16 +1057,24 @@ fn match_backward_back_reference(
     (capture_position == capture_start).then_some(input_position)
 }
 
-fn previous_character(input: &[u16], position: usize, unicode: bool) -> Option<u32> {
+fn previous_character<T: Copy + Into<u16>>(
+    input: &[T],
+    position: usize,
+    unicode: bool,
+) -> Option<u32> {
     read_previous_character(input, position, unicode).map(|(character, _)| character)
 }
 
-fn read_previous_character(input: &[u16], position: usize, unicode: bool) -> Option<(u32, usize)> {
+fn read_previous_character<T: Copy + Into<u16>>(
+    input: &[T],
+    position: usize,
+    unicode: bool,
+) -> Option<(u32, usize)> {
     read_previous_character_bounded(input, position, 0, unicode)
 }
 
-fn read_previous_character_bounded(
-    input: &[u16],
+fn read_previous_character_bounded<T: Copy + Into<u16>>(
+    input: &[T],
     position: usize,
     lower_bound: usize,
     unicode: bool,
@@ -1039,9 +1082,9 @@ fn read_previous_character_bounded(
     if position <= lower_bound {
         return None;
     }
-    let last = *input.get(position.checked_sub(1)?)?;
+    let last: u16 = (*input.get(position.checked_sub(1)?)?).into();
     if unicode && is_low_surrogate(last) && position >= lower_bound.saturating_add(2) {
-        let first = input[position - 2];
+        let first: u16 = input[position - 2].into();
         if is_high_surrogate(first) {
             return Some((
                 0x1_0000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(last) - 0xdc00),
@@ -1146,6 +1189,50 @@ mod tests {
             assert_eq!(range_contains(&ranges, character), expected);
         }
         assert!(!range_contains(&[], 0));
+    }
+
+    #[test]
+    fn latin1_leaf_execution_matches_utf16_across_candidates_and_backtracking() {
+        for (pattern, flags, bytes) in [
+            ("(?<a>a+)(b)?", "dg", &b"zzzaaab"[..]),
+            ("(a|ab)+c", "", &b"zzabababc"[..]),
+            ("(?<=a)b", "u", &b"zzab"[..]),
+            ("(a+)\\1", "i", &b"zzaAaA"[..]),
+            (".", "u", &[0xff, 0x80][..]),
+        ] {
+            let program = compile(pattern, flags);
+            let wide = bytes.iter().copied().map(u16::from).collect::<Vec<_>>();
+            for start in 0..=bytes.len() {
+                assert_eq!(
+                    execute_latin1_with_interrupt(&program, bytes, start, || false),
+                    execute(&program, &wide, start)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn failed_candidate_resets_state_without_discarding_capacity() {
+        let mut state = AttemptState::new(2, 1, 0).unwrap();
+        state.captures[0] = Some(42);
+        state.push_backtrack(7).unwrap();
+        let capacities = (
+            state.captures.capacity(),
+            state.registers.capacity(),
+            state.controls.capacity(),
+        );
+        state.reset(9);
+        assert_eq!(state.position, 9);
+        assert!(state.captures.iter().all(Option::is_none));
+        assert!(state.controls.is_empty());
+        assert_eq!(
+            capacities,
+            (
+                state.captures.capacity(),
+                state.registers.capacity(),
+                state.controls.capacity()
+            )
+        );
     }
 
     fn compile(pattern: &str, flags: &str) -> CompiledRegExp {

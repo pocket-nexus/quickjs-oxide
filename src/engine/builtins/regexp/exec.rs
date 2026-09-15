@@ -12,7 +12,9 @@ use crate::engine::value::{JsString, Value};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 use crate::engine::vm::call::{DirectCallTarget, NativeArguments, NativeInvocation};
-use crate::regexp::{ExecError, RegExpFlags, execute_with_interrupt};
+use crate::regexp::{
+    ExecError, RegExpFlags, execute_latin1_with_interrupt, execute_with_interrupt,
+};
 
 impl Runtime {
     pub(crate) fn call_regexp_exec_native(
@@ -62,21 +64,22 @@ impl Runtime {
         let updates_last_index =
             flags.contains(RegExpFlags::GLOBAL) || flags.contains(RegExpFlags::STICKY);
         let start = if updates_last_index { last_index } else { 0 };
-        let input_units = input.utf16_units().collect::<Vec<_>>();
-
-        let matched = if start > input_units.len() as u64 {
+        let flat = input.linearize();
+        let matched = if start > flat.len() as u64 {
             None
         } else {
-            match execute_with_interrupt(
-                program.as_ref(),
-                &input_units,
-                usize::try_from(start).expect("RegExp start was bounded by String length"),
-                // The runtime interrupt callback is not exposed at this layer
-                // yet.  Keep the executor boundary interrupt-aware now so a
-                // later host hook is a closure substitution rather than a
-                // semantic rewrite of builtin exec.
-                || false,
-            ) {
+            let start = usize::try_from(start).expect("RegExp start bounded by String length");
+            let execution = if let Some(units) = flat.flat_latin1() {
+                execute_latin1_with_interrupt(program.as_ref(), units, start, || false)
+            } else {
+                execute_with_interrupt(
+                    program.as_ref(),
+                    flat.flat_utf16().expect("linearized input"),
+                    start,
+                    || false,
+                )
+            };
+            match execution {
                 Ok(value) => value,
                 Err(ExecError::OutOfMemory) => {
                     return Ok(Completion::Throw(self.new_native_error(

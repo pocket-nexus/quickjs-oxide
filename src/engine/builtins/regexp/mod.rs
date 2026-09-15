@@ -281,6 +281,32 @@ impl Runtime {
             .state
             .borrow_mut()
             .get_or_create_shape(Some(regexp_prototype.object_id()), &entries)?;
+        let mut result_shapes = Vec::new();
+        for names in [
+            &["index", "input", "groups"][..],
+            &["index", "input", "groups", "indices"][..],
+            &["groups"][..],
+        ] {
+            let keys = std::iter::once("length").chain(names.iter().copied()).map(|name| self.intern_property_key(name)).collect::<Result<Vec<_>, _>>()?;
+            let entries = keys.iter().enumerate().map(|(index, key)| ShapeEntry {
+                atom: key.atom(), flags: if index == 0 { PropertyFlags::data(true, false, false) } else { PropertyFlags::data(true, true, true) }
+            }).collect::<Vec<_>>();
+            let mut state = self.0.state.borrow_mut();
+            let prototype = state.heap.context(realm)?.array_prototype;
+            match state.get_or_create_shape(Some(prototype), &entries) {
+                Ok(shape) => result_shapes.push(shape),
+                Err(error) => {
+                    for shape in result_shapes.into_iter().chain([object_shape]) {
+                        let cleanup = state.heap.release_shape(shape)?;
+                        state.apply_cleanup(cleanup)?;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let result_shapes: [_; 3] = result_shapes
+            .try_into()
+            .expect("three RegExp result layouts");
         let mut state = self.0.state.borrow_mut();
         let attached = state.heap.attach_regexp_intrinsics(
             realm,
@@ -288,6 +314,7 @@ impl Runtime {
                 prototype: regexp_prototype.object_id(),
                 constructor: constructor.as_object().object_id(),
                 object_shape,
+                result_shapes: Some(result_shapes),
                 string_iterator_prototype: regexp_string_iterator_prototype.object_id(),
             },
             last_index.atom(),
@@ -295,8 +322,10 @@ impl Runtime {
         // `get_or_create_shape` returned one construction reference. The
         // Context owns the durable edge only when `attached` succeeded; on
         // failure this release reclaims the unpublished shape instead.
-        let cleanup = state.heap.release_shape(object_shape)?;
-        state.apply_cleanup(cleanup)?;
+        for shape in result_shapes.into_iter().chain([object_shape]) {
+            let cleanup = state.heap.release_shape(shape)?;
+            state.apply_cleanup(cleanup)?;
+        }
         attached?;
         Ok(())
     }
