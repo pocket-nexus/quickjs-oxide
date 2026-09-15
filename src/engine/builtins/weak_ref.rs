@@ -275,7 +275,7 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: WeakRefNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         match kind {
@@ -341,11 +341,11 @@ impl Runtime {
         }
     }
 
-    fn finalization_registry_receiver(
+    pub(in crate::engine::builtins) fn finalization_registry_receiver<'a>(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        invocation: &'a NativeInvocation,
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "FinalizationRegistry method received the wrong native invocation",
@@ -384,7 +384,7 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: FinalizationRegistryNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         if kind == FinalizationRegistryNativeKind::Constructor {
@@ -401,7 +401,7 @@ impl Runtime {
             );
         }
 
-        let registry = match self.finalization_registry_receiver(realm, invocation)? {
+        let registry = match self.finalization_registry_receiver(realm, &invocation)? {
             NativeConversion::Value(registry) => registry,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };

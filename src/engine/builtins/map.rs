@@ -278,6 +278,15 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
+        self.call_map_native_borrowed(realm, kind, &invocation, arguments)
+    }
+    pub(crate) fn call_map_native_borrowed(
+        &self,
+        realm: ContextId,
+        kind: MapNativeKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Completion, RuntimeError> {
         match kind {
             MapNativeKind::Constructor => self.call_map_constructor(realm, invocation, arguments),
             MapNativeKind::Species => self.call_map_species(invocation),
@@ -301,19 +310,19 @@ impl Runtime {
         }
     }
 
-    fn call_map_species(&self, invocation: NativeInvocation) -> Result<Completion, RuntimeError> {
+    fn call_map_species(&self, invocation: &NativeInvocation) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Map species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value))
+        Ok(Completion::Return(this_value.clone()))
     }
 
     fn call_map_constructor(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         super::iterator::collection::finish(
@@ -329,12 +338,12 @@ impl Runtime {
         )
     }
 
-    fn map_receiver(
+    fn map_receiver<'a>(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &'a NativeInvocation,
         getter: bool,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let this_value = match (getter, invocation) {
             (false, NativeInvocation::Call { this_value })
             | (true, NativeInvocation::Getter { this_value }) => this_value,
@@ -455,7 +464,7 @@ impl Runtime {
     fn call_map_set(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
@@ -477,13 +486,13 @@ impl Runtime {
                 "Map.prototype.set value argv was not padded",
             ))?;
         self.set_map_record(&map, key, value)?;
-        Ok(Completion::Return(Value::Object(map)))
+        Ok(Completion::Return(Value::Object(map.clone())))
     }
 
     fn call_map_get(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
@@ -503,7 +512,7 @@ impl Runtime {
     fn call_map_has(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
@@ -521,7 +530,7 @@ impl Runtime {
     fn call_map_delete(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
@@ -543,7 +552,7 @@ impl Runtime {
     fn call_map_clear(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
@@ -558,7 +567,7 @@ impl Runtime {
     fn call_map_size(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, true)? {
             NativeConversion::Value(map) => map,
@@ -571,7 +580,7 @@ impl Runtime {
     fn call_map_get_or_insert(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
         computed: bool,
     ) -> Result<Completion, RuntimeError> {
@@ -591,7 +600,7 @@ impl Runtime {
     fn call_map_for_each(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         callback::finish(
@@ -639,7 +648,7 @@ impl Runtime {
     fn call_map_iterator_factory(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         kind: MapIteratorKind,
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
@@ -752,7 +761,7 @@ impl Runtime {
     fn call_map_group_by(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         super::object::iteration::finish(

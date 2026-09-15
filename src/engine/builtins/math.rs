@@ -654,7 +654,7 @@ impl Runtime {
     pub(crate) fn call_math_random(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
             return Err(RuntimeError::Invariant(

@@ -45,7 +45,7 @@ impl ComputedStep {
     ) -> Result<Self, RuntimeError> {
         let map = match runtime.weak_collection_receiver(
             realm,
-            invocation.clone(),
+            invocation,
             WeakCollectionKind::Map,
         )? {
             NativeConversion::Value(map) => map,
@@ -86,7 +86,7 @@ impl ComputedStep {
             callable,
             arguments: vec![key_value.clone()],
             resume: ComputedResume(Box::new(ComputedResumeState {
-                map,
+                map: map.clone(),
                 key,
                 _key_owner: key_value,
             })),

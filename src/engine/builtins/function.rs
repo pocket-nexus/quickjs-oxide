@@ -22,7 +22,7 @@ impl Runtime {
     pub(crate) fn call_throw_type_error(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
@@ -170,7 +170,7 @@ impl Runtime {
 
     pub(crate) fn call_function_prototype_file_name(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
@@ -200,7 +200,7 @@ impl Runtime {
 
     pub(crate) fn call_function_prototype_position(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         selector: FunctionDebugPosition,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {

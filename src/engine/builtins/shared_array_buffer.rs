@@ -171,12 +171,12 @@ impl Runtime {
                 self.call_shared_array_buffer_constructor(realm, invocation, arguments)
             }
             SharedArrayBufferNativeKind::Species => {
-                self.call_shared_array_buffer_species(invocation)
+                self.call_shared_array_buffer_species(&invocation)
             }
             SharedArrayBufferNativeKind::ByteLength
             | SharedArrayBufferNativeKind::MaxByteLength
             | SharedArrayBufferNativeKind::Growable => {
-                self.call_shared_array_buffer_getter(realm, kind, invocation)
+                self.call_shared_array_buffer_getter(realm, kind, &invocation)
             }
             SharedArrayBufferNativeKind::Grow => {
                 self.call_shared_array_buffer_grow(realm, invocation, arguments)
@@ -252,30 +252,30 @@ impl Runtime {
         Ok(Completion::Return(Value::Object(object)))
     }
 
-    fn call_shared_array_buffer_species(
+    pub(in crate::engine::builtins) fn call_shared_array_buffer_species(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "SharedArrayBuffer species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value))
+        Ok(Completion::Return(this_value.clone()))
     }
 
-    fn call_shared_array_buffer_getter(
+    pub(in crate::engine::builtins) fn call_shared_array_buffer_getter(
         &self,
         realm: ContextId,
         kind: SharedArrayBufferNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "SharedArrayBuffer prototype getter received a non-getter invocation",
             ));
         };
-        let object = match self.require_shared_array_buffer(realm, this_value)? {
+        let object = match self.require_shared_array_buffer_borrowed(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
@@ -502,7 +502,12 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_shared_array_buffer_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    pub(in crate::engine::builtins) fn require_shared_array_buffer_borrowed<'a>(
+        &self,
+        realm: ContextId,
+        value: &'a Value,
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let Value::Object(object) = value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,

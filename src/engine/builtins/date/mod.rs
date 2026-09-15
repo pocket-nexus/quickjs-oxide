@@ -226,7 +226,7 @@ impl Runtime {
             | DateNativeKind::Utc => {
                 self.call_date_constructor_native(realm, kind, invocation, arguments)
             }
-            _ => self.call_date_prototype_native(realm, kind, invocation, arguments),
+            _ => self.call_date_prototype_native(realm, kind, &invocation, arguments),
         }
     }
 

@@ -32,11 +32,11 @@ impl SynchronousNative {
         callable: &crate::engine::object::CallableRef,
     ) -> Result<crate::engine::vm::Completion, RuntimeError> {
         match self {
-            Self::Pure(target) => runtime.dispatch_adapted_native_function(
+            Self::Pure(target) => runtime.dispatch_synchronous_native_borrowed(
                 callable,
                 target,
                 realm,
-                invocation.clone(),
+                invocation,
                 arguments,
             ),
             Self::PrimitiveConstructor(kind) => match super::PrimitiveConstructorStep::start(
@@ -1088,11 +1088,11 @@ impl NativeOperation {
             Self::Pure(target) => {
                 // This registered domain cannot wait. Keep its completion in
                 // the small result channel, without constructing NativeStep.
-                let completion = runtime.dispatch_adapted_native_function(
+                let completion = runtime.dispatch_synchronous_native_borrowed(
                     callable,
                     target,
                     realm,
-                    invocation.clone(),
+                    invocation,
                     arguments,
                 )?;
                 return Ok(Some(

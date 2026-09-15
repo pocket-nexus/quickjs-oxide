@@ -221,6 +221,7 @@ pub(super) fn read_progress_selected(
         )
         .map(PropertyProgress::Deferred);
     }
+    let depth = execution.slots.depth(&frame.window);
     let (key, retained_key) = match key_kind {
         ReadKey::Static(index) => {
             let Some(atom) = frame
@@ -233,10 +234,15 @@ pub(super) fn read_progress_selected(
             else {
                 return Err(Error::internal("property read has no linked key"));
             };
-            let key = Some(
-                PropertyKey::from_borrowed_atom(runtime.clone(), atom)
-                    .map_err(|error| Error::internal(error.to_string()))?,
-            );
+            let cache = &mut frame.cold.property_keys;
+            let key = match cache.entry(index) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(
+                    PropertyKey::from_borrowed_atom(runtime.clone(), atom)
+                        .map_err(|error| Error::internal(error.to_string()))?,
+                ),
+            };
+            let key = Some(std::borrow::Cow::Borrowed(&*key));
             (key, None)
         }
         ReadKey::Computed { keep_key } => {
@@ -263,20 +269,20 @@ pub(super) fn read_progress_selected(
                     value => value.to_js_string().map(Value::String),
                 })
                 .transpose()?;
-            (Some(key), retained)
+            (Some(std::borrow::Cow::Owned(key)), retained)
         }
     };
-    let depth = execution.slots.depth(&frame.window);
     // Lookup borrows the original rooted operand. Only a pending callback
     // needs a second receiver owner; completed reads move this slot directly.
     let read = match selected_read.map(Ok).unwrap_or_else(|| {
-        runtime.prepare_value_property_read_borrowed(
+        runtime.prepare_value_property_read_selected(
             realm,
             base,
-            key.as_ref()
+            key.as_deref()
                 .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "fallback read lost its key",
                 ))?,
+            keep_receiver.then_some(&mut *native),
         )
     }) {
         Ok(read) => read,
@@ -284,6 +290,11 @@ pub(super) fn read_progress_selected(
             return throw_error(runtime, realm, runtime_error_to_vm_error(error))
                 .map(PropertyProgress::Deferred);
         }
+    };
+    let key = if matches!(read, OrdinaryRead::Special { .. }) {
+        key.map(std::borrow::Cow::into_owned)
+    } else {
+        None
     };
     match read {
         OrdinaryRead::Complete(value) => complete_read(
@@ -304,7 +315,7 @@ pub(super) fn read_progress_selected(
                 execution,
                 id,
                 preserved_receiver,
-                key.ok_or_else(|| Error::internal("pending read lost its key"))?,
+                key,
                 read,
                 retained_key,
                 keep_receiver,
@@ -459,7 +470,7 @@ fn read_prepared_progress(
             execution,
             id,
             preserved_receiver,
-            key,
+            Some(key),
             read,
             retained_key,
             keep_receiver,
@@ -584,7 +595,7 @@ fn read_pending(
     execution: &mut RunningExecution,
     id: FrameId,
     preserved_receiver: Value,
-    key: PropertyKey,
+    key: Option<PropertyKey>,
     read: OrdinaryRead,
     retained_key: Option<Value>,
     keep_receiver: bool,
@@ -593,6 +604,7 @@ fn read_pending(
 ) -> Result<CallStep, Error> {
     let realm = execution.frames.current_mut(id)?.executable.realm;
     let mut request = None;
+    let mut ordinary_callback = None;
     let mut deferred = None;
     let mut proxy = None;
     let mut proxy_callback = None;
@@ -600,73 +612,97 @@ fn read_pending(
     let value = match read {
         OrdinaryRead::Complete(value) => Some(value.unwrap_or(Value::Undefined)),
         OrdinaryRead::Call { getter, receiver } => {
-            let super::call::NormalizedCallback {
-                callable,
-                receiver,
-                arguments,
-                classification,
-            } = match super::call::normalize_callback(runtime, realm, getter, receiver, Vec::new())?
-            {
-                NativeConversion::Value(call) => call,
-                NativeConversion::Throw(value) => {
-                    return Ok(CallStep::Complete(Completion::Throw(value)));
-                }
-            };
-            let normal = match &classification {
-                CallableExecution::Bytecode { bytecode, .. } => {
-                    let state = runtime.0.state.borrow();
-                    state
-                        .heap
-                        .function_bytecode(bytecode.bytecode_id())
-                        .map_err(|error| Error::internal(error.to_string()))?
-                        .metadata
-                        .function_kind
-                        == FunctionKind::Normal
-                }
-                _ => false,
-            };
-            let is_resumable =
-                matches!(classification, CallableExecution::Bytecode { .. }) && !normal;
-            let is_proxy = matches!(classification, CallableExecution::Proxy);
-            let is_owned_native = matches!(&classification, CallableExecution::Native { .. }
-                if super::frames::native_operation(runtime, &callable).map_err(runtime_error_to_vm_error)?.is_some());
-            if let CallableExecution::Bytecode {
-                bytecode,
-                closure_slots,
-            } = classification
-                && normal
+            if let Some(call) =
+                super::call::ordinary::OrdinaryCall::select_callback(runtime, getter.as_object())
+                    .map_err(runtime_error_to_vm_error)?
             {
                 if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
+                    call.executable()
+                        .ensure_root(runtime)
+                        .map_err(runtime_error_to_vm_error)?;
                     return runtime
-                        .bytecode_stack_overflow_completion(realm, &bytecode)
+                        .bytecode_stack_overflow_completion(
+                            realm,
+                            call.executable().root().expect("rooted overflow frame"),
+                        )
                         .map(CallStep::Complete)
                         .map_err(runtime_error_to_vm_error);
                 }
-                request = Some(BytecodeCallRequest {
+                ordinary_callback = Some((call, receiver));
+            } else {
+                let super::call::NormalizedCallback {
                     callable,
                     receiver,
                     arguments,
-                    new_target: Value::Undefined,
+                    classification,
+                } = match super::call::normalize_callback(
+                    runtime,
+                    realm,
+                    getter,
+                    receiver,
+                    Vec::new(),
+                )? {
+                    NativeConversion::Value(call) => call,
+                    NativeConversion::Throw(value) => {
+                        return Ok(CallStep::Complete(Completion::Throw(value)));
+                    }
+                };
+                let normal = match &classification {
+                    CallableExecution::Bytecode { bytecode, .. } => {
+                        let state = runtime.0.state.borrow();
+                        state
+                            .heap
+                            .function_bytecode(bytecode.bytecode_id())
+                            .map_err(|error| Error::internal(error.to_string()))?
+                            .metadata
+                            .function_kind
+                            == FunctionKind::Normal
+                    }
+                    _ => false,
+                };
+                let is_resumable =
+                    matches!(classification, CallableExecution::Bytecode { .. }) && !normal;
+                let is_proxy = matches!(classification, CallableExecution::Proxy);
+                let is_owned_native = matches!(&classification, CallableExecution::Native { .. }
+                if super::frames::native_operation(runtime, &callable).map_err(runtime_error_to_vm_error)?.is_some());
+                if let CallableExecution::Bytecode {
                     bytecode,
                     closure_slots,
-                    caller_realm: realm,
-                    return_to: ReturnTarget {
-                        value_use: super::frame::ReturnValue::Push,
-                        owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
-                        tail: false,
-                        operation: None,
-                    },
-                });
-            } else if is_proxy {
-                proxy_callback = Some((callable, receiver, arguments));
-            } else if is_owned_native || is_resumable {
-                native_callback = Some((callable, receiver, arguments));
-            } else {
-                deferred = Some(Action::Call {
-                    callable,
-                    receiver,
-                    arguments,
-                });
+                } = classification
+                    && normal
+                {
+                    if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
+                        return runtime
+                            .bytecode_stack_overflow_completion(realm, &bytecode)
+                            .map(CallStep::Complete)
+                            .map_err(runtime_error_to_vm_error);
+                    }
+                    request = Some(BytecodeCallRequest {
+                        callable,
+                        receiver,
+                        arguments,
+                        new_target: Value::Undefined,
+                        bytecode,
+                        closure_slots,
+                        caller_realm: realm,
+                        return_to: ReturnTarget {
+                            value_use: super::frame::ReturnValue::Push,
+                            owner: crate::engine::vm::frame::ReturnOwner::Frame(id),
+                            tail: false,
+                            operation: None,
+                        },
+                    });
+                } else if is_proxy {
+                    proxy_callback = Some((callable, receiver, arguments));
+                } else if is_owned_native || is_resumable {
+                    native_callback = Some((callable, receiver, arguments));
+                } else {
+                    deferred = Some(Action::Call {
+                        callable,
+                        receiver,
+                        arguments,
+                    });
+                }
             }
             None
         }
@@ -675,7 +711,11 @@ fn read_pending(
         } => {
             // The Proxy protocol owns the remaining lookup stages. Earlier
             // key conversion stays consumed when its callbacks suspend.
-            proxy = Some((object, key, receiver));
+            proxy = Some((
+                object,
+                key.ok_or_else(|| Error::internal("Proxy read lost key"))?,
+                receiver,
+            ));
             None
         }
     };
@@ -720,7 +760,21 @@ fn read_pending(
         .fault_pc
         .checked_add(1)
         .ok_or_else(|| Error::internal("property resume PC overflow"))?;
-    if let Some(request) = request {
+    if let Some((call, receiver)) = ordinary_callback {
+        let entry = call.prepare_callback(
+            &mut execution.call_storage,
+            receiver,
+            Vec::new(),
+            realm,
+            ReturnTarget {
+                value_use: super::frame::ReturnValue::Push,
+                owner: super::frame::ReturnOwner::Frame(id),
+                tail: false,
+                operation: None,
+            },
+        )?;
+        push_frame(execution, entry)?;
+    } else if let Some(request) = request {
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
         push_frame(execution, entry)?;
     } else {

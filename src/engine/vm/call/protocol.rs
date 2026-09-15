@@ -1,6 +1,6 @@
 //! Owned activation protocol (S10).
 //!
-//! I1: only authenticated OrdinaryCall witnesses install lazy frames.
+//! I1: authenticated OrdinaryCall witnesses install lazy Call and property callback frames.
 //! I2: FrameStore fault PCs are authoritative; observation materializes the
 //!     new suffix and refreshes its nearest already-registered ancestor.
 //! I3: the materialized watermark never exceeds depth. Native argv uses the
@@ -12,7 +12,10 @@
 //!
 //! Generic cold driver operations conservatively observe (they can allocate
 //! errors, release owners, or invoke JS). Ordinary Call/Return do not. Native
-//! entry, suspend and run-owned release/error paths explicitly observe too.
+//! entry observes only when its native operation needs activation visibility; suspend
+//! and run-owned release/error paths explicitly observe. PropertyRead trap returns
+//! may directly reply after child retirement, with exact parent/operation identity.
+//! See docs/architecture/lazy-callback-frames.md for the callback ownership protocol.
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
@@ -70,3 +73,6 @@ mod tests {
 
 #[cfg(all(test, feature = "profiling"))]
 mod observation_tests;
+
+#[cfg(all(test, feature = "profiling"))]
+mod callback_tests;

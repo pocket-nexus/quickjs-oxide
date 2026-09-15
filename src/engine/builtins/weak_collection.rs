@@ -264,7 +264,7 @@ impl Runtime {
     fn call_weak_collection_constructor(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
         kind: WeakCollectionKind,
     ) -> Result<Completion, RuntimeError> {
@@ -285,12 +285,12 @@ impl Runtime {
         )
     }
 
-    fn weak_collection_receiver(
+    fn weak_collection_receiver<'a>(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &'a NativeInvocation,
         kind: WeakCollectionKind,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "weak collection method received the wrong native invocation",
@@ -463,6 +463,15 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
+        self.call_weak_map_native_borrowed(realm, kind, &invocation, arguments)
+    }
+    pub(crate) fn call_weak_map_native_borrowed(
+        &self,
+        realm: ContextId,
+        kind: WeakMapNativeKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Completion, RuntimeError> {
         if kind == WeakMapNativeKind::Constructor {
             return self.call_weak_collection_constructor(
                 realm,
@@ -500,7 +509,7 @@ impl Runtime {
                     .cloned()
                     .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?;
                 self.set_weak_map_record(&map, key, value)?;
-                Ok(Completion::Return(Value::Object(map)))
+                Ok(Completion::Return(Value::Object(map.clone())))
             }
             WeakMapNativeKind::Get => {
                 let value = match key {
@@ -551,6 +560,15 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
+        self.call_weak_set_native_borrowed(realm, kind, &invocation, arguments)
+    }
+    pub(crate) fn call_weak_set_native_borrowed(
+        &self,
+        realm: ContextId,
+        kind: WeakSetNativeKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Completion, RuntimeError> {
         if kind == WeakSetNativeKind::Constructor {
             return self.call_weak_collection_constructor(
                 realm,
@@ -575,7 +593,7 @@ impl Runtime {
                     return self.invalid_weak_key(realm, WeakCollectionKind::Set);
                 };
                 self.insert_weak_set_record(&set, key)?;
-                Ok(Completion::Return(Value::Object(set)))
+                Ok(Completion::Return(Value::Object(set.clone())))
             }
             WeakSetNativeKind::Has => Ok(Completion::Return(Value::Bool(match key {
                 Some(key) => self.has_weak_set_record(&set, key)?,

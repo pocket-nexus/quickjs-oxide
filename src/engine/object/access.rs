@@ -77,7 +77,7 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Completion, RuntimeError> {
-        let read = self.prepare_string_property_read(realm, string, key, &receiver)?;
+        let read = self.prepare_string_property_read(realm, string, key, &receiver, None)?;
         self.finish_value_property_read(realm, key, read)
     }
 
@@ -87,6 +87,7 @@ impl Runtime {
         string: &JsString,
         key: &PropertyKey,
         receiver: &Value,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
         let index = self.0.state.borrow().atoms.array_index(key.atom())?;
         if let Some(index) = index
@@ -105,7 +106,7 @@ impl Runtime {
             return Ok(OrdinaryRead::Complete(Some(length)));
         }
         let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::String)?;
-        self.prepare_ordinary_read_borrowed(&prototype, key, receiver)
+        self.prepare_ordinary_read_selected(&prototype, key, receiver, native)
     }
 
     /// Select a read without invoking its getter. Primitive receivers stay
@@ -125,11 +126,22 @@ impl Runtime {
         receiver: &Value,
         key: &PropertyKey,
     ) -> Result<OrdinaryRead, RuntimeError> {
+        self.prepare_value_property_read_selected(realm, receiver, key, None)
+    }
+    pub(crate) fn prepare_value_property_read_selected(
+        &self,
+        realm: ContextId,
+        receiver: &Value,
+        key: &PropertyKey,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+    ) -> Result<OrdinaryRead, RuntimeError> {
         self.validate_value_domain(receiver, "property receiver")?;
         match receiver {
-            Value::Object(object) => self.prepare_ordinary_read_borrowed(object, key, receiver),
+            Value::Object(object) => {
+                self.prepare_ordinary_read_selected(object, key, receiver, native)
+            }
             Value::String(string) => {
-                self.prepare_string_property_read(realm, string, key, receiver)
+                self.prepare_string_property_read(realm, string, key, receiver, native)
             }
             Value::Bool(_)
             | Value::Int(_)
@@ -144,7 +156,7 @@ impl Runtime {
                     _ => unreachable!(),
                 };
                 let prototype = self.primitive_prototype_for_realm(realm, kind)?;
-                self.prepare_ordinary_read_borrowed(&prototype, key, receiver)
+                self.prepare_ordinary_read_selected(&prototype, key, receiver, native)
             }
             Value::Undefined | Value::Null => {
                 let suffix = if matches!(receiver, Value::Null) {

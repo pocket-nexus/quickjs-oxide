@@ -17,12 +17,13 @@ pub(in crate::engine::vm) struct PreparedNativeCall {
 }
 
 pub(in crate::engine::vm) struct NativeActivation {
+    // Retire the non-owning diagnostic descriptor before callable roots on unwind.
+    active_frame: ActiveFrameGuard,
     pub callable: CallableRef,
     pub realm: ContextId,
     pub target: NativeFunctionId,
     pub mode: NativeInvokeMode,
     pub arguments: NativeArguments,
-    active_frame: ActiveFrameGuard,
 }
 
 enum NativeCallableInput<'a> {
@@ -263,7 +264,7 @@ impl Runtime {
             NativeArgumentInput::Borrowed(values) => {
                 let mut readable = Vec::new();
                 readable
-                    .try_reserve_exact(available_arg_count)
+                    .try_reserve(available_arg_count)
                     .map_err(|_| {
                         RuntimeError::Invariant("native readable arguments allocation failed")
                     })?;
@@ -276,20 +277,21 @@ impl Runtime {
                 // All padding allocation precedes publication. Actual arity
                 // and every extra argument survive this owning handoff.
                 values
-                    .try_reserve_exact(available_arg_count - actual_arg_count)
+                    .try_reserve(available_arg_count - actual_arg_count)
                     .map_err(|_| {
                         RuntimeError::Invariant("native readable arguments allocation failed")
                     })?;
                 (values, false, before)
             }
         };
-        readable.resize(available_arg_count, Value::Undefined);
+        if actual_arg_count < available_arg_count {
+            readable.resize(available_arg_count, Value::Undefined);
+        }
         #[cfg(feature = "profiling")]
         {
             use crate::engine::api::profiling::{
                 record_call_buffer_capacity, record_call_buffer_copies,
-                record_call_buffer_initialized, record_call_buffer_moves,
-                record_call_buffer_observed,
+                record_call_buffer_initialized, record_call_buffer_observed,
             };
             record_call_buffer_capacity(
                 "native.readable",
@@ -301,7 +303,8 @@ impl Runtime {
                 record_call_buffer_copies("native.readable", &readable[..actual_arg_count]);
             } else {
                 record_call_buffer_observed("native.incoming_argv", _before, size_of::<Value>());
-                record_call_buffer_moves("native.readable", actual_arg_count);
+                // Moving Vec ownership into NativeArguments does not move elements.
+                record_call_buffer_observed("native.readable", readable.capacity(), size_of::<Value>());
             }
             record_call_buffer_initialized(
                 "native.readable",
@@ -713,8 +716,8 @@ mod tests {
             assert_eq!(buffer.capacity_growths, 0);
             assert_eq!(buffer.values_copied, 0);
             assert_eq!(buffer.heap_root_copies, 0);
-            assert_eq!(buffer.values_moved, count as u64);
-            assert_eq!(buffer.slots_initialized, expected.len() as u64);
+            assert_eq!(buffer.values_moved, 0);
+            assert_eq!(buffer.slots_initialized, (expected.len() - count) as u64);
             let result = prepared
                 .activation
                 .finish(Ok(NativeInvokeOutcome::Completion(Completion::Throw(

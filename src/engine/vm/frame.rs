@@ -63,6 +63,7 @@ pub(super) enum ConstructorReturn {
 
 #[derive(Default)]
 pub(super) struct FrameRare {
+    pub property_keys: std::collections::HashMap<u32, crate::engine::object::PropertyKey>,
     pub normalized_this: Option<Value>,
     property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub iterator_wait: Option<crate::engine::vm::iterator_driver::PendingIterator>,
@@ -153,6 +154,13 @@ impl FrameStore {
             materialized_watermark: 0,
             unmaterialized_depth: 0,
         }
+    }
+
+    pub(super) fn can_reply_property_directly(&self, target: ReturnTarget) -> bool {
+        let Some((id, parent)) = self.frames.get(self.frames.len().saturating_sub(2)) else { return false; };
+        target.frame().ok() == Some(*id) && parent.cold.rare.get()
+            .and_then(|rare| rare.property_wait.as_ref())
+            .is_some_and(|pending| pending.is_direct_property_read(target.operation))
     }
 
     pub(super) fn depth(&self) -> usize {
@@ -765,7 +773,7 @@ impl FrameCold {
     pub(super) fn ordinary_return(&self) -> Option<ReturnTarget> {
         let target = self.return_to?;
         if target.tail
-            || target.operation.is_some()
+            || (target.operation.is_some() && !matches!(target.operation, Some(OperationTarget::PropertyGet(_))))
             || !matches!(target.owner, ReturnOwner::Frame(_))
         {
             return None;

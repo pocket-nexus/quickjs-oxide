@@ -30,6 +30,7 @@ use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarget};
 
+mod reuse;
 mod boolean;
 mod prototype;
 #[cfg(feature = "stack-vm")]

@@ -313,8 +313,8 @@ impl Runtime {
             RegExpNativeKind::Constructor => {
                 self.call_regexp_constructor(realm, invocation, arguments)
             }
-            RegExpNativeKind::Escape => self.call_regexp_escape(realm, invocation, arguments),
-            RegExpNativeKind::Species => self.call_regexp_species(invocation),
+            RegExpNativeKind::Escape => self.call_regexp_escape(realm, &invocation, arguments),
+            RegExpNativeKind::Species => self.call_regexp_species(&invocation),
             RegExpNativeKind::Source | RegExpNativeKind::Flags | RegExpNativeKind::Flag(_) => {
                 self.call_regexp_accessor(realm, kind, invocation)
             }

@@ -17,7 +17,7 @@ pub(crate) enum ProxyGetStep {
     Descriptor { resume: ProxyGetResume },
 }
 
-pub(crate) struct ProxyGetResume(Box<ProxyGetResumeState>);
+pub(crate) struct ProxyGetResume(super::reuse::PooledBox<ProxyGetResumeState>);
 impl std::ops::Deref for ProxyGetResume {
     type Target = ProxyGetResumeState;
     fn deref(&self) -> &Self::Target {
@@ -27,6 +27,16 @@ impl std::ops::Deref for ProxyGetResume {
 impl std::ops::DerefMut for ProxyGetResume {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+thread_local! {
+    static EMPTY_CONTINUATIONS: std::cell::RefCell<Vec<Box<Option<ProxyGetResumeState>>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+impl super::reuse::Reusable for ProxyGetResumeState {
+    #[cfg(feature = "profiling")]
+    const EVENT: &'static str = "get_resume_allocation";
+    fn pool() -> &'static super::reuse::EmptyPool<Self> {
+        &EMPTY_CONTINUATIONS
     }
 }
 const _: () = assert!(std::mem::size_of::<ProxyGetResume>() <= 8);
@@ -41,6 +51,7 @@ enum Phase {
         resume: MethodResume,
         key: PropertyKey,
         receiver: Value,
+        arguments: Vec<Value>,
     },
     Forward {
         _rooted: RootedProxy,
@@ -63,10 +74,21 @@ impl ProxyGetStep {
         key: PropertyKey,
         receiver: Value,
     ) -> Result<Self, RuntimeError> {
+        Self::start_buffered(runtime, realm, proxy, key, receiver, Vec::new())
+    }
+    pub(crate) fn start_buffered(
+        runtime: &Runtime,
+        realm: ContextId,
+        proxy: ObjectRef,
+        key: PropertyKey,
+        receiver: Value,
+        arguments: Vec<Value>,
+    ) -> Result<Self, RuntimeError> {
+        debug_assert!(arguments.is_empty());
         runtime.validate_object_and_key(&proxy, &key)?;
         runtime.validate_value_domain(&receiver, "property receiver")?;
         let step = MethodStep::start(runtime, realm, proxy, "get")?;
-        method(runtime, realm, key, receiver, step)
+        method(runtime, realm, key, receiver, arguments, step)
     }
 }
 
@@ -75,6 +97,7 @@ fn method(
     realm: ContextId,
     key: PropertyKey,
     receiver: Value,
+    mut arguments: Vec<Value>,
     step: MethodStep,
 ) -> Result<ProxyGetStep, RuntimeError> {
     Ok(match step {
@@ -88,7 +111,7 @@ fn method(
                     rooted.target.clone(),
                     key,
                     receiver,
-                    ProxyGetResume(Box::new(ProxyGetResumeState {
+                    ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
                         pending_effect: ProxyGetStepPending::default(),
                         realm,
                         phase: Phase::Forward { _rooted: rooted },
@@ -96,11 +119,12 @@ fn method(
                 ),
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
+                    arguments.extend([Value::Object(rooted.target.clone()), key_value, receiver]);
                     ProxyGetStep::request_call(
                         target,
                         Value::Object(rooted.handler.clone()),
-                        vec![Value::Object(rooted.target.clone()), key_value, receiver],
-                        ProxyGetResume(Box::new(ProxyGetResumeState {
+                        arguments,
+                        ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
                             pending_effect: ProxyGetStepPending::default(),
                             realm,
                             phase: Phase::Trap { rooted, key },
@@ -117,13 +141,14 @@ fn method(
                 object,
                 method_key,
                 method_receiver,
-                ProxyGetResume(Box::new(ProxyGetResumeState {
+                ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
                     pending_effect: ProxyGetStepPending::default(),
                     realm,
                     phase: Phase::Method {
                         resume,
                         key,
                         receiver,
+                        arguments,
                     },
                 })),
             )
@@ -140,24 +165,27 @@ impl ProxyGetResume {
         let Completion::Return(value) = completion else {
             return Ok(ProxyGetStep::Complete(completion));
         };
-        let realm = self.0.realm;
-        match self.0.phase {
+        let state = self.0.into_inner();
+        let realm = state.realm;
+        match state.phase {
             Phase::Method {
                 resume,
                 key,
                 receiver,
+                arguments,
             } => method(
                 runtime,
                 realm,
                 key,
                 receiver,
+                arguments,
                 resume.resume(runtime, Completion::Return(value))?,
             ),
             Phase::Forward { .. } => Ok(ProxyGetStep::Complete(Completion::Return(value))),
             Phase::Trap { rooted, key } => Ok(ProxyGetStep::request_descriptor(
                 rooted.target.clone(),
                 key,
-                Self(Box::new(ProxyGetResumeState {
+                Self(super::reuse::PooledBox::new(ProxyGetResumeState {
                     pending_effect: ProxyGetStepPending::default(),
                     realm,
                     phase: Phase::Invariant {
@@ -177,7 +205,8 @@ impl ProxyGetResume {
         runtime: &Runtime,
         descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<ProxyGetStep, RuntimeError> {
-        let Phase::Invariant { _rooted, result } = self.0.phase else {
+        let state = self.0.into_inner();
+        let Phase::Invariant { _rooted, result } = state.phase else {
             return Err(RuntimeError::Invariant(
                 "Proxy Get value continuation received a descriptor reply",
             ));
@@ -204,7 +233,7 @@ impl ProxyGetResume {
         };
         Ok(ProxyGetStep::Complete(if inconsistent {
             Completion::Throw(runtime.new_native_error(
-                self.0.realm,
+                state.realm,
                 NativeErrorKind::Type,
                 "proxy: inconsistent get",
             )?)

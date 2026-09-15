@@ -127,7 +127,7 @@ where
 }
 
 impl Runtime {
-    fn new_array_iterator(
+    pub(in crate::engine::builtins) fn new_array_iterator(
         &self,
         realm: ContextId,
         object: &ObjectRef,
@@ -690,7 +690,7 @@ impl Runtime {
     pub(crate) fn call_array_is_array(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
@@ -1338,16 +1338,19 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: ArrayIteratorKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Array iterator factory did not receive a generic invocation",
             ));
         };
-        let object = match self.native_to_object(realm, this_value)? {
-            NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+        let object = match this_value {
+            Value::Object(object) => std::borrow::Cow::Borrowed(object),
+            value => match self.native_to_object(realm, value.clone())? {
+                NativeConversion::Value(object) => std::borrow::Cow::Owned(object),
+                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            },
         };
         Ok(Completion::Return(Value::Object(
             self.new_array_iterator(realm, &object, kind)?,

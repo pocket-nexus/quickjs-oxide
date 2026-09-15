@@ -15,19 +15,19 @@ use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 impl Runtime {
     pub(crate) fn call_iterator_prototype_iterator(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Iterator.prototype iterator did not receive a generic invocation",
             ));
         };
-        Ok(Completion::Return(this_value))
+        Ok(Completion::Return(this_value.clone()))
     }
 
     pub(crate) fn call_iterator_prototype_to_string_tag_getter(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { .. } = invocation else {
             return Err(RuntimeError::Invariant(

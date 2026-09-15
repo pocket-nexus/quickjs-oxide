@@ -46,6 +46,11 @@ pub(super) struct PendingProxyGet {
 }
 
 impl PendingProxyGet {
+    pub(super) fn is_direct_property_read(&self, operation: Option<OperationTarget>) -> bool {
+        operation == Some(OperationTarget::PropertyGet(self.identity))
+            && matches!(self.query.finish, Some(Finish::PropertyRead(_)))
+    }
+
     #[cfg(test)]
     pub(super) fn with_parent_depth_for_test(
         realm: crate::engine::heap::ContextId,
@@ -279,8 +284,15 @@ pub(super) fn start(
     parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
-        let step = ProxyGetStep::start(runtime, realm, object, key, receiver)
-            .map_err(runtime_error_to_vm_error)?;
+        let step = ProxyGetStep::start_buffered(
+            runtime,
+            realm,
+            object,
+            key,
+            receiver,
+            execution.slots.take_argument_buffer(3)?,
+        )
+        .map_err(runtime_error_to_vm_error)?;
         advance(
             runtime,
             execution,
@@ -487,8 +499,15 @@ pub(super) fn start_conversion(
     let realm = parent.executable.realm;
     let result = (|| {
         let receiver = Value::Object(object.clone());
-        let step = ProxyGetStep::start(runtime, realm, object, key, receiver)
-            .map_err(runtime_error_to_vm_error)?;
+        let step = ProxyGetStep::start_buffered(
+            runtime,
+            realm,
+            object,
+            key,
+            receiver,
+            execution.slots.take_argument_buffer(3)?,
+        )
+        .map_err(runtime_error_to_vm_error)?;
         advance(
             runtime,
             execution,
@@ -1356,25 +1375,17 @@ fn reply_outcome(
             "request reply belongs to another operation",
         ));
     }
+    let (identity, query, resume) = execution.query_storage.release_pending(pending);
     let realm = match target.owner {
-        ReturnOwner::Root => pending.query.realm,
+        ReturnOwner::Root => query.realm,
         ReturnOwner::Frame(id) => execution.frames.current_mut(id)?.executable.realm,
     };
     let step = match outcome {
-        super::suspend::VmRunOutcome::Complete(completion) => {
-            pending.resume.resume(runtime, completion)
-        }
-        outcome => pending.resume.suspended(runtime, outcome),
+        super::suspend::VmRunOutcome::Complete(completion) => resume.resume(runtime, completion),
+        outcome => resume.suspended(runtime, outcome),
     }
     .map_err(runtime_error_to_vm_error);
-    let result = drive(
-        runtime,
-        execution,
-        target.owner,
-        pending.identity,
-        pending.query,
-        step,
-    );
+    let result = drive(runtime, execution, target.owner, identity, query, step);
     finish_error(runtime, realm, result)
 }
 
@@ -1550,18 +1561,7 @@ fn drive_inner(
             Ok(Next::Call { entry, pc, resume }) => {
                 #[cfg(feature = "profiling")]
                 let had_callback = std::mem::replace(&mut query.had_callback, true);
-                let pending = Box::new(PendingProxyGet {
-                    identity,
-                    query,
-                    resume,
-                });
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_call_buffer_capacity(
-                    "query.pending_box",
-                    0,
-                    1,
-                    size_of::<PendingProxyGet>(),
-                );
+                let pending = execution.query_storage.pending(identity, query, resume);
                 put_pending(execution, owner, pending)?;
                 match push_frame(execution, *entry) {
                     Ok(id) => {
@@ -1576,8 +1576,10 @@ fn drive_inner(
                     }
                     Err(error) => {
                         let pending = take_pending(execution, owner)?;
-                        drop(pending.resume);
-                        query = pending.query;
+                        let (_, restored, resume) =
+                            execution.query_storage.release_pending(pending);
+                        drop(resume);
+                        query = restored;
                         #[cfg(feature = "profiling")]
                         {
                             query.had_callback = had_callback;
@@ -1787,6 +1789,47 @@ fn invoke(
             return Ok(Next::Continue);
         }
     };
+    if let Some(call) =
+        super::call::ordinary::OrdinaryCall::select_callback(runtime, callable.as_object())
+            .map_err(runtime_error_to_vm_error)?
+    {
+        if !execution
+            .frames
+            .can_push_with_continuations(query.continuation_depth())
+            || runtime.bytecode_call_would_overflow()
+        {
+            call.executable()
+                .ensure_root(runtime)
+                .map_err(runtime_error_to_vm_error)?;
+            let completion = runtime
+                .bytecode_stack_overflow_completion(
+                    realm,
+                    call.executable().root().expect("rooted overflow frame"),
+                )
+                .map_err(runtime_error_to_vm_error)?;
+            *next_step = resume
+                .resume(runtime, completion)
+                .map_err(runtime_error_to_vm_error)?;
+            return Ok(Next::Continue);
+        }
+        let entry = call.prepare_callback(
+            &mut execution.call_storage,
+            receiver,
+            arguments,
+            realm,
+            ReturnTarget {
+                owner,
+                value_use: ReturnValue::Push,
+                tail: false,
+                operation: Some(OperationTarget::PropertyGet(identity)),
+            },
+        )?;
+        return Ok(Next::Call {
+            entry: Box::new(entry),
+            pc: 0,
+            resume,
+        });
+    }
     let super::call::NormalizedCallback {
         callable,
         receiver,

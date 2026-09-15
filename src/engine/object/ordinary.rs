@@ -137,6 +137,15 @@ impl Runtime {
         key: &PropertyKey,
         receiver: &Value,
     ) -> Result<OrdinaryRead, RuntimeError> {
+        self.prepare_ordinary_read_selected(object, key, receiver, None)
+    }
+    pub(crate) fn prepare_ordinary_read_selected(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        receiver: &Value,
+        mut native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+    ) -> Result<OrdinaryRead, RuntimeError> {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
         self.validate_value_domain(receiver, "property receiver")?;
@@ -144,7 +153,7 @@ impl Runtime {
         let mut prototype = None;
         loop {
             let current = prototype.as_ref().unwrap_or(object);
-            match self.ordinary_read_probe(current, key)? {
+            match self.ordinary_read_probe_selected(current, key, native.as_deref_mut())? {
                 ReadProbe::Value(value) => return Ok(OrdinaryRead::Complete(Some(value))),
                 ReadProbe::Getter(None) => {
                     return Ok(OrdinaryRead::Complete(Some(Value::Undefined)));

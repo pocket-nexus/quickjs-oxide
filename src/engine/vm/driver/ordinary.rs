@@ -110,7 +110,18 @@ pub(super) fn enter_selected(
             let (arguments, receiver) =
                 transaction.take_native_call_operands(logical_depth, count, method)?;
             drop(transaction);
-            execution.frames.materialize(runtime)?;
+            if !execution.frames.can_push_with_continuations(0)
+                || runtime.host_stack_would_overflow()
+                || runtime.0.deferred_references.has_pending()
+                || native_observes_activation(runtime, target, &receiver, &arguments)
+            {
+                execution.frames.materialize(runtime)?;
+            } else {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "native_unobserved_entry",
+                );
+            }
             let result = super::super::proxy_get_driver::start_native_with_classification(
                 runtime,
                 execution,
@@ -125,7 +136,14 @@ pub(super) fn enter_selected(
                 depth,
                 Some(selected),
                 operation,
-            )?;
+            );
+            if result.is_err() {
+                // Resource/invariant errors from a proven NoJS leaf carry no
+                // eagerly constructed JS exception. Publish its caller before
+                // propagating the error through the ordinary error boundary.
+                execution.frames.materialize(runtime)?;
+            }
+            let result = result?;
             if matches!(result, super::CallStep::Entered)
                 && execution.frames.current_id() == Some(id)
                 && !execution.frames.current_mut(id)?.cold.has_pending_query()
@@ -139,13 +157,84 @@ pub(super) fn enter_selected(
     }
 }
 
-pub(super) fn finish(execution: &mut RunningExecution, id: FrameId) -> Result<bool, Error> {
+/// Prove non-observation from the selected immutable native identity and actual
+/// inputs. Every callback-capable or throwing conversion retains publication.
+fn native_observes_activation(
+    runtime: &Runtime,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    receiver: &crate::engine::value::Value,
+    arguments: &[crate::engine::value::Value],
+) -> bool {
+    use crate::engine::{
+        builtins::native::{
+            MapNativeKind as M, NativeFunctionId as N, SetNativeKind as S, WeakMapNativeKind as W,
+            WeakSetNativeKind as WS,
+        },
+        heap::ObjectPayload,
+        value::Value,
+    };
+    if matches!(target, N::NumberPredicate(_)) {
+        return false;
+    }
+    if matches!(
+        target,
+        N::MathUnary(_)
+            | N::MathBinary(_)
+            | N::MathMinMax(_)
+            | N::MathHypot
+            | N::MathImul
+            | N::MathClz32
+    ) {
+        return arguments.iter().any(|value| {
+            !matches!(
+                value,
+                Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Null | Value::Undefined
+            )
+        });
+    }
+    let Value::Object(object) = receiver else {
+        return true;
+    };
+    let state = runtime.0.state.borrow();
+    let Ok(object) = state.heap.object(object.object_id()) else {
+        return true;
+    };
+    !match (target, &object.payload) {
+        (N::Map(M::Set | M::Get | M::Has | M::Delete | M::Clear), ObjectPayload::Map { .. }) => {
+            true
+        }
+        (N::Set(S::Add | S::Has | S::Delete | S::Clear), ObjectPayload::Set { .. }) => true,
+        (N::WeakMap(W::Get | W::Has | W::Delete), ObjectPayload::WeakMap { .. }) => true,
+        (N::WeakMap(W::Set), ObjectPayload::WeakMap { .. }) => {
+            matches!(arguments.first(), Some(Value::Object(_)))
+        }
+        (N::WeakSet(WS::Has | WS::Delete), ObjectPayload::WeakSet { .. }) => true,
+        (N::WeakSet(WS::Add), ObjectPayload::WeakSet { .. }) => {
+            matches!(arguments.first(), Some(Value::Object(_)))
+        }
+        _ => false,
+    }
+}
+
+pub(super) enum ReturnProgress {
+    Declined,
+    Returned,
+    Property(super::CallStep),
+}
+pub(super) fn finish(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<ReturnProgress, Error> {
     let frame = execution.frames.current_mut(id)?;
     let Some(target) = frame.cold.ordinary_return() else {
-        return Ok(false);
+        return Ok(ReturnProgress::Declined);
     };
+    if target.operation.is_some() && !execution.frames.can_reply_property_directly(target) {
+        return Ok(ReturnProgress::Declined);
+    }
     if execution.pending.is_none() {
-        return Ok(false);
+        return Ok(ReturnProgress::Declined);
     }
     // Result ownership precedes window clearing and activation removal.
     let value = execution.pending.take().unwrap();
@@ -156,13 +245,30 @@ pub(super) fn finish(execution: &mut RunningExecution, id: FrameId) -> Result<bo
         guard.finish().map_err(runtime_error_to_vm_error)?;
     }
     execution.call_storage.recycle(frame.cold);
+    if target.operation.is_some() {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("property_return_direct");
+        return match crate::engine::vm::proxy_get_driver::reply(
+            runtime,
+            execution,
+            target,
+            crate::engine::vm::Completion::Return(value),
+        )? {
+            crate::engine::vm::proxy_get_driver::Progress::Call(step) => {
+                Ok(ReturnProgress::Property(step))
+            }
+            crate::engine::vm::proxy_get_driver::Progress::Conversion(_) => {
+                Err(Error::internal("property read returned conversion"))
+            }
+        };
+    }
     let parent = execution.frames.current_mut(target.frame()?)?;
     if matches!(target.value_use, ReturnValue::Push) {
         execution.slots.push(&mut parent.window, value)?;
     }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");
-    Ok(true)
+    Ok(ReturnProgress::Returned)
 }
 
 #[cfg(test)]

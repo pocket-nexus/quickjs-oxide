@@ -72,14 +72,14 @@ impl Runtime {
     pub(crate) fn call_typed_array_to_reversed(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "TypedArray.prototype.toReversed received a constructor invocation",
             ));
         };
-        let source = match self.require_typed_array(realm, this_value)? {
+        let source = match self.require_typed_array_borrowed(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };

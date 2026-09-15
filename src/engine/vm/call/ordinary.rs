@@ -72,6 +72,12 @@ impl<'a> DirectSelection<'a> {
         let Value::Object(function) = value else {
             return Ok(Self::General);
         };
+        Self::select_object(runtime, function)
+    }
+    pub(in crate::engine::vm) fn select_object(
+        runtime: &'a Runtime,
+        function: &'a ObjectRef,
+    ) -> Result<Self, RuntimeError> {
         if !function.belongs_to(runtime) {
             return Ok(Self::General);
         }
@@ -159,6 +165,16 @@ impl<'a> DirectSelection<'a> {
 }
 
 impl OrdinaryCall {
+    pub(in crate::engine::vm) fn select_callback(
+        runtime: &Runtime,
+        function: &ObjectRef,
+    ) -> Result<Option<Self>, RuntimeError> {
+        match DirectSelection::select_object(runtime, function)? {
+            DirectSelection::Ordinary(selected) => selected.authenticate(runtime).map(Some),
+            _ => Ok(None),
+        }
+    }
+
     #[cfg(test)]
     pub(in crate::engine::vm) fn authenticate(
         runtime: &Runtime,
@@ -181,6 +197,68 @@ impl OrdinaryCall {
     ) -> Result<ActiveFrameGuard, RuntimeError> {
         runtime.push_ordinary_active_frame(self)
     }
+    /// Property callbacks use the same authenticated lazy activation as Call.
+    /// Arguments already belong to the callback protocol; zero-argument getters
+    /// therefore require no outgoing argument allocation.
+    pub(in crate::engine::vm) fn prepare_callback(
+        self,
+        storage: &mut crate::engine::vm::frame::CallStorage,
+        receiver: Value,
+        arguments: Vec<Value>,
+        caller_realm: crate::engine::heap::ContextId,
+        return_to: crate::engine::vm::frame::ReturnTarget,
+    ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
+        use crate::engine::vm::{
+            frame::{FrameCold, FrameEntry},
+            stack::FrameStorage,
+        };
+        storage.reserve()?;
+        let (flags, flag_bytes) = if self.executable.has_captured_locals {
+            storage.capture_flags(self.executable.local_definitions.len())?
+        } else {
+            (Vec::new(), 0)
+        };
+        let (cold, frame_bytes) = storage.install(FrameCold {
+            rare: std::cell::OnceCell::new(),
+            return_to: Some(return_to),
+            entry_guard: None,
+            function: self.function.into(),
+            closure_slots: self.closure,
+            reusable_captured_locals: flags,
+            input: crate::engine::vm::CallInput {
+                this_value: receiver,
+                new_target: Value::Undefined,
+                callee_global: None,
+            }
+            .into(),
+        });
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "property_callback_lazy_install",
+        );
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_call_storage(
+            frame_bytes, flag_bytes, arguments.capacity() * size_of::<Value>(),
+        );
+        #[cfg(not(feature = "profiling"))]
+        let _ = (frame_bytes, flag_bytes);
+        Ok(FrameEntry {
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm,
+            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
+            initialize_bindings: true,
+            executable: self.executable,
+            cold,
+            storage: FrameStorage {
+                original_arguments: arguments,
+                parameters: Vec::new(),
+                locals: Vec::new(),
+                operands: Vec::new(),
+            },
+        })
+    }
+
     pub(in crate::engine::vm) fn install(
         self,
         _runtime: &Runtime,

@@ -550,17 +550,17 @@ impl Runtime {
             }
             TypedArrayNativeKind::From => self.call_typed_array_from(realm, invocation, arguments),
             TypedArrayNativeKind::Of => self.call_typed_array_of(realm, invocation, arguments),
-            TypedArrayNativeKind::Species => self.call_typed_array_species(invocation),
+            TypedArrayNativeKind::Species => self.call_typed_array_species(&invocation),
             TypedArrayNativeKind::Length
             | TypedArrayNativeKind::Buffer
             | TypedArrayNativeKind::ByteLength
             | TypedArrayNativeKind::ByteOffset
             | TypedArrayNativeKind::ToStringTag => {
-                self.call_typed_array_getter(realm, kind, invocation)
+                self.call_typed_array_getter(realm, kind, &invocation)
             }
             TypedArrayNativeKind::Set => self.call_typed_array_set(realm, invocation, arguments),
             TypedArrayNativeKind::Iterator(kind) => {
-                self.call_typed_array_iterator(realm, kind, invocation)
+                self.call_typed_array_iterator(realm, kind, &invocation)
             }
             TypedArrayNativeKind::CopyWithin => {
                 self.call_typed_array_copy_within(realm, invocation, arguments)
@@ -572,11 +572,11 @@ impl Runtime {
                 self.call_typed_array_reduce(realm, kind, invocation, arguments)
             }
             TypedArrayNativeKind::Fill => self.call_typed_array_fill(realm, invocation, arguments),
-            TypedArrayNativeKind::Reverse => self.call_typed_array_reverse(realm, invocation),
+            TypedArrayNativeKind::Reverse => self.call_typed_array_reverse(realm, &invocation),
             TypedArrayNativeKind::At => self.call_typed_array_at(realm, invocation, arguments),
             TypedArrayNativeKind::With => self.call_typed_array_with(realm, invocation, arguments),
             TypedArrayNativeKind::ToReversed => {
-                self.call_typed_array_to_reversed(realm, invocation)
+                self.call_typed_array_to_reversed(realm, &invocation)
             }
             TypedArrayNativeKind::Search(kind) => {
                 self.call_typed_array_search(realm, kind, invocation, arguments)
@@ -702,23 +702,23 @@ impl Runtime {
         )?))
     }
 
-    fn call_typed_array_species(
+    pub(in crate::engine::builtins) fn call_typed_array_species(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "TypedArray species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value))
+        Ok(Completion::Return(this_value.clone()))
     }
 
-    fn call_typed_array_getter(
+    pub(in crate::engine::builtins) fn call_typed_array_getter(
         &self,
         realm: ContextId,
         kind: TypedArrayNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
@@ -736,7 +736,7 @@ impl Runtime {
                 snapshot.element.name(),
             ))));
         }
-        let object = match self.require_typed_array(realm, this_value)? {
+        let object = match self.require_typed_array_borrowed(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
@@ -762,18 +762,18 @@ impl Runtime {
         Ok(Completion::Return(result))
     }
 
-    fn call_typed_array_iterator(
+    pub(in crate::engine::builtins) fn call_typed_array_iterator(
         &self,
         realm: ContextId,
         kind: ArrayIteratorKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "TypedArray iterator factory received a constructor invocation",
             ));
         };
-        let object = match self.require_typed_array(realm, this_value)? {
+        let object = match self.require_typed_array_borrowed(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
@@ -781,13 +781,7 @@ impl Runtime {
             NativeConversion::Value(_) => {}
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         }
-        self.call_array_prototype_iterator(
-            realm,
-            kind,
-            NativeInvocation::Call {
-                this_value: Value::Object(object),
-            },
-        )
+        Ok(Completion::Return(Value::Object(self.new_array_iterator(realm,object,kind)?)))
     }
 
     fn call_typed_array_from(
@@ -899,7 +893,12 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_typed_array_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    fn require_typed_array_borrowed<'a>(
+        &self,
+        realm: ContextId,
+        value: &'a Value,
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let Value::Object(object) = value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,

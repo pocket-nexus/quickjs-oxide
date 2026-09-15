@@ -155,11 +155,12 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn primitive_this_value(
+    pub(crate) fn primitive_this_value(&self, realm: ContextId, kind: PrimitiveKind, this_value: Value) -> Result<NativeConversion<Value>, RuntimeError> { self.primitive_this_value_borrowed(realm,kind,&this_value) }
+    pub(crate) fn primitive_this_value_borrowed(
         &self,
         realm: ContextId,
         kind: PrimitiveKind,
-        this_value: Value,
+        this_value: &Value,
     ) -> Result<NativeConversion<Value>, RuntimeError> {
         let direct = matches!(
             (&this_value, kind),
@@ -170,7 +171,7 @@ impl Runtime {
                 | (Value::BigInt(_), PrimitiveKind::BigInt)
         );
         if direct {
-            return Ok(NativeConversion::Value(this_value));
+            return Ok(NativeConversion::Value(this_value.clone()));
         }
         if let Value::Object(object) = &this_value {
             let payload = {
@@ -591,7 +592,7 @@ impl Runtime {
     pub(crate) fn call_number_predicate(
         &self,
         kind: NumberPredicateKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
@@ -639,7 +640,7 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: SymbolRegistryKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
@@ -683,14 +684,14 @@ impl Runtime {
     pub(crate) fn call_symbol_prototype_description(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Symbol.prototype.description received the wrong native invocation",
             ));
         };
-        let value = match self.primitive_this_value(realm, PrimitiveKind::Symbol, this_value)? {
+        let value = match self.primitive_this_value_borrowed(realm, PrimitiveKind::Symbol, this_value)? {
             NativeConversion::Value(Value::Symbol(value)) => value,
             NativeConversion::Value(_) => {
                 return Err(RuntimeError::Invariant(
@@ -709,14 +710,14 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: PrimitiveKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "primitive valueOf did not receive a generic invocation",
             ));
         };
-        match self.primitive_this_value(realm, kind, this_value)? {
+        match self.primitive_this_value_borrowed(realm, kind, this_value)? {
             NativeConversion::Value(value) => Ok(Completion::Return(value)),
             NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
         }

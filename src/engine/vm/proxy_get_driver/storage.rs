@@ -10,6 +10,9 @@ pub(super) fn reserve<T>(
     additional: usize,
     _name: &'static str,
 ) -> Result<(), std::collections::TryReserveError> {
+    if values.capacity().saturating_sub(values.len()) >= additional {
+        return Ok(());
+    }
     #[cfg(feature = "profiling")]
     let before = values.capacity();
     values.try_reserve(additional)?;
@@ -34,9 +37,61 @@ pub(super) struct Buffers {
 pub(in crate::engine::vm) struct QueryStorage {
     free: Vec<Buffers>,
     native_waits: Vec<Vec<super::native::NativeWaitRecord>>,
+    // Reuse the pending allocations themselves; all cached query fields are empty.
+    #[allow(clippy::vec_box)]
+    pending: Vec<Box<super::PendingProxyGet>>,
 }
 
 impl QueryStorage {
+    pub(super) fn pending(
+        &mut self,
+        identity: u64,
+        query: Query,
+        resume: Resume,
+    ) -> Box<super::PendingProxyGet> {
+        if let Some(mut pending) = self.pending.pop() {
+            pending.identity = identity;
+            pending.query = query;
+            pending.resume = resume;
+            return pending;
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_call_buffer_capacity(
+            "query.pending_box",
+            0,
+            1,
+            size_of::<super::PendingProxyGet>(),
+        );
+        Box::new(super::PendingProxyGet {
+            identity,
+            query,
+            resume,
+        })
+    }
+
+    pub(super) fn release_pending(
+        &mut self,
+        mut pending: Box<super::PendingProxyGet>,
+    ) -> (u64, Query, Resume) {
+        let empty = Query {
+            #[cfg(feature = "profiling")]
+            had_callback: false,
+            realm: pending.query.realm,
+            parents: Parents::default(),
+            natives: Vec::new(),
+            saved_native_depth: 0,
+            spare_parents: Vec::new(),
+            finish: None,
+        };
+        let query = std::mem::replace(&mut pending.query, empty);
+        let resume = std::mem::replace(&mut pending.resume, Resume::Identity);
+        let identity = pending.identity;
+        if self.pending.len() < 16 && reserve(&mut self.pending, 1, "query.pending_pool").is_ok() {
+            self.pending.push(pending);
+        }
+        (identity, query, resume)
+    }
+
     pub(super) fn take_native_wait(
         &mut self,
     ) -> Result<Vec<super::native::NativeWaitRecord>, crate::engine::api::Error> {
@@ -88,44 +143,6 @@ impl QueryStorage {
         Ok(true)
     }
 
-    /// Borrow only empty capacity for a Runtime-only native entry. Its other
-    /// execution input is a disjoint SlotStore borrow; host child executions
-    /// own independent caches. Generic callers keep using take_cached below.
-    #[inline]
-    pub(super) fn cached_native_buffers(&mut self) -> Option<&mut Buffers> {
-        let buffers = self.free.last_mut()?;
-        debug_assert!(buffers.parents.is_empty() && buffers.natives.is_empty());
-        debug_assert!(buffers.spare_parents.iter().all(Parents::is_empty));
-        Some(buffers)
-    }
-
-    /// The old pop/recycle pair had one free pool slot available, so returning
-    /// these same buffers could not grow the pool. Preserve that observation
-    /// after instruction finishing without moving three empty Vec headers.
-    #[inline]
-    pub(super) fn complete_cached_native(&mut self) {
-        debug_assert!(
-            self.free
-                .last()
-                .is_some_and(|buffers| buffers.parents.is_empty()
-                    && buffers.natives.is_empty()
-                    && buffers.spare_parents.iter().all(Parents::is_empty))
-        );
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
-            "query.free_pool",
-            self.free.capacity(),
-            self.free.capacity(),
-            size_of::<Buffers>(),
-        );
-    }
-
-    /// Remove idle buffers before native entry so nested executions cannot
-    /// consume the continuation capacity reserved for this invocation.
-    pub(super) fn take_cached(&mut self) -> Option<Buffers> {
-        self.free.pop()
-    }
-
     pub(super) fn acquire(
         &mut self,
         realm: ContextId,
@@ -160,40 +177,6 @@ impl QueryStorage {
             saved_native_depth: 0,
             spare_parents: buffers.spare_parents,
             finish: Some(finish),
-        }
-    }
-}
-
-impl Buffers {
-    pub(super) fn reserve_native(&mut self) -> Result<(), crate::engine::api::Error> {
-        reserve(&mut self.natives, 1, "query.native_scopes").map_err(|_| {
-            crate::engine::api::Error::internal("native continuation allocation failed")
-        })?;
-        reserve(&mut self.spare_parents, 1, "query.spare_parents").map_err(|_| {
-            crate::engine::api::Error::internal("native parent storage allocation failed")
-        })?;
-        Ok(())
-    }
-
-    pub(super) fn into_query(self, realm: ContextId, finish: Finish) -> Query {
-        Query {
-            #[cfg(feature = "profiling")]
-            had_callback: false,
-            realm,
-            parents: self.parents,
-            natives: self.natives,
-            saved_native_depth: 0,
-            spare_parents: self.spare_parents,
-            finish: Some(finish),
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn recycle(self, storage: &mut QueryStorage) {
-        debug_assert!(self.parents.is_empty() && self.natives.is_empty());
-        debug_assert!(self.spare_parents.iter().all(Parents::is_empty));
-        if reserve(&mut storage.free, 1, "query.free_pool").is_ok() {
-            storage.free.push(self);
         }
     }
 }
@@ -259,13 +242,12 @@ mod tests {
         storage
             .acquire(context.realm, Vec::new(), Finish::Root)
             .recycle(&mut storage);
-        let mut buffers = storage.take_cached().unwrap();
-        buffers.reserve_native().unwrap();
+        assert!(storage.reserve_cached_native_entry().unwrap());
+        let query = storage.acquire(context.realm, Vec::new(), Finish::Root);
         assert!(!storage.has_cached_entry());
         let nested = storage.acquire(context.realm, Vec::new(), Finish::Root);
         assert_eq!(nested.natives.capacity(), 0);
         nested.recycle(&mut storage);
-        let query = buffers.into_query(context.realm, Finish::Root);
         assert!(query.natives.capacity() >= 1);
         assert!(query.spare_parents.capacity() >= 1);
         query.recycle(&mut storage);
@@ -297,26 +279,22 @@ mod tests {
         let runtime = Runtime::new();
         let context = runtime.new_context();
         let mut storage = QueryStorage::default();
-        assert!(storage.cached_native_buffers().is_none());
+        assert!(!storage.reserve_cached_native_entry().unwrap());
         storage
             .acquire(context.realm, Vec::new(), Finish::Root)
             .recycle(&mut storage);
         let pool_capacity = storage.free.capacity();
         let entry_address = storage.free.as_ptr();
         for _ in 0..8 {
-            let buffers = storage.cached_native_buffers().unwrap();
-            buffers.reserve_native().unwrap();
+            assert!(storage.reserve_cached_native_entry().unwrap());
+            let buffers = storage.free.last().unwrap();
             assert!(buffers.parents.is_empty() && buffers.natives.is_empty());
-            storage.complete_cached_native();
             assert_eq!(storage.free.len(), 1);
             assert_eq!(storage.free.capacity(), pool_capacity);
             assert_eq!(storage.free.as_ptr(), entry_address);
         }
-        let reserved = storage.cached_native_buffers().unwrap().natives.capacity();
-        let query = storage
-            .take_cached()
-            .unwrap()
-            .into_query(context.realm, Finish::Root);
+        let reserved = storage.free.last().unwrap().natives.capacity();
+        let query = storage.acquire(context.realm, Vec::new(), Finish::Root);
         assert_eq!(query.natives.capacity(), reserved);
         assert!(!storage.has_cached_entry());
         query.recycle(&mut storage);
@@ -333,8 +311,8 @@ mod tests {
             .query_storage
             .acquire(context.realm, Vec::new(), Finish::Root)
             .recycle(&mut outer.query_storage);
-        let borrowed = outer.query_storage.cached_native_buffers().unwrap();
-        borrowed.reserve_native().unwrap();
+        assert!(outer.query_storage.reserve_cached_native_entry().unwrap());
+        let borrowed = outer.query_storage.free.last().unwrap();
         let reserved = borrowed.natives.capacity();
         let boundary = HostBoundaryGuard::enter(&runtime).unwrap();
         let mut inner = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
@@ -348,7 +326,6 @@ mod tests {
         boundary.finish(&runtime).unwrap();
         assert_eq!(borrowed.natives.capacity(), reserved);
         assert!(borrowed.natives.is_empty());
-        outer.query_storage.complete_cached_native();
         assert_eq!(outer.query_storage.free.len(), 1);
     }
 

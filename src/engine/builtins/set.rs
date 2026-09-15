@@ -294,11 +294,20 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
+        self.call_set_native_borrowed(realm, kind, &invocation, arguments)
+    }
+    pub(crate) fn call_set_native_borrowed(
+        &self,
+        realm: ContextId,
+        kind: SetNativeKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Completion, RuntimeError> {
         match kind {
             SetNativeKind::Constructor => self.call_set_constructor(realm, invocation, arguments),
             SetNativeKind::Species => self.call_set_species(invocation),
             SetNativeKind::GroupBy => {
-                self.call_map_native(realm, MapNativeKind::GroupBy, invocation, arguments)
+                self.call_map_native_borrowed(realm, MapNativeKind::GroupBy, invocation, arguments)
             }
             SetNativeKind::Add => self.call_set_add(realm, invocation, arguments),
             SetNativeKind::Has => self.call_set_has(realm, invocation, arguments),
@@ -325,19 +334,19 @@ impl Runtime {
         }
     }
 
-    fn call_set_species(&self, invocation: NativeInvocation) -> Result<Completion, RuntimeError> {
+    fn call_set_species(&self, invocation: &NativeInvocation) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Set species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value))
+        Ok(Completion::Return(this_value.clone()))
     }
 
     fn call_set_constructor(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         super::iterator::collection::finish(
@@ -353,12 +362,12 @@ impl Runtime {
         )
     }
 
-    fn set_receiver(
+    fn set_receiver<'a>(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &'a NativeInvocation,
         getter: bool,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let this_value = match (getter, invocation) {
             (false, NativeInvocation::Call { this_value })
             | (true, NativeInvocation::Getter { this_value }) => this_value,
@@ -486,7 +495,7 @@ impl Runtime {
     fn call_set_add(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let set = match self.set_receiver(realm, invocation, false)? {
@@ -501,13 +510,13 @@ impl Runtime {
                 "Set.prototype.add value argv was not padded",
             ))?;
         self.insert_set_record(&set, value)?;
-        Ok(Completion::Return(Value::Object(set)))
+        Ok(Completion::Return(Value::Object(set.clone())))
     }
 
     fn call_set_has(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let set = match self.set_receiver(realm, invocation, false)? {
@@ -525,7 +534,7 @@ impl Runtime {
     fn call_set_delete(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let set = match self.set_receiver(realm, invocation, false)? {
@@ -547,7 +556,7 @@ impl Runtime {
     fn call_set_clear(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let set = match self.set_receiver(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
@@ -562,7 +571,7 @@ impl Runtime {
     fn call_set_size(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let set = match self.set_receiver(realm, invocation, true)? {
             NativeConversion::Value(set) => set,
@@ -576,7 +585,7 @@ impl Runtime {
     fn call_set_for_each(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         callback::finish(
@@ -618,7 +627,7 @@ impl Runtime {
     fn call_set_iterator_factory(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         kind: SetIteratorKind,
     ) -> Result<Completion, RuntimeError> {
         let set = match self.set_receiver(realm, invocation, false)? {
@@ -743,7 +752,7 @@ impl Runtime {
     fn call_set_is_disjoint_from(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operations::finish(
@@ -762,7 +771,7 @@ impl Runtime {
     fn call_set_is_subset_of(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operations::finish(
@@ -781,7 +790,7 @@ impl Runtime {
     fn call_set_is_superset_of(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operations::finish(
@@ -800,7 +809,7 @@ impl Runtime {
     fn call_set_intersection(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operations::finish(
@@ -819,7 +828,7 @@ impl Runtime {
     fn call_set_difference(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operations::finish(
@@ -838,7 +847,7 @@ impl Runtime {
     fn call_set_symmetric_difference(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operations::finish(
@@ -857,7 +866,7 @@ impl Runtime {
     fn call_set_union(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operations::finish(

@@ -64,12 +64,21 @@ pub(super) fn run(
                     return Ok(boundary);
                 }
             }
-            RunExit::Complete => {
-                if !super::ordinary::finish(execution, id)? {
-                    return Ok(Boundary::Exit(exit));
+            RunExit::Complete => match super::ordinary::finish(runtime, execution, id)? {
+                super::ordinary::ReturnProgress::Declined => return Ok(Boundary::Exit(exit)),
+                super::ordinary::ReturnProgress::Returned => {
+                    id = execution.frames.current_id().unwrap()
                 }
-                id = execution.frames.current_id().unwrap();
-            }
+                super::ordinary::ReturnProgress::Property(CallStep::Entered) => {
+                    return Ok(Boundary::Entered);
+                }
+                super::ordinary::ReturnProgress::Property(CallStep::Complete(completion)) => {
+                    return Ok(Boundary::Complete(completion));
+                }
+                super::ordinary::ReturnProgress::Property(CallStep::Bridge) => {
+                    return Err(invariant("property return attempted replay"));
+                }
+            },
             RunExit::ReplaceBinding { .. } | RunExit::ReleaseOperand { .. } => {
                 if !crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)? {
                     return Err(invariant(

@@ -56,7 +56,7 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: DateNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         if matches!(
@@ -81,7 +81,7 @@ impl Runtime {
             DateNativeKind::TimeValue => self.call_date_time_value(realm, &this_value),
             DateNativeKind::String(method) => self.call_date_string(realm, &this_value, method),
             DateNativeKind::ToPrimitive => {
-                self.call_date_to_primitive(realm, this_value, arguments)
+                self.call_date_to_primitive(realm, this_value.clone(), arguments)
             }
             DateNativeKind::TimezoneOffset => self.call_date_timezone_offset(realm, &this_value),
             DateNativeKind::GetField(field) => self.call_date_get_field(realm, &this_value, field),
@@ -90,7 +90,7 @@ impl Runtime {
                 self.call_date_set_field(realm, &this_value, field, arguments)
             }
             DateNativeKind::SetYear => self.call_date_set_year(realm, &this_value, arguments),
-            DateNativeKind::ToJson => self.call_date_to_json(realm, this_value),
+            DateNativeKind::ToJson => self.call_date_to_json(realm, this_value.clone()),
             DateNativeKind::Constructor
             | DateNativeKind::Now
             | DateNativeKind::Parse
@@ -98,11 +98,11 @@ impl Runtime {
         }
     }
 
-    fn date_this_time_value(
+    fn date_this_time_value<'a>(
         &self,
         realm: ContextId,
-        this_value: &Value,
-    ) -> Result<NativeConversion<(ObjectRef, f64)>, RuntimeError> {
+        this_value: &'a Value,
+    ) -> Result<NativeConversion<(&'a ObjectRef, f64)>, RuntimeError> {
         let Value::Object(object) = this_value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
@@ -159,7 +159,7 @@ impl Runtime {
                 "not a Date object",
             )?));
         };
-        Ok(NativeConversion::Value((object.clone(), value)))
+        Ok(NativeConversion::Value((object, value)))
     }
 
     fn set_date_this_time_value(

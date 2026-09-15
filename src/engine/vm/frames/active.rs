@@ -1,12 +1,14 @@
 //! Incremental physical-native budgets owned by the activation stack.
 use super::{ActiveFrameKind, ActiveFrameRecord, ActiveFrameToken};
 use crate::engine::vm::native_stack::{native_stack_family, native_stack_weight};
-use std::ops::{Deref, DerefMut};
 use std::{cell::Cell, rc::Rc};
 
 #[derive(Default)]
 pub(crate) struct ActiveFrames {
     records: Vec<ActiveFrameRecord>,
+    // The common synchronous native tail never enters the allocated vector.
+    // Observers see the descriptor through the same checked collection API.
+    pending_native: Option<ActiveFrameRecord>,
     depth: Rc<Cell<usize>>,
     native_cost: usize,
     families: [usize; 14],
@@ -15,7 +17,8 @@ impl Clone for ActiveFrames {
     fn clone(&self) -> Self {
         Self {
             records: self.records.clone(),
-            depth: Rc::new(Cell::new(self.records.len())),
+            pending_native: self.pending_native,
+            depth: Rc::new(Cell::new(self.len())),
             native_cost: self.native_cost,
             families: self.families,
         }
@@ -28,6 +31,37 @@ impl ActiveFrames {
             depth,
             ..Self::default()
         }
+    }
+    pub(crate) fn len(&self) -> usize { self.records.len() + usize::from(self.pending_native.is_some()) }
+    pub(crate) fn is_empty(&self) -> bool { self.len() == 0 }
+    pub(crate) fn get(&self, index: usize) -> Option<&ActiveFrameRecord> {
+        if index == self.records.len() { self.pending_native.as_ref() } else { self.records.get(index) }
+    }
+    pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut ActiveFrameRecord> {
+        if index == self.records.len() { self.pending_native.as_mut() } else { self.records.get_mut(index) }
+    }
+    pub(crate) fn last(&self) -> Option<&ActiveFrameRecord> { self.pending_native.as_ref().or_else(|| self.records.last()) }
+    pub(crate) fn last_mut(&mut self) -> Option<&mut ActiveFrameRecord> {
+        if self.pending_native.is_some() { self.pending_native.as_mut() } else { self.records.last_mut() }
+    }
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item=&ActiveFrameRecord> + ExactSizeIterator {
+        (0..self.len()).map(|index| self.get(index).unwrap())
+    }
+    pub(crate) fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item=&mut ActiveFrameRecord> {
+        self.records.iter_mut().chain(self.pending_native.iter_mut())
+    }
+    pub(crate) fn to_vec(&self) -> Vec<ActiveFrameRecord> { self.iter().copied().collect() }
+    fn materialize_native_tail(&mut self) {
+        if self.pending_native.is_some() {
+            self.records.reserve(1);
+            self.records.push(self.pending_native.take().unwrap());
+        }
+    }
+    pub(crate) fn push_lazy_native(&mut self, record: ActiveFrameRecord) {
+        self.materialize_native_tail();
+        self.pending_native = Some(record);
+        self.depth.set(self.len());
+        self.charge(record, true);
     }
     pub(crate) fn native_cost(&self) -> usize {
         self.native_cost
@@ -58,58 +92,37 @@ impl ActiveFrames {
     }
     pub(crate) fn push(&mut self, record: ActiveFrameRecord) {
         // Allocation precedes accounting so unwinding cannot leave a charge.
+        self.materialize_native_tail();
         self.records.push(record);
-        self.depth.set(self.records.len());
+        self.depth.set(self.len());
         self.charge(record, true);
     }
     pub(crate) fn pop(&mut self) -> Option<ActiveFrameRecord> {
-        let record = self.records.pop()?;
-        self.depth.set(self.records.len());
+        let record = self.pending_native.take().or_else(|| self.records.pop())?;
+        self.depth.set(self.len());
         self.charge(record, false);
         Some(record)
     }
     pub(crate) fn truncate(&mut self, depth: usize) {
-        while self.records.len() > depth {
+        while self.len() > depth {
             self.pop();
         }
     }
     pub(super) fn mark_native_continuation(&mut self, depth: usize, token: ActiveFrameToken) {
-        let record = self.records[depth];
+        let record = *self.get(depth).expect("native frame index");
         assert_eq!(record.token, token);
         self.charge(record, false);
-        self.records[depth].native_continuation = true;
-    }
-}
-impl Deref for ActiveFrames {
-    type Target = [ActiveFrameRecord];
-    fn deref(&self) -> &Self::Target {
-        &self.records
-    }
-}
-impl DerefMut for ActiveFrames {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.records
+        self.get_mut(depth).expect("native frame index").native_continuation = true;
     }
 }
 impl ActiveFrames {
     pub(crate) fn retire(&mut self, token: ActiveFrameToken, depth: usize) {
-        // Guards carry their installation index. Exception suffix destruction
-        // touches only the removed records, not surviving ancestors.
-        if self
-            .records
-            .get(depth)
-            .is_some_and(|frame| frame.token == token)
-        {
-            self.truncate(depth);
-        } else if let Ok(position) = self
-            .records
-            .binary_search_by_key(&token.0, |frame| frame.token.0)
-        {
-            // Corrupt/out-of-order identities preserve the old cleanup result.
-            self.truncate(position);
+        let position = if self.get(depth).is_some_and(|frame| frame.token == token) {
+            depth
         } else {
-            self.truncate(depth);
-        }
+            self.iter().position(|frame| frame.token == token).unwrap_or(depth)
+        };
+        self.truncate(position);
     }
 }
 
@@ -156,7 +169,7 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            frames.push(ActiveFrameRecord {
+            frames.push_lazy_native(ActiveFrameRecord {
                 token: ActiveFrameToken(i as u64 + 1),
                 function: function.object_id(),
                 realm: context.realm,
@@ -169,6 +182,9 @@ mod tests {
                 native_continuation: false,
             });
             verify(&frames);
+            assert_eq!(frames.records.len(), i);
+            assert!(frames.pending_native.is_some());
+            assert_eq!(frames.to_vec().len(), i + 1);
         }
         let mut independent = frames.clone();
         independent.pop();

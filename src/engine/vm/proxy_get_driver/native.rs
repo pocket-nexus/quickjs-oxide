@@ -115,7 +115,7 @@ pub(super) fn begin_synchronous(
     kind: crate::engine::builtins::continuation::SynchronousNative,
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<Completion, Error> {
-    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
+    // The operand transfer reserves the reusable buffer once, before moving argv.
     let native_realm = if target.uses_calling_realm() {
         realm
     } else {

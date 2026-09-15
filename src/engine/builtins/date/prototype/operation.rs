@@ -168,7 +168,7 @@ impl DatePrototypeStep {
         };
         DatePrototypeResume(Box::new(DatePrototypeResumeState {
             realm,
-            object,
+            object: object.clone(),
             phase,
             arguments: arguments
                 .readable

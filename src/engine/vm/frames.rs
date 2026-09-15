@@ -18,7 +18,8 @@ use crate::engine::vm::BytecodePc;
 /// realm cannot change while this root is held. General callers cannot forge it.
 #[cfg(feature = "stack-vm")]
 pub(in crate::engine::vm) struct NativeClassification {
-    function: ObjectRef,
+    function: ObjectId,
+    domain: u64,
     target: NativeFunctionId,
     defining_realm: ContextId,
     min_readable_args: u8,
@@ -31,12 +32,14 @@ impl NativeClassification {
     ) -> (crate::engine::object::CallableRef, Self) {
         let (function, target, defining_realm, min_readable_args, operation) =
             selection.into_parts();
-        let function = function.clone();
+        let domain = function.runtime().domain_id();
         let callable = crate::engine::object::CallableRef::from_validated_object(function.clone());
+        let function = function.object_id();
         (
             callable,
             Self {
                 function,
+                domain,
                 target,
                 defining_realm,
                 min_readable_args,
@@ -53,12 +56,14 @@ impl NativeClassification {
             return None;
         };
         let data = selection.into_parts(function)?;
-        let function = function.clone();
+        let domain = function.runtime().domain_id();
         let callable = crate::engine::object::CallableRef::from_validated_object(function.clone());
+        let function = function.object_id();
         Some((
             callable,
             Self {
                 function,
+                domain,
                 target: data.target,
                 defining_realm: data.realm.expect("selected native realm"),
                 min_readable_args: data.min_readable_args,
@@ -89,7 +94,8 @@ impl NativeClassification {
         let operation = data.operation();
         drop(state);
         Ok(Some(Self {
-            function: callable.as_object().clone(),
+            function: callable.as_object().object_id(),
+            domain: runtime.domain_id(),
             target,
             defining_realm,
             min_readable_args,
@@ -217,8 +223,8 @@ impl<'a> NativePublicationWitness<'a> {
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("native callable"));
         }
-        if !selected.function.belongs_to(runtime)
-            || selected.function.object_id() != callable.as_object().object_id()
+        if selected.domain != runtime.domain_id()
+            || selected.function != callable.as_object().object_id()
             || selected.target != target
             || selected.min_readable_args != min_readable_args
             || (matches!(mode, super::call::NativeInvokeMode::Ordinary)
@@ -256,7 +262,7 @@ impl<'a> NativePublicationWitness<'a> {
         continuation: bool,
     ) -> Result<ActiveFrameGuard, RuntimeError> {
         // Keep the caller's owning frame root at the original retain site.
-        let function_root = self.callable.as_object().clone();
+        let function = self.callable.as_object().object_id();
         if !self.realm_allowed
             || readable_arg_count != actual_arg_count.max(usize::from(self.min_readable_args))
         {
@@ -264,9 +270,8 @@ impl<'a> NativePublicationWitness<'a> {
                 "native active frame disagrees with its rooted callable",
             ));
         }
-        self.runtime.publish_validated_active_frame(
-            function_root,
-            None,
+        self.runtime.publish_borrowed_native_frame(
+            function,
             self.realm,
             ActiveFrameFlags {
                 backtrace_hidden: self.iterator_next_raw,
@@ -283,6 +288,22 @@ impl<'a> NativePublicationWitness<'a> {
 }
 
 impl Runtime {
+    fn publish_borrowed_native_frame(
+        &self, function: ObjectId, realm: ContextId, flags: ActiveFrameFlags,
+        kind: ActiveFrameKind, native_continuation: bool,
+    ) -> Result<ActiveFrameGuard, RuntimeError> {
+        let mut state = self.0.state.borrow_mut();
+        let token = ActiveFrameToken(state.next_active_frame_token);
+        state.next_active_frame_token = state.next_active_frame_token.checked_add(1)
+            .ok_or(RuntimeError::Invariant("active-frame token space was exhausted"))?;
+        let depth = state.active_frames.len();
+        state.active_frames.push_lazy_native(ActiveFrameRecord {
+            token, native_continuation, function, realm, flags, kind,
+        });
+        Ok(ActiveFrameGuard { runtime: self.clone(), token, depth, active: true,
+            _function_root: None, _bytecode_root: None })
+    }
+
     pub(crate) fn push_active_collection_record(
         &self,
         record: ActiveCollectionRecord,

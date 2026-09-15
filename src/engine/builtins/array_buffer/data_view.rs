@@ -168,7 +168,7 @@ impl Runtime {
             }
             DataViewNativeKind::Buffer
             | DataViewNativeKind::ByteLength
-            | DataViewNativeKind::ByteOffset => self.call_data_view_getter(realm, kind, invocation),
+            | DataViewNativeKind::ByteOffset => self.call_data_view_getter(realm, kind, &invocation),
             DataViewNativeKind::Get(element) => {
                 self.call_data_view_get(realm, element, invocation, arguments)
             }
@@ -225,18 +225,18 @@ impl Runtime {
         Ok(Completion::Return(Value::Object(object)))
     }
 
-    fn call_data_view_getter(
+    pub(in crate::engine::builtins) fn call_data_view_getter(
         &self,
         realm: ContextId,
         kind: DataViewNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "DataView prototype getter received a non-getter invocation",
             ));
         };
-        let object = match self.require_data_view(realm, this_value)? {
+        let object = match self.require_data_view_borrowed(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
@@ -494,7 +494,12 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_data_view_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    fn require_data_view_borrowed<'a>(
+        &self,
+        realm: ContextId,
+        value: &'a Value,
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let Value::Object(object) = value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,

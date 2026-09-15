@@ -17,7 +17,7 @@ pub(super) enum MethodStep {
     Read { resume: MethodResume },
 }
 
-pub(super) struct MethodResume(Box<MethodResumeState>);
+pub(super) struct MethodResume(super::reuse::PooledBox<MethodResumeState>);
 impl std::ops::Deref for MethodResume {
     type Target = MethodResumeState;
     fn deref(&self) -> &Self::Target {
@@ -27,6 +27,16 @@ impl std::ops::Deref for MethodResume {
 impl std::ops::DerefMut for MethodResume {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+thread_local! {
+    static EMPTY_CONTINUATIONS: std::cell::RefCell<Vec<Box<Option<MethodResumeState>>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+impl super::reuse::Reusable for MethodResumeState {
+    #[cfg(feature = "profiling")]
+    const EVENT: &'static str = "method_resume_allocation";
+    fn pool() -> &'static super::reuse::EmptyPool<Self> {
+        &EMPTY_CONTINUATIONS
     }
 }
 const _: () = assert!(std::mem::size_of::<MethodResume>() <= 8);
@@ -98,7 +108,7 @@ impl Search {
             rooted.handler.clone(),
             self.key.clone(),
             Value::Object(rooted.handler.clone()),
-            MethodResume(Box::new(MethodResumeState {
+            MethodResume(super::reuse::PooledBox::new(MethodResumeState {
                 pending_effect: MethodStepPending::default(),
                 rooted: Some(rooted),
                 selected: None,
@@ -124,32 +134,32 @@ impl MethodResume {
             Completion::Throw(value) => return Ok(MethodStep::Throw(value)),
             Completion::Return(value) => value,
         };
+        let state = &mut *self.0;
         if matches!(value, Value::Undefined | Value::Null) {
-            let rooted = self.0.rooted.as_ref().expect("proxy owner");
+            let rooted = state.rooted.as_ref().expect("proxy owner");
             if let Some(data) = runtime.proxy_snapshot_if_any(&rooted.target)? {
-                self.0.search.depth = self.0.search.depth.saturating_add(1);
-                if self
-                    .0
+                state.search.depth = state.search.depth.saturating_add(1);
+                if state
                     .search
                     .limit
-                    .is_some_and(|limit| self.0.search.depth == limit)
+                    .is_some_and(|limit| state.search.depth == limit)
                 {
-                    return overflow(runtime, self.0.search.realm);
+                    return overflow(runtime, state.search.realm);
                 }
                 if data.is_revoked {
                     let NativeConversion::Throw(value) =
-                        runtime.proxy_revoked_throw::<()>(self.0.search.realm)?
+                        runtime.proxy_revoked_throw::<()>(state.search.realm)?
                     else {
                         unreachable!("revoked proxy throws")
                     };
                     return Ok(MethodStep::Throw(value));
                 }
                 let next = runtime.root_proxy_snapshot(&rooted.target, data)?;
-                let old = self.0.rooted.replace(next);
-                let rooted = self.0.rooted.as_ref().unwrap();
+                let old = state.rooted.replace(next);
+                let rooted = state.rooted.as_ref().unwrap();
                 let object = rooted.handler.clone();
                 let receiver = Value::Object(rooted.handler.clone());
-                let key = self.0.search.key.clone();
+                let key = state.search.key.clone();
                 let step = MethodStep::request_read(object, key, receiver, self);
                 drop(old);
                 return Ok(step);
@@ -160,14 +170,14 @@ impl MethodResume {
             Ok(method) => method,
             Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
                 return Ok(MethodStep::Throw(runtime.new_native_error_from_error(
-                    self.0.search.realm,
+                    state.search.realm,
                     NativeErrorKind::Type,
                     &error,
                 )?));
             }
             Err(error) => return Err(error),
         };
-        self.0.selected = Some(method);
+        state.selected = Some(method);
         Ok(MethodStep::Complete { resume: self })
     }
 }

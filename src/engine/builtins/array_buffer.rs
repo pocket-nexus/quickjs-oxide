@@ -214,13 +214,13 @@ impl Runtime {
             ArrayBufferNativeKind::Constructor => {
                 self.call_array_buffer_constructor(realm, invocation, arguments)
             }
-            ArrayBufferNativeKind::IsView => self.call_array_buffer_is_view(invocation, arguments),
-            ArrayBufferNativeKind::Species => self.call_array_buffer_species(invocation),
+            ArrayBufferNativeKind::IsView => self.call_array_buffer_is_view(&invocation, arguments),
+            ArrayBufferNativeKind::Species => self.call_array_buffer_species(&invocation),
             ArrayBufferNativeKind::ByteLength
             | ArrayBufferNativeKind::MaxByteLength
             | ArrayBufferNativeKind::Resizable
             | ArrayBufferNativeKind::Detached => {
-                self.call_array_buffer_getter(realm, kind, invocation)
+                self.call_array_buffer_getter(realm, kind, &invocation)
             }
             ArrayBufferNativeKind::Resize => {
                 self.call_array_buffer_resize(realm, invocation, arguments)
@@ -302,9 +302,9 @@ impl Runtime {
         Ok(Completion::Return(Value::Object(object)))
     }
 
-    fn call_array_buffer_is_view(
+    pub(in crate::engine::builtins) fn call_array_buffer_is_view(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
@@ -330,30 +330,30 @@ impl Runtime {
         Ok(Completion::Return(Value::Bool(is_view)))
     }
 
-    fn call_array_buffer_species(
+    pub(in crate::engine::builtins) fn call_array_buffer_species(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "ArrayBuffer species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value))
+        Ok(Completion::Return(this_value.clone()))
     }
 
-    fn call_array_buffer_getter(
+    pub(in crate::engine::builtins) fn call_array_buffer_getter(
         &self,
         realm: ContextId,
         kind: ArrayBufferNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "ArrayBuffer prototype getter received a non-getter invocation",
             ));
         };
-        let object = match self.require_array_buffer(realm, this_value)? {
+        let object = match self.require_array_buffer_borrowed(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
@@ -676,7 +676,12 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_array_buffer_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    fn require_array_buffer_borrowed<'a>(
+        &self,
+        realm: ContextId,
+        value: &'a Value,
+    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
         let Value::Object(object) = value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
@@ -841,7 +846,7 @@ impl Runtime {
     #[cfg(feature = "test262-host")]
     pub(crate) fn call_test262_detach_array_buffer(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {

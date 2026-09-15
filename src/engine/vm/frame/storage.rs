@@ -178,6 +178,7 @@ impl CallStorage {
         // Drop owners in their resident allocation; never take the whole frame
         // onto the native stack just to destroy it.
         if let Some(rare) = cold.rare.get_mut() {
+            rare.property_keys.clear();
             rare.property_wait = None;
             rare.iterator_wait = None;
             rare.resume_throw = None;

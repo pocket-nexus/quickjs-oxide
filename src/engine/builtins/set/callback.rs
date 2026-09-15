@@ -42,7 +42,7 @@ impl EachStep {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let set = match runtime.set_receiver(realm, invocation.clone(), false)? {
+        let set = match runtime.set_receiver(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
@@ -60,7 +60,7 @@ impl EachStep {
         };
         EachResume(Box::new(EachResumeState {
             pending_effect: EachStepPending::default(),
-            set,
+            set: set.clone(),
             callback,
             receiver: arguments
                 .readable

@@ -434,9 +434,16 @@ pub(super) fn get(
                             Error::internal("property continuation allocation failed")
                         })?;
                         query.parents.push(resume);
-                        *step = ProxyGetStep::start(runtime, realm, object, key, receiver)
-                            .map_err(runtime_error_to_vm_error)?
-                            .into();
+                        *step = ProxyGetStep::start_buffered(
+                            runtime,
+                            realm,
+                            object,
+                            key,
+                            receiver,
+                            execution.slots.take_argument_buffer(3)?,
+                        )
+                        .map_err(runtime_error_to_vm_error)?
+                        .into();
                         continue;
                     }
                 }

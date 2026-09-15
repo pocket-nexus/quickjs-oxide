@@ -508,6 +508,13 @@ impl Runtime {
         self.ordinary_read_probe_atom(object, key.atom(), false, None)
     }
 
+    pub(super) fn ordinary_read_probe_selected(
+        &self, object: &ObjectRef, key: &PropertyKey,
+        native: Option<&mut Option<LinkedNativeSelection>>,
+    ) -> Result<ReadProbe, RuntimeError> {
+        self.ordinary_read_probe_atom(object, key.atom(), false, native)
+    }
+
     fn ordinary_read_probe_atom(
         &self,
         object: &ObjectRef,

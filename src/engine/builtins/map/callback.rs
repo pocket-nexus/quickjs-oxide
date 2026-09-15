@@ -54,7 +54,7 @@ impl CallbackStep {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let map = match runtime.map_receiver(realm, invocation.clone(), false)? {
+        let map = match runtime.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
@@ -91,7 +91,7 @@ impl CallbackStep {
                     vec![key.clone()],
                     CallbackResume(Box::new(CallbackResumeState {
                         pending_effect: CallbackStepPending::default(),
-                        map,
+                        map: map.clone(),
                         phase: Phase::Insert(key),
                     })),
                 ));
@@ -108,7 +108,7 @@ impl CallbackStep {
         };
         CallbackResume(Box::new(CallbackResumeState {
             pending_effect: CallbackStepPending::default(),
-            map,
+            map: map.clone(),
             phase: Phase::Each {
                 callback,
                 receiver: arguments
