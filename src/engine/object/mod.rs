@@ -752,6 +752,7 @@ pub(crate) mod function_initialization;
 pub(crate) mod access;
 
 pub(crate) mod storage;
+pub(crate) use storage::SelectedMissingAppend;
 
 pub(crate) mod operations;
 

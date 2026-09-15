@@ -46,6 +46,32 @@ impl RuntimeState {
         flags: PropertyFlags,
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
+        self.append_unique_layout_inner(object, atom, flags, replacement, None)
+    }
+
+    pub(super) fn append_selected_unique_layout(
+        &mut self,
+        selected: super::SelectedMissingAppend,
+        flags: PropertyFlags,
+        replacement: PropertySlot,
+    ) -> Result<(), RuntimeError> {
+        self.append_unique_layout_inner(
+            selected.object(),
+            selected.atom(),
+            flags,
+            replacement,
+            Some(selected),
+        )
+    }
+
+    fn append_unique_layout_inner(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+        flags: PropertyFlags,
+        replacement: PropertySlot,
+        selected: Option<super::SelectedMissingAppend>,
+    ) -> Result<(), RuntimeError> {
         let shape = self.heap.object(object)?.shape;
         if self.heap.shape_strong_count(shape)? != 1 {
             return Err(RuntimeError::Invariant(
@@ -69,10 +95,16 @@ impl RuntimeState {
             }
             (fingerprint, owned_cache_entry)
         });
-        if let Err(error) =
-            self.heap
-                .append_unique_object_property(object, atom, flags, replacement)
-        {
+        let result = match selected {
+            Some(selected) => {
+                self.heap
+                    .append_selected_missing_object_property(selected, flags, replacement)
+            }
+            None => self
+                .heap
+                .append_unique_object_property(object, atom, flags, replacement),
+        };
+        if let Err(error) = result {
             if let Some((fingerprint, owned_cache_entry)) = unlinked {
                 if owned_cache_entry {
                     self.shape_cache.insert(fingerprint.clone(), shape);
@@ -923,6 +955,85 @@ impl Runtime {
         }
     }
 
+    /// The caller has selected an absent consecutive dense element and walked
+    /// its ordinary prototypes without callbacks. Reuse that descriptor fact;
+    /// permission failures retain Set's existing precise rejection path.
+    #[cfg(feature = "stack-vm")]
+    pub(super) fn define_selected_dense_array_append(
+        &self,
+        object: &ObjectRef,
+        index: u32,
+        value: &Value,
+    ) -> Result<Option<PropertySetRejection>, RuntimeError> {
+        let (old_length, length_writable) = self.array_length_state(object)?;
+        let extensible = self.is_extensible(object)?;
+        if index >= old_length && !length_writable {
+            return Ok(Some(if !extensible {
+                PropertySetRejection::NotExtensible
+            } else {
+                PropertySetRejection::ArrayLengthReadOnly
+            }));
+        }
+        let descriptor = crate::engine::object::property::PropertyDescriptor {
+            value: Some(value),
+            writable: Some(true),
+            enumerable: Some(true),
+            configurable: Some(true),
+            ..crate::engine::object::property::PropertyDescriptor::new()
+        };
+        if validate_and_apply_property_descriptor(
+            extensible,
+            &descriptor,
+            None,
+            &&Value::Undefined,
+            |a, b| Value::same_value(a, b),
+        )
+        .is_err()
+        {
+            return Ok(Some(PropertySetRejection::NotExtensible));
+        }
+        self.commit_dense_array_index_append(object, index, old_length, value)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "set_dense_append_from_selection",
+        );
+        Ok(None)
+    }
+
+    // The authoritative append/length-growth tail shared by descriptor Define
+    // and an immediately selected Set. Keep append before length-key creation
+    // and growth publication, including the original partial-failure behavior.
+    fn commit_dense_array_index_append(
+        &self,
+        object: &ObjectRef,
+        index: u32,
+        old_length: u32,
+        value: &Value,
+    ) -> Result<(), RuntimeError> {
+        self.append_dense_array_value(object, value)?;
+        if index < old_length {
+            return Ok(());
+        }
+        let length = self.intern_property_key("length")?;
+        let next_length = index
+            .checked_add(1)
+            .ok_or(RuntimeError::Invariant("Array index exceeded Uint32 range"))?;
+        let updated = self.define_ordinary_own_property(
+            object,
+            &length,
+            &OrdinaryPropertyDescriptor {
+                value: DescriptorField::Present(Self::array_length_value(next_length)),
+                ..OrdinaryPropertyDescriptor::new()
+            },
+        )?;
+        if !updated {
+            return Err(RuntimeError::Invariant(
+                "writable Array length rejected dense index growth",
+            ));
+        }
+        Ok(())
+    }
+
     fn define_array_index(
         &self,
         object: &ObjectRef,
@@ -986,27 +1097,7 @@ impl Runtime {
             if index == dense_len
                 && let Some(value) = compatible_value
             {
-                self.append_dense_array_value(object, value)?;
-                if index < old_length {
-                    return Ok(PropertyDefineOutcome::Defined(true));
-                }
-                let length = self.intern_property_key("length")?;
-                let next_length = index
-                    .checked_add(1)
-                    .ok_or(RuntimeError::Invariant("Array index exceeded Uint32 range"))?;
-                let updated = self.define_ordinary_own_property(
-                    object,
-                    &length,
-                    &OrdinaryPropertyDescriptor {
-                        value: DescriptorField::Present(Self::array_length_value(next_length)),
-                        ..OrdinaryPropertyDescriptor::new()
-                    },
-                )?;
-                if !updated {
-                    return Err(RuntimeError::Invariant(
-                        "writable Array length rejected dense index growth",
-                    ));
-                }
+                self.commit_dense_array_index_append(object, index, old_length, value)?;
                 return Ok(PropertyDefineOutcome::Defined(true));
             }
             self.materialize_dense_array(object)?;

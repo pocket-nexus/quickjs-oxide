@@ -26,6 +26,25 @@ pub(in crate::engine::vm) struct NativeClassification {
 }
 #[cfg(feature = "stack-vm")]
 impl NativeClassification {
+    pub(in crate::engine::vm) fn promote_selected(
+        selection: super::call::ordinary::NativeSelection<'_>,
+    ) -> (crate::engine::object::CallableRef, Self) {
+        let (function, target, defining_realm, min_readable_args, operation) =
+            selection.into_parts();
+        let function = function.clone();
+        let callable = crate::engine::object::CallableRef::from_validated_object(function.clone());
+        (
+            callable,
+            Self {
+                function,
+                target,
+                defining_realm,
+                min_readable_args,
+                operation: Some(operation),
+            },
+        )
+    }
+
     pub(in crate::engine::vm) fn select(
         runtime: &Runtime,
         callable: &crate::engine::object::CallableRef,

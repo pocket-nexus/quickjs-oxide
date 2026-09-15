@@ -8233,6 +8233,135 @@ mod tests {
     }
 
     #[test]
+    fn selected_direct_calls_validate_domains_once_and_reuse_native_facts() {
+        for (callee_source, native) in [
+            ("Math.min", true),
+            ("(function(x,y){return x<y?x:y})", false),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let callee = context.eval(callee_source).unwrap();
+            let entry = entry(
+                &runtime,
+                &mut context,
+                "(function root(f){return f(42,99)})",
+                vec![callee],
+            );
+            let profile = CostProfile::start();
+            assert!(matches!(
+                execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
+                Completion::Return(Value::Int(42))
+            ));
+            let report = profile.snapshot();
+            assert_eq!(
+                report
+                    .owned_execution_events
+                    .get("call_value_domain_validation"),
+                Some(&1)
+            );
+            assert_eq!(
+                report
+                    .owned_execution_events
+                    .get("native_classification_reused")
+                    .copied()
+                    .unwrap_or(0),
+                u64::from(native)
+            );
+            assert_eq!(
+                report
+                    .owned_execution_events
+                    .get("native_publication_checked")
+                    .copied()
+                    .unwrap_or(0),
+                0
+            );
+            assert_eq!(report.legacy_dispatches, 0);
+            assert_eq!(report.owned_bridge_exits, 0);
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn selected_native_metadata_error_follows_foreign_argument_rejection() {
+        assert_selected_native_metadata_error(true, false);
+    }
+
+    #[test]
+    fn selected_native_metadata_error_is_reported_after_valid_domains() {
+        assert_selected_native_metadata_error(false, false);
+    }
+
+    #[test]
+    fn selected_native_missing_receiver_precedes_metadata_error() {
+        assert_selected_native_metadata_error(false, true);
+    }
+
+    fn assert_selected_native_metadata_error(foreign_argument: bool, missing_receiver: bool) {
+        let runtime = Runtime::new();
+        let foreign = Runtime::new();
+        let mut context = runtime.new_context();
+        let callee = context.eval("Math.min").unwrap();
+        let Value::Object(function) = &callee else {
+            panic!("native")
+        };
+        let object_id = function.object_id();
+        let entry = entry(
+            &runtime,
+            &mut context,
+            "(function root(f,x){return f(x)})",
+            vec![
+                callee,
+                if foreign_argument {
+                    Value::Object(foreign.new_object(None).unwrap())
+                } else {
+                    Value::Int(42)
+                },
+            ],
+        );
+        let old_realm = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .replace_native_realm_for_test(object_id, None)
+            .unwrap();
+        let result = if missing_receiver {
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let frame = push_frame(&mut execution, entry).unwrap();
+            let RunExit::Call {
+                arguments, tail, ..
+            } = run(&mut execution, frame).unwrap()
+            else {
+                panic!("call")
+            };
+            // The actual call has [callee, argument], so requesting a method
+            // receiver must fail the unchanged leading range check first.
+            super::ordinary::enter(&runtime, &mut execution, frame, arguments, true, tail)
+                .map(|_| Completion::Return(Value::Undefined))
+        } else {
+            execute(runtime.clone(), entry, ExecutionLimits::default())
+        };
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .replace_native_realm_for_test(object_id, old_realm)
+            .unwrap();
+        let error = result.err().expect("call rejection");
+        let expected = if missing_receiver {
+            "owned operand stack underflow"
+        } else if foreign_argument {
+            "call argument"
+        } else {
+            "native function was called before its defining realm was attached"
+        };
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
     fn direct_child_call_preserves_foreign_argument_rejection() {
         let runtime = Runtime::new();
         let foreign = Runtime::new();

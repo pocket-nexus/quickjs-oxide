@@ -34,6 +34,26 @@ FILES = (
 )
 
 
+# R5's selected facts may only travel through these synchronous storage
+# transactions. Keep helpers explicit so moving a callback into a helper does
+# not escape the phase-level observable-method guard below.
+R5_STORAGE_PROTOCOLS = {
+    "src/engine/object/ordinary_storage.rs": (
+        "locate", "select_set_slot", "select_missing_prototypes", "set_missing_local",
+        "ordinary_set_probe", "ordinary_set_receiver_probe", "ordinary_set_probe_inner",
+    ),
+    "src/engine/object/storage.rs": ("store_property_slot", "store_selected_property_slot"),
+    "src/engine/object/properties.rs": (
+        "append_unique_layout", "append_selected_unique_layout", "append_unique_layout_inner",
+        "define_selected_dense_array_append", "commit_dense_array_index_append",
+    ),
+    "src/engine/heap/object_storage.rs": (
+        "append_unique_object_property", "append_selected_missing_object_property",
+        "append_unique_object_property_at_index",
+    ),
+}
+
+
 def check(ctx):
     if getattr(ctx, "self_test_marker_authorized", False):
         # The existing codec isolation fixtures deliberately omit the property
@@ -108,7 +128,14 @@ def check(ctx):
         (typed_element, ("start", "from_primitive", "resume")),
         (typed_write, ("set", "set_primitive", "set_primitive_result", "complete_primitive", "define", "element", "finish_element")),
     )
-    for source, names in protocols:
+    selected_storage_protocols = []
+    for relative, names in R5_STORAGE_PROTOCOLS.items():
+        path = ctx.root / relative
+        if path.is_symlink() or not path.is_file():
+            ctx.fail("ordinary-property-source", f"missing regular source: {relative}")
+            return
+        selected_storage_protocols.append((ctx.rust_code_only(path.read_text()), names))
+    for source, names in (*protocols, *selected_storage_protocols):
         for name in names:
             phase, _, _ = ctx.unique_braced_item(source, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "proxy-property-step", name)
             requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|call_proxy|proxy_method|internal_get|internal_get_own_property|internal_has_property|internal_is_extensible|native_to_property_descriptor|internal_set|proxy_set|internal_define_own_property|try_special_set|prepare_set_array_length|define_own_property_in_realm|native_to_number|array_length_to_number|to_array_length|to_primitive|get_property_in_realm|typed_array_convert_element|native_to_bigint|internal_delete_property|internal_prevent_extensions|internal_get_prototype_of|internal_set_prototype_of|internal_own_property_keys|get_value_property_in_realm)\s*\(", phase), "property and descriptor phases must yield observable requests to their driver"))

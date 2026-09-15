@@ -24,22 +24,83 @@ pub(in crate::engine::vm) struct OrdinarySelection<'a> {
     bytecode: FunctionBytecodeId,
     closure: std::cell::Ref<'a, std::rc::Rc<[VarRefId]>>,
 }
-impl OrdinaryCall {
-    pub(in crate::engine::vm) fn select<'a>(
+// Only DirectSelection can create this proof: payload metadata and borrowed
+// owner originate from the same heap lookup. Promotion cannot accept a caller's
+// detached metadata or an unrelated object.
+pub(in crate::engine::vm) struct NativeSelection<'a> {
+    function: &'a ObjectRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    operation: crate::engine::builtins::continuation::NativeOperation,
+}
+impl<'a> NativeSelection<'a> {
+    pub(in crate::engine::vm) fn into_parts(
+        self,
+    ) -> (
+        &'a ObjectRef,
+        crate::engine::builtins::native::NativeFunctionId,
+        crate::engine::heap::ContextId,
+        u8,
+        crate::engine::builtins::continuation::NativeOperation,
+    ) {
+        (
+            self.function,
+            self.target,
+            self.defining_realm,
+            self.min_readable_args,
+            self.operation,
+        )
+    }
+}
+
+pub(in crate::engine::vm) enum DirectSelection<'a> {
+    Ordinary(OrdinarySelection<'a>),
+    Native(NativeSelection<'a>),
+    General,
+}
+
+impl<'a> DirectSelection<'a> {
+    /// One payload inspection for ordinary, native and general callees. Any
+    /// metadata error is held by the caller until operand domains are checked.
+    pub(in crate::engine::vm) fn select(
         runtime: &'a Runtime,
         value: &'a Value,
-    ) -> Result<Option<OrdinarySelection<'a>>, RuntimeError> {
+    ) -> Result<Self, RuntimeError> {
         let Value::Object(function) = value else {
-            return Ok(None);
+            return Ok(Self::General);
         };
         if !function.belongs_to(runtime) {
-            return Ok(None);
+            return Ok(Self::General);
         }
         let mut selected_bytecode = None;
+        let mut native = None;
         let mut failure = None;
         let closure = std::cell::Ref::filter_map(runtime.0.state.borrow(), |state| {
             let selected = (|| {
                 let object = state.heap.object(function.object_id())?;
+                if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
+                    // Unregistered native kinds retain the checked general
+                    // entry, including its original preparation/error order.
+                    if let Some(operation) =
+                        crate::engine::builtins::continuation::NativeOperation::for_target(
+                            data.target,
+                        )
+                    {
+                        let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
+                            "native function was called before its defining realm was attached",
+                        ))?;
+                        state.heap.context(defining_realm)?;
+                        native = Some(NativeSelection {
+                            function,
+                            target: data.target,
+                            defining_realm,
+                            min_readable_args: data.min_readable_args,
+                            operation,
+                        });
+                    }
+                    return Ok(None);
+                }
                 let ObjectPayload::BytecodeFunction {
                     bytecode,
                     closure_slots,
@@ -69,7 +130,7 @@ impl OrdinaryCall {
             }
         });
         match closure {
-            Ok(closure) => Ok(Some(OrdinarySelection {
+            Ok(closure) => Ok(Self::Ordinary(OrdinarySelection {
                 function,
                 bytecode: selected_bytecode
                     .ok_or(RuntimeError::Invariant("ordinary selection lost bytecode"))?,
@@ -77,18 +138,22 @@ impl OrdinaryCall {
             })),
             Err(_) => match failure {
                 Some(error) => Err(error),
-                None => Ok(None),
+                None => Ok(native.map(Self::Native).unwrap_or(Self::General)),
             },
         }
     }
+}
+
+impl OrdinaryCall {
     #[cfg(test)]
     pub(in crate::engine::vm) fn authenticate(
         runtime: &Runtime,
         value: &Value,
     ) -> Result<Option<Self>, RuntimeError> {
-        Self::select(runtime, value)?
-            .map(|selected| selected.authenticate(runtime))
-            .transpose()
+        match DirectSelection::select(runtime, value)? {
+            DirectSelection::Ordinary(selected) => selected.authenticate(runtime).map(Some),
+            _ => Ok(None),
+        }
     }
     pub(in crate::engine::vm) fn function(&self) -> &ObjectRef {
         &self.function
@@ -206,5 +271,47 @@ impl OrdinarySelection<'_> {
             function,
             executable,
         })
+    }
+}
+
+#[cfg(test)]
+mod direct_selection_tests {
+    use super::*;
+
+    #[test]
+    fn direct_selection_borrows_owners_and_preserves_general_fallback() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for (source, kind) in [
+            ("(function(x){return x})", 0),
+            ("Math.min", 1),
+            ("(function(x){return x}).bind(null)", 2),
+            ("new Proxy(function(){},{})", 2),
+            ("new Proxy({},{})", 2),
+            ("(function*(){})", 2),
+            ("({})", 2),
+            ("17", 2),
+        ] {
+            let value = context.eval(source).unwrap();
+            let owners = std::rc::Rc::strong_count(&runtime.0);
+            let selected = DirectSelection::select(&runtime, &value).unwrap();
+            assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners, "{source}");
+            assert_eq!(
+                match selected {
+                    DirectSelection::Ordinary(_) => 0,
+                    DirectSelection::Native(_) => 1,
+                    DirectSelection::General => 2,
+                },
+                kind,
+                "{source}"
+            );
+            assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners, "{source}");
+        }
+        let foreign = Runtime::new();
+        let value = Value::Object(foreign.new_object(None).unwrap());
+        assert!(matches!(
+            DirectSelection::select(&runtime, &value).unwrap(),
+            DirectSelection::General
+        ));
     }
 }

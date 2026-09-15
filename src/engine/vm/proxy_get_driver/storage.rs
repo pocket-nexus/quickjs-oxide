@@ -41,18 +41,27 @@ impl QueryStorage {
         &mut self,
     ) -> Result<Vec<super::native::NativeWaitRecord>, crate::engine::api::Error> {
         let mut waiting = self.native_waits.pop().unwrap_or_default();
-        debug_assert!(waiting.is_empty());
-        reserve(&mut waiting, 1, "query.native_wait_payload").map_err(|_| {
-            crate::engine::api::Error::internal("native waiting payload allocation failed")
-        })?;
+        if waiting.is_empty() {
+            reserve(&mut waiting, 1, "query.native_wait_payload").map_err(|_| {
+                crate::engine::api::Error::internal("native waiting payload allocation failed")
+            })?;
+            waiting.push(super::native::NativeWaitRecord {
+                call: None,
+                step: super::Step::Complete(crate::engine::vm::Completion::Return(
+                    crate::engine::value::Value::Undefined,
+                )),
+                parents: Vec::new(),
+            });
+        }
+        debug_assert_eq!(waiting.len(), 1);
+        debug_assert!(waiting[0].call.is_none() && waiting[0].parents.is_empty());
         Ok(waiting)
     }
 
     pub(super) fn recycle_native_wait(&mut self, waiting: Vec<super::native::NativeWaitRecord>) {
-        debug_assert!(waiting.is_empty());
-        if waiting.is_empty()
-            && reserve(&mut self.native_waits, 1, "query.native_wait_pool").is_ok()
-        {
+        debug_assert_eq!(waiting.len(), 1);
+        debug_assert!(waiting[0].call.is_none() && waiting[0].parents.is_empty());
+        if reserve(&mut self.native_waits, 1, "query.native_wait_pool").is_ok() {
             self.native_waits.push(waiting);
         }
     }

@@ -148,6 +148,13 @@ impl StringReplaceStep {
     }
 }
 impl StringReplaceResume {
+    /// Only the already-selected @@replace protocol call is eligible for the
+    /// VM local native handoff; functional replacers remain real calls.
+    #[cfg(feature = "stack-vm")]
+    pub(crate) fn awaits_protocol_result(&self) -> bool {
+        matches!(self.phase, Phase::ProtocolResult)
+    }
+
     fn method(&mut self, runtime: &Runtime) -> Result<StringReplaceAction, RuntimeError> {
         if !matches!(self.search_value, Value::Object(_)) {
             return Err(RuntimeError::Invariant(

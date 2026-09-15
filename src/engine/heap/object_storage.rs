@@ -710,6 +710,70 @@ impl Heap {
                         operation: "appending an in-place shape property",
                     },
                 })?;
+        self.append_unique_object_property_at_index(
+            id,
+            shape_id,
+            atom,
+            flags,
+            replacement,
+            index,
+            slot_count,
+        )
+    }
+
+    /// Consume the storage owner's immediate missing-property selection.
+    /// Ordinary independent append callers retain the complete duplicate check.
+    pub(crate) fn append_selected_missing_object_property(
+        &mut self,
+        selected: crate::engine::object::SelectedMissingAppend,
+        flags: PropertyFlags,
+        replacement: PropertySlot,
+    ) -> Result<(), HeapError> {
+        let (id, shape_id, atom, selected_count) = selected.into_parts();
+        let object = self.object(id)?;
+        if object.shape != shape_id
+            || object.slots.len() != selected_count
+            || self.shape(shape_id)?.entries().len() != selected_count
+        {
+            return Err(HeapError::Invariant(
+                "selected missing append changed shape or slot count",
+            ));
+        }
+        if self.shape_strong_count(shape_id)? != 1 {
+            return Err(HeapError::Invariant(
+                "in-place property append reached a shared shape",
+            ));
+        }
+        if atom.is_null() {
+            return Err(HeapError::Invariant(
+                "in-place property append used a null atom",
+            ));
+        }
+        let index = u32::try_from(selected_count).map_err(|_| HeapError::Overflow {
+            operation: "appending an in-place shape property",
+        })?;
+        self.append_unique_object_property_at_index(
+            id,
+            shape_id,
+            atom,
+            flags,
+            replacement,
+            index,
+            selected_count,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn append_unique_object_property_at_index(
+        &mut self,
+        id: ObjectId,
+        shape_id: ShapeId,
+        atom: Atom,
+        flags: PropertyFlags,
+        replacement: PropertySlot,
+        index: u32,
+        slot_count: usize,
+    ) -> Result<(), HeapError> {
         if usize::try_from(index) != Ok(slot_count) {
             return Err(HeapError::Invariant(
                 "in-place property append found mismatched shape and slot lengths",

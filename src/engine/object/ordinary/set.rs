@@ -523,15 +523,28 @@ impl State {
         mut probe: SetProbe,
     ) -> Result<SelectedSet, RuntimeError> {
         loop {
+            #[cfg(feature = "stack-vm")]
+            if let SetProbe::SpecialAt(object, kind) = probe {
+                current = object;
+                probe = SetProbe::Special(kind);
+            }
             #[cfg(all(feature = "profiling", feature = "stack-vm"))]
             crate::engine::api::profiling::record_owned_execution_event(match &probe {
                 SetProbe::Stored(_) => "set_selected.Stored",
+                SetProbe::Rejected(_) => "set_selected.Rejected",
+                SetProbe::SpecialAt(..) => unreachable!("selected special normalized above"),
                 SetProbe::Writable => "set_selected.Writable",
                 SetProbe::Setter(_) => "set_selected.Setter",
                 SetProbe::Missing(_) => "set_selected.Missing",
                 SetProbe::Special(_) => "set_selected.Special",
             });
             match probe {
+                #[cfg(feature = "stack-vm")]
+                SetProbe::Rejected(reason) => {
+                    return Ok(SelectedSet::Complete(PropertySetAction::Rejected(reason)));
+                }
+                #[cfg(feature = "stack-vm")]
+                SetProbe::SpecialAt(..) => unreachable!("selected special normalized above"),
                 SetProbe::Stored(accepted) => {
                     return Ok(SelectedSet::Complete(stored_action(accepted)));
                 }
@@ -645,8 +658,16 @@ impl State {
         };
         let receiver = clone_set_object(receiver);
         Ok(
-            match runtime.ordinary_set_probe(&receiver, &self.key, &self.value, true)? {
+            match runtime.ordinary_set_receiver_probe(&receiver, &self.key, &self.value)? {
                 SetProbe::Stored(accepted) => SelectedSet::Complete(stored_action(accepted)),
+                #[cfg(feature = "stack-vm")]
+                SetProbe::Rejected(reason) => {
+                    SelectedSet::Complete(PropertySetAction::Rejected(reason))
+                }
+                #[cfg(feature = "stack-vm")]
+                SetProbe::SpecialAt(..) => {
+                    unreachable!("receiver own selection does not walk prototypes")
+                }
                 SetProbe::Setter(set) => {
                     SelectedSet::Complete(PropertySetAction::Rejected(if set.is_some() {
                         PropertySetRejection::ReadOnly
@@ -1356,6 +1377,89 @@ mod tests {
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
+    #[test]
+    fn selected_missing_set_preserves_prototype_and_distinct_receiver_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(() => {
+            const symbol = Symbol('slot'), marker = {};
+            let trace = '';
+            const proto = { writable: 1, set setter(v) { trace += 's'; this.seen = v; } };
+            Object.defineProperty(proto, 'readonly', { value: 1 });
+            const object = Object.create(proto);
+            object.writable = marker; object[symbol] = marker; object.setter = marker;
+            if (object.writable !== marker || object[symbol] !== marker || object.seen !== marker || trace !== 's') return false;
+            if (Reflect.set(object, 'readonly', marker) || Object.hasOwn(object, 'readonly')) return false;
+            try { (function(){ 'use strict'; object.readonly = marker; })(); return false; }
+            catch (e) { if (!(e instanceof TypeError)) return false; }
+            const sealed = Object.preventExtensions(Object.create(proto));
+            if (Reflect.set(sealed, 'newKey', marker)) return false;
+            // Receiver's prototype is irrelevant once target has selected data.
+            const receiver = Object.create({ set writable(v) { throw 'wrong receiver prototype'; } });
+            if (!Reflect.set(proto, 'writable', marker, receiver) || receiver.writable !== marker) return false;
+            const proxy = new Proxy({}, {
+                set(t,k,v,r) { trace += 'p'; return Reflect.set(t,k,v,r); },
+                getOwnPropertyDescriptor(t,k) { trace += 'd'; return Reflect.getOwnPropertyDescriptor(t,k); }
+            });
+            const child = Object.create(Object.create(proxy));
+            child.key = marker;
+            if (trace !== 'sp' || child.key !== marker) return false;
+            const mutating = new Proxy({}, {set(t,k,v,r) {
+                Object.defineProperty(r,k,{value:7,writable:false});
+                return Reflect.set(t,k,v,r);
+            }});
+            const afterBoundary = Object.create(mutating);
+            if (Reflect.set(afterBoundary,'key',marker) || afterBoundary.key !== 7) return false;
+            return true;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn selected_missing_append_keeps_unique_dictionary_and_shared_shape_isolation() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(() => {
+            const a = {}, b = {};
+            for (let i=0; i<12; i++) { a['k'+i]=i; b['k'+i]=i; }
+            a.onlyA=12;
+            if ('onlyA' in b || Object.keys(b).length !== 12) return false;
+            delete a.k1; a.afterDelete=13; a.k1=14;
+            const symbol=Symbol(); a[symbol]=15;
+            if (a.k0 !== 0 || a.k1 !== 14 || a.afterDelete !== 13 || a[symbol] !== 15) return false;
+            if (Object.keys(a).join(',') !== 'k0,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,onlyA,afterDelete,k1') return false;
+            Object.preventExtensions(a);
+            return !Reflect.set(a,'rejected',1) && a.k1 === 14 && b.k1 === 1;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn selected_dense_append_preserves_array_permissions_holes_and_special_keys() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(() => {
+            const a = [], marker = {}, symbol = Symbol();
+            a[0] = marker; a[1] = 2;
+            if (a.length !== 2 || a[0] !== marker) return false;
+            a.length = 5; a[2] = 3;
+            if (a.length !== 5 || 3 in a || 4 in a) return false;
+            Object.defineProperty(a, 'length', { writable: false });
+            a[3] = 4;
+            if (a[3] !== 4 || Reflect.set(a, '5', 6)) return false;
+            a['4294967295'] = 9; a[symbol] = marker;
+            if (a.length !== 5 || a['4294967295'] !== 9 || a[symbol] !== marker) return false;
+            const b = []; Object.preventExtensions(b);
+            if (Reflect.set(b, '0', marker) || b.length !== 0) return false;
+            let seen = 0;
+            const prototype = Object.create(Array.prototype);
+            Object.defineProperty(prototype, '0', { set(v) { seen++; if(v !== marker) throw 'bad'; } });
+            const c = []; Object.setPrototypeOf(c, prototype); c[0] = marker;
+            if (seen !== 1 || c.length !== 0 || Object.hasOwn(c, '0')) return false;
+            const receiver = []; Object.setPrototypeOf(receiver, prototype);
+            if (!Reflect.set({0: 1}, '0', marker, receiver) || seen !== 1 || receiver[0] !== marker || receiver.length !== 1) return false;
+            return true;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
     #[cfg(feature = "stack-vm")]
     #[test]
     fn local_new_property_definition_uses_selected_receiver_and_shared_rejection() {
@@ -1397,15 +1501,36 @@ mod tests {
             #[cfg(all(feature = "profiling", feature = "stack-vm"))]
             {
                 let costs = profile.snapshot();
-                for event in [
-                    "set_state_created",
-                    "set_local_define_attempt",
-                    "set_owner_clone.PropertyKey",
-                ] {
+                assert_eq!(
+                    costs
+                        .owned_execution_events
+                        .get("property_storage_set_probe")
+                        .copied(),
+                    Some(1),
+                    "the initial missing selection must not be repeated",
+                );
+                if !rejected {
                     assert_eq!(
-                        costs.owned_execution_events.get(event).copied(),
-                        Some(1),
-                        "{event}"
+                        costs
+                            .owned_execution_events
+                            .get("set_missing_committed_from_selection")
+                            .copied(),
+                        Some(1)
+                    );
+                    assert!(
+                        !costs
+                            .owned_execution_events
+                            .contains_key("set_state_created")
+                    );
+                    assert!(
+                        !costs
+                            .owned_execution_events
+                            .contains_key("set_local_define_attempt")
+                    );
+                    assert!(
+                        !costs
+                            .owned_execution_events
+                            .contains_key("set_owner_clone.PropertyKey")
                     );
                 }
                 assert!(
@@ -1480,7 +1605,7 @@ mod tests {
             profile
                 .snapshot()
                 .owned_execution_events
-                .get("set_definition_completed_without_query")
+                .get("set_missing_committed_from_selection")
                 .copied()
                 .unwrap_or(0)
                 > 0

@@ -167,6 +167,13 @@ pub(super) fn begin_synchronous(
 pub(super) struct NativeWaitRecord {
     pub(super) call: Option<PreparedNativeCall>,
     pub(super) step: Step,
+    // Only a real wait in the selected nested @@replace needs this owner.
+    // Ordinary local completion never allocates or transports a parent record.
+    pub(super) parents: Vec<ReplaceParent>,
+}
+pub(super) struct ReplaceParent {
+    pub(super) call: Option<PreparedNativeCall>,
+    pub(super) resume: crate::engine::builtins::StringReplaceResume,
 }
 
 /// The synchronous ABI contains no generic Step/Resume. Their reusable owning
@@ -180,16 +187,141 @@ pub(super) enum LocalNativeResult {
 // non-migrated domains also avoid allocation; only a true effect owns a record.
 #[inline(never)]
 fn capture_native_step(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    storage: &mut storage::QueryStorage,
+    realm: crate::engine::heap::ContextId,
+    nested_budget: bool,
+    step: crate::engine::builtins::continuation::NativeStep,
+    pending: &mut Option<Vec<NativeWaitRecord>>,
+) -> Result<Option<NativeInvokeOutcome>, Error> {
+    use crate::engine::builtins::StringReplaceStep;
+    use crate::engine::builtins::continuation::NativeStep;
+    use crate::engine::builtins::native::{NativeFunctionId, RegExpNativeKind};
+    // Consume exactly the method selected by String.replace's observable Get.
+    // Bound, Proxy and custom methods retain their general Call continuation.
+    if let NativeStep::StringReplace(StringReplaceStep::Call {
+        target: DirectCallTarget::Callable(callable),
+        receiver,
+        arguments,
+        resume,
+    }) = step
+    {
+        if resume.awaits_protocol_result() {
+            if let Some(mut selected) =
+                super::super::frames::NativeClassification::select(runtime, &callable)
+                    .map_err(runtime_error_to_vm_error)?
+                    .filter(|selected| {
+                        selected.target() == NativeFunctionId::RegExp(RegExpNativeKind::Replace)
+                    })
+            {
+                let result = if !nested_budget || runtime.host_stack_would_overflow() {
+                    LocalNativeResult::Complete(overflow(runtime, realm)?)
+                } else {
+                    let target = selected.target();
+                    let defining_realm = selected.defining_realm();
+                    let minimum = selected.minimum();
+                    let kind = selected
+                        .take_operation()
+                        .ok_or_else(|| Error::internal("selected replace has no continuation"))?;
+                    begin_local(
+                        runtime,
+                        slots,
+                        storage,
+                        realm,
+                        callable,
+                        target,
+                        defining_realm,
+                        minimum,
+                        receiver,
+                        arguments,
+                        kind,
+                        Some(selected),
+                        false,
+                    )?
+                };
+                return match result {
+                    LocalNativeResult::Complete(result) => {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "string_replace_protocol_completed_locally",
+                        );
+                        match resume
+                            .resume(runtime, result)
+                            .map_err(runtime_error_to_vm_error)?
+                        {
+                            StringReplaceStep::Complete(result) => {
+                                Ok(Some(NativeInvokeOutcome::Completion(result)))
+                            }
+                            _ => Err(Error::internal(
+                                "replace protocol reply selected another effect",
+                            )),
+                        }
+                    }
+                    LocalNativeResult::Waiting(mut records) => {
+                        if storage::reserve(&mut records[0].parents, 1, "query.replace_parent")
+                            .is_err()
+                        {
+                            let inner = records[0].call.take().expect("nested replace activation");
+                            let result = finish_result(
+                                runtime,
+                                slots,
+                                inner,
+                                Err(Error::internal("replace parent storage allocation failed")),
+                            )
+                            .and_then(identity_completion);
+                            records[0].step = Step::Complete(Completion::Return(Value::Undefined));
+                            storage.recycle_native_wait(records);
+                            let result = result?;
+                            return match resume
+                                .resume(runtime, result)
+                                .map_err(runtime_error_to_vm_error)?
+                            {
+                                StringReplaceStep::Complete(result) => {
+                                    Ok(Some(NativeInvokeOutcome::Completion(result)))
+                                }
+                                _ => Err(Error::internal(
+                                    "replace protocol error selected another effect",
+                                )),
+                            };
+                        }
+                        records[0]
+                            .parents
+                            .push(ReplaceParent { call: None, resume });
+                        *pending = Some(records);
+                        Ok(None)
+                    }
+                };
+            }
+        }
+        return capture_waiting_step(
+            storage,
+            NativeStep::StringReplace(StringReplaceStep::Call {
+                target: DirectCallTarget::Callable(callable),
+                receiver,
+                arguments,
+                resume,
+            }),
+            pending,
+        );
+    }
+    capture_waiting_step(storage, step, pending)
+}
+
+#[inline(never)]
+fn capture_waiting_step(
     storage: &mut storage::QueryStorage,
     step: crate::engine::builtins::continuation::NativeStep,
     pending: &mut Option<Vec<NativeWaitRecord>>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
-    let mut step: Step = step.into();
+    // Completed non-migrated domains must also remain allocation-free. Only
+    // after their small payload is ruled out acquire the resident wait record.
+    let mut step = step.into();
     if let Some(result) = take_immediate(&mut step) {
         return Ok(Some(result));
     }
     let mut records = storage.take_native_wait()?;
-    records.push(NativeWaitRecord { call: None, step });
+    records[0].step = step;
     *pending = Some(records);
     Ok(None)
 }
@@ -208,6 +340,7 @@ pub(super) fn begin_local(
     arguments: Vec<Value>,
     kind: crate::engine::builtins::continuation::NativeOperation,
     selected: Option<super::super::frames::NativeClassification>,
+    nested_budget: bool,
 ) -> Result<LocalNativeResult, Error> {
     slots.reserve_native_argument_depth(runtime.0.state.borrow().active_frames.len() + 1)?;
     let native_realm = if target.uses_calling_realm() {
@@ -251,7 +384,15 @@ pub(super) fn begin_local(
                 &invocation,
                 &call.activation.arguments,
                 &call.activation.callable,
-                |step| match capture_native_step(storage, step, &mut pending) {
+                |step| match capture_native_step(
+                    runtime,
+                    slots,
+                    storage,
+                    native_realm,
+                    nested_budget,
+                    step,
+                    &mut pending,
+                ) {
                     Ok(result) => transported_completion = result,
                     Err(error) => pending_error = Some(error),
                 },
@@ -272,12 +413,24 @@ pub(super) fn begin_local(
             },
         },
     };
-    if let Some(result) = immediate {
-        let result = finish_result(runtime, slots, call, result).and_then(identity_completion);
+    if let Some(mut result) = immediate {
         if let Some(mut records) = pending {
-            records.clear();
+            // start_into currently emits one wait as its final action. Keep
+            // cleanup LIFO even if a future adapter fails after publishing it.
+            if let Some(inner) = records[0].call.take() {
+                result = finish_result(runtime, slots, inner, result);
+            }
+            records[0].step = Step::Complete(Completion::Return(Value::Undefined));
+            debug_assert!(
+                records[0]
+                    .parents
+                    .iter()
+                    .all(|parent| parent.call.is_none())
+            );
+            records[0].parents.clear();
             storage.recycle_native_wait(records);
         }
+        let result = finish_result(runtime, slots, call, result).and_then(identity_completion);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "native_completed_without_waiting_scope",
@@ -285,7 +438,11 @@ pub(super) fn begin_local(
         return result.map(LocalNativeResult::Complete);
     }
     let mut records = pending.expect("native waiting output");
-    records[0].call = Some(call);
+    if let Some(parent) = records[0].parents.first_mut() {
+        parent.call = Some(call);
+    } else {
+        records[0].call = Some(call);
+    }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event(
         "native_activation_transported_to_wait",
@@ -321,7 +478,7 @@ pub(super) fn start_into(
     mode: super::super::call::NativeInvokeMode,
     invocation: super::super::call::NativeInvocation,
     arguments: Vec<Value>,
-    mut resume: Resume,
+    resume: Resume,
     output: &mut Step,
 ) -> Result<(), Error> {
     start_selected_into(
@@ -1147,6 +1304,157 @@ mod cached_native_inplace_tests {
         );
         assert_eq!(calls.get(), 8);
         drop(guard);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod selected_replace_local_tests {
+    use super::*;
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn selected_replace_keeps_method_getter_custom_exec_groups_and_callbacks_once() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(() => {
+            const replace = RegExp.prototype[Symbol.replace];
+            let methods = 0, flags = 0, execGets = 0, execCalls = 0, groups = 0, names = 0;
+            const result = {0:'a', length:1, index:0,
+                get groups() { groups++; return {get x(){names++;return 'Z'}}; }};
+            const search = {
+                get [Symbol.replace]() {
+                    methods++;
+                    Object.defineProperty(this, Symbol.replace, {value(){throw 99}});
+                    return replace;
+                },
+                get flags() { flags++; return 'g'; },
+                get exec() { execGets++; return function() {
+                    execCalls++; return execCalls === 1 ? result : null;
+                }; }
+            };
+            if ('a'.replace(search, '$<x>') !== 'Z') return false;
+            if (methods!==1 || flags!==1 || execGets!==2 || execCalls!==2 || groups!==1 || names!==1) return false;
+            let callbacks=0, original=RegExp.prototype.exec, rx=/a/g;
+            let replaced='aa'.replace(rx, function(m,p,s) {
+                callbacks++;
+                rx.exec=function(){throw 71};
+                return String(p);
+            });
+            if (replaced!=='01' || callbacks!==2) return false;
+            let custom=0, read=0;
+            const other={get [Symbol.replace]() {read++;return function(s,r) {
+                custom++; return this===other && s==='a' && r==='b' ? 'ok' : 'bad';
+            }}};
+            if ('a'.replace(other,'b')!=='ok' || custom!==1 || read!==1) return false;
+            let stringCallbacks=0;
+            return 'aba'.replaceAll('a', function(m,p){stringCallbacks++;return p})==='0b2'
+                && stringCallbacks===2 && 'aa'.replace(/a/g,'x')==='xx';
+        })()"#).unwrap(), Value::Bool(true));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn selected_replace_inner_budget_rejects_in_parent_realm_before_input_conversion() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let input = context
+            .eval("globalThis.conversions=0;({toString(){conversions++;return 'a'}})")
+            .unwrap();
+        let mut foreign = runtime.new_context();
+        let search = foreign.eval("/a/g").unwrap();
+        let callable = runtime
+            .callable_from_value(context.eval("String.prototype.replace").unwrap())
+            .unwrap();
+        let mut selected =
+            super::super::super::frames::NativeClassification::select(&runtime, &callable)
+                .unwrap()
+                .unwrap();
+        let target = selected.target();
+        let realm = selected.defining_realm();
+        let minimum = selected.minimum();
+        let kind = selected.take_operation().unwrap();
+        let mut slots = SlotStore::new(32);
+        let mut storage = storage::QueryStorage::default();
+        let result = begin_local(
+            &runtime,
+            &mut slots,
+            &mut storage,
+            context.realm,
+            callable,
+            target,
+            realm,
+            minimum,
+            input,
+            vec![
+                search,
+                Value::String(crate::engine::value::JsString::from_static("b")),
+            ],
+            kind,
+            Some(selected),
+            false,
+        )
+        .unwrap();
+        let LocalNativeResult::Complete(Completion::Throw(Value::Object(error))) = result else {
+            panic!("expected nested budget error");
+        };
+        // The original scheduler rejects before entering the selected native:
+        // overflow belongs to query.realm (the outer activation), unlike an
+        // error created after entering the foreign RegExp builtin.
+        let Value::Object(expected) = runtime
+            .new_native_error(
+                context.realm,
+                crate::engine::api::error::NativeErrorKind::Internal,
+                "expected",
+            )
+            .unwrap()
+        else {
+            panic!("expected native error object");
+        };
+        assert_eq!(
+            runtime.get_prototype_of(&error).unwrap(),
+            runtime.get_prototype_of(&expected).unwrap()
+        );
+        assert_eq!(context.eval("conversions").unwrap(), Value::Int(0));
+        assert!(!storage.has_cached_entry());
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn selected_replace_inner_error_uses_defining_realm_and_both_diagnostic_activations() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let mut foreign = runtime.new_context();
+        let global = context.global_object().unwrap();
+        for (name, value) in [
+            (
+                "foreignReplace",
+                foreign.eval("RegExp.prototype[Symbol.replace]").unwrap(),
+            ),
+            (
+                "foreignTypeError",
+                foreign.eval("TypeError.prototype").unwrap(),
+            ),
+        ] {
+            context
+                .set_property(&global, &runtime.intern_property_key(name).unwrap(), value)
+                .unwrap();
+        }
+        assert_eq!(
+            context
+                .eval(
+                    r#"(() => {
+            const search = {[Symbol.replace]:foreignReplace};
+            try { 'a'.replace(search,'b'); return false; }
+            catch(e) {
+                return Object.getPrototypeOf(e)===foreignTypeError
+                    && e.stack.split('replace').length>=3;
+            }
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

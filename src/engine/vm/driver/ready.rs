@@ -46,12 +46,19 @@ pub(super) fn run(
                 arguments,
                 method,
                 tail,
-            } => {
-                if !super::ordinary::enter(runtime, execution, id, arguments, method, tail)? {
-                    return Ok(Boundary::Exit(exit));
+            } => match super::ordinary::enter(runtime, execution, id, arguments, method, tail)? {
+                super::ordinary::Entry::Ordinary => {
+                    id = execution.frames.current_id().unwrap();
                 }
-                id = execution.frames.current_id().unwrap();
-            }
+                super::ordinary::Entry::Native(CallStep::Entered) => return Ok(Boundary::Entered),
+                super::ordinary::Entry::Native(CallStep::Complete(completion)) => {
+                    return Ok(Boundary::Complete(completion));
+                }
+                super::ordinary::Entry::Native(CallStep::Bridge) => {
+                    return Ok(Boundary::Exit(RunExit::Bridge));
+                }
+                super::ordinary::Entry::General => return Ok(Boundary::Exit(exit)),
+            },
             RunExit::Complete => {
                 if !super::ordinary::finish(execution, id)? {
                     return Ok(Boundary::Exit(exit));

@@ -48,6 +48,117 @@ fn locate(
     }))
 }
 
+// The shared physical selector used by both single-step Set and the local
+// missing-receiver walk. It neither roots handles nor performs observable work.
+enum BorrowedSet {
+    Missing(Option<ObjectId>),
+    Data(OwnSlot),
+    Setter(Option<ObjectId>),
+    Special(SpecialKind),
+}
+fn select_set_slot(
+    state: &RuntimeState,
+    id: ObjectId,
+    atom: Atom,
+) -> Result<BorrowedSet, RuntimeError> {
+    let data = state.heap.object(id)?;
+    if !is_ordinary(data) {
+        return Ok(BorrowedSet::Special(special_kind(data)));
+    }
+    Ok(match locate(state, id, atom)? {
+        None => BorrowedSet::Missing(state.heap.shape(data.shape)?.prototype()),
+        Some(slot) => match &data.slots[slot.index] {
+            PropertySlot::Data(_) => BorrowedSet::Data(slot),
+            PropertySlot::Accessor { set, .. } => BorrowedSet::Setter(*set),
+            PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
+                BorrowedSet::Special(SpecialKind::Other)
+            }
+        },
+    })
+}
+
+#[cfg(feature = "stack-vm")]
+enum MissingSelection {
+    Define,
+    Complete(SetProbe),
+    Special(ObjectId, SpecialKind),
+}
+#[cfg(feature = "stack-vm")]
+fn select_missing_prototypes(
+    state: &RuntimeState,
+    atom: Atom,
+    mut prototype: Option<ObjectId>,
+) -> Result<MissingSelection, RuntimeError> {
+    while let Some(id) = prototype {
+        match select_set_slot(state, id, atom)? {
+            BorrowedSet::Missing(next) => prototype = next,
+            BorrowedSet::Data(slot) if slot.flags.writable => break,
+            BorrowedSet::Data(_) => return Ok(MissingSelection::Complete(SetProbe::Stored(false))),
+            BorrowedSet::Setter(setter) => {
+                return Ok(MissingSelection::Complete(SetProbe::Setter(setter)));
+            }
+            BorrowedSet::Special(kind) => return Ok(MissingSelection::Special(id, kind)),
+        }
+    }
+    Ok(MissingSelection::Define)
+}
+
+/// Continue an already-selected missing own property without releasing the
+/// borrow. Any exotic boundary declines before changing the receiver; the
+/// ordinary state machine then performs its original observable protocol.
+#[cfg(feature = "stack-vm")]
+fn set_missing_local(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    receiver: ObjectId,
+    atom: Atom,
+    value: &Value,
+    prototype: Option<ObjectId>,
+) -> Result<MissingSelection, RuntimeError> {
+    match select_missing_prototypes(state, atom, prototype)? {
+        MissingSelection::Define => {}
+        selected => return Ok(selected),
+    }
+    use crate::engine::object::property::{
+        PropertyDescriptor, validate_and_apply_property_descriptor,
+    };
+    let descriptor = PropertyDescriptor {
+        value: Some(value),
+        writable: Some(true),
+        enumerable: Some(true),
+        configurable: Some(true),
+        ..PropertyDescriptor::new()
+    };
+    // Use the same descriptor permissions as DefineOwnProperty. Rejection stays
+    // on the existing rejection path, which preserves its precise error reason.
+    if validate_and_apply_property_descriptor(
+        state.heap.object(receiver)?.extensible,
+        &descriptor,
+        None,
+        &&Value::Undefined,
+        |a, b| Value::same_value(a, b),
+    )
+    .is_err()
+    {
+        return Ok(MissingSelection::Complete(SetProbe::Rejected(
+            crate::engine::object::operations::PropertySetRejection::NotExtensible,
+        )));
+    }
+    let replacement = PropertySlot::Data(runtime.raw_property_value(value)?);
+    state.store_selected_property_slot(
+        receiver,
+        atom,
+        PropertyFlags::data(true, true, true),
+        replacement,
+        None,
+    )?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "set_missing_committed_from_selection",
+    );
+    Ok(MissingSelection::Complete(SetProbe::Stored(true)))
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum SpecialKind {
     Proxy,
@@ -68,6 +179,10 @@ fn special_kind(data: &crate::engine::heap::ObjectData) -> SpecialKind {
 
 pub(super) enum SetProbe {
     Stored(bool),
+    #[cfg(feature = "stack-vm")]
+    Rejected(crate::engine::object::operations::PropertySetRejection),
+    #[cfg(feature = "stack-vm")]
+    SpecialAt(ObjectRef, SpecialKind),
     Writable,
     Setter(Option<ObjectId>),
     Missing(Option<ObjectRef>),
@@ -85,53 +200,118 @@ impl Runtime {
         value: &Value,
         receiver_is_target: bool,
     ) -> Result<SetProbe, RuntimeError> {
+        self.ordinary_set_probe_inner(object, key, value, receiver_is_target, true)
+    }
+
+    // OrdinarySetWithOwnDescriptor checks only Receiver's own descriptor. Its
+    // prototype must not be consulted again after the target selected a writable
+    // data descriptor (Reflect.set may have a completely different receiver).
+    pub(super) fn ordinary_set_receiver_probe(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: &Value,
+    ) -> Result<SetProbe, RuntimeError> {
+        self.ordinary_set_probe_inner(object, key, value, true, false)
+    }
+
+    fn ordinary_set_probe_inner(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: &Value,
+        receiver_is_target: bool,
+        _walk_missing: bool,
+    ) -> Result<SetProbe, RuntimeError> {
         #[cfg(all(feature = "profiling", feature = "stack-vm"))]
         crate::engine::api::profiling::record_owned_execution_event("property_storage_set_probe");
         enum Selected {
             Setter(Option<ObjectId>),
             Missing(Option<ObjectId>),
             Dense(u32),
+            #[cfg(feature = "stack-vm")]
+            DenseAppend(u32),
+            #[cfg(feature = "stack-vm")]
+            SpecialAt(ObjectId, SpecialKind),
         }
         let selected = {
             let mut state = self.0.state.borrow_mut();
             let id = object.object_id();
             let data = state.heap.object(id)?;
-            if cfg!(feature = "stack-vm")
-                && receiver_is_target
-                && matches!(data.kind, ObjectKind::Array)
-                && let Some(index) = key.atom().immediate_integer()
-                && let ObjectPayload::Array { dense: Some(dense) } = &data.payload
-                && (index as usize) < dense.len()
-            {
-                // Dense prefix entries are existing writable own data.
-                // Different receivers retain the full descriptor protocol.
-                Selected::Dense(index)
-            } else {
-                if !is_ordinary(data) {
-                    return Ok(SetProbe::Special(special_kind(data)));
-                }
-                match locate(&state, id, key.atom())? {
-                    None => {
-                        let data = state.heap.object(id)?;
-                        Selected::Missing(state.heap.shape(data.shape)?.prototype())
+            #[cfg(feature = "stack-vm")]
+            let dense_index = if receiver_is_target && matches!(data.kind, ObjectKind::Array) {
+                key.atom().immediate_integer().and_then(|index| {
+                    if let ObjectPayload::Array { dense: Some(dense) } = &data.payload {
+                        (index as usize <= dense.len()).then_some((index, dense.len()))
+                    } else {
+                        None
                     }
-                    Some(slot) => match &state.heap.object(id)?.slots[slot.index] {
-                        PropertySlot::Data(_) => {
-                            if !slot.flags.writable {
-                                return Ok(SetProbe::Stored(false));
-                            }
-                            if !receiver_is_target {
-                                return Ok(SetProbe::Writable);
-                            }
-                            let replacement = PropertySlot::Data(self.raw_property_value(value)?);
-                            replace_data(&mut state, id, slot, replacement)?;
-                            return Ok(SetProbe::Stored(true));
+                })
+            } else {
+                None
+            };
+            #[cfg(not(feature = "stack-vm"))]
+            let dense_index: Option<(u32, usize)> = None;
+            if let Some((index, dense_len)) = dense_index {
+                if (index as usize) < dense_len {
+                    Selected::Dense(index)
+                } else {
+                    #[cfg(feature = "stack-vm")]
+                    {
+                        let prototype = if _walk_missing {
+                            state.heap.shape(data.shape)?.prototype()
+                        } else {
+                            None
+                        };
+                        match select_missing_prototypes(&state, key.atom(), prototype)? {
+                            MissingSelection::Define => Selected::DenseAppend(index),
+                            MissingSelection::Complete(result) => return Ok(result),
+                            MissingSelection::Special(id, kind) => Selected::SpecialAt(id, kind),
                         }
-                        PropertySlot::Accessor { set, .. } => Selected::Setter(*set),
-                        PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
-                            return Ok(SetProbe::Special(SpecialKind::Other));
+                    }
+                    #[cfg(not(feature = "stack-vm"))]
+                    unreachable!("dense local selection is stack-vm only")
+                }
+            } else {
+                match select_set_slot(&state, id, key.atom())? {
+                    BorrowedSet::Missing(prototype) => {
+                        #[cfg(feature = "stack-vm")]
+                        if receiver_is_target {
+                            match set_missing_local(
+                                self,
+                                &mut state,
+                                id,
+                                key.atom(),
+                                value,
+                                if _walk_missing { prototype } else { None },
+                            )? {
+                                MissingSelection::Complete(result) => return Ok(result),
+                                MissingSelection::Special(id, kind) => {
+                                    Selected::SpecialAt(id, kind)
+                                }
+                                MissingSelection::Define => {
+                                    unreachable!("missing receiver definition is consumed locally")
+                                }
+                            }
+                        } else {
+                            Selected::Missing(prototype)
                         }
-                    },
+                        #[cfg(not(feature = "stack-vm"))]
+                        Selected::Missing(prototype)
+                    }
+                    BorrowedSet::Data(slot) => {
+                        if !slot.flags.writable {
+                            return Ok(SetProbe::Stored(false));
+                        }
+                        if !receiver_is_target {
+                            return Ok(SetProbe::Writable);
+                        }
+                        let replacement = PropertySlot::Data(self.raw_property_value(value)?);
+                        replace_data(&mut state, id, slot, replacement)?;
+                        return Ok(SetProbe::Stored(true));
+                    }
+                    BorrowedSet::Setter(set) => Selected::Setter(set),
+                    BorrowedSet::Special(kind) => return Ok(SetProbe::Special(kind)),
                 }
             }
         };
@@ -141,6 +321,19 @@ impl Runtime {
                 // this authoritative transaction, which rechecks dense bounds.
                 self.replace_dense_array_value(object, index, value)?;
                 SetProbe::Stored(true)
+            }
+            #[cfg(feature = "stack-vm")]
+            Selected::SpecialAt(id, kind) => {
+                SetProbe::SpecialAt(ObjectRef::from_borrowed_handle(self.clone(), id)?, kind)
+            }
+            #[cfg(feature = "stack-vm")]
+            Selected::DenseAppend(index) => {
+                // This is the exact missing element selected above, with no
+                // callback or owner release before the shared Array definition.
+                match self.define_selected_dense_array_append(object, index, value)? {
+                    None => SetProbe::Stored(true),
+                    Some(reason) => SetProbe::Rejected(reason),
+                }
             }
             Selected::Setter(set) => SetProbe::Setter(set),
             Selected::Missing(prototype) => SetProbe::Missing(

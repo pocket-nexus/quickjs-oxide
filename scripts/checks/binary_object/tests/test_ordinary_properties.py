@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -12,7 +13,7 @@ class OrdinaryPropertyContracts(unittest.TestCase):
     def scan(self, edits=()):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for relative in (*ordinary_properties.FILES, *ordinary_properties.S05_FILES):
+            for relative in (*ordinary_properties.FILES, *ordinary_properties.S05_FILES, *ordinary_properties.R5_STORAGE_PROTOCOLS):
                 source = (ROOT / relative).read_text()
                 for path, before, after in edits:
                     if path == relative:
@@ -37,6 +38,22 @@ class OrdinaryPropertyContracts(unittest.TestCase):
             (path, "resume: Resume::ForIn(resume),", "resume: Resume::ForIn(resume)"),
             (path, "resume: Resume::Environment(resume),", "resume: Resume::Environment(resume)"),
         ]), [])
+
+    def test_r5_selected_storage_helpers_reject_observable_work(self):
+        for path, names in ordinary_properties.R5_STORAGE_PROTOCOLS.items():
+            source = (ROOT / path).read_text()
+            for name in names:
+                with self.subTest(path=path, helper=name):
+                    header = re.search(
+                        r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{", source
+                    )
+                    self.assertIsNotNone(header)
+                    before = header.group(0)
+                    # internal_get is intentionally outside the older, narrower
+                    # whole ordinary_storage.rs three-method deny-list.
+                    self.assertTrue(self.scan([
+                        (path, before, before + " runtime.internal_get();")
+                    ]))
 
     def test_bad_boundaries_are_rejected(self):
         storage, ordinary, dispatch, runtime, heap, access, proxy_get, proxy_method, proxy_own, proxy_boolean, descriptor, proxy_call, ordinary_set, proxy_set, proxy_define, array_length, number, typed_element, typed_write, proxy_prototype, builtin_prototype, object_builtin, builtin_property, proxy_keys, builtin_predicate, builtin_definitions, builtin_string = ordinary_properties.FILES

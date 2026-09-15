@@ -706,6 +706,7 @@ pub(super) fn start_waitable_native_call(
             arguments,
             kind,
             selected,
+            execution.frames.can_push_with_continuations(1),
         )? {
             native::LocalNativeResult::Complete(completion) => {
                 #[cfg(feature = "profiling")]
@@ -715,47 +716,80 @@ pub(super) fn start_waitable_native_call(
                 finish_call_instruction_call(execution, owner, completion, depth, tail)
             }
             native::LocalNativeResult::Waiting(mut records) => {
-                let mut waiting = records.pop().expect("native selected wait");
-                execution.query_storage.recycle_native_wait(records);
-                let call = waiting.call.take().expect("waiting activation");
+                // Take individual live fields, never pop/move the wide record.
+                let call = records[0].call.take().expect("waiting activation");
+                let mut parent = records[0].parents.pop();
                 let mut query = execution.query_storage.acquire(
                     realm,
                     Vec::new(),
                     Finish::Call { depth, tail },
                 );
                 let identity = (|| {
-                    let parent = execution.frames.current_mut(frame)?;
-                    let identity = parent
+                    let frame_state = execution.frames.current_mut(frame)?;
+                    let identity = frame_state
                         .cold
                         .property_generation
                         .checked_add(1)
                         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-                    storage::reserve(&mut query.natives, 1, "query.native_scopes")
-                        .map_err(|_| Error::internal("native continuation allocation failed"))?;
-                    storage::reserve(&mut query.spare_parents, 1, "query.spare_parents")
-                        .map_err(|_| Error::internal("native parent storage allocation failed"))?;
-                    parent.cold.property_generation = identity;
+                    storage::reserve(
+                        &mut query.natives,
+                        1 + usize::from(parent.is_some()),
+                        "query.native_scopes",
+                    )
+                    .map_err(|_| Error::internal("native continuation allocation failed"))?;
+                    storage::reserve(
+                        &mut query.spare_parents,
+                        1 + usize::from(parent.is_some()),
+                        "query.spare_parents",
+                    )
+                    .map_err(|_| Error::internal("native parent storage allocation failed"))?;
+                    frame_state.cold.property_generation = identity;
                     Ok(identity)
                 })();
                 let identity = match identity {
                     Ok(identity) => identity,
                     Err(error) => {
-                        let result =
-                            native::finish_result(runtime, &mut execution.slots, call, Err(error))
-                                .and_then(native::identity_completion);
-                        drop(waiting);
+                        let mut result =
+                            native::finish_result(runtime, &mut execution.slots, call, Err(error));
+                        // Release the abandoned inner state while its outer
+                        // activation still owns the protocol call. The reply
+                        // resume is likewise consumed before the outer finish.
+                        records[0].step = Step::Complete(Completion::Return(Value::Undefined));
+                        if let Some(mut parent) = parent.take() {
+                            let outer = parent.call.take().expect("outer replace activation");
+                            drop(parent);
+                            result =
+                                native::finish_result(runtime, &mut execution.slots, outer, result);
+                        }
+                        let result = result.and_then(native::identity_completion);
+                        execution.query_storage.recycle_native_wait(records);
                         query.recycle(&mut execution.query_storage);
                         return result.and_then(|completion| {
                             finish_call_instruction_call(execution, owner, completion, depth, tail)
                         });
                     }
                 };
-                native::install_waiting(&mut query, call, Resume::Identity);
+                let resume = if let Some(mut parent) = parent.take() {
+                    native::install_waiting(
+                        &mut query,
+                        parent.call.take().expect("outer replace activation"),
+                        Resume::Identity,
+                    );
+                    Resume::StringReplace(parent.resume)
+                } else {
+                    Resume::Identity
+                };
+                native::install_waiting(&mut query, call, resume);
+                let step = std::mem::replace(
+                    &mut records[0].step,
+                    Step::Complete(Completion::Return(Value::Undefined)),
+                );
+                execution.query_storage.recycle_native_wait(records);
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "native_call_direct_wait",
                 );
-                drive_native_call(runtime, execution, owner, identity, query, Ok(waiting.step))
+                drive_native_call(runtime, execution, owner, identity, query, Ok(step))
             }
         }
     })();
@@ -2054,9 +2088,17 @@ mod native_scope_tests {
             execution::ExecutionLimits,
             frame::{ReturnTarget, ReturnValue},
         };
-        for (name, receiver, arguments) in [
+        for (name, receiver, mut arguments) in [
             ("Math.min", "undefined", vec![Value::Int(3), Value::Int(2)]),
             ("String", "undefined", vec![Value::Int(42)]),
+            (
+                "String.prototype.replace",
+                "'a'",
+                vec![
+                    Value::Undefined,
+                    Value::String(crate::engine::value::JsString::from_static("b")),
+                ],
+            ),
             ("Array.prototype.push", "[]", vec![Value::Int(42)]),
             ("Array.prototype.pop", "[42]", Vec::new()),
             (
@@ -2078,11 +2120,14 @@ mod native_scope_tests {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
             let receiver = context.eval(receiver).unwrap();
-            if name == "RegExp.prototype[Symbol.replace]" {
+            if name == "RegExp.prototype[Symbol.replace]" || name == "String.prototype.replace" {
                 // The unchanged standard matcher predicate requires a Data
                 // native exec. Materialize that lazy property only: do not run
                 // replace or warm this execution's Query cache.
                 context.eval("RegExp.prototype.exec").unwrap();
+            }
+            if name == "String.prototype.replace" {
+                arguments[0] = context.eval("/a/g").unwrap();
             }
             let callable = runtime
                 .callable_from_value(context.eval(name).unwrap())

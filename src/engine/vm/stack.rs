@@ -817,7 +817,9 @@ impl SlotStore {
 
     #[inline]
     fn push_current(&mut self, window: &mut FrameWindow, value: Value) -> Result<(), Error> {
-        self.push_pending_current(window, &mut Some(value))
+        let index = self.operand_push_index(window)?;
+        self.install_operand(window, index, value);
+        Ok(())
     }
 
     #[inline]
@@ -826,20 +828,33 @@ impl SlotStore {
         window: &mut FrameWindow,
         value: &mut Option<Value>,
     ) -> Result<(), Error> {
+        let index = self.operand_push_index(window)?;
+        self.install_operand(window, index, value.take().expect("pending operand owner"));
+        Ok(())
+    }
+
+    /// Check before consuming an owner. Pending callers retain their value on
+    /// rejection; ordinary pushes need no temporary Option or drop protocol.
+    #[inline]
+    fn operand_push_index(&self, window: &FrameWindow) -> Result<usize, Error> {
         if window.depth >= window.operands().len() {
             return Err(Error::internal(
                 "owned operand stack exceeds verified capacity",
             ));
         }
-        let slot = &mut self.slots[window.operands().start + window.depth];
-        if slot.is_some() {
+        let index = window.operands().start + window.depth;
+        if self.slots[index].is_some() {
             return Err(Error::internal(
                 "owned operand push would replace a live value",
             ));
         }
-        *slot = Some(FrameBinding::Direct(
-            value.take().expect("pending operand owner"),
-        ));
+        Ok(index)
+    }
+
+    /// The checked index is private and consumed without an observable boundary.
+    #[inline]
+    fn install_operand(&mut self, window: &mut FrameWindow, index: usize, value: Value) {
+        self.slots[index] = Some(FrameBinding::Direct(value));
         window.depth += 1;
         #[cfg(feature = "profiling")]
         {
@@ -847,7 +862,6 @@ impl SlotStore {
             record_owned_storage(Cost::Move(1));
             self.record_occupancy();
         }
-        Ok(())
     }
 
     /// Rotate existing owners in place. No retain, release, or allocation occurs.
@@ -1090,7 +1104,12 @@ impl SlotStore {
         index: u16,
         value: FrameBinding,
     ) -> Result<FrameBinding, Error> {
-        self.replace_local_pending_current(window, index, &mut Some(value))
+        self.local_current(window, index)?;
+        #[cfg(feature = "profiling")]
+        record_owned_storage(Cost::Move(2));
+        Ok(self.slots[window.locals().start + usize::from(index)]
+            .replace(value)
+            .unwrap())
     }
 
     #[inline]
