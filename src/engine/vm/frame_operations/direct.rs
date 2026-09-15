@@ -49,7 +49,13 @@ pub(in crate::engine::vm) fn complete(
             }
         };
         if uninitialized {
-            frame.cold.reusable_captured_locals[usize::from(index)] = false;
+            if let Some(flag) = frame
+                .cold
+                .reusable_captured_locals
+                .get_mut(usize::from(index))
+            {
+                *flag = false;
+            }
         }
         // Publish the replacement before releasing the displaced last root.
         // Ordinary Drop handles collection work outside the resident dispatch.

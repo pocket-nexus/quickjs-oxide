@@ -34,6 +34,7 @@ impl DerefMut for ColdFrame {
 
 #[derive(Default)]
 pub(in crate::engine::vm) struct CallStorage {
+    prepared_depth: usize,
     empty_frames: Vec<Box<FrameCold>>,
     capture_flags: Vec<Vec<bool>>,
     regions: Vec<Vec<crate::engine::vm::VmUnwindRegion>>,
@@ -45,6 +46,9 @@ impl CallStorage {
     }
     /// The high-water mark is simultaneous frame depth, not cumulative calls.
     pub(in crate::engine::vm) fn reserve_depth(&mut self, depth: usize) -> Result<(), Error> {
+        if depth <= self.prepared_depth {
+            return Ok(());
+        }
         #[cfg(feature = "profiling")]
         let before = self.empty_frames.capacity();
         self.empty_frames
@@ -81,6 +85,7 @@ impl CallStorage {
             self.regions.capacity(),
             size_of::<Vec<crate::engine::vm::VmUnwindRegion>>(),
         );
+        self.prepared_depth = depth;
         Ok(())
     }
     pub(in crate::engine::vm) fn capture_flags(
@@ -157,14 +162,15 @@ impl CallStorage {
             rare.eval_arguments = None;
             rare.constructor_return = None;
             rare.conversion = None;
+            rare.normalized_this = None;
         }
-        cold.normalized_this = None;
+
         cold.return_to = None;
         cold.entry_guard = None;
         cold.function.0 = None;
         cold.closure_slots = Default::default();
         cold.input.0 = None;
-        if self.capture_flags.len() < self.capture_flags.capacity() {
+        if flags.capacity() != 0 && self.capture_flags.len() < self.capture_flags.capacity() {
             self.capture_flags.push(flags);
         }
 
@@ -196,23 +202,26 @@ mod tests {
         let snapshot = profile.snapshot();
         assert_eq!(snapshot.call_preparation.parameter_buffer_allocations, 0);
         assert!(snapshot.call_preparation.owned_frame_allocations <= 3);
-        assert!(snapshot.call_preparation.owned_captured_reuse_allocations <= 3);
+        assert_eq!(
+            snapshot.call_preparation.owned_captured_reuse_allocations,
+            0
+        );
         assert!(snapshot.owned_execution_events["call_cold_frame_reused"] >= 1998);
         for name in [
             "cold.empty_pool",
             "cold.capture_pool",
             "cold.region_pool",
             "cold.frame_box",
-            "cold.capture_flags",
         ] {
             let cost = &snapshot.call_buffers[name];
             assert!(cost.capacity_growths > 0, "{name}");
             assert!(cost.capacity_growth_bytes > 0, "{name}");
         }
+        assert!(!snapshot.call_buffers.contains_key("cold.capture_flags"));
         assert!(snapshot.call_buffers["cold.frame_box"].capacity_growths <= 3);
         let metadata = &snapshot.call_buffers["executable.published_data_rc"];
-        assert!(metadata.shared_storage_clones > 2000);
-        assert!(metadata.capacity_growths < metadata.shared_storage_clones);
+        assert!(metadata.capacity_growths <= 3);
+        assert!(snapshot.owned_execution_events["ordinary_call_auth_cache_hit"] >= 1998);
 
         assert!(snapshot.owned_execution_events["call_bindings_initialized_in_window"] >= 2000);
         assert!(
@@ -294,7 +303,7 @@ impl<T> DerefMut for Resident<T> {
 impl CallStorage {
     pub(in crate::engine::vm) fn vacant(
         &mut self,
-        realm: crate::engine::heap::ContextId,
+        _realm: crate::engine::heap::ContextId,
     ) -> (ColdFrame, usize) {
         if let Some(frame) = self.empty_frames.pop() {
             #[cfg(feature = "profiling")]
@@ -317,14 +326,9 @@ impl CallStorage {
             );
             (
                 ColdFrame::new(FrameCold {
-                    property_generation: 0,
-                    iterator_generation: 0,
                     rare: Default::default(),
-                    normalized_this: None,
                     return_to: None,
                     entry_guard: None,
-                    caller_realm: realm,
-                    active_frame: super::ActiveFrameToken(0),
                     function: Resident(None),
                     input: Resident(None),
                     closure_slots: Default::default(),
@@ -333,5 +337,90 @@ impl CallStorage {
                 size_of::<FrameCold>(),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod lazy_tests {
+    use super::*;
+    use crate::engine::api::Runtime;
+    use crate::engine::value::Value;
+    use crate::engine::vm::CallInput;
+
+    #[test]
+    fn reserve_watermark_reuses_all_three_pools_without_touching_contents() {
+        let mut storage = CallStorage::default();
+        storage.reserve_depth(7).unwrap();
+        let capacities = (
+            storage.empty_frames.capacity(),
+            storage.capture_flags.capacity(),
+            storage.regions.capacity(),
+        );
+        storage.capture_flags.push(vec![true; 3]);
+        for depth in [0, 1, 7, 2] {
+            storage.reserve_depth(depth).unwrap();
+        }
+        assert_eq!(storage.prepared_depth, 7);
+        assert_eq!(
+            capacities,
+            (
+                storage.empty_frames.capacity(),
+                storage.capture_flags.capacity(),
+                storage.regions.capacity()
+            )
+        );
+        assert_eq!(storage.capture_flags, [vec![true; 3]]);
+        storage.reserve_depth(11).unwrap();
+        assert_eq!(storage.prepared_depth, 11);
+        assert!(
+            storage.empty_frames.capacity() >= 11
+                && storage.capture_flags.capacity() >= 11
+                && storage.regions.capacity() >= 11
+        );
+    }
+
+    #[test]
+    fn vacant_frame_and_unused_global_keep_lazy_storage_empty() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut storage = CallStorage::default();
+        storage.reserve().unwrap();
+        let (mut cold, _) = storage.vacant(context.realm);
+        cold.input = CallInput {
+            this_value: Value::Undefined,
+            new_target: Value::Undefined,
+            callee_global: None,
+        }
+        .into();
+        assert!(cold.rare.get().is_none());
+        assert!(cold.input.callee_global.is_none());
+        let expected = runtime.global_object_for_realm(context.realm).unwrap();
+        let first = cold
+            .input
+            .callee_global(&runtime, context.realm)
+            .unwrap()
+            .object_id();
+        assert_eq!(first, expected.object_id());
+        assert_eq!(
+            cold.input
+                .callee_global(&runtime, context.realm)
+                .unwrap()
+                .object_id(),
+            first
+        );
+        assert!(cold.rare.get().is_none());
+        storage.recycle(cold);
+        assert!(storage.capture_flags.is_empty());
+        let (cold, _) = storage.vacant(context.realm);
+        assert!(cold.rare.get().is_none());
+    }
+
+    #[test]
+    fn lazy_this_preserves_strict_sloppy_eval_and_captured_scope_behavior() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval("function sloppy(){return this === globalThis} function strict(){'use strict';return this===undefined} function direct(){return eval('this===globalThis')} sloppy() && strict() && direct()").unwrap(), Value::Bool(true));
+        assert_eq!(context.eval("function scoped(){let a=[];for(let i=0;i<3;i++){let x=i;a.push(()=>x)}return a[0]()+a[1]()+a[2]()} scoped()+scoped()").unwrap(), Value::Int(6));
+        assert_eq!(context.eval("function plain(){let sum=0;for(let i=0;i<3;i++){let x=i;sum+=x}return sum} plain()+plain()").unwrap(), Value::Int(6));
     }
 }

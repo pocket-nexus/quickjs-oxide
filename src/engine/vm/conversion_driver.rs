@@ -198,7 +198,7 @@ pub(super) fn complete_primitives(
                     (frame.fault_pc, frame.resume_pc) = (store_pc, store_pc);
                     runtime
                         .update_active_bytecode_pc(
-                            frame.cold.active_frame,
+                            frame.active_frame,
                             super::BytecodePc::new(frame.fault_pc),
                         )
                         .map_err(runtime_error_to_vm_error)?;
@@ -215,7 +215,7 @@ pub(super) fn complete_primitives(
                             (frame.fault_pc, frame.resume_pc) = (store_pc, store_pc);
                             runtime
                                 .update_active_bytecode_pc(
-                                    frame.cold.active_frame,
+                                    frame.active_frame,
                                     super::BytecodePc::new(frame.fault_pc),
                                 )
                                 .map_err(runtime_error_to_vm_error)?;

@@ -50,22 +50,27 @@ impl BytecodeCallRequest {
             ));
         }
         let local_count = prepared.executable.local_definitions.len();
-        let (flags, flag_bytes) = storage.capture_flags(local_count)?;
+        let (flags, flag_bytes) = if prepared.executable.has_captured_locals {
+            storage.capture_flags(local_count)?
+        } else {
+            (Vec::new(), 0)
+        };
+        let active_frame = prepared.active_frame.token();
         let (cold, frame_bytes) = storage.install(FrameCold {
-            property_generation: 0,
-            iterator_generation: 0,
             rare: std::cell::OnceCell::new(),
-            normalized_this: None,
             return_to: Some(return_to),
-            active_frame: prepared.active_frame.token(),
             entry_guard: Some(prepared.active_frame),
-            caller_realm,
             function: (callable.into_object()).into(),
             closure_slots,
             reusable_captured_locals: flags,
             input: (prepared.input).into(),
         });
         let entry = FrameEntry {
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm: caller_realm,
+            active_frame: active_frame,
+
             initialize_bindings: true,
             executable: prepared.executable,
             cold,

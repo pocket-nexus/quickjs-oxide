@@ -2,6 +2,8 @@
 
 2026-09-15 用户决定：原 [S10（退役旧执行路径）](primitive-vm-commit-plan.md#s10--refactorvm-finish-validation-and-retire-the-previous-execution-path)顺延为 S13；在它之前插入三个结构性修复阶段，作为新的 S10、S11、S12。本阶段**先设计后实现，设计与实现期间不做 benchmark/Profile**；测量只发生在各阶段验收点，沿用 S09 的三轮公平复测与单变量归因纪律。S09 的未完成状态与退出条件不因本计划改变。
 
+**本次执行授权（覆盖下文旧测量顺序）：**用户已要求分别用三个 commit 完成新 S10、S11、S12，允许并行独立工作，不要求向后兼容。S12 带精确失效机制的属性位置缓存已授权，无需再次确认旧禁令例外。全部代码结束后额外逐项 review，仅核对 S10–S12 实现覆盖，发现遗漏必须补齐；之后只对最终新核心统一进行一轮 benchmark/Profile，复用旧 S0，包含 getter/proxy/mixed 探针级 Profile。期间不做 benchmark/Profile，不运行旧核心。阶段实现与语义检查按依赖推进，G 与 S13 不纳入。
+
 设计参照：CPython 3.11 的 [inlined Python function calls](https://docs.python.org/3/whatsnew/3.11.html#inlined-python-function-calls) 与 [cheaper lazy Python frames](https://docs.python.org/3/whatsnew/3.11.html#cheaper-lazy-python-frames) 是成对改动——先把帧做便宜（lazy frames 贡献 3–7%），内联调用（1–3%）才能兑现。本 PR 的 stack-vm 迁移等价于前者的 inlined calls（递归原生栈 → 扁平 run 循环 + 显式帧栈；S0 在 depth 512/2048 探针全部栈溢出、新核心全部通过即其证据），但帧仍是"急切且宽"的。新 S10 补齐 lazy frames 对应物；S11、S12 分别处理状态机结构与属性读驻留。
 
 ## 1. 病历记录（诊断固化，2026-09-15）

@@ -39,7 +39,7 @@ pub(in crate::engine::vm) fn complete_local_add(
     frame.resume_pc = frame.fault_pc;
     runtime
         .update_active_bytecode_pc(
-            frame.cold.active_frame,
+            frame.active_frame,
             super::super::BytecodePc::new(frame.fault_pc),
         )
         .map_err(runtime_error_to_vm_error)?;
@@ -95,7 +95,7 @@ pub(in crate::engine::vm) fn complete_local_add(
             // pending output is released only after its active PC is published.
             runtime
                 .update_active_bytecode_pc(
-                    frame.cold.active_frame,
+                    frame.active_frame,
                     super::super::BytecodePc::new(frame.fault_pc),
                 )
                 .map_err(runtime_error_to_vm_error)?;

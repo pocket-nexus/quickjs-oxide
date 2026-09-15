@@ -34,18 +34,14 @@ pub(super) fn run(
             Ok(exit) => exit.diagnostic_name(),
             Err(_) => "run_exit.EngineError",
         });
-        // run has dropped RunSlots and materialized the exact frame PCs even
-        // on error. Publish before any cold allocation, release or JS error.
-        let frame = execution.frames.current_mut(id)?;
-        // LocalAdd owns its first publication at the canonical Add, before
-        // any allocation/error. Its already guarded GetLocal entry cannot observe PC.
-        if !matches!(&result, Ok(RunExit::AddLocal)) {
-            runtime
-                .update_active_bytecode_pc(frame.cold.active_frame, BytecodePc::new(frame.fault_pc))
-                .map_err(runtime_error_to_vm_error)?;
+        // Ordinary Call/Return need no observable activation. Cold operations
+        // may allocate an error, release an observable owner or invoke code.
+        if !matches!(&result, Ok(RunExit::Call { .. } | RunExit::Complete)) {
+            execution.frames.materialize(runtime)?;
         }
         let exit = result?;
         match exit {
+            RunExit::Materialize => continue,
             RunExit::PrimitiveThrow => {
                 let thrown = execution
                     .pending
@@ -159,7 +155,7 @@ pub(super) fn run(
                     frame.fault_pc = frame.resume_pc;
                     runtime
                         .update_active_bytecode_pc(
-                            frame.cold.active_frame,
+                            frame.active_frame,
                             BytecodePc::new(frame.fault_pc),
                         )
                         .map_err(runtime_error_to_vm_error)?;
@@ -270,11 +266,14 @@ fn enter_call(
             super::ordinary::Entry::Native(CallStep::Bridge) => {
                 Some(Boundary::Exit(RunExit::Bridge))
             }
-            super::ordinary::Entry::General => Some(Boundary::Exit(RunExit::Call {
-                arguments,
-                method,
-                tail,
-            })),
+            super::ordinary::Entry::General => {
+                execution.frames.materialize(runtime)?;
+                Some(Boundary::Exit(RunExit::Call {
+                    arguments,
+                    method,
+                    tail,
+                }))
+            }
         },
     )
 }

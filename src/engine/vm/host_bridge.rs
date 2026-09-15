@@ -111,7 +111,7 @@ impl RuntimeVmHost {
     #[inline]
     pub(super) fn new_activation(
         &self,
-        input: CallInput,
+        mut input: CallInput,
     ) -> Result<(Rc<[Instruction]>, VmActivation), Error> {
         if self.executable.root().is_none() {
             return Err(Error::internal(
@@ -129,6 +129,9 @@ impl RuntimeVmHost {
             .as_ref()
             .ok_or_else(|| Error::internal("published frame has no current function"))?
             .clone();
+        let callee_global = input
+            .callee_global(&self.runtime, self.current_realm)?
+            .clone();
         let activation = VmActivation::new_in_realm(
             self.executable.frame_layout(),
             self.caller_realm,
@@ -136,7 +139,7 @@ impl RuntimeVmHost {
             function,
             input.this_value,
             input.new_target,
-            input.callee_global,
+            callee_global,
         );
         Ok((self.executable.code.clone(), activation))
     }
@@ -3076,7 +3079,7 @@ mod tests {
                 CallInput {
                     this_value: Value::Undefined,
                     new_target: Value::Undefined,
-                    callee_global: runtime.global_object_for_realm(context.realm).unwrap(),
+                    callee_global: Some(runtime.global_object_for_realm(context.realm).unwrap()),
                 },
                 &mut host,
             )

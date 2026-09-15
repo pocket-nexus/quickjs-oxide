@@ -99,6 +99,10 @@ pub(super) fn finish(
         let storage = execution.slots.take_frame(frame.window)?;
         let entry = FrameEntry {
             initialize_bindings: false,
+            property_generation: frame.property_generation,
+            iterator_generation: frame.iterator_generation,
+            caller_realm: frame.caller_realm,
+            active_frame: frame.active_frame,
             executable: frame.executable,
             cold: frame.cold,
             storage,

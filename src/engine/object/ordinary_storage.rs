@@ -870,7 +870,7 @@ fn linked_field_atom(
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
     index: u32,
 ) -> Option<Atom> {
-    if !executable.root()?.belongs_to(runtime) {
+    if !executable.belongs_to(runtime) {
         return None;
     }
     executable

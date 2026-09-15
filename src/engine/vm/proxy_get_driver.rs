@@ -278,11 +278,10 @@ pub(super) fn start(
 ) -> Result<CallStep, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
         let step = ProxyGetStep::start(runtime, realm, object, key, receiver)
@@ -316,11 +315,10 @@ pub(super) fn start_owned_read(
 ) -> Result<CallStep, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let realm = parent.executable.realm;
     let step = Step::Read {
         object: object.clone(),
@@ -388,11 +386,10 @@ pub(super) fn start_boolean(
     }
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let realm = parent.executable.realm;
     let resume = Resume::BooleanResult {
         _object: object.clone(),
@@ -442,11 +439,10 @@ pub(super) fn start_prototype(
 ) -> Result<CallStep, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
         let mut parents = Vec::new();
@@ -481,11 +477,10 @@ pub(super) fn start_conversion(
 ) -> Result<Progress, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
         let receiver = Value::Object(object.clone());
@@ -732,7 +727,6 @@ pub(super) fn start_waitable_native_call(
                 let identity = (|| {
                     let frame_state = execution.frames.current_mut(frame)?;
                     let identity = frame_state
-                        .cold
                         .property_generation
                         .checked_add(1)
                         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
@@ -748,7 +742,7 @@ pub(super) fn start_waitable_native_call(
                         "query.spare_parents",
                     )
                     .map_err(|_| Error::internal("native parent storage allocation failed"))?;
-                    frame_state.cold.property_generation = identity;
+                    frame_state.property_generation = identity;
                     Ok(identity)
                 })();
                 let identity = match identity {
@@ -906,11 +900,10 @@ fn start_instruction(
 ) -> Result<Progress, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("instruction operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let depth = execution.slots.depth(&parent.window);
     // The request owns every source value before any window owner is released.
     for _ in 0..operand_count {
@@ -958,11 +951,10 @@ fn start_owned_callback(
 ) -> Result<Progress, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = advance(
         runtime,
@@ -1012,11 +1004,10 @@ fn start_proxy_call(
 ) -> Result<Progress, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
         let step =
@@ -1245,11 +1236,10 @@ fn schedule_write(
     // never reads or mutates this cold counter.
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("set_wait_handoff");
     write_call_progress(advance(
@@ -2112,7 +2102,7 @@ mod native_scope_tests {
             .unwrap();
             assert!(matches!(result, CallStep::Complete(Completion::Throw(_))));
             let parent = execution.frames.current_mut(frame).unwrap();
-            assert_eq!(parent.cold.property_generation, 0);
+            assert_eq!(parent.property_generation, 0);
             assert_eq!(parent.resume_pc, 0);
             assert_eq!(execution.slots.depth(&parent.window), 0);
             assert_eq!(runtime.0.state.borrow().active_frames.len(), 1);
@@ -2221,7 +2211,6 @@ mod native_scope_tests {
                 .frames
                 .current_mut(frame)
                 .unwrap()
-                .cold
                 .property_generation = u64::MAX;
             assert!(!execution.query_storage.has_cached_entry());
             let result = start_classified_native_call(
@@ -2247,7 +2236,6 @@ mod native_scope_tests {
                     .frames
                     .current_mut(frame)
                     .unwrap()
-                    .cold
                     .property_generation,
                 u64::MAX,
                 "{name}"
@@ -2665,11 +2653,10 @@ fn start_array_next_direct(
 fn iterator_query_identity(execution: &mut RunningExecution, frame: FrameId) -> Result<u64, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("iterator query identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     Ok(identity)
 }
 /// Query completion carries only identity. The frame's reusable cold record
@@ -2744,11 +2731,10 @@ pub(super) fn start_instance(
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("instance query identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let result = (|| {
         let step = crate::engine::builtins::InstanceStep::start(runtime, realm, candidate, target)
             .map_err(runtime_error_to_vm_error)?;
@@ -2799,7 +2785,7 @@ pub(super) fn start_object_copy(
         .map_err(runtime_error_to_vm_error)?;
     let depth = execution.slots.depth(&parent.window);
     // Computing the next identity is pure. Only a selected wait publishes it.
-    let identity = parent.cold.property_generation.checked_add(1);
+    let identity = parent.property_generation.checked_add(1);
     let mut rejected_source = None;
     if excluded_depth.is_none() {
         let source = execution.slots.pop(&mut parent.window)?;
@@ -2835,11 +2821,7 @@ pub(super) fn start_object_copy(
             // The selected getter/Proxy request has never been executed.
             return Err(Error::internal("copy query identity exhausted"));
         };
-        execution
-            .frames
-            .current_mut(frame)?
-            .cold
-            .property_generation = identity;
+        execution.frames.current_mut(frame)?.property_generation = identity;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("copy_wait_handoff");
         advance(
@@ -2894,11 +2876,10 @@ pub(super) fn start_environment(
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("environment query identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let finish = match value_use {
         ReturnValue::Push => Finish::PropertyRead(depth),
         ReturnValue::Discard => Finish::Discard(depth),
@@ -3016,11 +2997,10 @@ pub(super) fn start_numeric(
         step => step,
     };
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("numeric query identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let result = advance(
         runtime,
         execution,
@@ -3097,11 +3077,10 @@ fn start_instruction_query(
 ) -> Result<CallStep, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
-        .cold
         .property_generation
         .checked_add(1)
         .ok_or_else(|| Error::internal("instruction query identity exhausted"))?;
-    parent.cold.property_generation = identity;
+    parent.property_generation = identity;
     let result = advance(
         runtime,
         execution,
@@ -3145,11 +3124,10 @@ pub(super) fn start_for_in_query(
         step => {
             let parent = execution.frames.current_mut(frame)?;
             let identity = parent
-                .cold
                 .property_generation
                 .checked_add(1)
                 .ok_or_else(|| Error::internal("instruction query identity exhausted"))?;
-            parent.cold.property_generation = identity;
+            parent.property_generation = identity;
             start_for_in_pending(runtime, execution, frame, identity, step, depth)
         }
     })();
@@ -3231,6 +3209,10 @@ pub(super) fn start_import(
 ) -> Result<CallStep, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
+    parent
+        .executable
+        .ensure_root(runtime)
+        .map_err(runtime_error_to_vm_error)?;
     let options = execution.slots.peek(&parent.window, 0)?.clone();
     let specifier = execution.slots.peek(&parent.window, 1)?.clone();
     let result = crate::engine::modules::import::ImportStep::start(

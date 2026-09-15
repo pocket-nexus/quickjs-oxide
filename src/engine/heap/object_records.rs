@@ -376,6 +376,8 @@ pub enum ObjectPayload {
         arguments: Rc<[RawValue]>,
     },
     BytecodeFunction {
+        authentication:
+            std::cell::RefCell<Option<crate::engine::code::runtime::OrdinaryAuthentication>>,
         bytecode: FunctionBytecodeId,
         home_object: Option<ObjectId>,
         /// Hidden instance-field initializer owned by a class constructor.
@@ -1349,6 +1351,7 @@ impl ObjectData {
             is_constructor,
             kind: ObjectKind::BytecodeFunction,
             payload: ObjectPayload::BytecodeFunction {
+                authentication: Default::default(),
                 bytecode,
                 home_object,
                 class_instance_initializer: None,
@@ -1380,6 +1383,7 @@ impl ObjectData {
             is_constructor,
             kind: ObjectKind::BytecodeFunction,
             payload: ObjectPayload::BytecodeFunction {
+                authentication: Default::default(),
                 bytecode,
                 home_object,
                 class_instance_initializer: None,

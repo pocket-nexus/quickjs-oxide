@@ -182,15 +182,14 @@ mod tests {
         let entry = FrameEntry {
             initialize_bindings: false,
             executable: prepared.executable,
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm: context.realm,
+            active_frame: prepared.active_frame.token(),
             cold: ColdFrame::new(FrameCold {
-                property_generation: 0,
-                iterator_generation: 0,
                 rare: std::cell::OnceCell::new(),
-                normalized_this: None,
                 return_to: None,
-                active_frame: prepared.active_frame.token(),
                 entry_guard: Some(prepared.active_frame),
-                caller_realm: context.realm,
                 function: function.into(),
                 closure_slots,
                 reusable_captured_locals: vec![false; locals],
@@ -314,7 +313,7 @@ mod tests {
         let before = (frame.fault_pc, frame.resume_pc);
         runtime
             .update_active_bytecode_pc(
-                frame.cold.active_frame,
+                frame.active_frame,
                 crate::engine::vm::BytecodePc::new(frame.fault_pc),
             )
             .unwrap();
@@ -365,7 +364,6 @@ mod tests {
             .frames
             .current_mut(id)
             .unwrap()
-            .cold
             .property_generation = u64::MAX;
         push(&mut execution, id, Value::Int(6));
         push(&mut execution, id, Value::Int(7));
@@ -374,7 +372,7 @@ mod tests {
             Some(NumericProgress::Completed)
         ));
         let frame = execution.frames.current_mut(id).unwrap();
-        assert_eq!(frame.cold.property_generation, u64::MAX);
+        assert_eq!(frame.property_generation, u64::MAX);
         assert_eq!(
             execution.slots.pop(&mut frame.window).unwrap(),
             Value::Int(42)
@@ -470,7 +468,6 @@ mod tests {
             .frames
             .current_mut(id)
             .unwrap()
-            .cold
             .property_generation = u64::MAX;
         push(&mut execution, id, Value::Object(target.clone()));
         push(&mut execution, id, source.clone());
@@ -488,7 +485,7 @@ mod tests {
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(execution.slots.depth(&frame.window), 2);
         assert_eq!(execution.slots.peek(&frame.window, 0).unwrap(), &source);
-        assert_eq!(frame.cold.property_generation, u64::MAX);
+        assert_eq!(frame.property_generation, u64::MAX);
         // Classification may already have completed ordinary fresh-target
         // definitions. No selected getter was called or replayed to discover it.
         assert!(
@@ -521,7 +518,6 @@ mod tests {
                 .frames
                 .current_mut(id)
                 .unwrap()
-                .cold
                 .property_generation = u64::MAX;
             push(&mut execution, id, target);
             push(&mut execution, id, source);
@@ -550,7 +546,7 @@ mod tests {
                 1,
                 "source consumed before the first ordinary copy effect"
             );
-            assert_eq!(frame.cold.property_generation, u64::MAX);
+            assert_eq!(frame.property_generation, u64::MAX);
         }
     }
 

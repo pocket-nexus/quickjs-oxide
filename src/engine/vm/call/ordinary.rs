@@ -2,8 +2,9 @@
 use crate::engine::{
     api::{Error, runtime::Runtime, runtime_error::RuntimeError},
     code::{
-        function::metadata::FunctionKind, rooted::FunctionBytecodeRef,
-        runtime::PublishedFunctionSnapshot,
+        function::metadata::FunctionKind,
+        rooted::FunctionBytecodeRef,
+        runtime::{OrdinaryAuthentication, PublishedFunctionSnapshot},
     },
     heap::{FunctionBytecodeId, ObjectPayload, VarRefId},
     object::ObjectRef,
@@ -22,6 +23,7 @@ pub(in crate::engine::vm) struct OrdinaryCall {
 pub(in crate::engine::vm) struct OrdinarySelection<'a> {
     function: &'a ObjectRef,
     bytecode: FunctionBytecodeId,
+    authentication: Option<OrdinaryAuthentication>,
     closure: std::cell::Ref<'a, std::rc::Rc<[VarRefId]>>,
 }
 // Only DirectSelection can create this proof: payload metadata and borrowed
@@ -74,6 +76,7 @@ impl<'a> DirectSelection<'a> {
             return Ok(Self::General);
         }
         let mut selected_bytecode = None;
+        let mut selected_authentication = None;
         let mut native = None;
         let mut failure = None;
         let closure = std::cell::Ref::filter_map(runtime.0.state.borrow(), |state| {
@@ -100,19 +103,33 @@ impl<'a> DirectSelection<'a> {
                 let ObjectPayload::BytecodeFunction {
                     bytecode,
                     closure_slots,
+                    authentication,
                     ..
                 } = &object.payload
                 else {
                     return Ok(None);
                 };
-                let data = state.heap.function_bytecode(*bytecode)?;
-                if data.metadata.function_kind != FunctionKind::Normal {
-                    return Ok(None);
-                }
-                if closure_slots.len() != usize::from(data.metadata.closure_count) {
-                    return Err(RuntimeError::Invariant(
-                        "function object closure slot count does not match bytecode metadata",
-                    ));
+                let cached = authentication.borrow();
+                if let Some(facts) = cached
+                    .as_ref()
+                    .filter(|facts| facts.publish_generation == bytecode.publish_generation())
+                {
+                    if closure_slots.len() != facts.closure_count {
+                        return Err(RuntimeError::Invariant(
+                            "function object closure slot count does not match bytecode metadata",
+                        ));
+                    }
+                    selected_authentication = Some(facts.clone());
+                } else {
+                    let data = state.heap.function_bytecode(*bytecode)?;
+                    if data.metadata.function_kind != FunctionKind::Normal {
+                        return Ok(None);
+                    }
+                    if closure_slots.len() != usize::from(data.metadata.closure_count) {
+                        return Err(RuntimeError::Invariant(
+                            "function object closure slot count does not match bytecode metadata",
+                        ));
+                    }
                 }
                 selected_bytecode = Some(*bytecode);
                 Ok(Some(closure_slots))
@@ -128,6 +145,7 @@ impl<'a> DirectSelection<'a> {
         match closure {
             Ok(closure) => Ok(Self::Ordinary(OrdinarySelection {
                 function,
+                authentication: selected_authentication,
                 bytecode: selected_bytecode
                     .ok_or(RuntimeError::Invariant("ordinary selection lost bytecode"))?,
                 closure,
@@ -165,17 +183,14 @@ impl OrdinaryCall {
     }
     pub(in crate::engine::vm) fn install(
         self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         execution: &mut crate::engine::vm::execution::RunningExecution,
         parent: crate::engine::vm::frame::FrameId,
         count: usize,
         method: bool,
         tail: bool,
     ) -> Result<(), Error> {
-        use crate::engine::vm::{
-            exception::runtime_error_to_vm_error,
-            frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue},
-        };
+        use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
         let depth = execution.frames.depth() + 1;
         execution.call_storage.reserve_depth(depth)?;
         let frame = execution.frames.current_mut(parent)?;
@@ -189,13 +204,13 @@ impl OrdinaryCall {
         } else {
             Value::Undefined
         };
-        let callee_global = runtime
-            .global_object_for_realm(self.executable.realm)
-            .map_err(runtime_error_to_vm_error)?;
-        let guard = self.register(runtime).map_err(runtime_error_to_vm_error)?;
-        let (flags, flag_bytes) = execution
-            .call_storage
-            .capture_flags(self.executable.local_definitions.len())?;
+        let (flags, flag_bytes) = if self.executable.has_captured_locals {
+            execution
+                .call_storage
+                .capture_flags(self.executable.local_definitions.len())?
+        } else {
+            (Vec::new(), 0)
+        };
         let prepared = execution.frames.prepare_push()?;
         let mut prepared = prepared;
         let frame = prepared.current_mut(parent)?;
@@ -210,27 +225,27 @@ impl OrdinaryCall {
         )?;
         frame.resume_pc = resume;
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.property_generation = 0;
-        cold.iterator_generation = 0;
         cold.return_to = Some(ReturnTarget {
             value_use: ReturnValue::Push,
             owner: ReturnOwner::Frame(parent),
             tail,
             operation: None,
         });
-        cold.active_frame = guard.token();
-        cold.entry_guard = Some(guard);
-        cold.caller_realm = caller_realm;
+        cold.entry_guard = None;
         cold.function = self.function.into();
         cold.closure_slots = self.closure;
         cold.reusable_captured_locals = flags;
         cold.input = crate::engine::vm::CallInput {
             this_value: receiver,
             new_target: Value::Undefined,
-            callee_global,
+            callee_global: None,
         }
         .into();
         prepared.install(Frame {
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm,
+            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
             executable: self.executable,
             window,
             fault_pc: 0,
@@ -240,9 +255,6 @@ impl OrdinaryCall {
         #[cfg(feature = "profiling")]
         {
             crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_call_authenticated",
-            );
         }
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
@@ -260,8 +272,33 @@ impl OrdinarySelection<'_> {
         let closure = std::rc::Rc::clone(&self.closure);
         drop(self.closure);
         let function = self.function.clone();
-        let bytecode = FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), self.bytecode)?;
-        let executable = runtime.snapshot_function_bytecode_owned(bytecode)?;
+        let executable = if let Some(facts) = self.authentication {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_call_auth_cache_hit",
+            );
+            PublishedFunctionSnapshot::from_authentication(runtime, self.bytecode, facts)
+        } else {
+            let bytecode =
+                FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), self.bytecode)?;
+            let snapshot = runtime.snapshot_function_bytecode_owned(bytecode)?;
+            let facts = snapshot.authentication(closure.len());
+            {
+                let state = runtime.0.state.borrow();
+                let object = state.heap.object(function.object_id())?;
+                let ObjectPayload::BytecodeFunction { authentication, .. } = &object.payload else {
+                    return Err(RuntimeError::Invariant(
+                        "selected ordinary function changed kind",
+                    ));
+                };
+                *authentication.borrow_mut() = Some(facts.clone());
+            }
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_call_authenticated",
+            );
+            PublishedFunctionSnapshot::from_authentication(runtime, self.bytecode, facts)
+        };
         Ok(OrdinaryCall {
             closure: ClosureSlots::shared(function.clone(), closure),
             function,
@@ -273,6 +310,91 @@ impl OrdinarySelection<'_> {
 #[cfg(test)]
 mod direct_selection_tests {
     use super::*;
+
+    #[test]
+    fn authentication_cache_is_rootless_and_rejects_a_different_publication() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let first = context.eval("(function(){ return 11 })").unwrap();
+        let second = context.eval("(function(){ return 22 })").unwrap();
+        let selected = OrdinaryCall::authenticate(&runtime, &first)
+            .unwrap()
+            .unwrap();
+        assert!(selected.executable.root().is_none());
+        let id = selected.executable.bytecode_id().unwrap();
+        drop(selected);
+        let get_facts = |value: &Value| {
+            let Value::Object(object) = value else {
+                unreachable!()
+            };
+            let state = runtime.0.state.borrow();
+            let ObjectPayload::BytecodeFunction { authentication, .. } =
+                &state.heap.object(object.object_id()).unwrap().payload
+            else {
+                unreachable!()
+            };
+            authentication.borrow().clone().unwrap()
+        };
+        let facts = get_facts(&first);
+        let warmed = OrdinaryCall::authenticate(&runtime, &first)
+            .unwrap()
+            .unwrap();
+        assert!(std::rc::Rc::ptr_eq(&facts.data, &get_facts(&first).data));
+        assert_eq!(warmed.executable.bytecode_id(), Some(id));
+        assert!(warmed.executable.root().is_none());
+        assert!(warmed.executable.belongs_to(&runtime));
+        let foreign = Runtime::new();
+        assert!(!warmed.executable.belongs_to(&foreign));
+        assert!(matches!(
+            warmed.executable.ensure_root(&foreign),
+            Err(RuntimeError::WrongRuntime("function bytecode"))
+        ));
+        warmed.executable.ensure_root(&runtime).unwrap();
+        assert_eq!(warmed.executable.root().unwrap().bytecode_id(), id);
+        drop(warmed);
+        // A transplanted/stale certificate must miss even if closure arity is
+        // identical. Publication identity is stronger than code pointer/shape.
+        {
+            let Value::Object(object) = &second else {
+                unreachable!()
+            };
+            let state = runtime.0.state.borrow();
+            let ObjectPayload::BytecodeFunction { authentication, .. } =
+                &state.heap.object(object.object_id()).unwrap().payload
+            else {
+                unreachable!()
+            };
+            *authentication.borrow_mut() = Some(facts);
+        }
+        let refreshed = OrdinaryCall::authenticate(&runtime, &second)
+            .unwrap()
+            .unwrap();
+        assert_ne!(refreshed.executable.bytecode_id(), Some(id));
+        assert_eq!(
+            get_facts(&second).publish_generation,
+            refreshed
+                .executable
+                .bytecode_id()
+                .unwrap()
+                .publish_generation()
+        );
+        assert!(!std::rc::Rc::ptr_eq(
+            &get_facts(&first).data,
+            &get_facts(&second).data
+        ));
+    }
+
+    #[test]
+    fn heap_authentication_cache_does_not_retain_runtime() {
+        let weak = {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let value = context.eval("(function(){ return 1 })").unwrap();
+            drop(OrdinaryCall::authenticate(&runtime, &value).unwrap());
+            std::rc::Rc::downgrade(&runtime.0)
+        };
+        assert!(weak.upgrade().is_none());
+    }
 
     #[test]
     fn direct_selection_borrows_owners_and_preserves_general_fallback() {

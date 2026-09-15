@@ -35,12 +35,12 @@ impl FrameTransaction<'_> {
     }
     pub(in crate::engine::vm) fn take_native_call_operands(
         &mut self,
-        runtime: &Runtime,
+        logical_active_depth: usize,
         count: usize,
         method: bool,
     ) -> Result<(Vec<Value>, Value), Error> {
         self.store
-            .reserve_native_argument_depth(runtime.0.active_frame_depth.get().saturating_add(1))?;
+            .reserve_native_argument_depth(logical_active_depth.saturating_add(1))?;
         self.store
             .take_native_call_operands_current(self.window, count, method)
     }

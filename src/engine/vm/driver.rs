@@ -40,6 +40,10 @@ pub(super) fn push_frame(
             .push_frame(&entry.executable.frame_layout(), entry.storage)?
     };
     Ok(prepared.install(Frame {
+        property_generation: entry.property_generation,
+        iterator_generation: entry.iterator_generation,
+        caller_realm: entry.caller_realm,
+        active_frame: entry.active_frame,
         executable: entry.executable,
         cold: entry.cold,
         window,
@@ -79,6 +83,10 @@ fn push_direct_call_frame(
     )?;
     frame.resume_pc = resume;
     Ok(prepared.install(Frame {
+        property_generation: entry.property_generation,
+        iterator_generation: entry.iterator_generation,
+        caller_realm: entry.caller_realm,
+        active_frame: entry.active_frame,
         executable: entry.executable,
         cold: entry.cold,
         window,
@@ -91,6 +99,9 @@ pub(super) fn prepare_captured_reuse(
     frame: &mut Frame,
     slots: &super::stack::SlotStore,
 ) -> Result<(), Error> {
+    if !frame.executable.has_captured_locals && frame.cold.reusable_captured_locals.is_empty() {
+        return Ok(());
+    }
     if frame.cold.reusable_captured_locals.len() != frame.executable.local_definitions.len() {
         return Err(Error::internal(
             "reusable captured-local flags disagree with the frame",
@@ -784,6 +795,7 @@ fn run_frames_with_state(
                 }
             }
         };
+        execution.frames.materialize(runtime)?;
         // Calls do not belong to the outlined frame-operation dispatcher.
         // Enter them before scanning unrelated cold exits on every invocation.
         if let RunExit::Call {
@@ -1474,15 +1486,14 @@ mod tests {
         FrameEntry {
             initialize_bindings: false,
             executable: prepared.executable,
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm: context.realm,
+            active_frame: prepared.active_frame.token(),
             cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
-                property_generation: 0,
-                iterator_generation: 0,
                 rare: std::cell::OnceCell::new(),
-                normalized_this: None,
                 return_to: None,
-                active_frame: prepared.active_frame.token(),
                 entry_guard: Some(prepared.active_frame),
-                caller_realm: context.realm,
                 function: (function).into(),
                 closure_slots,
                 reusable_captured_locals: vec![false; locals],
@@ -1929,7 +1940,7 @@ mod tests {
             };
             let frame = execution.frames.current_mut(id).unwrap();
             runtime
-                .update_active_bytecode_pc(frame.cold.active_frame, BytecodePc::new(frame.fault_pc))
+                .update_active_bytecode_pc(frame.active_frame, BytecodePc::new(frame.fault_pc))
                 .unwrap();
             assert!(
                 super::super::private_bindings::step(&runtime, &mut execution, id, index, kind)

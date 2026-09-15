@@ -22,6 +22,14 @@ impl OwnedSuspension {
     ) -> Result<Self, Error> {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.detach");
+        let runtime = execution
+            .frames
+            .current_mut(id)?
+            .cold
+            .function
+            .runtime()
+            .clone();
+        execution.frames.materialize(&runtime)?;
         let frame = execution.frames.current_mut(id)?;
         if frame.cold.has_pending_query()
             || frame.cold.iterator_wait.is_some()
@@ -45,6 +53,10 @@ impl OwnedSuspension {
             return_to,
             entry: FrameEntry {
                 initialize_bindings: false,
+                property_generation: frame.property_generation,
+                iterator_generation: frame.iterator_generation,
+                caller_realm: frame.caller_realm,
+                active_frame: frame.active_frame,
                 executable: frame.executable,
                 cold: frame.cold,
                 storage,
@@ -129,9 +141,11 @@ pub(super) fn prepare(
     let input = CallInput {
         this_value: parts.this_value,
         new_target: parts.new_target,
-        callee_global: parts
-            .callee_global
-            .ok_or(RuntimeError::Invariant("suspension has no callee global"))?,
+        callee_global: Some(
+            parts
+                .callee_global
+                .ok_or(RuntimeError::Invariant("suspension has no callee global"))?,
+        ),
     };
     let (_runtime, mut entry) =
         owned::prepare(host, input, &original_arguments).map_err(RuntimeError::Engine)?;

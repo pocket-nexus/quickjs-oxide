@@ -86,6 +86,7 @@ pub(super) enum RunExit {
     Throw,
     /// Owned arithmetic error in execution.pending; operands already consumed.
     PrimitiveThrow,
+    Materialize,
     BindingError {
         index: u32,
         redeclaration: bool,
@@ -164,6 +165,7 @@ impl RunExit {
             Self::NipCatch => "run_exit.NipCatch",
             Self::Throw => "run_exit.Throw",
             Self::PrimitiveThrow => "run_exit.PrimitiveThrow",
+            Self::Materialize => "run_exit.Materialize",
             Self::BindingError { .. } => "run_exit.BindingError",
             Self::PrivateInitialize { .. } => "run_exit.PrivateInitialize",
             Self::PrivateAccess { .. } => "run_exit.PrivateAccess",
@@ -257,10 +259,13 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     // frame resident. No slot borrow crosses active-PC publication or Drop.
     macro_rules! release_outside_slots {
         ($operation:expr) => {{
+            if !frame.active_frame.is_materialized() {
+                return Ok(RunExit::Materialize);
+            }
             drop(slots);
             pc.publish_fault();
             runtime
-                .update_active_bytecode_pc(cold.active_frame, super::BytecodePc::new(pc.fault))
+                .update_active_bytecode_pc(frame.active_frame, super::BytecodePc::new(pc.fault))
                 .map_err(runtime_error_to_vm_error)?;
             slots = transaction.slots();
             let released = $operation;
@@ -316,14 +321,22 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::PushThis => {
-                let value = if let Some(value) = &cold.normalized_this {
+                let value = if let Some(value) = cold
+                    .rare
+                    .get()
+                    .and_then(|rare| rare.normalized_this.as_ref())
+                {
                     copy_value(value)?
                 } else if frame.executable.metadata.strict
                     || matches!(cold.input.this_value, Value::Object(_))
                 {
                     copy_value(&cold.input.this_value)?
                 } else if matches!(cold.input.this_value, Value::Undefined | Value::Null) {
-                    copy_value(&Value::Object(cold.input.callee_global.clone()))?
+                    copy_value(&Value::Object(
+                        cold.input
+                            .callee_global(runtime, frame.executable.realm)?
+                            .clone(),
+                    ))?
                 } else {
                     return Ok(RunExit::NormalizeThis);
                 };
@@ -331,23 +344,23 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::PutField(index) => {
-                let Some(identity) = cold.property_generation.checked_add(1) else {
+                let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 };
                 if !slots.ordinary_field_immediate_write(runtime, &frame.executable, *index)? {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 }
-                cold.property_generation = identity;
+                frame.property_generation = identity;
                 true
             }
             Instruction::PutArrayEl => {
-                let Some(identity) = cold.property_generation.checked_add(1) else {
+                let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(None));
                 };
                 if !slots.typed_array_number_write(runtime)? {
                     return Ok(RunExit::SetProperty(None));
                 }
-                cold.property_generation = identity;
+                frame.property_generation = identity;
                 true
             }
             Instruction::GetField(index) => {
@@ -1217,7 +1230,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_)) {
                     return Ok(RunExit::CloseCaptured(*index));
                 } else {
-                    cold.reusable_captured_locals[usize::from(*index)] = false;
+                    if let Some(flag) = cold.reusable_captured_locals.get_mut(usize::from(*index)) {
+                        *flag = false;
+                    }
                     true
                 }
             }
@@ -1237,7 +1252,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 };
                 if ready {
                     let old = slots.replace_local(*index, FrameBinding::Uninitialized)?;
-                    cold.reusable_captured_locals[usize::from(*index)] = false;
+                    if let Some(flag) = cold.reusable_captured_locals.get_mut(usize::from(*index)) {
+                        *flag = false;
+                    }
                     if matches!(old, FrameBinding::Direct(_)) {
                         release_displaced(runtime, old)?;
                     }
@@ -1245,7 +1262,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if !ready {
                     release_outside_slots!({
                         let old = slots.replace_local(*index, FrameBinding::Uninitialized)?;
-                        cold.reusable_captured_locals[usize::from(*index)] = false;
+                        if let Some(flag) =
+                            cold.reusable_captured_locals.get_mut(usize::from(*index))
+                        {
+                            *flag = false;
+                        }
                         old
                     });
                 }
@@ -1635,16 +1656,27 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             if let Some(kind) = super::numeric::operation::NumericKind::for_instruction(instruction)
             {
                 if numeric::supported(&slots, kind) {
+                    // Symbol release and BigInt errors may observe the stack.
+                    // Number/String/bool coercions cannot construct a JS error.
+                    if !frame.active_frame.is_materialized()
+                        && (0..if kind.unary() { 1 } else { 2 }).any(|i| {
+                            matches!(slots.peek(i), Ok(Value::Symbol(_) | Value::BigInt(_)))
+                        })
+                    {
+                        return Ok(RunExit::Materialize);
+                    }
                     // Preserve active-PC admission before consuming operands,
                     // then keep this transaction and run frame across parsing.
                     drop(slots);
                     pc.publish_fault();
-                    runtime
-                        .update_active_bytecode_pc(
-                            cold.active_frame,
-                            super::BytecodePc::new(pc.fault),
-                        )
-                        .map_err(runtime_error_to_vm_error)?;
+                    if frame.active_frame.is_materialized() {
+                        runtime
+                            .update_active_bytecode_pc(
+                                frame.active_frame,
+                                super::BytecodePc::new(pc.fault),
+                            )
+                            .map_err(runtime_error_to_vm_error)?;
+                    }
                     if !numeric::complete(
                         runtime,
                         frame.executable.realm,

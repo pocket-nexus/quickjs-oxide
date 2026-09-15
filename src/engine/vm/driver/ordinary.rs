@@ -36,6 +36,7 @@ pub(super) fn enter_selected(
     tail: bool,
     selected_native: Option<crate::engine::object::LinkedNativeSelection>,
 ) -> Result<Entry, Error> {
+    let logical_depth = execution.frames.logical_active_depth(runtime);
     let frame = execution.frames.current_mut(id)?;
     let count = usize::from(count);
     let depth = execution.slots.depth(&frame.window);
@@ -107,8 +108,9 @@ pub(super) fn enter_selected(
             let minimum = selected.minimum();
             let operation = selected.take_operation();
             let (arguments, receiver) =
-                transaction.take_native_call_operands(runtime, count, method)?;
+                transaction.take_native_call_operands(logical_depth, count, method)?;
             drop(transaction);
+            execution.frames.materialize(runtime)?;
             let result = super::super::proxy_get_driver::start_native_with_classification(
                 runtime,
                 execution,

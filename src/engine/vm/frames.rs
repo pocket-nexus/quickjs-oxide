@@ -542,6 +542,35 @@ impl Runtime {
         )
     }
 
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn publish_materialized_pc(
+        &self,
+        token: ActiveFrameToken,
+        depth: Option<usize>,
+        pc: BytecodePc,
+    ) -> Result<(), RuntimeError> {
+        let mut state = self.0.state.borrow_mut();
+        let index = depth
+            .or_else(|| state.active_frames.iter().rposition(|f| f.token == token))
+            .ok_or(RuntimeError::Invariant("materialized frame is absent"))?;
+        let frame = state
+            .active_frames
+            .get_mut(index)
+            .filter(|f| f.token == token)
+            .ok_or(RuntimeError::Invariant(
+                "materialized frame identity changed",
+            ))?;
+        let ActiveFrameKind::Bytecode { pc: stored, .. } = &mut frame.kind else {
+            return Err(RuntimeError::Invariant(
+                "materialized PC targets a native frame",
+            ));
+        };
+        *stored = Some(pc);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
+        Ok(())
+    }
+
     pub(crate) fn update_active_bytecode_pc(
         &self,
         token: ActiveFrameToken,
@@ -752,6 +781,16 @@ pub(crate) struct ActiveFrameRecord {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveFrameToken(pub(in crate::engine::vm) u64);
+impl ActiveFrameToken {
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) const fn unmaterialized() -> Self {
+        Self(0)
+    }
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn is_materialized(self) -> bool {
+        self.0 != 0
+    }
+}
 
 /// Flags which belong to a QuickJS stack frame rather than to the callable
 /// heap object. Raw IteratorNext dispatch keeps a rooted validation frame but
@@ -819,6 +858,11 @@ pub(crate) struct BacktraceBarrierGuard {
 }
 
 impl ActiveFrameGuard {
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn registry_depth(&self) -> usize {
+        self.depth
+    }
+
     #[cfg(feature = "stack-vm")]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
@@ -911,6 +955,52 @@ impl Drop for BacktraceBarrierGuard {
 }
 
 impl Runtime {
+    /// Called only by FrameStore's observation protocol. Frame owners retain
+    /// the function and immutable executable until this guard is retired.
+    #[cfg(feature = "stack-vm")]
+    pub(in crate::engine::vm) fn materialize_owned_frame(
+        &self,
+        frame: &super::frame::Frame,
+    ) -> Result<ActiveFrameGuard, RuntimeError> {
+        let mut state = self.0.state.borrow_mut();
+        let token = ActiveFrameToken(state.next_active_frame_token);
+        state.next_active_frame_token = token.0.checked_add(1).ok_or(RuntimeError::Invariant(
+            "active-frame token space was exhausted",
+        ))?;
+        let depth = state.active_frames.len();
+        state.active_frames.push(ActiveFrameRecord {
+            token,
+            native_continuation: false,
+            function: frame.cold.function.object_id(),
+            realm: frame.executable.realm,
+            flags: ActiveFrameFlags {
+                strict: frame.executable.metadata.strict,
+                ..Default::default()
+            },
+            kind: ActiveFrameKind::Bytecode {
+                bytecode: frame
+                    .executable
+                    .bytecode_id()
+                    .ok_or(RuntimeError::Invariant(
+                        "owned frame has no bytecode identity",
+                    ))?,
+                pc: Some(BytecodePc::new(frame.fault_pc)),
+            },
+        });
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("lazy_frame_materialized");
+        Ok(ActiveFrameGuard {
+            runtime: self.clone(),
+            token,
+            depth,
+            active: true,
+            _function_root: None,
+            _bytecode_root: None,
+        })
+    }
+}
+
+impl Runtime {
     /// The sealed witness authenticated these identities together. Its owners
     /// move into the frame before execution; registration owns only a token.
     #[cfg(feature = "stack-vm")]
@@ -942,7 +1032,7 @@ impl Runtime {
                 ..Default::default()
             },
             kind: ActiveFrameKind::Bytecode {
-                bytecode: executable.root().unwrap().bytecode_id(),
+                bytecode: executable.bytecode_id().unwrap(),
                 pc: None,
             },
         });

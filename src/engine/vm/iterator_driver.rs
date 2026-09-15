@@ -638,8 +638,7 @@ impl PendingIterator {
     }
 
     fn new(frame: &mut super::frame::Frame, id: FrameId, mode: Mode) -> Result<Self, Error> {
-        frame.cold.iterator_generation = frame
-            .cold
+        frame.iterator_generation = frame
             .iterator_generation
             .checked_add(1)
             .ok_or_else(|| Error::internal("iterator operation identity exhausted"))?;
@@ -649,7 +648,7 @@ impl PendingIterator {
             done: false,
             frame: id,
             pc: frame.fault_pc,
-            generation: frame.cold.iterator_generation,
+            generation: frame.iterator_generation,
             realm: frame.executable.realm,
             array: None,
             iterable: Value::Undefined,

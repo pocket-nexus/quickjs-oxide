@@ -1,5 +1,6 @@
 pub(crate) use super::executable::{
-    PublishedEvalEnvironment, PublishedFunctionData, PublishedFunctionSnapshot,
+    OrdinaryAuthentication, PublishedEvalEnvironment, PublishedFunctionData,
+    PublishedFunctionSnapshot,
 };
 #[cfg(feature = "test262-host")]
 use crate::engine::api::error::Error;

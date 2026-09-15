@@ -224,7 +224,13 @@ pub(super) fn step(
     }
     if let RunExit::CloseCaptured(index) = exit {
         let frame = execution.frames.current_mut(id)?;
-        frame.cold.reusable_captured_locals[usize::from(index)] = false;
+        if let Some(flag) = frame
+            .cold
+            .reusable_captured_locals
+            .get_mut(usize::from(index))
+        {
+            *flag = false;
+        }
         super::bindings::close_frame_binding(
             runtime,
             execution.slots.local_mut(&frame.window, index)?,
@@ -515,7 +521,7 @@ pub(super) fn step(
         let value = execution.slots.pop(&mut frame.window)?;
         let completion = super::bindings::finish_derived_return(
             runtime,
-            frame.cold.caller_realm,
+            frame.caller_realm,
             definition,
             Some(execution.slots.local(&frame.window, index)?),
             value,

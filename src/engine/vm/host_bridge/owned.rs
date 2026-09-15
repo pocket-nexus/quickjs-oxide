@@ -45,16 +45,15 @@ pub(in crate::engine::vm) fn execute_call(
     for value in arguments {
         original_arguments.push(copy_value(value).map_err(RuntimeError::Engine)?);
     }
-    let local_count = prepared.executable.local_definitions.len();
+    let local_count = if prepared.executable.has_captured_locals {
+        prepared.executable.local_definitions.len()
+    } else {
+        0
+    };
     let cold = crate::engine::vm::frame::ColdFrame::new(FrameCold {
-        property_generation: 0,
-        iterator_generation: 0,
         rare: std::cell::OnceCell::new(),
-        normalized_this: None,
         return_to: None,
         entry_guard: None,
-        caller_realm,
-        active_frame: prepared.active_frame.token(),
         function: (callable.as_object().clone()).into(),
         closure_slots,
         reusable_captured_locals: vec![false; local_count],
@@ -67,6 +66,11 @@ pub(in crate::engine::vm) fn execute_call(
         original_arguments.capacity() * size_of::<Value>(),
     );
     let entry = FrameEntry {
+        property_generation: 0,
+        iterator_generation: 0,
+        caller_realm: caller_realm,
+        active_frame: prepared.active_frame.token(),
+
         initialize_bindings: true,
         executable: prepared.executable,
         cold,
@@ -150,15 +154,14 @@ pub(in crate::engine::vm) fn prepare(
     let entry = FrameEntry {
         initialize_bindings: false,
         executable,
+        property_generation: 0,
+        iterator_generation: 0,
+        caller_realm: caller_realm,
+        active_frame: active_frame_token,
         cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
-            property_generation: 0,
-            iterator_generation: 0,
             rare: std::cell::OnceCell::new(),
-            normalized_this: None,
             return_to: None,
             entry_guard: None,
-            caller_realm,
-            active_frame: active_frame_token,
             function: (function).into(),
             closure_slots,
             reusable_captured_locals,
@@ -218,25 +221,30 @@ pub(in crate::engine::vm) fn detach_frame(
     resume_pc: usize,
 ) -> Result<(RuntimeVmHost, VmActivation, Vec<Value>), Error> {
     let FrameEntry {
+        property_generation: _,
+        iterator_generation: _,
+        caller_realm,
+        active_frame,
         initialize_bindings: _,
         executable,
         cold,
         storage,
     } = entry;
+    executable
+        .ensure_root(&runtime)
+        .map_err(super::super::exception::runtime_error_to_vm_error)?;
     let has_pending_query = cold.has_pending_query();
     let FrameCold {
         rare,
-        normalized_this,
-        caller_realm,
-        active_frame,
         function,
         closure_slots,
-        reusable_captured_locals,
+        mut reusable_captured_locals,
         input,
         ..
     } = cold.into_inner();
     let crate::engine::vm::frame::FrameRare {
         regions,
+        normalized_this,
         resume_throw,
         iterator_wait,
         eval_arguments,
@@ -254,7 +262,8 @@ pub(in crate::engine::vm) fn detach_frame(
         ));
     }
     let function = function.into_inner();
-    let input = input.into_inner();
+    let mut input = input.into_inner();
+    let callee_global = input.callee_global(&runtime, executable.realm)?.clone();
     let mut activation = VmActivation::new_in_realm(
         executable.frame_layout(),
         caller_realm,
@@ -262,12 +271,18 @@ pub(in crate::engine::vm) fn detach_frame(
         function.clone(),
         input.this_value,
         input.new_target,
-        input.callee_global,
+        callee_global,
     );
     activation.regions = regions;
     activation.normalized_this = normalized_this;
     activation.stack = storage.operands;
     activation.pc = resume_pc;
+    // RuntimeVmHost is a cold fully materialized representation. Freeze and
+    // legacy host helpers require one flag per local even when ordinary frames
+    // proved that no local can be captured and omitted the vector entirely.
+    if reusable_captured_locals.is_empty() && !executable.has_captured_locals {
+        reusable_captured_locals.resize(storage.locals.len(), false);
+    }
     let host = RuntimeVmHost {
         runtime,
         active_frame_token: active_frame,

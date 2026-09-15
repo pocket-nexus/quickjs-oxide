@@ -224,7 +224,7 @@ pub(super) fn read_progress_selected(
             Err(error) => {
                 runtime
                     .update_active_bytecode_pc(
-                        frame.cold.active_frame,
+                        frame.active_frame,
                         super::BytecodePc::new(frame.fault_pc),
                     )
                     .map_err(runtime_error_to_vm_error)?;

@@ -140,7 +140,7 @@ impl Runtime {
             input: CallInput {
                 this_value,
                 new_target,
-                callee_global,
+                callee_global: Some(callee_global),
             },
         })
     }

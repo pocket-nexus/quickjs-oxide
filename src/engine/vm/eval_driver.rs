@@ -75,14 +75,19 @@ fn prepare_and_enter(
     let string = matches!(input, Value::String(_));
     let this_value = if !string {
         frame.cold.input.this_value.clone()
-    } else if let Some(value) = &frame.cold.normalized_this {
+    } else if let Some(value) = frame
+        .cold
+        .rare
+        .get()
+        .and_then(|rare| rare.normalized_this.as_ref())
+    {
         value.clone()
     } else if frame.executable.metadata.strict
         || matches!(frame.cold.input.this_value, Value::Object(_))
     {
         frame.cold.input.this_value.clone()
     } else if matches!(frame.cold.input.this_value, Value::Null | Value::Undefined) {
-        Value::Object(frame.cold.input.callee_global.clone())
+        Value::Object(frame.cold.input.callee_global(runtime, realm)?.clone())
     } else {
         let value = match runtime
             .native_to_object(realm, frame.cold.input.this_value.clone())
@@ -97,6 +102,10 @@ fn prepare_and_enter(
         value
     };
     let prepared = if string {
+        frame
+            .executable
+            .ensure_root(runtime)
+            .map_err(runtime_error_to_vm_error)?;
         let descriptor = frame
             .executable
             .eval_environment(environment)

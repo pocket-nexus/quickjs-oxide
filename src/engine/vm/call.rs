@@ -1,6 +1,8 @@
 #[cfg(feature = "stack-vm")]
 pub(super) mod ordinary;
 #[cfg(feature = "stack-vm")]
+mod protocol;
+#[cfg(feature = "stack-vm")]
 mod request;
 #[cfg(feature = "stack-vm")]
 pub(in crate::engine::vm) use request::{

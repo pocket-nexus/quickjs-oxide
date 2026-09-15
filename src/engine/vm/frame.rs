@@ -63,6 +63,7 @@ pub(super) enum ConstructorReturn {
 
 #[derive(Default)]
 pub(super) struct FrameRare {
+    pub normalized_this: Option<Value>,
     property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub iterator_wait: Option<crate::engine::vm::iterator_driver::PendingIterator>,
     pub resume_throw: Option<Value>,
@@ -73,14 +74,9 @@ pub(super) struct FrameRare {
 }
 
 pub(super) struct FrameCold {
-    pub property_generation: u64,
-    pub iterator_generation: u64,
     pub rare: std::cell::OnceCell<Box<FrameRare>>,
-    pub normalized_this: Option<crate::engine::value::Value>,
     pub return_to: Option<ReturnTarget>,
     pub entry_guard: Option<ActiveFrameGuard>,
-    pub caller_realm: ContextId,
-    pub active_frame: ActiveFrameToken,
     pub function: storage::Resident<ObjectRef>,
     pub closure_slots: crate::engine::vm::closure::ClosureSlots,
     pub reusable_captured_locals: Vec<bool>,
@@ -89,6 +85,11 @@ pub(super) struct FrameCold {
 
 /// Owners crossing the driver boundary before installation or after detachment.
 pub(super) struct FrameEntry {
+    pub property_generation: u64,
+    pub iterator_generation: u64,
+    pub caller_realm: ContextId,
+    pub active_frame: ActiveFrameToken,
+
     pub initialize_bindings: bool,
     pub executable: PublishedFunctionSnapshot,
     pub cold: ColdFrame,
@@ -96,6 +97,11 @@ pub(super) struct FrameEntry {
 }
 
 pub(super) struct Frame {
+    pub property_generation: u64,
+    pub iterator_generation: u64,
+    pub caller_realm: ContextId,
+    pub active_frame: ActiveFrameToken,
+
     pub executable: PublishedFunctionSnapshot,
     pub window: FrameWindow,
     pub fault_pc: usize,
@@ -117,6 +123,8 @@ pub(super) struct FrameStore {
     // Exact sum: at most usize::MAX frames, each charged at most usize::MAX.
     // Wider accounting preserves overflow recovery without rescanning ancestors.
     installed_wait_depth: u128,
+    materialized_watermark: usize,
+    unmaterialized_depth: usize,
 }
 
 impl FrameStore {
@@ -127,11 +135,60 @@ impl FrameStore {
             next_generation: 1,
             limit,
             installed_wait_depth: 0,
+            materialized_watermark: 0,
+            unmaterialized_depth: 0,
         }
     }
 
     pub(super) fn depth(&self) -> usize {
         self.frames.len()
+    }
+
+    /// Register only the newly observable suffix; ancestors have been frozen
+    /// at their call PC since the previous suffix was materialized.
+    pub(super) fn materialize(
+        &mut self,
+        runtime: &crate::engine::api::runtime::Runtime,
+    ) -> Result<(), Error> {
+        use super::exception::runtime_error_to_vm_error;
+        let depth = self.frames.len();
+        let start = self.materialized_watermark.saturating_sub(1);
+        for (offset, (_, frame)) in self.frames[start..].iter_mut().enumerate() {
+            if frame.active_frame.is_materialized() {
+                runtime
+                    .publish_materialized_pc(
+                        frame.active_frame,
+                        frame
+                            .cold
+                            .entry_guard
+                            .as_ref()
+                            .map(|guard| guard.registry_depth()),
+                        super::BytecodePc::new(frame.fault_pc),
+                    )
+                    .map_err(runtime_error_to_vm_error)?;
+            } else {
+                let guard = runtime
+                    .materialize_owned_frame(frame)
+                    .map_err(runtime_error_to_vm_error)?;
+                frame.active_frame = guard.token();
+                self.unmaterialized_depth -= 1;
+                frame.cold.entry_guard = Some(guard);
+            }
+            self.materialized_watermark = start + offset + 1;
+        }
+        self.materialized_watermark = depth;
+        Ok(())
+    }
+
+    pub(super) fn logical_active_depth(
+        &self,
+        runtime: &crate::engine::api::runtime::Runtime,
+    ) -> usize {
+        runtime
+            .0
+            .active_frame_depth
+            .get()
+            .saturating_add(self.unmaterialized_depth)
     }
 
     pub(super) fn can_push(&self) -> bool {
@@ -221,6 +278,8 @@ impl FrameStore {
 
     pub(super) fn pop_current(&mut self) -> Option<Frame> {
         let (_, frame) = self.frames.pop()?;
+        self.materialized_watermark = self.materialized_watermark.min(self.frames.len());
+        self.unmaterialized_depth -= usize::from(!frame.active_frame.is_materialized());
         self.remove_installed_wait_depth(frame.cold.pending_depth());
         Some(frame)
     }
@@ -256,6 +315,7 @@ impl FramePush<'_> {
         };
         self.store.next_generation = self.next;
         let depth = frame.cold.pending_depth();
+        self.store.unmaterialized_depth += usize::from(!frame.active_frame.is_materialized());
         self.store.frames.push((id, frame));
         self.store.installed_wait_depth += depth as u128;
         #[cfg(feature = "profiling")]
@@ -445,18 +505,13 @@ mod tests {
             .unwrap();
         let function = runtime.new_object(None).unwrap();
         let cold = super::ColdFrame::new(FrameCold {
-            property_generation: 0,
-            iterator_generation: 0,
             rare: std::cell::OnceCell::new(),
-            normalized_this: None,
             return_to: None,
             entry_guard: None,
-            caller_realm: realm,
-            active_frame: ActiveFrameToken(0),
             input: (CallInput {
                 this_value: Value::Undefined,
                 new_target: Value::Undefined,
-                callee_global: function.clone(),
+                callee_global: Some(function.clone()),
             })
             .into(),
             function: (function).into(),
@@ -465,6 +520,11 @@ mod tests {
         });
         (
             Frame {
+                property_generation: 0,
+                iterator_generation: 0,
+                caller_realm: realm,
+                active_frame: ActiveFrameToken(0),
+
                 executable,
                 window,
                 fault_pc: 0,
@@ -531,6 +591,10 @@ mod tests {
         let (frame, _slots) = frame(runtime, realm);
         FrameEntry {
             initialize_bindings: false,
+            property_generation: frame.property_generation,
+            iterator_generation: frame.iterator_generation,
+            caller_realm: frame.caller_realm,
+            active_frame: frame.active_frame,
             executable: frame.executable,
             cold: frame.cold,
             storage: FrameStorage {
