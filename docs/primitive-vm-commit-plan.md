@@ -1,6 +1,6 @@
 # 栈 VM：一个 PR 内的 10 个 commit
 
-状态：2026-09-15，S01–S07 阶段验收通过；S08 已按现有实现与性能记录收口；S09.1–S09.3 已实现并提交，`3860cba3` 后 R1/R2/R5 三处确认漏项已补齐。本次 S0 与当前实现各三轮完整 benchmark/Profile 已完成：58 fixed 中 32 项中位耗时更高（28 项三次均更慢且范围分离，4 项方向不一致），67 compile 中 9 项中位耗时更高（均范围重叠）；当前原始八项及 combined 三轮全部成功，S0 原始 Earley/combined 三轮栈溢出。残余回退、owner/宽 Step 搬运和因果归因仍开放，**S09 尚未完成**。剩余工作与原退出条件统一在“S09 已提交后的全部 S0 回退修复计划”；以[三轮公平复测报告](reports/primitive-vm-s09-fair-three-rounds.md)为最新性能证据。S10 尚未开始。
+状态：2026-09-15，S01–S07 阶段验收通过；S08 已按现有实现与性能记录收口；S09.1–S09.3 已实现并提交，`3860cba3` 后 R1/R2/R5 三处确认漏项已补齐。本次 S0 与当前实现各三轮完整 benchmark/Profile 已完成：58 fixed 中 32 项中位耗时更高（28 项三次均更慢且范围分离，4 项方向不一致），67 compile 中 9 项中位耗时更高（均范围重叠）；当前原始八项及 combined 三轮全部成功，S0 原始 Earley/combined 三轮栈溢出。残余回退、owner/宽 Step 搬运和因果归因仍开放，**S09 尚未完成**。剩余工作与原退出条件统一在“S09 已提交后的全部 S0 回退修复计划”；以[三轮公平复测报告](reports/primitive-vm-s09-fair-three-rounds.md)为最新性能证据，复测后的根因归纳与分簇修复计划（P1–P4 共同原则、簇 A–G、实施顺序）已写入该节“三轮复测后的根因归纳与分簇修复计划”小节。S10 尚未开始。
 
 **用户最新执行约束（2026-09-15）：后续仅构建、测试、benchmark 和 Profile 新执行核心（当前 `--features stack-vm`）。不再构建或运行旧 default 执行路径，也不重跑 S0/S07/S08 等历史候选；旧数据只读取已有记录。本文以前要求 default/stack-vm 双配置或新旧对跑的流程不再适用。历史已执行记录保留，但不能据此再次启动旧路径。Test262/语义 oracle 仍用于核对新核心，不把它们误称为另一个性能候选。**
 
@@ -648,6 +648,38 @@ Math.min 的 1,105,000 次主体调用**已经**不分配域内 argv 且没有�
 全部 58 fixed 的三轮 CPU Profile/硬件计数有效，当前三种 legacy bridge 全部为零。S0 仅支持内存 Profile，不存在后加 VM 成本 schema；174 条原始解析状态经 stdout/退出码/JSON 核验按接口能力修正，缺失计数不是零。实际失败 45 条全部为 S0 栈溢出，完整保留。RSS 普通调用/闭包/固定 Earley 的三轮中位差分别 +19.84%/+19.32%/+1.71%，同样保留为内存成本。
 
 本次完成复测，不是完成全部性能修复。原 37 项及 R1–R5 的历史实现账本保留，当前待办以完整 58 项最新差值为准，不漏掉新增正差值、不把波动当成确定因果。原退出条件与未完成归因继续属于同一次 S09 验收。
+
+##### 三轮复测后的根因归纳与分簇修复计划（2026-09-15）
+
+证据来源为三轮复测 JSON 的 `hardware_counters`（三轮中位）与 `cost_profiles`（同源 profiling 二进制第 1 轮计数；正式耗时不含插桩）。计数与热点份额支持下述机制目标，但每项收益仍须按本节既有纪律单变量消融验证；不据 self 份额或计数宣称因果，也不据此改动结案任何回退行。
+
+**两种病，可用硬件计数区分：**
+
+1. **协议往返次数超过必要下限（纯指令增量）。** `bigint64_arith` 是纯样本：IPC 持平（2.65→2.66），指令 +34.5%。3,201,603 次 ConvertAdd 付出 22,438,715 次 fault-PC 写、14,411,706 次槽认证、30,440,417 次槽搬运、7,225,604 次 `slot_copy.BigIntImmediate`。`math_min` 的 1,105,000 次调用付出 11,050,461 次槽认证（约 10/调用）、14,382,965 次 fault-PC 写（约 13/调用）、18,799,727 次槽搬运、3,315,204 次 PC 发布，另有 1,105,097 次 `run_exit.Environment`（环境读也整程退出 run）与 1,105,015 次方法属性 probe。R4 机械验收自设目标为约 3 次必要认证/运算，现状约为其两倍以上。
+2. **驱动器结构破坏流水线（IPC 下降）。** `local_destruct` 是纯样本：指令仅 +0.3%，周期 +20.1%（IPC −16.5%，branch-misses +30.1%）。同病：`string_to_float` IPC −15.7%、`v8-regexp` −14.2%、`math_min` −13.5%、`map_set_int` −11.1%、`array_for_in` −11.1%。调用类 branch-misses 大涨（func_call +78.0%、闭包 +66.8%、global_func_call +62.8%、array_pop +51.2%）表明 `run_frames_with_state` 约 20 臂顺序扫描、`frame_operations::step` 二级扫描与宽 `Step`/`Resume` 按值搬运（真实等待成功路两次 584 B memcpy，见 R2 残余行）的分支/数据依赖结构是共同来源——这三项用例本身已更快，佐证该结构成本是全局的。
+
+已区分协议性成本与实现选择：借用边界（分配/retain-release/回调必须在 `RunSlots` 之外，`stack/window.rs:12`）、原始错误顺序、预算先于副作用、真实等待的 identity/Query 容量为协议性，不动；同一逻辑操作的重复认证（`property_driver.rs:427/:467` 两次 `run_window`；`frame_operations/numeric.rs` 输入/输出各一次外加散落 peek/pop/push）、每次调用重跑 `NativeOperation::for_target` 约 113 臂 match、`reserve_native_argument_depth` 每次借 state 读 `active_frames.len()`（`native.rs:118`）、`publish_selected` 的 `clone_set_key/value/receiver`（`ordinary/set.rs:891`）为实现选择，均可消除。
+
+**四条共同机制原则（均为既有模式的推广，不新设特例）：**
+
+- **P1 一次借用一个事务。** 一个逻辑操作 = 输入事务（域检查+分类+取 owner，1 次认证）→ 借用外风险区（分配/解析/错误物化）→ 输出事务（提交+一次打包 PC 发布，1 次认证）。`with_linked_own_read` 为范本；owning 值经 `&mut Option` pending 模式传出借用（`push_pending` 同款），消除第二次 `run_window`。
+- **P2 发布期事实随代码走。** sealed metadata / `PublishedFunctionSnapshot` 携带 native 的 `NativeOperation` kind、静态键 atom（`linked_field_atom` 已有）、fusion span；运行时零重推导。发布期事实不可变，不违反本节“无失效机制缓存”的禁令（S09.1、R5.4 行）；仍不建立任何运行期 shape/属性值缓存。
+- **P3 驻留状态 + 窄效果枚举。** `State` 驻留、`&mut` 推进，阶段间只传窄 action；宽 `Step`/`Resume`/`Next` 仅在真实等待发布时构造一次。`MutationAction`/`SelectedSet`/`IteratorAction` 三处已落地，推广为全家族规范。
+- **P4 run 内受守卫叶子。** 按 `array_immediate_read` 模式扩展 run 可原位完成的操作集（环境 Direct/immediate captured 读、Array/String length、for-in fast-array 推进、`ReplaceBinding`/`ReleaseOperand` 原地处理）；每叶子显式 guard，不命中原路退驱动器，语义路径不变。
+
+**独立消融候选（需先审计，不与其他项捆绑）：惰性 fault-PC。** `run_frame_fault_pc_write` 在多用例中为第一大计数。借用内不发生回调/GC，理论上 run 可持局部 PC，仅在退出点与抛错前写回。动手前必须枚举 run 借用期间全部 fault-PC 读取方（异常物化、backtrace、诊断帧、溢出恢复、profiling），审计不通过则放弃，不得以性能理由削弱可观察性。
+
+**分簇计划（编号供残余修复引用；验收计数一律用既有 profiling 事件）：**
+
+- **簇 A 转换完成协议**（BigInt64 +37.31%、string_to_float +26.70%、int_to_string +12.01%、string_build 系）。输入借用已是单事务，残余在输出与频次。A1：输出事务化，一次认证+一次打包 PC 发布（现融合分支发布 resume/fault/active 三处）。A2：`ready::run` 内驻留转换循环，ConvertAdd 完成后直接重入 run，不回 `run_frames_with_state`（普通 Call/Return resident 同款）。A3：为 BigInt/String 加法链补 fusion span，压 `slot_copy.BigIntImmediate`。约束：维持 owned-fusion.md 的“String/BigInt 分配不进 run 借用”，不做 run 内 BigInt 叶子。验收：每转换认证 ≤2、PC 发布 ≤1 组。
+- **簇 B native 同步调用**（Math.min +29.72%、Map/WeakMap +14~18%、depth-native +15~19%）。`begin_synchronous` 已零 Query/零 argv 分配，残余为逐项费用。B1：P2 落地，sealed metadata 携带 operation kind，运行时 `for_target` 调用数归零。B2：`reserve_native_argument_depth` 改增量记账（`installed_wait_depth` 先例）；`identity_completion` 与 generation 推进移入真实等待分支（同 R4.4 遗留）。B3：环境读叶子（P4），消除 `run_exit.Environment` 每调用一次的整程退出。B4：静态键方法取用+调用合并为一次借用内 probe+分类+安装；不缓存 lookup 结果。验收：math_min 认证 ≤4/调用、run 退出 ≤1/调用，depth-native 差 <5%。
+- **簇 C 属性读写驱动**（richards +14.97%、raytrace +14.88%、deltablue +11.27%、splay +10.57%、固定 Earley +26.61%、crypto +9.79%）。C1：读输出单事务，owning 键 pending 传出，`complete_read` 合并为一次认证。C2：R5.4 落实，`SetResume` 驻留 `&mut` 推进，`publish_selected` 及 `clone_set_*` 仅在真实等待发生。C3：R5.5 落实，`advance_without_callback` 本地消费 `ArrayLengthStep::Complete`（`array_length_decr` 现付 1,107,050 次 Query）。C4：R5.2 落实，补 Array length/String length/Arguments own-index 即时读叶子。验收：`set_owner_clone.*` ≈ 真实等待数。
+- **簇 D 迭代协议**（local_destruct +18.65%、for-in +8.22%）。D1：R5.3 落实，`ReplaceBinding`/`ReleaseOperand` 在 run 内借用结束后原地处理再继续（`frame_operations/direct.rs` 逻辑前移；for-in 现付 1,352,500 次 String owner 退出）。D2：for-in fast-array 推进叶子化，`ForInResume::Phase` 驻留帧内（现 2,123,425 次本地 step + 1,379,550 次 ForIn 退出）。D3：非 Array 迭代器的 `PendingIterator` Box（312 B）延迟到真实等待（Array 路径 `iterator_driver.rs:226` 已做）。验收：for-in 每迭代 run 退出 ≤1，local_destruct IPC 回升。
+- **簇 E 正则外围**（v8-regexp +41.28%、replace +19.98%、regexp_ascii/utf16 +11%）。执行器两边相同，回退在外围：整用例 6,981,639 次 query_dispatch、7,284,996 + 3,634,260 次 set owner 克隆、2,531,208 次 dispatch_write.define。E1：直接受益于 C2/C3，先落 C 再复测。E2：match 结果对象/数组按发布期已知键序批量 define，复用 R5 prepared property effect。E3 归因先行：解析多用例 5~10% 的未解析地址 `0x18f413`（原始 perf.data 在本地证据目录）；核对 query_dispatch 的操作构成后再定 E2 覆盖面。`Utf16Units::next` 为两边共有成本，不属于本回退账本，另行提案。验收：query_dispatch 与 set_owner_clone 各降一个数量级。
+- **簇 F 数组变异**（push +10.57%、pop +11.48%、length_decr +6.63%、prop_delete +10.04%）。F1：C3 落地后 `local_set_result` 覆盖 ArrayLength 分支，无 proxy/getter 时 push/pop 等待迁移与 Query 归零（现 push 268,002 次迁移 / 1,072,014 次 Query，每 push 2 次 `set_owner_clone.ObjectRef`）。F2：dense 快路三 probe 合一，读 length+写元素+写 length 为单借用复合 effect（`SetProbe::Stored` 已证 dense 写免 continuation root）。F3：数字索引键不经 JsString→intern（push 第一热点为 `intern_property_key_js_string`）。验收：四项差 <5%。
+- **簇 G RSS**（普通调用/闭包 +19.84%/+19.32%，约 2 MiB）。resident 槽/帧预分配成本，换得 width-256 −90% 与深栈全通过。初始容量降档+高水位增长；只记账，排最后，不以执行更快抵销。
+
+**实施顺序：**第 1 步事务原语与打包 PC 发布（P1 基建，C1 首个使用者）→ 第 2 步簇 B → 第 3 步簇 C → 第 4 步簇 A → 第 5 步 F、D、E（E 依赖 C 后复测）；惰性 fault-PC 独立审计与消融；G 记账。四项三轮方向不一致用例（string_to_int、string_build3、global_func_call、array_slice）暂不投入。本计划不改变本节任何验收条件与证据纪律；每条目完成时须回填对应计数变化与 A/B 结果，未达标行继续保持未完成。
 
 **执行与验收顺序：**先固定机制和可证伪指标，定向验证后合并候选，再对同一最终源码统一运行完整门禁；发现新失败才重新打开相关实现。阶段目标不是“所有计数归零”：必要的参数校验/初始化、实际创建捕获和最终释放仍按真实工作量计费；普通调用的额外记账必须与祖先数 D、整个环境宽度 C 无关。
 
