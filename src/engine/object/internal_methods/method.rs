@@ -160,13 +160,7 @@ impl MethodResume {
         // level first tries the trap cache and otherwise keeps the dynamic read.
         loop {
             if matches!(value, Value::Undefined | Value::Null) {
-                let target = self
-                    .0
-                    .rooted
-                    .as_ref()
-                    .expect("proxy owner")
-                    .target
-                    .clone();
+                let target = self.0.rooted.as_ref().expect("proxy owner").target.clone();
                 let Some(data) = runtime.proxy_snapshot_if_any(&target)? else {
                     return Ok(MethodStep::Complete { resume: self });
                 };
@@ -387,7 +381,10 @@ mod trap_cache_tests {
         let proxy = object(context.eval("accessorProxy").unwrap());
         for _ in 0..3 {
             assert!(
-                matches!(start(&runtime, context.realm, &proxy), MethodStep::Read { .. }),
+                matches!(
+                    start(&runtime, context.realm, &proxy),
+                    MethodStep::Read { .. }
+                ),
                 "an accessor trap may run observable code on every read"
             );
         }
@@ -418,7 +415,9 @@ mod trap_cache_tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         context
-            .eval("var delHandler={get:function(){return 1}};var delProxy=new Proxy({},delHandler);")
+            .eval(
+                "var delHandler={get:function(){return 1}};var delProxy=new Proxy({},delHandler);",
+            )
             .unwrap();
         let proxy = object(context.eval("delProxy").unwrap());
         assert!(matches!(
@@ -453,10 +452,7 @@ mod trap_cache_tests {
         ));
         context.eval("revocable.revoke()").unwrap();
         assert!(
-            matches!(
-                start(&runtime, context.realm, &proxy),
-                MethodStep::Throw(_)
-            ),
+            matches!(start(&runtime, context.realm, &proxy), MethodStep::Throw(_)),
             "revocation is checked before any cached hit"
         );
     }

@@ -272,7 +272,12 @@ mod tests {
         );
         drop(profile);
         // Concatenation is not commutative: the constant stays on the left.
-        assert_eq!(context.eval("(()=>{let r='R';return ('C'+r)==='CR'&&(r+'C')==='RC';})()").unwrap(), Value::Bool(true));
+        assert_eq!(
+            context
+                .eval("(()=>{let r='R';return ('C'+r)==='CR'&&(r+'C')==='RC';})()")
+                .unwrap(),
+            Value::Bool(true)
+        );
     }
 
     #[test]

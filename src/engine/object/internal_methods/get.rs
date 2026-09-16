@@ -262,15 +262,17 @@ fn complete_get_invariant(
             return Ok(ProxyGetStep::Complete(Completion::Throw(value)));
         }
     };
-    Ok(ProxyGetStep::Complete(if get_invariant_violation(&result, &descriptor) {
-        Completion::Throw(runtime.new_native_error(
-            realm,
-            NativeErrorKind::Type,
-            "proxy: inconsistent get",
-        )?)
-    } else {
-        Completion::Return(result)
-    }))
+    Ok(ProxyGetStep::Complete(
+        if get_invariant_violation(&result, &descriptor) {
+            Completion::Throw(runtime.new_native_error(
+                realm,
+                NativeErrorKind::Type,
+                "proxy: inconsistent get",
+            )?)
+        } else {
+            Completion::Return(result)
+        },
+    ))
 }
 
 #[cfg(test)]

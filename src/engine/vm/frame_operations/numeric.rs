@@ -315,10 +315,7 @@ mod tests {
         let active_frame = frame.active_frame;
         let fault_pc = frame.fault_pc;
         runtime
-            .update_active_bytecode_pc(
-                active_frame,
-                crate::engine::vm::BytecodePc::new(fault_pc),
-            )
+            .update_active_bytecode_pc(active_frame, crate::engine::vm::BytecodePc::new(fault_pc))
             .unwrap();
         {
             let mut transaction = execution

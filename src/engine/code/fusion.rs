@@ -163,41 +163,41 @@ impl FusionPlan {
                 .or(const_local_add)
                 .or(update)
                 .or_else(|| match rest {
-                [
-                    Instruction::Lt
-                    | Instruction::Lte
-                    | Instruction::Gt
-                    | Instruction::Gte
-                    | Instruction::Eq
-                    | Instruction::Neq
-                    | Instruction::StrictEq
-                    | Instruction::StrictNeq,
-                    Instruction::IfTrue(_) | Instruction::IfFalse(_),
-                    ..,
-                ] => Some((32, 2)),
-                [
-                    Instruction::Add,
-                    Instruction::PutLocal(index) | Instruction::PutLocalCheck(index),
-                    ..,
-                ] if locals
-                    .get(usize::from(*index))
-                    .is_some_and(|d| !d.is_const && d.kind == ClosureVariableKind::Normal) =>
-                {
-                    Some((64, 2))
-                }
-                [
-                    Instruction::Add,
-                    Instruction::SetLocal(index) | Instruction::SetLocalCheck(index),
-                    Instruction::Drop,
-                    ..,
-                ] if locals
-                    .get(usize::from(*index))
-                    .is_some_and(|d| !d.is_const && d.kind == ClosureVariableKind::Normal) =>
-                {
-                    Some((65, 3))
-                }
-                _ => None,
-            });
+                    [
+                        Instruction::Lt
+                        | Instruction::Lte
+                        | Instruction::Gt
+                        | Instruction::Gte
+                        | Instruction::Eq
+                        | Instruction::Neq
+                        | Instruction::StrictEq
+                        | Instruction::StrictNeq,
+                        Instruction::IfTrue(_) | Instruction::IfFalse(_),
+                        ..,
+                    ] => Some((32, 2)),
+                    [
+                        Instruction::Add,
+                        Instruction::PutLocal(index) | Instruction::PutLocalCheck(index),
+                        ..,
+                    ] if locals
+                        .get(usize::from(*index))
+                        .is_some_and(|d| !d.is_const && d.kind == ClosureVariableKind::Normal) =>
+                    {
+                        Some((64, 2))
+                    }
+                    [
+                        Instruction::Add,
+                        Instruction::SetLocal(index) | Instruction::SetLocalCheck(index),
+                        Instruction::Drop,
+                        ..,
+                    ] if locals
+                        .get(usize::from(*index))
+                        .is_some_and(|d| !d.is_const && d.kind == ClosureVariableKind::Normal) =>
+                    {
+                        Some((65, 3))
+                    }
+                    _ => None,
+                });
             if let Some((flag, length)) = candidate {
                 if !entries[pc + 1..pc + length].iter().any(|v| *v) {
                     if flags.is_empty() {
@@ -373,47 +373,23 @@ mod tests {
         assert_eq!(plan.const_add_span(0), Some(5));
 
         // Store must target the right local.
-        let code = [
-            PushConst(0),
-            GetLocal(1),
-            Add,
-            PutLocal(0),
-            ReturnUndefined,
-        ];
+        let code = [PushConst(0), GetLocal(1), Add, PutLocal(0), ReturnUndefined];
         assert_eq!(
             FusionPlan::build(&code, &[local(false), local(false)]).const_add_span(0),
             None
         );
         // Constant target local is rejected.
-        let code = [
-            PushConst(0),
-            GetLocal(1),
-            Add,
-            PutLocal(1),
-            ReturnUndefined,
-        ];
+        let code = [PushConst(0), GetLocal(1), Add, PutLocal(1), ReturnUndefined];
         assert_eq!(
             FusionPlan::build(&code, &[local(false), local(true)]).const_add_span(0),
             None
         );
         // Const-left shape is only tagged at the PushConst PC.
-        let code = [
-            PushConst(0),
-            GetLocal(1),
-            Add,
-            PutLocal(1),
-            ReturnUndefined,
-        ];
+        let code = [PushConst(0), GetLocal(1), Add, PutLocal(1), ReturnUndefined];
         let plan = FusionPlan::build(&code, &[local(false), local(false)]);
         assert_eq!(plan.local_add_span(1), None);
         // Any interior control target rejects the span.
-        let base = [
-            PushConst(0),
-            GetLocal(1),
-            Add,
-            PutLocal(1),
-            ReturnUndefined,
-        ];
+        let base = [PushConst(0), GetLocal(1), Add, PutLocal(1), ReturnUndefined];
         for target in 1..4 {
             let mut code = base.to_vec();
             code.push(Goto(target));

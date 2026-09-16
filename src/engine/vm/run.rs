@@ -206,7 +206,15 @@ pub(super) fn test_complete_numeric(
     active_frame: super::frames::ActiveFrameToken,
     fault_pc: usize,
 ) -> Result<bool, Error> {
-    numeric::complete(runtime, realm, transaction, kind, thrown, active_frame, fault_pc)
+    numeric::complete(
+        runtime,
+        realm,
+        transaction,
+        kind,
+        thrown,
+        active_frame,
+        fault_pc,
+    )
 }
 
 fn number(value: &Value) -> Option<Number> {
