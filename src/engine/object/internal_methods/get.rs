@@ -184,18 +184,28 @@ impl ProxyGetResume {
                 resume.resume(runtime, Completion::Return(value))?,
             ),
             Phase::Forward { .. } => Ok(ProxyGetStep::Complete(Completion::Return(value))),
-            Phase::Trap { rooted, key } => Ok(ProxyGetStep::request_descriptor(
-                rooted.target.clone(),
-                key,
-                Self(super::reuse::PooledBox::new(ProxyGetResumeState {
-                    pending_effect: ProxyGetStepPending::default(),
-                    realm,
-                    phase: Phase::Invariant {
-                        _rooted: rooted,
-                        result: value,
-                    },
-                })),
-            )),
+            Phase::Trap { rooted, key } => {
+                // An ordinary target's [[GetOwnProperty]] is synchronous, so the
+                // invariant comparison runs in place instead of a full scheduler
+                // descriptor round. A Proxy target may re-enter JavaScript and
+                // keeps the descriptor round.
+                if runtime.is_proxy_object(&rooted.target)? {
+                    return Ok(ProxyGetStep::request_descriptor(
+                        rooted.target.clone(),
+                        key,
+                        Self(super::reuse::PooledBox::new(ProxyGetResumeState {
+                            pending_effect: ProxyGetStepPending::default(),
+                            realm,
+                            phase: Phase::Invariant {
+                                _rooted: rooted,
+                                result: value,
+                            },
+                        })),
+                    ));
+                }
+                let descriptor = runtime.internal_get_own_property(realm, &rooted.target, &key)?;
+                complete_get_invariant(runtime, realm, value, descriptor)
+            }
             Phase::Invariant { .. } => Err(RuntimeError::Invariant(
                 "Proxy Get descriptor continuation received a value reply",
             )),
@@ -213,36 +223,54 @@ impl ProxyGetResume {
                 "Proxy Get value continuation received a descriptor reply",
             ));
         };
-        let descriptor = match descriptor {
-            NativeConversion::Value(descriptor) => descriptor,
-            NativeConversion::Throw(value) => {
-                return Ok(ProxyGetStep::Complete(Completion::Throw(value)));
-            }
-        };
-        let inconsistent = match descriptor {
-            Some(CompleteOrdinaryPropertyDescriptor::Data {
-                value,
-                writable: false,
-                configurable: false,
-                ..
-            }) => !result.same_value(&value),
-            Some(CompleteOrdinaryPropertyDescriptor::Accessor {
-                get: None,
-                configurable: false,
-                ..
-            }) => !matches!(result, Value::Undefined),
-            _ => false,
-        };
-        Ok(ProxyGetStep::Complete(if inconsistent {
-            Completion::Throw(runtime.new_native_error(
-                state.realm,
-                NativeErrorKind::Type,
-                "proxy: inconsistent get",
-            )?)
-        } else {
-            Completion::Return(result)
-        }))
+        complete_get_invariant(runtime, state.realm, result, descriptor)
     }
+}
+
+/// Shared `[[Get]]` invariant test: a non-configurable, non-writable data
+/// property must return the same value, and a setter-less non-configurable
+/// accessor must return `undefined`.
+fn get_invariant_violation(
+    result: &Value,
+    descriptor: &Option<CompleteOrdinaryPropertyDescriptor>,
+) -> bool {
+    match descriptor {
+        Some(CompleteOrdinaryPropertyDescriptor::Data {
+            value,
+            writable: false,
+            configurable: false,
+            ..
+        }) => !result.same_value(value),
+        Some(CompleteOrdinaryPropertyDescriptor::Accessor {
+            get: None,
+            configurable: false,
+            ..
+        }) => !matches!(result, Value::Undefined),
+        _ => false,
+    }
+}
+
+fn complete_get_invariant(
+    runtime: &Runtime,
+    realm: ContextId,
+    result: Value,
+    descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+) -> Result<ProxyGetStep, RuntimeError> {
+    let descriptor = match descriptor {
+        NativeConversion::Value(descriptor) => descriptor,
+        NativeConversion::Throw(value) => {
+            return Ok(ProxyGetStep::Complete(Completion::Throw(value)));
+        }
+    };
+    Ok(ProxyGetStep::Complete(if get_invariant_violation(&result, &descriptor) {
+        Completion::Throw(runtime.new_native_error(
+            realm,
+            NativeErrorKind::Type,
+            "proxy: inconsistent get",
+        )?)
+    } else {
+        Completion::Return(result)
+    }))
 }
 
 #[cfg(test)]
