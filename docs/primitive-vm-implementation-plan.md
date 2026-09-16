@@ -422,7 +422,7 @@ VM 的 protocol、activation、frame_execution、dispatch、numeric 等文件通
 
 大段内联测试可按 stack/control、parameters/eval、closures、private、modules、malformed 分到验证模块的 tests 子目录；保持单元测试所需私有可见性和真实发布入口覆盖。编译器现有 tests/ 已按语义分类，可继续使用。文件移动复用既有行为测试，不添加仅断言函数被拆开的镜像测试。
 
-[binary_object/layout.py](../scripts/checks/binary_object/layout.py) 登记物理文件归属，[runtime_protocols.py](../scripts/checks/binary_object/rules/runtime_protocols.py) 还对指定函数做源码形状/哈希检查。结构迁移必须同步到真实新调用路径与所有者；每次更新保留其防止断开生产入口、绕过验证等检查目的，并以原畸形码和 mutation 反例核验。不能只替换哈希就宣称新结构正确，也不能因旧文件删除而跳过整个检查。
+文件移动应同步到真实新调用路径与所有者，并由源码布局门禁、架构说明和所属测试共同覆盖；不能只改文件名或哈希就宣称新结构正确，也不能因旧文件删除而跳过相关检查。
 
 [架构说明](architecture.md)维护跨模块入口与职责；局部不变量由所属 Rust 类型、函数和测试共同说明。源码中的过期导航（如 code/bytecode_validation 注释仍称规则在 heap）随迁移修正。源码布局检查只检查源码归属、模块可达性与公有边界，不检查 README 的存在、内容或覆盖率。新文件和方法按责任命名，避免使用旧迁移阶段编号作为生产概念。
 

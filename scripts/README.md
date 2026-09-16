@@ -29,8 +29,6 @@ generated evidence remains in `dev-support/test262/generated/`.
 
 Tool regression tests live beside the implementation they exercise. Engine unit
 and integration tests retain the Cargo layout documented in `tests/README.md`.
-See [the binary-object checker](checks/binary_object/README.md) for its rule,
-evidence and mutation-test layout.
 
 Historical Test262 receipts retain their original source commit, input list and
 fingerprint. Current tool paths point to the owned, byte-identical fingerprint

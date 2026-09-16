@@ -12,6 +12,5 @@ binary_object 负责固定 QuickJS 版本的二进制对象读取、格式检查
 明确限定的 trusted-bytecode 入口，不承诺通用的不可信字节码加载器。
 版本目录、操作码和 Atom 数据共同限定格式解释。
 
-整体发布责任见[code 介绍](../README.md)；
-[边界检查工具](../../../../scripts/checks/binary_object/README.md)
-说明如何验证真实发布路径和畸形输入的拒绝边界。
+整体发布责任见[code 介绍](../README.md)。畸形输入的拒绝边界由 codec 自身的
+解码/翻译测试与 QuickJS oracle 覆盖。

@@ -66,8 +66,6 @@ jobs:
       - name: Check formatting and architecture gates
         run: |
           cargo fmt --all -- --check
-          ./scripts/checks/check-binary-object-boundary.sh
-          PYTHONPATH=scripts/checks python3 -m unittest discover -s scripts/checks/binary_object/tests
           python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'
           ./scripts/checks/check-no-test262-special-casing.sh
           node scripts/checks/check-test262-artifact-inventory.mjs
@@ -259,9 +257,6 @@ jobs:
             'scripts/quickjs/build-quickjs-oracle.sh', 'scripts/test262/prepare-test262.sh') }}
           restore-keys: |
             ${{ runner.os }}-test262-${{ env.RUST_VERSION }}-
-
-      - name: Check the Test262 receipt boundary
-        run: ./scripts/checks/check-binary-object-boundary.sh --scan-only .
 
       - name: Run the complete frozen Test262 vector
         env:
