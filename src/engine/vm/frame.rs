@@ -1,7 +1,9 @@
 //! One executable owner and one exclusive storage window per running frame.
 
 mod storage;
-pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame, FrameBody};
+#[cfg(any(test, feature = "profiling"))]
+pub(in crate::engine::vm) use storage::FrameBody;
+pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame};
 
 use crate::engine::api::error::Error;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;

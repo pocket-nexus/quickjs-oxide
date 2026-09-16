@@ -425,7 +425,7 @@ mod tests {
         use super::super::NativeInvocationAdaptation;
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        for (source, construct) in [
+        for (fixture, construct) in [
             ("Reflect.get", false),
             ("Math.min", true),
             ("Array", false),
@@ -441,7 +441,7 @@ mod tests {
             ),
         ] {
             let callable = runtime
-                .callable_from_value(context.eval(source).unwrap())
+                .callable_from_value(context.eval(fixture).unwrap())
                 .unwrap();
             let CallableExecution::Native {
                 target,
@@ -476,7 +476,7 @@ mod tests {
                     &prepared.activation.arguments,
                 )
                 .unwrap();
-            if source == "Reflect.get" {
+            if fixture == "Reflect.get" {
                 assert!(
                     matches!(&borrowed,NativeInvocationAdaptation::Invoke(std::borrow::Cow::Borrowed(value)) if std::ptr::eq(*value,&prepared.invocation))
                 );

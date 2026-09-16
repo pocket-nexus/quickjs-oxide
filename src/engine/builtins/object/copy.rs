@@ -156,14 +156,14 @@ impl CopyResume {
             }
             // This optimization is only selected for non-Proxy sources. It
             // observes every descriptor before the first value getter runs.
+            #[cfg(feature = "profiling")]
             if self.0.snapshot {
-                #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "copy_snapshot_descriptor_read",
                 );
-                if !runtime.own_property_is_enumerable(&self.0.source, &key)? {
-                    continue;
-                }
+            }
+            if self.0.snapshot && !runtime.own_property_is_enumerable(&self.0.source, &key)? {
+                continue;
             }
             selected.push(key);
         }

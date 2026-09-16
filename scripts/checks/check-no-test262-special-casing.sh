@@ -75,12 +75,19 @@ printf '%s\n' \
     "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"export\")" \
     "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\".\") {" \
     "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"(\") {" \
+    "src/engine/vm/driver.rs:            let arguments = if source.contains(\"try{\") {" \
+    "src/engine/vm/driver.rs:            if source.contains(\"try{\") {" \
+    "src/engine/vm/driver.rs:                assert!(source.contains(\"extends 1\"), \"{source}\");" \
+    "src/engine/vm/driver.rs:                assert!(!source.contains(\"extends 1\"), \"{source}\");" \
+    "src/engine/vm/stack.rs:                if source.starts_with(\"new Uint8Array\") && !detached {" \
+    "src/engine/builtins/iterator/collection.rs:            if source.contains(\"get 0(){\") {" \
     > "$source_probe_allowlist"
 
 filename_probe_allowlist=$tmp/filename-probe-allowlist.txt
 printf '%s\n' \
     "apps/cli/src/main.rs:        if filename.ends_with(\".json\") || import_type_is(attributes, \"json\") {" \
     "apps/cli/src/main.rs:    filename.ends_with(\".mjs\") || quickjs_detect_module_bytes(source)" \
+    "apps/cli/examples/compile_probe.rs:    if path == \"--version\" {" \
     > "$filename_probe_allowlist"
 
 filter_exact_allowlist() {

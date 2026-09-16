@@ -77,20 +77,24 @@ if dependency["uses_default_features"] or dependency["features"]:
 feature = '#[cfg(feature = "test262-host")]'
 
 
-def require_gated(path: str, declarations: tuple[str, ...]) -> None:
+def require_gated(path: str, declarations: tuple[str | tuple[str, int], ...]) -> None:
     lines = Path(path).read_text().splitlines()
-    for declaration in declarations:
+    for entry in declarations:
+        declaration, expected = entry if isinstance(entry, tuple) else (entry, 1)
         matches = [index for index, line in enumerate(lines) if line == declaration]
-        if len(matches) != 1:
-            fail(f"{path} must contain exactly one declaration: {declaration.strip()}")
-        index = matches[0]
-        attributes = []
-        cursor = index - 1
-        while cursor >= 0 and lines[cursor].strip().startswith("#["):
-            attributes.append(lines[cursor].strip())
-            cursor -= 1
-        if feature not in attributes:
-            fail(f"{path} must gate {declaration.strip()} with test262-host")
+        if len(matches) != expected:
+            fail(
+                f"{path} must contain exactly {expected} declaration(s): "
+                f"{declaration.strip()}"
+            )
+        for index in matches:
+            attributes = []
+            cursor = index - 1
+            while cursor >= 0 and lines[cursor].strip().startswith("#["):
+                attributes.append(lines[cursor].strip())
+                cursor -= 1
+            if feature not in attributes:
+                fail(f"{path} must gate {declaration.strip()} with test262-host")
 
 
 require_gated('apps/cli/tests/oracle/main.rs', ('mod test262_create_realm;', 'mod test262_host_gc;', 'mod test262_is_html_dda;'))
@@ -101,7 +105,7 @@ require_gated('src/engine/api/context/test262.rs', ('    pub fn new_code_point_r
 require_gated('src/engine/api/mod.rs', ('pub use crate::engine::api::test262_agent::{Test262AgentError, Test262AgentSession};',))
 require_gated('src/engine/builtins/native.rs', ('pub enum Test262AgentKind {', '    StringCodePointRange,', '    Test262DetachArrayBuffer,', '    Test262EvalScript,', '    Test262CreateRealm,', '    Test262IsHtmlDda,', '    Test262Gc,', '    Test262Agent(Test262AgentKind),'))
 require_gated('src/engine/heap/object_storage.rs', ('    pub(crate) fn set_object_is_html_dda(&mut self, id: ObjectId) -> Result<(), HeapError> {',))
-require_gated('src/engine/builtins/dispatch.rs', ('            NativeFunctionId::StringCodePointRange => {', '            NativeFunctionId::Test262DetachArrayBuffer => {', '            NativeFunctionId::Test262EvalScript => {', '            NativeFunctionId::Test262CreateRealm => self.call_test262_create_realm(invocation),', '            NativeFunctionId::Test262IsHtmlDda => self.call_test262_is_html_dda(invocation),', '            NativeFunctionId::Test262Gc => self.call_test262_gc(invocation),', '            NativeFunctionId::Test262Agent(kind) => {'))
+require_gated('src/engine/builtins/dispatch.rs', ('            NativeFunctionId::StringCodePointRange => {', ('            NativeFunctionId::Test262DetachArrayBuffer => {', 2), '            NativeFunctionId::Test262EvalScript => {', '            NativeFunctionId::Test262CreateRealm => self.call_test262_create_realm(invocation),', '            NativeFunctionId::Test262IsHtmlDda => self.call_test262_is_html_dda(invocation),', '            NativeFunctionId::Test262Gc => self.call_test262_gc(invocation),', '            NativeFunctionId::Test262Agent(kind) => {'))
 require_gated('src/engine/builtins/array_buffer.rs', ('    pub(crate) fn call_test262_detach_array_buffer(', '    pub fn new_detach_array_buffer_function(&mut self) -> Result<CallableRef, RuntimeError> {'))
 require_gated('src/engine/builtins/string.rs', ('    pub(crate) fn call_string_code_point_range(',))
 require_gated('src/engine/value/primitive.rs', ('    pub fn try_with_exact_capacity(capacity: usize) -> Result<Self, JsStringError> {',))

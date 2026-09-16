@@ -172,6 +172,7 @@ pub(crate) struct PotentialEffects {
     pub may_allocate: bool,
 }
 
+#[cfg(feature = "profiling")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct InstructionInfo {
     pub stack: StackEffect,
@@ -181,6 +182,9 @@ pub(crate) struct InstructionInfo {
 }
 
 impl Instruction {
+    /// Diagnostic projection of every canonical contract, consumed only by the
+    /// profiling disassembler.
+    #[cfg(feature = "profiling")]
     pub(crate) const fn info(&self) -> InstructionInfo {
         InstructionInfo {
             stack: self.stack_contract(),
