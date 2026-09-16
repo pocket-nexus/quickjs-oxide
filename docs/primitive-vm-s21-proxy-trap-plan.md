@@ -124,10 +124,28 @@ S21.1 的命中路径仍付一次 `MethodResumeState` 的 PooledBox 进出（构
 
 ## 8. 状态
 
-- [ ] 架构文档条目（工序 1）
-- [ ] 红线测试先行（工序 2）
-- [ ] S21.1 陷阱选择缓存（工序 3–6）
-- [ ] S21.2 同步 invariant（工序 7–8）
-- [ ] 语义门禁全量（工序 9）
-- [ ] 最终测量与验收（工序 10）
-- [ ] S21.3 门控判定（工序 11）
+- [x] 架构文档条目（工序 1）：`docs/architecture/property-cache-validity.md` 新增 "Proxy trap selection cache (S21)"。
+- [x] 红线测试先行（工序 2）：`method.rs` `trap_cache_tests`（同 shape 覆写、accessor decline、handler-proxy decline、delete、revoke、链式深度上溢）与 `call/protocol/callback_tests.rs`（命中计数/accessor 零命中、revoke/GC/链式/Reflect、缓存不 retention）。
+- [x] S21.1 陷阱选择缓存（工序 3–5）：`PinnedAtom::proxy_method` 返回 `(PinnedAtom, index)`；`RuntimeState.proxy_trap_reads[13]`；`Runtime::proxy_trap_read` 查/训入口；`Search::read` 命中直接 `resume()`，`MethodResume::resume` 改为链式下探迭代循环并逐层查缓存。
+- [x] S21.2 同步 invariant（工序 7）：`get_invariant_violation`/`complete_get_invariant` 自由函数；`Phase::Trap` 对非 proxy target 就地同步比对。
+- [x] 语义门禁全量（工序 9）：工作区 `--all-targets`、`--doc`、`--features test262-host --lib --bins` 全绿；`cargo test -p quickjs-oxide --features profiling --lib` 2491/2491；Test262 full vector 逐位对齐 `79982 pass of 80032 eligible (102037 total)`（含 proxy 全章）。
+- [x] 最终测量与验收（工序 10）：见 §9。
+- [ ] S21.3 门控判定（工序 11）：未达标，但按 §9 证据与 `MethodStep <= 64 B` 协议约束，字面上的"命中路径不经 PooledBox"不可行（`Complete` 内联 `RootedProxy` 会突破尺寸断言），且实测该 PooledBox 成本 <1%。缓行至 S21.4 类结构工作。
+- [ ] S21.4 缓行项（本阶段不做，保持）。
+
+### 9. 实测结论（2026-09-16，单轮 ×3，core 6，governor=powersave，loadavg 0.25）
+
+机械计数（`depth-proxy-0`，profiling 二进制，100003 次读取）：
+
+| 计数 | 现值 | 目标 | 判定 |
+|---|---|---|---|
+| `query_dispatch`（read+descriptor+complete） | ≈1.0/迭代（read=1、descriptor=0、complete=100003） | ≤1 | 达标 |
+| `dispatch_read.get.visit` | 100003（≈1/迭代） | ≤2 | 达标 |
+| `property_storage_read_probe` | 201038（≈2/迭代） | ≤2 | 达标 |
+| `proxy_trap_read.hit` | 99999/100003 = 0.99996 | ≥0.99 | 达标 |
+| `method_resume_allocation` / `get_resume_allocation` | 1 / 1 | 不回归 | 达标 |
+| `query_bytecode_callback` / `property_return_direct` / `property_callback_lazy_install` | 100001 / 100000 / 100001 | 不回归 | 达标 |
+
+耗时（三轮中位对 S0 三轮中位）：depth-proxy-0 **+26.6% → +8.9%**、depth-proxy-32 **+28.7% → +10.2%**、depth-proxy-128 **+21.5% → +4.8%**；512/2048 与 128 档差值 ≤±1%（固定成本一致性达标）。目标 ≤+2% **未达标**。getter/native/mixed 探针族无连带回退；fixed geomean 0.697→0.692、probe geomean 0.752→0.726（整体改善）。>5% 对 S0 回归项（string_build*、int_to_string、float_arith、bigint64_arith、v8-earley-boyer、richards）为 S22 已立项的先存 prepend/字符串拼接回归，非 S21 引入。
+
+结论：S21.1/S21.2 消掉了 R-A（每读全量动态读）与 R-B（descriptor 分派轮），机械计数全部达标；残余 ≈15 ms 属 R-C（proxy_get_driver 相位搬运）与 S21.4 类结构成本，字面 S21.3 收益上界 <1%（perf：`PooledBox::drop` 0.38%），不足以收敛剩余差值。
