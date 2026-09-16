@@ -30,10 +30,10 @@ use crate::engine::code::function::metadata::{
 use crate::engine::code::function::metadata::{EvalBinding, EvalScope, ParameterArgumentCell};
 
 mod buffers;
-mod gc;
 mod edges;
+mod gc;
 use edges::Edges;
-#[cfg(feature = "stack-vm")]
+
 mod slot_ownership;
 #[cfg(test)]
 use gc::object_atoms;
@@ -46,7 +46,7 @@ use gc::{
     raw_module_record_edges, raw_value_atom, raw_value_edges, raw_value_matches_weak_key,
     shape_edges, var_ref_edges,
 };
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use slot_ownership::SlotReleaseReadiness;
 mod collection_index;
 mod collection_records;
@@ -215,9 +215,7 @@ impl SlotState {
     const fn kind(&self) -> Option<HeapNodeKind> {
         match self {
             Self::Initializing { kind, .. } | Self::Zombie { kind, .. } => Some(*kind),
-            Self::Live(node) | Self::ZeroQueued(node) => {
-                Some(node.data.kind())
-            }
+            Self::Live(node) | Self::ZeroQueued(node) => Some(node.data.kind()),
             Self::Vacant | Self::Retired => None,
         }
     }
@@ -243,7 +241,6 @@ struct ArenaSlot {
 /// A `Heap` is deliberately not internally synchronized.  The enclosing
 /// runtime chooses its single-threaded ownership boundary, as QuickJS does.
 pub struct Heap {
-    #[cfg(feature = "stack-vm")]
     property_layout_epoch: u64,
     #[cfg(not(feature = "profiling"))]
     slots: Vec<ArenaSlot>,

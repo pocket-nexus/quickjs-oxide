@@ -1091,8 +1091,7 @@ impl Heap {
                     })?;
                     vacate_zombie = *strong == 0;
                 }
-                SlotState::Initializing { .. }
-                | SlotState::ZeroQueued(_) => {
+                SlotState::Initializing { .. } | SlotState::ZeroQueued(_) => {
                     return Err(HeapError::Underflow {
                         kind: id.kind(),
                         index: id.index(),
@@ -1542,7 +1541,9 @@ fn internal_callable_edges(internal: &InternalCallableData) -> Vec<RawId> {
             .into_iter()
             .chain(std::iter::once(RawId::Object(*on_finally)))
             .collect(),
-        InternalCallableData::PromiseFinallyThunk { value } => raw_value_edges(value).into_iter().collect(),
+        InternalCallableData::PromiseFinallyThunk { value } => {
+            raw_value_edges(value).into_iter().collect()
+        }
         InternalCallableData::PromiseAllResolveElement {
             values, resolve, ..
         } => vec![RawId::Object(*values), RawId::Object(*resolve)],
@@ -1627,7 +1628,9 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
     match slot {
         PropertySlot::Data(value) => edges.extend(raw_value_edges(value)),
         PropertySlot::VarRef(var_ref) => edges.push(RawId::VarRef(*var_ref)),
-        PropertySlot::Accessor { get, set } => edges.extend(get.iter().chain(set.iter()).copied().map(RawId::Object)),
+        PropertySlot::Accessor { get, set } => {
+            edges.extend(get.iter().chain(set.iter()).copied().map(RawId::Object))
+        }
         PropertySlot::AutoInit(
             AutoInitProperty::FunctionPrototype { realm }
             | AutoInitProperty::NativeBuiltin { realm, .. }
@@ -1639,14 +1642,18 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
             | AutoInitProperty::Atomics { realm },
         ) => edges.push(RawId::Context(*realm)),
         #[cfg(test)]
-        PropertySlot::AutoInit(AutoInitProperty::FailureProbe { realm }) => edges.push(RawId::Context(*realm)),
+        PropertySlot::AutoInit(AutoInitProperty::FailureProbe { realm }) => {
+            edges.push(RawId::Context(*realm))
+        }
     }
     edges
 }
 
 pub(super) fn raw_value_edges(value: &RawValue) -> Edges {
     let mut edges = Edges::new();
-    if let RawValue::Object(object) = value { edges.push(RawId::Object(*object)); }
+    if let RawValue::Object(object) = value {
+        edges.push(RawId::Object(*object));
+    }
     edges
 }
 
@@ -1776,7 +1783,13 @@ pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
         edges.extend(raw_value_edges(value));
     }
     edges.extend(context.initial_shapes.iter().copied().map(RawId::Shape));
-    edges.extend(context.regexp_group_shapes.values().copied().map(RawId::Shape));
+    edges.extend(
+        context
+            .regexp_group_shapes
+            .values()
+            .copied()
+            .map(RawId::Shape),
+    );
     for record in context.loaded_modules.records.iter().flatten() {
         edges.extend(raw_module_record_edges(record));
     }

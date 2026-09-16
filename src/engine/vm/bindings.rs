@@ -35,7 +35,6 @@ pub(in crate::engine::vm) const fn is_private_callable_kind(kind: ClosureVariabl
 /// Read a freshly authenticated shared cell without creating any owner or
 /// operation boundary. Pending releases must take the canonical path because
 /// its RuntimeOperation drains them before observing the cell.
-#[cfg(feature = "stack-vm")]
 #[inline]
 pub(in crate::engine::vm) fn read_immediate_cell(
     runtime: &Runtime,
@@ -61,7 +60,6 @@ pub(in crate::engine::vm) fn read_immediate_cell(
 
 /// Keep the scalar read cheap; only a non-immediate miss attempts an owned
 /// read under the shared heap guard. The flag distinguishes profiling events.
-#[cfg(feature = "stack-vm")]
 #[inline]
 pub(in crate::engine::vm) fn read_run_cell(
     runtime: &Runtime,
@@ -79,7 +77,6 @@ pub(in crate::engine::vm) fn read_run_cell(
 /// Commit only a no-owner immediate replacement. The caller first proves its
 /// operand exists; no stack/heap mutation can occur between that peek and the
 /// successful write, so consuming that same immediate operand cannot fail.
-#[cfg(feature = "stack-vm")]
 #[inline]
 pub(in crate::engine::vm) fn try_write_immediate_cell(
     runtime: &Runtime,
@@ -145,29 +142,6 @@ pub(in crate::engine::vm) fn read_frame_binding(
         )),
         FrameBinding::Captured(root) => runtime
             .read_var_ref(root)
-            .map_err(|error| Error::internal(error.to_string())),
-    }
-}
-
-#[inline]
-pub(in crate::engine::vm) fn write_frame_binding(
-    runtime: &Runtime,
-    binding: &mut FrameBinding,
-    value: Value,
-) -> Result<(), Error> {
-    match binding {
-        FrameBinding::Direct(slot) => {
-            *slot = value;
-            Ok(())
-        }
-        FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => Err(Error::internal(
-            "ordinary local write reached a private-element binding",
-        )),
-        FrameBinding::Uninitialized => Err(Error::internal(
-            "unchecked local write reached an uninitialized lexical binding",
-        )),
-        FrameBinding::Captured(root) => runtime
-            .write_var_ref(root, value)
             .map_err(|error| Error::internal(error.to_string())),
     }
 }
@@ -611,9 +585,9 @@ pub(in crate::engine::vm) fn reset_captured_binding(
             .map_err(runtime_error_to_vm_error)?;
         return Ok(());
     }
-    return Err(Error::internal(
+    Err(Error::internal(
         "captured local entered a new lexical lifetime before CloseLocal",
-    ));
+    ))
 }
 
 /// Initialize a published lexical/with binding while preserving captured cells.
@@ -706,7 +680,7 @@ pub(super) fn validate_module_import_collision(descriptor: ClosureVariable) -> R
     Ok(())
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod immediate_cell_tests {
     use super::*;
 

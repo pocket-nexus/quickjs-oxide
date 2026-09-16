@@ -16,8 +16,6 @@ use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::compiler::CompileOptions;
 use crate::engine::heap::ContextId;
 
-#[cfg(not(feature = "stack-vm"))]
-use crate::engine::object::operations::{InternalDefineResult, InternalSetResult};
 use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey,

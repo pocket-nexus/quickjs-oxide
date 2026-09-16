@@ -23,7 +23,6 @@ pub(crate) enum ConsumeKind {
     Array,
 }
 impl ConsumeKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::IteratorPrototypeConsume(kind) => Some(Self::Predicate(kind)),
@@ -126,7 +125,8 @@ impl ConsumeStep {
         };
         Ok({
             let __pending_field_object = source.clone();
-            let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
+            let __pending_field_key =
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
             let __pending_field_resume = ConsumeResume(Box::new(ConsumeResumeState {
                 pending_effect: ConsumeStepPending::default(),
                 realm,

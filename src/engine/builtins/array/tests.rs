@@ -38,14 +38,24 @@ fn reduced_flatten_target_limit_preserves_prefix_and_exact_error() {
     assert_eq!(int_property(&runtime, &mut context, &target, "1"), 2);
     assert!(
         runtime
-            .get_own_property(&target, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal3).unwrap())
+            .get_own_property(
+                &target,
+                &runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal3)
+                    .unwrap()
+            )
             .unwrap()
             .is_none(),
         "the failing element was defined past the reduced target limit",
     );
     assert!(
         runtime
-            .get_own_property(&target, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length).unwrap())
+            .get_own_property(
+                &target,
+                &runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)
+                    .unwrap()
+            )
             .unwrap()
             .is_none(),
         "flatten performed a final length Set on an ordinary species target",

@@ -794,14 +794,6 @@ impl From<crate::engine::builtins::ArraySliceStep> for Step {
                     resume: Some(Resume::ArraySlice(resume)),
                 }
             }
-            T::Has { mut resume } => {
-                let (object, key) = resume.take_has();
-                Self::Has {
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::ArraySlice(resume)),
-                }
-            }
             T::Set { mut resume } => {
                 let (object, key, value) = resume.take_set();
                 Self::Set {

@@ -276,11 +276,7 @@ impl Runtime {
             self,
             realm,
             super::iterator::collection::CollectionStep::start(
-                self,
-                realm,
-                kind,
-                &invocation,
-                arguments,
+                self, realm, kind, invocation, arguments,
             )?,
         )
     }
@@ -484,7 +480,7 @@ impl Runtime {
             return computed::finish(
                 self,
                 realm,
-                computed::ComputedStep::start(self, realm, &invocation, arguments)?,
+                computed::ComputedStep::start(self, realm, invocation, arguments)?,
             );
         }
         let map = match self.weak_collection_receiver(realm, invocation, WeakCollectionKind::Map)? {
@@ -508,12 +504,12 @@ impl Runtime {
                     .get(1)
                     .cloned()
                     .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?;
-                self.set_weak_map_record(&map, key, value)?;
+                self.set_weak_map_record(map, key, value)?;
                 Ok(Completion::Return(Value::Object(map.clone())))
             }
             WeakMapNativeKind::Get => {
                 let value = match key {
-                    Some(key) => match self.find_weak_map_record(&map, key)? {
+                    Some(key) => match self.find_weak_map_record(map, key)? {
                         Some(value) => self.root_raw_value(&value)?,
                         None => Value::Undefined,
                     },
@@ -525,7 +521,7 @@ impl Runtime {
                 let Some(key) = key else {
                     return self.invalid_weak_key(realm, WeakCollectionKind::Map);
                 };
-                if let Some(value) = self.find_weak_map_record(&map, key)? {
+                if let Some(value) = self.find_weak_map_record(map, key)? {
                     return Ok(Completion::Return(self.root_raw_value(&value)?));
                 }
                 let value = arguments
@@ -533,18 +529,18 @@ impl Runtime {
                     .get(1)
                     .cloned()
                     .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?;
-                self.set_weak_map_record(&map, key, value.clone())?;
+                self.set_weak_map_record(map, key, value.clone())?;
                 Ok(Completion::Return(value))
             }
             WeakMapNativeKind::Has => {
                 let present = match key {
-                    Some(key) => self.find_weak_map_record(&map, key)?.is_some(),
+                    Some(key) => self.find_weak_map_record(map, key)?.is_some(),
                     None => false,
                 };
                 Ok(Completion::Return(Value::Bool(present)))
             }
             WeakMapNativeKind::Delete => Ok(Completion::Return(Value::Bool(match key {
-                Some(key) => self.delete_weak_map_record(&map, key)?,
+                Some(key) => self.delete_weak_map_record(map, key)?,
                 None => false,
             }))),
             WeakMapNativeKind::Constructor | WeakMapNativeKind::GetOrInsertComputed => {
@@ -592,15 +588,15 @@ impl Runtime {
                 let Some(key) = key else {
                     return self.invalid_weak_key(realm, WeakCollectionKind::Set);
                 };
-                self.insert_weak_set_record(&set, key)?;
+                self.insert_weak_set_record(set, key)?;
                 Ok(Completion::Return(Value::Object(set.clone())))
             }
             WeakSetNativeKind::Has => Ok(Completion::Return(Value::Bool(match key {
-                Some(key) => self.has_weak_set_record(&set, key)?,
+                Some(key) => self.has_weak_set_record(set, key)?,
                 None => false,
             }))),
             WeakSetNativeKind::Delete => Ok(Completion::Return(Value::Bool(match key {
-                Some(key) => self.delete_weak_set_record(&set, key)?,
+                Some(key) => self.delete_weak_set_record(set, key)?,
                 None => false,
             }))),
             WeakSetNativeKind::Constructor => {

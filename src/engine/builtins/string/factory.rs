@@ -1,5 +1,5 @@
 //! String factories share conversion order and String.raw's latched buffer error.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -16,7 +16,6 @@ pub(crate) enum StringFactoryKind {
     CodePointRange,
 }
 impl StringFactoryKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::StringStatic(kind) => Some(Self::Static(kind)),
@@ -127,7 +126,8 @@ impl StringFactoryStep {
                 resume.phase = Phase::Raw;
                 Ok(Self::Read {
                     object: cooked,
-                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Raw)?,
+                    key: runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Raw)?,
                     resume,
                 })
             }
@@ -323,7 +323,8 @@ impl StringFactoryResume {
                 self.0.phase = Phase::Length;
                 Ok(StringFactoryStep::Read {
                     object: raw,
-                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+                    key: runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                     resume: self,
                 })
             }

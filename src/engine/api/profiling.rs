@@ -7,15 +7,14 @@
 
 mod cost;
 pub(crate) use cost::record_call_preparation;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use cost::record_owned_call_storage;
 pub use cost::{
     CallBufferCost, CallPreparationCost, CostProfile, CostSnapshot, OwnedStorageCost, PhaseCost,
     VmPhaseCost,
 };
 pub(crate) use cost::{
-    CompilePhase, PhaseTimer, cost_profile_active, record_compiler_storage, record_legacy_dispatch,
-    record_legacy_pc_publication, record_lowered_function,
+    CompilePhase, PhaseTimer, cost_profile_active, record_compiler_storage, record_lowered_function,
 };
 pub(crate) use cost::{
     record_call_buffer_capacity, record_call_buffer_copies, record_call_buffer_initialized,
@@ -202,6 +201,11 @@ impl AllocationTrace {
     }
 }
 
+pub(crate) use cost::{
+    OwnedStorageEvent, record_owned_execution_event, record_owned_execution_layout,
+    record_owned_instruction, record_owned_storage,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,10 +310,3 @@ mod tests {
         assert!(before.heap.context_nodes >= 2);
     }
 }
-
-#[cfg(feature = "stack-vm")]
-pub(crate) use cost::{
-    OwnedStorageEvent, record_owned_bridge, record_owned_execution_event,
-    record_owned_execution_layout, record_owned_instruction, record_owned_storage,
-    record_owned_sync_call_bridge,
-};

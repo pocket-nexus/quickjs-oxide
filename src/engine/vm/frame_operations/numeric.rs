@@ -424,10 +424,10 @@ mod tests {
             Value::Object(foreign.new_object(None).unwrap()),
         );
         identity = u64::MAX;
-        assert!(matches!(
-            complete_primitives(&runtime, &mut execution, id, false, &mut identity).unwrap(),
-            PrimitiveCompletion::InvalidDomain
-        ));
+        let error = complete_primitives(&runtime, &mut execution, id, false, &mut identity)
+            .err()
+            .expect("foreign conversion operand must fail before identity issue");
+        assert!(error.to_string().contains("conversion operand"));
         assert_eq!(identity, u64::MAX);
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(execution.slots.depth(&frame.window), 1);

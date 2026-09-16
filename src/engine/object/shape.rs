@@ -116,7 +116,6 @@ impl Error for ShapeError {}
 /// Slot positions are internal and must be looked up again after mutations.
 #[derive(Clone, Debug)]
 pub struct Shape {
-    #[cfg(feature = "stack-vm")]
     layout_revision: u64,
     prototype: Option<ObjectId>,
     entries: Vec<ShapeEntry>,
@@ -126,12 +125,10 @@ pub struct Shape {
 }
 
 impl Shape {
-    #[cfg(feature = "stack-vm")]
     pub(crate) const fn layout_revision(&self) -> u64 {
         self.layout_revision
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn invalidate_layout(&mut self) {
         // Saturation permanently disables IC admission; never wrap into stale facts.
         self.layout_revision = self.layout_revision.saturating_add(1);
@@ -175,7 +172,6 @@ impl Shape {
         }
 
         Ok(Self {
-            #[cfg(feature = "stack-vm")]
             layout_revision: 0,
             prototype,
             entries: ordered,
@@ -321,7 +317,7 @@ impl Shape {
 
     pub(crate) fn append_unique_property(&mut self, atom: Atom, flags: PropertyFlags, index: u32) {
         debug_assert_eq!(usize::try_from(index), Ok(self.entries.len()));
-        debug_assert!(!atom.is_null() && !self.find(atom).is_some());
+        debug_assert!(!atom.is_null() && self.find(atom).is_none());
         self.entries.push(ShapeEntry { atom, flags });
         if self.entries.len() == 9 {
             self.lookup.extend(
@@ -351,7 +347,6 @@ impl Shape {
         let mut entries = self.entries.to_vec();
         entries[index].flags = flags;
         Ok(Self {
-            #[cfg(feature = "stack-vm")]
             layout_revision: 0,
             prototype: self.prototype,
             entries,
@@ -439,6 +434,23 @@ mod tests {
             atom,
             flags: DEFAULT_DATA,
         }
+    }
+
+    #[test]
+    fn small_shape_lookup_allocates_only_above_eight_entries() {
+        let atoms = (1..=9)
+            .map(|n| Atom::from_immediate_integer(n).unwrap())
+            .collect::<Vec<_>>();
+        let small = Shape::new(None, atoms[..8].iter().copied().map(entry)).unwrap();
+        assert_eq!(small.lookup.capacity(), 0);
+        for (index, atom) in atoms[..8].iter().enumerate() {
+            assert_eq!(small.find(*atom), Some(index as u32));
+        }
+        let large = small.derive_add(atoms[8], DEFAULT_DATA).unwrap();
+        assert!(large.lookup.capacity() >= 9);
+        assert_eq!(large.find(atoms[8]), Some(8));
+        let small = large.derive_delete(atoms[8]).unwrap();
+        assert_eq!(small.lookup.capacity(), 0);
     }
 
     #[test]
@@ -569,17 +581,5 @@ mod tests {
             shape.ordered_own_keys(&foreign),
             Err(AtomError::UnknownAtom(atom)) if atom == key
         ));
-    }
-    #[test]
-    fn small_shape_lookup_allocates_only_above_eight_entries() {
-        let atoms=(1..=9).map(|n|Atom::from_immediate_integer(n).unwrap()).collect::<Vec<_>>();
-        let small=Shape::new(None,atoms[..8].iter().copied().map(entry)).unwrap();
-        assert_eq!(small.lookup.capacity(),0);
-        for (index,atom) in atoms[..8].iter().enumerate(){assert_eq!(small.find(*atom),Some(index as u32));}
-        let large=small.derive_add(atoms[8],DEFAULT_DATA).unwrap();
-        assert!(large.lookup.capacity()>=9);
-        assert_eq!(large.find(atoms[8]),Some(8));
-        let small=large.derive_delete(atoms[8]).unwrap();
-        assert_eq!(small.lookup.capacity(),0);
     }
 }

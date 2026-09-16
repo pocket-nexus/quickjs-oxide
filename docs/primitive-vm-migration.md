@@ -1,8 +1,8 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-15。用户已确定使用栈 VM，**S01–S08、S09（含 N1–N3）与新 S10–S12 已实施；性能退出条件未全部通过，S13（退役旧路径）未实施，整体计划尚未完成**。本表与[架构计划](primitive-vm-plan.md)、[实施设计](primitive-vm-implementation-plan.md)、[逐 commit 计划](primitive-vm-commit-plan.md)共同定义一个 PR 的交付。提交合并后，能力与结构条目仍逐项验收。
+状态：2026-09-16。S14–S20 的计划内代码及 S13 旧执行路径退役已实现，额外覆盖 review 发现的遗漏已补齐。当前只有 SlotStore/FrameEntry/driver 执行核心，已移除 stack-vm feature 开关。最终联合语义门禁进行中，唯一一轮 benchmark/Profile 尚未执行；性能退出条件仍待最终数据判定。实施与验证记录见[逐 commit 计划](primitive-vm-commit-plan.md)、[工序覆盖核对](primitive-vm-s14-s20-execution-plan.md)和[迁移账本](primitive-vm-migration.md#s13-单执行核心退役实现与测试迁移)。
 
-S10–S12 最终单轮 403/403 有效，58 fixed 仍有 25 项高于 S0（见[联合报告](performance/README.md)）；残余差值的根因与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)。以下能力与结构条目的验收口径不变；历史 S07 回退分析保留为证据（[回退分析](performance/README.md)）。
+历史 S10–S12 被测版本的最终单轮 403/403 有效，58 fixed 仍有 25 项高于 S0（见[联合报告](performance/README.md)）；残余差值的根因与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)。以下能力与结构条目的验收口径不变；历史 S07 回退分析保留为证据（[回退分析](performance/README.md)）。
 
 ## 1. 起点与范围
 
@@ -1179,3 +1179,112 @@ binary callable 复用相同入口，真实 host 边界使用 delimiter 和原�
 `target/primitive-vm-s07-acceptance/`，判定见 `stage-verdict.json`。
 本节取代历史 S07 待办状态；S08/S09 优化和 S10 默认切换、旧路径删除未实施。
 完整 benchmark/profile 在本阶段唯一 commit 后执行，另在 PR #21 comment 汇报。
+
+
+## S13 单执行核心退役实现与测试迁移
+
+默认执行路径现为显式栈 driver；`stack-vm` 功能开关及旧解释器已经移除。
+`RuntimeVmHost`、`VmHost`、`VmActivation`、独立 dispatch/unwind/numeric_execution
+不再承担运行时工作。根调用直接构建 `FrameEntry`，生成器 freeze/thaw 直接保存与恢复
+该结构，复用同一 driver；异步、模块 link/evaluate 和普通函数均走新核心。
+benchmark、Test262、WASM 构建脚本仅构建新核心，不再提供双后端矩阵。
+历史 S06/S07 两配置记录仅解释当时验收，不是当前待执行门禁。
+
+旧独立解释器的 13 项指令测试改为发布到真实 realm 后执行，保留数值类型、NaN、
+负零、位移和控制流断言。唯一过时的“无 runtime 时 Array 必须拒绝分配”断言改为
+真实 realm 中分配 Array。旧测试宿主注入的用例改用真实 JS 路径，逐项如下；
+函数名保持一致，可定位原测试与当前断言，实际验证结果由最终统一门禁记录。
+
+| 旧测试名称 | 当前覆盖路径 |
+|---|---|
+| `generator_initial_yield_resumes_without_an_input_operand` | `vm/tests.rs` 同名真实 realm 测试 |
+| `generator_yield_snapshot_and_next_resume_preserve_quickjs_stack_abi` | `vm/tests.rs` 同名真实 realm 测试 |
+| `generator_yield_return_resume_pushes_magic_one` | `vm/tests.rs` 同名真实 realm 测试 |
+| `generator_plain_yield_throw_enters_existing_unwind_path` | `vm/tests.rs` 同名真实 realm 测试 |
+| `generator_yield_return_runs_compiled_finally_unwind_path` | `vm/tests.rs` 同名真实 realm 测试 |
+| `generator_yield_star_throw_resume_injects_magic_two` | `vm/tests.rs` 同名真实 realm 测试 |
+| `yield_star_iterator_start_and_next_keep_an_ordinary_four_slot_record` | `vm/tests.rs` 同名真实 realm 测试 |
+| `yield_star_iterator_call_uses_typed_method_and_argument_modes` | `vm/tests.rs` 同名真实 realm 测试 |
+| `yield_star_iterator_protocol_errors_match_quickjs` | `vm/tests.rs` 同名真实 realm 测试 |
+| `class_definition_opcodes_preserve_quickjs_stack_order` | `vm/tests.rs` 同名真实 realm 测试 |
+| `check_ctor_rejects_calls_and_accepts_construction_frames` | `vm/tests.rs` 同名真实 realm 测试 |
+| `borrowed_call_window_keeps_lower_operands_and_cleans_up_all_exit_kinds` | `vm/tests.rs` 同名真实 realm 测试 |
+| `tail_invocations_complete_the_frame_with_exact_call_operands` | `vm/tests.rs` 同名真实 realm 测试 |
+| `tail_invocation_throws_use_the_activation_backtrace_and_catch_path` | `vm/tests.rs` 同名真实 realm 测试 |
+| `eval_opcode_gates_original_identity_and_preserves_fallback_arguments` | `vm/tests.rs` 同名真实 realm 测试 |
+| `string_direct_eval_forwards_environment_and_lazily_normalizes_this` | `vm/tests.rs` 同名真实 realm 测试 |
+| `arguments_opcode_forwards_kind_and_host_completion` | `vm/tests.rs` 同名真实 realm 测试 |
+| `rest_opcode_forwards_start_and_host_completion` | `vm/tests.rs` 同名真实 realm 测试 |
+| `eval_variable_object_opcodes_preserve_stack_and_host_operands` | `vm/tests.rs` 同名真实 realm 测试 |
+| `to_object_boxes_primitives_and_rejects_nullish_values` | `vm/tests.rs` 同名真实 realm 测试 |
+| `dynamic_environment_opcodes_forward_sources_strictness_and_stack_values` | `vm/tests.rs` 同名真实 realm 测试 |
+| `iterator_unwind_preserves_exception_and_completion_precedence` | `vm/tests.rs` 同名真实 realm 测试 |
+| `for_of_next_disables_done_and_throwing_iterators` | `vm/tests.rs` 同名真实 realm 测试 |
+| `array_literal_opcodes_preserve_operands_and_element_order` | `vm/tests.rs` 同名真实 realm 测试 |
+| `object_literal_opcodes_preserve_target_and_operand_order` | `vm/tests.rs` 同名真实 realm 测试 |
+| `object_rest_copy_reads_depth_operands_after_to_object_and_preserves_the_stack` | `vm/tests.rs` 同名真实 realm 测试 |
+| `object_literal_opcodes_forward_host_throws` | `vm/tests.rs` 同名真实 realm 测试 |
+| `append_uses_iterator_protocol_and_preserves_pending_throw_on_close` | `vm/tests.rs` 同名真实 realm 测试 |
+| `iterator_region_above_gosub_address_closes_without_consuming_it` | `vm/tests.rs` 同名真实 realm 测试 |
+| `captured_local_reuse_hook_is_limited_to_abrupt_resume_boundaries` | `vm/tests.rs` 同名真实 realm 测试 |
+| `detached_vm_enforces_lexical_local_tdz_and_initialization` | `vm/tests.rs` 同名真实 realm 测试 |
+| `detached_vm_enforces_derived_this_one_shot_and_return_shape` | `vm/tests.rs` 同名真实 realm 测试 |
+| `detached_vm_rejects_checked_writes_in_the_tdz_and_allows_plain_reinitialization` | `vm/tests.rs` 同名真实 realm 测试 |
+| `detached_membership_rejects_primitive_right_operands_before_host_dispatch` | `vm/tests.rs` 同名真实 realm 测试 |
+| `string_addition_builds_ropes_and_reports_the_quickjs_length_error` | `vm/tests.rs` 同名真实 realm 测试 |
+
+补充迁移：`published_execution_tests` 对无效 fetch/branch 使用发布拒绝测试，
+对完整 0–255 读取深度、256/257 深栈和根保活使用 `SlotStore` 测试；
+`heap/runtime/tests/eval.rs` 的调用者 local/arg/closure 捕获断言移到
+`vm/eval_driver.rs::capture_tests`，包括非字符串与解析失败不物化。
+堆 iterators、binary_apply、GC 测试直接调用对应共享内核。Test262 没有跳过或改写预期。
+
+## S19 / S20 实施工序核对
+
+S19：Latin1 与 UTF16 平坦叶子直接借用输入，rope 只线性化一次；编译时构建
+`ValidatedProgram`，生产执行不重复验证；realm 预建三种固定结果 shape，命名组
+使用最多 64 项的有界 shape 缓存并释放淘汰 owner；replacement 使用范围批量追加
+与摊还 reserve，`Utf16Units::nth` 跳过子树；`AttemptState::reset` 跨候选起点保留容量。
+输入直接支持 Latin1，因此不需要计划假设的每次 widening buffer。
+
+S20.1–4：Context payload 装箱；zero queue 单次取出；`Edges` 四项内联并按需 spill，
+去掉 object edges 的容量预扫描；atom retain 单趟收集；deferred release 单次出队。
+64 位目标的实际 `ArenaSlot` 尺寸为 440 B，并有精确断言：计划中约 100 B 的预估
+没有计入其余 NodeData 变体，不能据此声称已经降至该预估值。
+这些项目的最终性能结论留待全部代码结束后的单轮统一 benchmark/profile。
+
+迁移 probe 的两个预期经本地 pinned QuickJS 2026-06-04 的纯语义对照校正：
+循环 try/catch 跳过 CloseLocal 时捕获结果为 `0,2,2`，与现有复用 cell 注释一致；
+`{..."ab"}` 为 `{}`，与现有 CopyDataProperties 跳过非 Object 源一致。
+测试继续断言 `true`，但其内部检查严格采用这两项已确认的 pinned 行为；
+ToObject 测试同时保留 Number 装箱值与 null/undefined 拒绝两项检查。
+
+静态门禁随 S13 移植到实际执行路径：移除的是已删除解释器的函数体冻结证据，
+以新 `run`、`driver`、`root_call`、`frame_exit`、iterator unwind 和直接
+freeze/thaw 的结构证据替代。公共 pending-exception、发布证书、共享 verifier、
+BC5 翻译和真实运行时语义矩阵继续校验；迁移后的 JS probe 额外认证源字面量，
+避免仅检查 `assert_js` 外壳。旧 VmHost 专属负向变异改为活跃 owner 的短路、
+丢失 completion 和错用 publication 等变异；不再通过要求恢复旧核心来满足门禁。
+
+### S13 四类维护演练的源码覆盖核对
+
+| 维护类型 | 新核心中的实际覆盖 |
+|---|---|
+| Number 表示与运算扩展 | `vm/tests.rs::unary_arithmetic_preserves_quickjs_numeric_tags_and_float_bits` 通过真实发布入口检查 Float 标签、NaN 与负零位；`numeric_coercion_tests::numeric_preparation_keeps_string_bigint_and_number_semantics` 检查 Int 溢出到 Float、混合 Number/BigInt 拒绝及驻留转换路径。S14 的数字到字符串直通与 S15 的算术驻留是本轮实际消费者。 |
+| 转换顺序 | `numeric_coercion_tests::numeric_object_conversion_preserves_hints_order_and_abrupt_completion` 检查左右 hint/顺序、普通 valueOf→toString 和首次 Throw 后不执行右侧。回调由 conversion task 与 typed callback continuation 完成。 |
+| 异常与恢复 | `published_execution_tests::published_resume_keeps_captured_cells_live_through_finally`、生成器 throw/return/yield* 用例以及 `suspend` 的失败 thaw、跨 runtime 拒绝测试直接覆盖新 FrameEntry freeze/thaw、展开和 roots 清理。 |
+| binding/eval | `published_bindings_keep_capture_eval_and_argument_aliases_live`、`published_eval_reuses_topology_but_observes_live_scope_and_super` 与 `eval_driver::capture_tests::direct_eval_preparation_captures_exact_cells_only_after_successful_string_compile` 覆盖真实 local/arg/closure 别名、eval 捕获时机、scope 与 super。 |
+
+最后覆盖检查发现并补齐了独立的同步调用桥遗漏：`call_bridge.rs`、`PendingCall`、
+`CallContinuation` 和 `RunningExit::Call` 已删除；属性、转换与普通调用统一使用
+现有 typed callback continuation。`proxy_get_driver::invoke` 的同步出口只接受
+已经分类的 native ABI，不能将 Bytecode/Bound/Proxy 交回通用 `call_internal`。
+`native_getter_and_conversion_callbacks_share_the_explicit_call_continuation` 新增验证
+bound getter、native getter、转换异常身份、apply/tail 与 `.call` 递归。
+原 `owned_sync_call_bridges` 快照字段保留零值用于旧报告比较，真实同步 native 叶子
+另记 `native_leaf_completion`，不再把叶子 ABI 记为迁移桥。
+
+源码检查确认没有 VM 通配导出、`VmHost`/`RuntimeVmHost` 类型、重复可执行
+`VmActivation` 或旧驱动文件；`VmUnwindRegion` 只是帧中的展开元数据。
+测试专用的 eager frame fixture 不进入生产构建。以上是实现与覆盖核对，
+不是本轮最终门禁或性能验收的通过声明；最终结果由统一验收另记。

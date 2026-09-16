@@ -68,7 +68,6 @@ impl Heap {
     /// Restricted equivalent of replacement for a mutable, initialized cell
     /// whose old and new values own no heap/atom/primitive-storage edge.
     /// Declining leaves both the cell and all pending cleanup untouched.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_replace_immediate_var_ref_value(
         &mut self,
         id: VarRefId,
@@ -125,7 +124,7 @@ impl Heap {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod immediate_write_tests {
     use super::*;
 

@@ -106,7 +106,9 @@ fn global_atomics_is_lazy_realm_local_and_has_the_pinned_surface() {
     let mut second = runtime.new_context();
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Atomics).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Atomics)
+        .unwrap();
 
     for (global, realm) in [(&first_global, first.realm), (&second_global, second.realm)] {
         let state = runtime.0.state.borrow();
@@ -140,7 +142,9 @@ fn global_atomics_is_lazy_realm_local_and_has_the_pinned_surface() {
         runtime.get_prototype_of(&second_atomics).unwrap(),
         Some(second.object_prototype().unwrap()),
     );
-    let load_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Load).unwrap();
+    let load_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Load)
+        .unwrap();
     let Value::Object(first_load) = first.get_property(&first_atomics, &load_key).unwrap() else {
         panic!("first realm Atomics.load did not materialize to a function");
     };
@@ -789,7 +793,9 @@ fn lazy_and_materialized_atomics_edges_are_released() {
     let runtime = Runtime::new();
     let context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Atomics).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Atomics)
+        .unwrap();
     let before = runtime
         .0
         .state

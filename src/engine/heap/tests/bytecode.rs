@@ -822,7 +822,6 @@ fn bytecode_static_names_require_complete_owned_string_mappings() {
     assert_eq!(heap.counts().live, 0);
 }
 
-#[cfg(feature = "stack-vm")]
 #[test]
 fn bytecode_publication_rebuilds_fusion_from_the_authenticated_payload() {
     use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};

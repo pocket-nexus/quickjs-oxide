@@ -1393,7 +1393,9 @@ fn prototype_set_handles_array_like_order_overlap_and_reentrant_bounds() {
 fn context_free_host_definition_converts_primitive_typed_array_values() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+        .unwrap();
 
     let Value::Object(number_array) = context.eval("new Uint8Array(1)").unwrap() else {
         panic!("Uint8Array construction did not return an object");
@@ -1467,7 +1469,6 @@ fn typed_array_integer_key_fast_path_keeps_domains_and_noncanonical_strings() {
     ));
 }
 
-#[cfg(feature = "stack-vm")]
 #[test]
 fn scoped_typed_words_match_token_access_and_keep_shared_fallback() {
     let runtime = Runtime::new();
@@ -1529,7 +1530,6 @@ fn scoped_typed_words_match_token_access_and_keep_shared_fallback() {
     }
 }
 
-#[cfg(feature = "stack-vm")]
 #[test]
 fn scoped_typed_words_reacquire_after_conversion_resize_detach_and_throw() {
     let runtime = Runtime::new();
@@ -1557,7 +1557,6 @@ fn scoped_typed_words_reacquire_after_conversion_resize_detach_and_throw() {
     );
 }
 
-#[cfg(feature = "stack-vm")]
 #[test]
 fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
     let runtime = Runtime::new();

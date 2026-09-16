@@ -7,12 +7,10 @@ pub(crate) struct SlotReplacementError {
 }
 
 impl Heap {
-    #[cfg(feature = "stack-vm")]
     pub(crate) const fn property_layout_epoch(&self) -> u64 {
         self.property_layout_epoch
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(super) fn invalidate_property_layout(&mut self, id: ObjectId) {
         if self.object(id).is_ok_and(|object| object.used_as_prototype) {
             self.property_layout_epoch = self.property_layout_epoch.saturating_add(1);
@@ -125,7 +123,6 @@ impl Heap {
     ) -> Result<&mut Shape, HeapError> {
         match self.live_node_mut(RawId::Shape(id))?.data {
             NodeData::Shape(ref mut shape) => {
-                #[cfg(feature = "stack-vm")]
                 shape.invalidate_layout();
                 Ok(shape)
             }
@@ -344,16 +341,24 @@ impl Heap {
     }
 
     /// Publish a complete dense payload into a prevalidated empty Array.
-    pub(crate) fn fill_empty_array_dense(&mut self, id: ObjectId, values: Vec<RawValue>) -> Result<(), HeapError> {
+    pub(crate) fn fill_empty_array_dense(
+        &mut self,
+        id: ObjectId,
+        values: Vec<RawValue>,
+    ) -> Result<(), HeapError> {
         let ObjectPayload::Array { dense: Some(dense) } = &self.object(id)?.payload else {
             return Err(HeapError::Invariant("dense fill requires fast Array"));
         };
-        if !dense.is_empty() { return Err(HeapError::Invariant("dense fill requires empty payload")); }
+        if !dense.is_empty() {
+            return Err(HeapError::Invariant("dense fill requires empty payload"));
+        }
         let edges = values.iter().flat_map(raw_value_edges).collect::<Vec<_>>();
         self.retain_edges_transactionally(&edges)?;
-        let ObjectPayload::Array { dense: Some(dense) } = &mut self.object_mut(id)?.payload else { unreachable!() };
+        let ObjectPayload::Array { dense: Some(dense) } = &mut self.object_mut(id)?.payload else {
+            unreachable!()
+        };
         *dense = values;
-        #[cfg(feature = "stack-vm")]
+
         self.invalidate_property_layout(id);
         Ok(())
     }
@@ -822,7 +827,7 @@ impl Heap {
         }
 
         self.retain_edges_transactionally(&property_slot_edges(&replacement))?;
-        #[cfg(feature = "stack-vm")]
+
         self.invalidate_property_layout(id);
         let shape = match self.shape_mut(shape_id) {
             Ok(shape) => shape,
@@ -1042,7 +1047,6 @@ impl Heap {
         let new_edges = object_layout_edges(shape, &slots);
         self.retain_edges_transactionally(&new_edges)?;
 
-        #[cfg(feature = "stack-vm")]
         self.invalidate_property_layout(id);
         let (previous_shape, previous_slots) = {
             let object = self
@@ -1110,7 +1114,6 @@ impl Heap {
             })?;
         self.retain_shape(shape)?;
 
-        #[cfg(feature = "stack-vm")]
         self.invalidate_property_layout(id);
         let detached_shape = {
             let object = self

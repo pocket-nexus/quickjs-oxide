@@ -549,16 +549,9 @@ impl Runtime {
             "FinalizationRegistry job callback lost its callable brand",
         ))?;
         let held_value = self.root_raw_value(held_value)?;
-        #[cfg(feature = "stack-vm")]
-        return crate::engine::vm::entry::call(
+
+        crate::engine::vm::entry::call(
             self,
-            realm,
-            &callback,
-            Value::Undefined,
-            std::slice::from_ref(&held_value),
-        );
-        #[cfg(not(feature = "stack-vm"))]
-        self.call_internal(
             realm,
             &callback,
             Value::Undefined,

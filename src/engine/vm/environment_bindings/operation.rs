@@ -374,57 +374,6 @@ impl EnvironmentResume {
         ))
     }
 }
-pub(in crate::engine::vm) fn finish(
-    runtime: &Runtime,
-    realm: ContextId,
-    mut step: EnvironmentStep,
-) -> Result<Completion, RuntimeError> {
-    loop {
-        step = match step {
-            EnvironmentStep::Complete(result) => return Ok(result),
-            EnvironmentStep::Has { mut resume } => {
-                let object = resume.take_has_object();
-                let key = resume.take_has_key();
-                resume.boolean(
-                    runtime,
-                    runtime.internal_has_property(realm, &object, &key)?,
-                )?
-            }
-            EnvironmentStep::Read { mut resume } => {
-                let object = resume.take_read_object();
-                let key = resume.take_read_key();
-                let receiver = resume.take_read_receiver();
-                resume.resume(
-                    runtime,
-                    runtime.internal_get(realm, &object, &key, receiver)?,
-                )?
-            }
-            EnvironmentStep::Set { mut resume } => {
-                let object = resume.take_set_object();
-                let key = resume.take_set_key();
-                let value = resume.take_set_value();
-                resume.set(
-                    runtime,
-                    runtime.internal_set(
-                        realm,
-                        &object,
-                        &key,
-                        value,
-                        Value::Object(object.clone()),
-                    )?,
-                )?
-            }
-            EnvironmentStep::Delete { mut resume } => {
-                let object = resume.take_delete_object();
-                let key = resume.take_delete_key();
-                resume.boolean(
-                    runtime,
-                    runtime.internal_delete_property(realm, &object, &key)?,
-                )?
-            }
-        };
-    }
-}
 
 #[derive(Default)]
 struct EnvironmentStepPending {

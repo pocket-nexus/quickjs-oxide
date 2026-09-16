@@ -85,7 +85,10 @@ pub(in crate::engine::vm) fn complete_local_add(
                     // Reuse the conversion already completed above even when
                     // a shared/rope lhs cannot append into its own buffer.
                     return Ok(PreparedAdd::Result(
-                        string.try_concat(&suffix).map(Value::String).map_err(Error::from),
+                        string
+                            .try_concat(&suffix)
+                            .map(Value::String)
+                            .map_err(Error::from),
                     ));
                 }
             }

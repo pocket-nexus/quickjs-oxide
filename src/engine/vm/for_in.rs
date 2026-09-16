@@ -11,23 +11,6 @@ use crate::engine::object::ObjectRef;
 use crate::engine::value::Value;
 
 impl Runtime {
-    /// QuickJS `js_for_in_start`: box non-nullish primitives, snapshot the
-    /// base object's own string keys, and return a hidden enumeration object.
-    pub(crate) fn start_for_in(
-        &self,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<ObjectRef, RuntimeError> {
-        let step = operation::ForInStep::start(self, realm, value)?;
-        let (value, done) = operation::finish(self, realm, step)?;
-        let (Value::Object(iterator), None) = (value, done) else {
-            return Err(RuntimeError::Invariant(
-                "for-in start returned an invalid result",
-            ));
-        };
-        Ok(iterator)
-    }
-
     fn allocate_for_in_iterator(
         &self,
         object: Option<&ObjectRef>,
@@ -62,21 +45,6 @@ impl Runtime {
         state.apply_cleanup(cleanup)?;
         drop(state);
         Ok(ObjectRef::from_owned_handle(self.clone(), iterator))
-    }
-
-    /// QuickJS `js_for_in_next`: retain the enumeration object, return one
-    /// string key plus `done`, and snapshot prototypes only when reached.
-    pub(crate) fn next_for_in(
-        &self,
-        realm: ContextId,
-        iterator: &ObjectRef,
-    ) -> Result<(Value, bool), RuntimeError> {
-        let step = operation::ForInStep::next(self, realm, iterator)?;
-        let (value, done) = operation::finish(self, realm, step)?;
-        let done = done.ok_or(RuntimeError::Invariant(
-            "for-in next returned a start result",
-        ))?;
-        Ok((value, done))
     }
 
     /// Mirror the representation-sensitive branch in

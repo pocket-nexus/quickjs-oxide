@@ -9,15 +9,14 @@ use crate::engine::builtins::native::{
     ArrayJoinKind, DynamicFunctionKind, FunctionDebugPosition, NativeCProto, NativeFunctionId,
     PrimitiveKind,
 };
-use crate::engine::code::bytecode::{ApplyKind, DetachedBytecode, Instruction};
+use crate::engine::code::bytecode::{ApplyKind, Instruction};
 use crate::engine::code::debug::{DebugInfoMode, Pc2LineEntry, Pc2LineTable};
 use crate::engine::code::dynamic_source::DynamicSourceBuilder;
 use crate::source::LineColumn;
 
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName, ConstructorKind,
-    EvalBinding, EvalBindingSource, EvalEnvironment, EvalKind, EvalScope, EvalScopeKind,
-    EvalVariableEnvironment, FunctionKind, FunctionMetadata,
+    EvalKind, FunctionKind, FunctionMetadata,
 };
 use crate::engine::code::function::{
     UnlinkedConstant, UnlinkedFunction, UnlinkedFunctionDebug, UnlinkedVariableDefinition,
@@ -37,11 +36,8 @@ use crate::engine::object::{
 };
 use crate::engine::value::{JsString, JsStringError, Value};
 use crate::engine::vm::call::CallableExecution;
-use crate::engine::vm::host_bridge::RuntimeVmHost;
 
-use crate::engine::vm::{
-    Completion, DirectEvalInvocation, IteratorCloseOutcome, ToPrimitiveHint, Vm, VmHost,
-};
+use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 const QUICKJS_SCALAR_42_BC5: &[u8] = &[
     0x05, 0x00, 0x0c, 0x00, 0x02, 0x00, 0xa8, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04,
@@ -620,7 +616,9 @@ fn take_error_message(
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("pending exception was not an Error object");
     };
-    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
+    let message = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
+        .unwrap();
     let Value::String(message) = context.get_property(&error, &message).unwrap() else {
         panic!("Error.message was not a string");
     };
@@ -634,8 +632,12 @@ fn take_error_name_and_message(
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("pending exception was not an Error object");
     };
-    let name = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap();
-    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
+    let name = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+        .unwrap();
+    let message = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
+        .unwrap();
     let Value::String(name) = context.get_property(&error, &name).unwrap() else {
         panic!("Error.name was not a string");
     };
@@ -788,7 +790,7 @@ mod binary_property_keys;
 mod binary_this;
 
 mod binary_calls;
-#[cfg(all(feature = "stack-vm", feature = "profiling"))]
+#[cfg(feature = "profiling")]
 mod binary_constructor_driver;
 
 mod binary_throw;

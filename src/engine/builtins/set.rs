@@ -96,7 +96,8 @@ impl Runtime {
         )?;
         // QuickJS installs both aliases from the exact values-function object,
         // before `entries`; preserving that order is observable in ownKeys.
-        let values_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
+        let values_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, &set_prototype, &values_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) => {
@@ -356,7 +357,7 @@ impl Runtime {
                 self,
                 realm,
                 super::iterator::collection::CollectionKind::Set,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -509,7 +510,7 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant(
                 "Set.prototype.add value argv was not padded",
             ))?;
-        self.insert_set_record(&set, value)?;
+        self.insert_set_record(set, value)?;
         Ok(Completion::Return(Value::Object(set.clone())))
     }
 
@@ -527,7 +528,7 @@ impl Runtime {
             RuntimeError::Invariant("Set.prototype.has value argv was not padded"),
         )?);
         Ok(Completion::Return(Value::Bool(
-            self.find_set_record(&set, &value)?.is_some(),
+            self.find_set_record(set, &value)?.is_some(),
         )))
     }
 
@@ -549,7 +550,7 @@ impl Runtime {
                 "Set.prototype.delete value argv was not padded",
             ))?;
         Ok(Completion::Return(Value::Bool(
-            self.delete_set_record(&set, &value)?,
+            self.delete_set_record(set, &value)?,
         )))
     }
 
@@ -578,7 +579,7 @@ impl Runtime {
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
         Ok(Completion::Return(Value::number(
-            self.set_size_value(&set)? as f64,
+            self.set_size_value(set)? as f64
         )))
     }
 
@@ -591,7 +592,7 @@ impl Runtime {
         callback::finish(
             self,
             realm,
-            callback::EachStep::start(self, realm, &invocation, arguments)?,
+            callback::EachStep::start(self, realm, invocation, arguments)?,
         )
     }
 
@@ -635,7 +636,7 @@ impl Runtime {
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
         Ok(Completion::Return(Value::Object(
-            self.new_set_iterator(realm, &set, kind)?,
+            self.new_set_iterator(realm, set, kind)?,
         )))
     }
 
@@ -762,7 +763,7 @@ impl Runtime {
                 self,
                 realm,
                 operations::SetOperation::Disjoint,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -781,7 +782,7 @@ impl Runtime {
                 self,
                 realm,
                 operations::SetOperation::Subset,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -800,7 +801,7 @@ impl Runtime {
                 self,
                 realm,
                 operations::SetOperation::Superset,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -819,7 +820,7 @@ impl Runtime {
                 self,
                 realm,
                 operations::SetOperation::Intersection,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -838,7 +839,7 @@ impl Runtime {
                 self,
                 realm,
                 operations::SetOperation::Difference,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -857,7 +858,7 @@ impl Runtime {
                 self,
                 realm,
                 operations::SetOperation::SymmetricDifference,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -876,7 +877,7 @@ impl Runtime {
                 self,
                 realm,
                 operations::SetOperation::Union,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )

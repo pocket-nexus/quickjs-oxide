@@ -7,7 +7,7 @@ use crate::engine::heap::Heap;
 use crate::engine::heap::runtime::{NEXT_RUNTIME_DOMAIN_ID, RuntimeInner, RuntimeState};
 use crate::engine::host::HostServices;
 use crate::engine::object::WellKnownSymbol;
-use crate::engine::vm::host_bridge as vm_host;
+
 #[cfg(test)]
 use quickjs_oxide_host::SystemHostServices;
 
@@ -44,9 +44,10 @@ impl Runtime {
         let host_services: Rc<dyn HostServices> = Rc::new(host_services);
         let domain_id = NEXT_RUNTIME_DOMAIN_ID.fetch_add(1, Ordering::Relaxed);
         assert_ne!(domain_id, 0, "runtime domain ID space exhausted");
-        let mut atoms = AtomTable::with_static_atoms(vm_host::TYPEOF_STATIC_ATOMS)
+        let mut atoms = AtomTable::with_static_atoms(crate::engine::vm::TYPEOF_STATIC_ATOMS)
             .expect("fixed typeof atom set fits the atom table");
-        let pinned_atoms = crate::engine::atom::pinned::PinnedAtoms::new(&mut atoms).expect("static property atoms fit");
+        let pinned_atoms = crate::engine::atom::pinned::PinnedAtoms::new(&mut atoms)
+            .expect("static property atoms fit");
         let mut well_known_symbols = HashMap::new();
         for symbol in WellKnownSymbol::ALL {
             let atom = atoms

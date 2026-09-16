@@ -89,7 +89,9 @@ impl PartialEq<Vec<RawId>> for Edges {
 
 #[cfg(test)]
 impl<const N: usize> PartialEq<[RawId; N]> for Edges {
-    fn eq(&self, other: &[RawId; N]) -> bool { &**self == other.as_slice() }
+    fn eq(&self, other: &[RawId; N]) -> bool {
+        &**self == other.as_slice()
+    }
 }
 
 #[cfg(test)]
@@ -113,6 +115,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg(target_pointer_width = "64")]
     fn arena_layout_is_compact() {
         eprintln!(
             "ArenaSlot bytes: {}",

@@ -44,18 +44,18 @@ pub(super) fn instantiate(
     for descriptor in descriptors.iter().copied() {
         let root = match descriptor.source {
             ClosureSource::ParentLocal(index) => capture_local_binding(
-                &runtime,
+                runtime,
                 execution.slots.local_mut(&frame.window, index)?,
                 frame.executable.local_definitions[usize::from(index)],
                 descriptor,
             )?,
             ClosureSource::ParentArgument(index) => capture_frame_binding(
-                &runtime,
+                runtime,
                 execution.slots.parameter_mut(&frame.window, index)?,
                 descriptor,
             )?,
             ClosureSource::ParentClosure(index) => reuse_frame_capture(
-                &runtime,
+                runtime,
                 &frame
                     .cold
                     .closure_slots

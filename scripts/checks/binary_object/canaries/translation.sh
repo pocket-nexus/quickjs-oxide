@@ -58,9 +58,9 @@ expect_full_rewrite_rejected stage3b-apply-stack-effect \
     '            Self::Apply(_) | Self::ApplySuper => (3, 1),' \
     '            Self::Apply(_) | Self::ApplySuper => (2, 1),'
 expect_full_rewrite_rejected stage3b-nullish-apply-bypass \
-    stage3b-apply-order src/engine/vm/host_bridge.rs \
-    '        if matches!(argument_array, Value::Undefined | Value::Null) {' \
-    '        if false && matches!(argument_array, Value::Undefined | Value::Null) {'
+    stage3b-apply-order src/engine/builtins/function/invoke.rs \
+    '        if matches!(value, Value::Null | Value::Undefined) {' \
+    '        if false && matches!(value, Value::Null | Value::Undefined) {'
 expect_full_rewrite_rejected stage3b-raw-new-target-collapse \
     stage3b-raw-construction src/engine/vm/call.rs \
     $'            ConstructNewTarget::Raw(value) => {' \
@@ -95,17 +95,17 @@ expect_full_rewrite_rejected stage3b-proxy-construct-callable-narrowing \
     $'.callable_from_value(Value::Object(rooted.target.clone()))?'
 expect_full_rewrite_rejected stage3b-public-raw-construction-leak \
     stage3b-public-construction src/engine/api/context/calls.rs \
-    '            .construct_internal(self.realm, constructor, new_target, arguments)' \
-    '            .construct_value_with_raw_new_target_internal(self.realm, Value::Object(constructor.as_object().clone()), Value::Object(new_target.as_object().clone()), arguments)'
+    $'        let result = crate::engine::vm::entry::construct(\n            &self.runtime,\n            self.realm,\n            constructor,\n            new_target,\n            arguments,\n        );' \
+    '        let result = self.runtime.construct_value_with_raw_new_target_internal(self.realm, Value::Object(constructor.as_object().clone()), Value::Object(new_target.as_object().clone()), arguments);'
 expect_full_rewrite_rejected stage3b-species-callable-narrowing \
-    stage3b-species-constructor src/engine/builtins/promise.rs \
-    '    ) -> Result<NativeConversion<Option<ConstructorRef>>, RuntimeError> {' \
-    '    ) -> Result<NativeConversion<Option<CallableRef>>, RuntimeError> {'
+    stage3b-species-constructor src/engine/builtins/promise/operation/capability.rs \
+    '        constructor: Option<ConstructorRef>,' \
+    '        constructor: Option<CallableRef>,'
 expect_full_rewrite_table < "$boundary_dir/canaries/stage3b_payload_canaries.txt"
 expect_full_rewrite_rejected stage3b-apply-nullish-prework \
-    stage3b-apply-order src/engine/vm/host_bridge.rs \
-    $'        if matches!(argument_array, Value::Undefined | Value::Null) {\n            return self' \
-    $'        if matches!(argument_array, Value::Undefined | Value::Null) {\n            let _ = self.build_argument_list(Value::Undefined)?;\n            return self'
+    stage3b-apply-order src/engine/builtins/function/invoke.rs \
+    '        if matches!(value, Value::Null | Value::Undefined) {' \
+    '        let _ = Self::request_arguments(value.clone(), unreachable!()); if matches!(value, Value::Null | Value::Undefined) {'
 expect_full_rewrite_rejected stage3b-native-prototype-payload \
     stage3b-native-prototype-family src/engine/builtins/array_buffer/constructor.rs \
     $'ProtoSourceStep::start(runtime, realm, new_target)?' \
@@ -136,7 +136,7 @@ expect_full_rewrite_rejected stage3c-publisher-alias-tail-bypass \
     $'    let instruction = match operation {\n        OrdinaryLeafOp::Nop => Instruction::Nop,\n        OrdinaryLeafOp::Object => Instruction::Object,\n        OrdinaryLeafOp::ToObject => Instruction::ToObject,\n        OrdinaryLeafOp::ToPropKey => Instruction::ToPropKey,\n        OrdinaryLeafOp::PushThis => Instruction::PushThis,\n        OrdinaryLeafOp::PushI32(value) => Instruction::PushI32(value),' \
     $'    use OrdinaryLeafOp as O;\n    if let O::TailCall(argument_count) = &operation {\n        return Ok(Instruction::Call(*argument_count));\n    }\n    let instruction = match operation {\n        OrdinaryLeafOp::Nop => Instruction::Nop,\n        OrdinaryLeafOp::Object => Instruction::Object,\n        OrdinaryLeafOp::ToObject => Instruction::ToObject,\n        OrdinaryLeafOp::ToPropKey => Instruction::ToPropKey,\n        OrdinaryLeafOp::PushThis => Instruction::PushThis,\n        OrdinaryLeafOp::PushI32(value) => Instruction::PushI32(value),'
 expect_full_rewrite_rejected stage3c-stack-effect-guarded-bypass \
-    stage3c-tail-verifier src/engine/code/bytecode.rs \
+    stage3c-tail-verifier src/engine/code/instruction.rs \
     $'const fn nominal_stack_effect(&self) -> (usize, usize) {\n        match self {' \
     $'const fn nominal_stack_effect(&self) -> (usize, usize) {\n        if let Self::TailCall(0) | Self::TailCallMethod(0) = self {\n            return (1, 1);\n        }\n        match self {'
 expect_full_rewrite_rejected stage3c-verifier-alias-fallthrough \
@@ -144,34 +144,49 @@ expect_full_rewrite_rejected stage3c-verifier-alias-fallthrough \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses' \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        use Instruction as I;\n        if let I::TailCall(_) | I::TailCallMethod(_) = instruction {\n            enqueue_fallthrough(\n                &mut worklist,\n                pc,\n                VerificationState {\n                    depth: next_depth,\n                    regions: next_regions.clone(),\n                    return_addresses: next_return_addresses.clone(),\n                    super_call_bases: next_super_call_bases.clone(),\n                },\n                code.len(),\n            )?;\n        }\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses'
 expect_full_rewrite_rejected stage3c-call-arguments-shadow \
-    stage3c-tail-vm src/engine/vm/mod.rs \
-    $'    ) -> Result<Vec<Value>, Error> {\n        let argument_count = usize::from(argument_count);' \
-    $'    ) -> Result<Vec<Value>, Error> {\n        let argument_count = 0;\n        let argument_count = usize::from(argument_count);'
+    s13-owned-route src/engine/vm/driver.rs \
+    '    let count = usize::from(count);' \
+    '    let count = 0;'
+
 expect_full_rewrite_rejected stage3c-call-arguments-drop \
-    stage3c-tail-vm src/engine/vm/mod.rs \
-    $'        let start = self.stack.len() - argument_count;\n        Ok(self.stack.split_off(start))' \
-    $'        let start = self.stack.len() - argument_count;\n        let mut arguments = self.stack.split_off(start);\n        arguments.pop();\n        Ok(arguments)'
+    s13-owned-route src/engine/vm/driver.rs \
+    '                .take_native_call_operands(window, count, method)?;
+            return super::proxy_get_driver::start_native_with_classification(' \
+    '                .take_native_call_operands(window, count, method)?;
+            let mut arguments = arguments;
+            arguments.pop();
+            return super::proxy_get_driver::start_native_with_classification('
+
 expect_full_rewrite_rejected stage3c-call-dispatch-alias-bypass \
-    stage3c-tail-vm src/engine/vm/mod.rs \
-    $'    ) -> Result<Option<Completion>, Error> {\n        let completion = match instruction {\n            Instruction::Import => {' \
-    $'    ) -> Result<Option<Completion>, Error> {\n        use Instruction as I;\n        let completion = match instruction {\n            I::TailCall(argument_count) if *argument_count == 0 => {\n                let _ = self.pop()?;\n                return host.call(Value::Undefined, Value::Null, Vec::new()).map(Some);\n            }\n            Instruction::Import => {'
-# Use the PC publication point so new direct-dispatch arms do not stale this probe.
+    s13-owned-route src/engine/vm/run.rs \
+    '                    arguments: *arguments,' \
+    '                    arguments: 0,'
+
 expect_full_rewrite_rejected stage3c-execute-inner-tail-intercept \
-    stage3c-tail-vm src/engine/vm/mod.rs \
-    '            host.update_active_bytecode_pc(BytecodePc::new(self.pc))?;' \
-    $'            host.update_active_bytecode_pc(BytecodePc::new(self.pc))?;\n            use Instruction as I;\n            if matches!(instruction, I::TailCall(_) | I::TailCallMethod(_)) {\n                return Ok(InterpreterExit::Complete(Completion::Return(Value::Undefined)));\n            }'
+    s13-owned-route src/engine/vm/run.rs \
+    '        let handled = match instruction {' \
+    '        if matches!(instruction, Instruction::TailCall(_) | Instruction::TailCallMethod(_)) { return Ok(RunExit::Complete); }
+        let handled = match instruction {'
+
 expect_full_rewrite_rejected stage3c-execute-alias-return-bypass \
-    stage3c-tail-completion src/engine/vm/mod.rs \
-    $'    ) -> Result<Completion, Error> {\n        loop {\n            let raised = match self.execute_inner(code, host) {' \
-    $'    ) -> Result<Completion, Error> {\n        use Completion as C;\n        loop {\n            let raised = match self.execute_inner(code, host) {\n                Ok(InterpreterExit::Complete(C::Return(value))) if matches!(&value, Value::Undefined) => {\n                    self.pc = self.pc.saturating_add(1);\n                    continue;\n                }'
+    s13-owned-route src/engine/vm/frame_exit.rs \
+    '        Some(completion) => completion,' \
+    '        Some(Completion::Return(_)) => Completion::Return(Value::Undefined),
+        Some(completion) => completion,'
+
 expect_full_rewrite_rejected stage3c-run-throw-bypass \
-    stage3c-tail-completion src/engine/vm/mod.rs \
-    $'                Ok(InterpreterExit::Complete(Completion::Return(value))) => {\n                    return Ok(VmExit::Complete(Completion::Return(value)));\n                }\n                Ok(InterpreterExit::Complete(Completion::Throw(value))) => value,' \
-    $'                Ok(InterpreterExit::Complete(Completion::Return(value))) => {\n                    return Ok(VmExit::Complete(Completion::Return(value)));\n                }\n                Ok(InterpreterExit::Complete(Completion::Throw(value)))\n                    if matches!(&value, Value::Undefined) => {\n                        return Ok(VmExit::Complete(Completion::Throw(value)));\n                    }\n                Ok(InterpreterExit::Complete(Completion::Throw(value))) => value,'
+    s13-owned-route src/engine/vm/driver.rs \
+    '        if matches!(forwarded, Some(Completion::Throw(_))) {' \
+    '        if false && matches!(forwarded, Some(Completion::Throw(_))) {'
+
 expect_full_rewrite_rejected stage3c-raise-guarded-bypass \
-    stage3c-tail-completion src/engine/vm/mod.rs \
-    $'    ) -> Result<Option<Completion>, Error> {\n        host.ensure_backtrace(&value)?;\n        loop {' \
-    $'    ) -> Result<Option<Completion>, Error> {\n        if matches!(value, Value::Undefined) {\n            return Ok(Some(Completion::Throw(value)));\n        }\n        host.ensure_backtrace(&value)?;\n        loop {'
+    s13-owned-route src/engine/vm/iterator_driver/regions.rs \
+    '    runtime
+        .ensure_error_backtrace(&value, false, None)' \
+    '    if matches!(value, Value::Undefined) { return Ok(CallStep::Complete(Completion::Throw(value))); }
+    runtime
+        .ensure_error_backtrace(&value, false, None)'
+
 expect_full_rewrite_rejected stage3c-required-module-cfg-excluded \
     stage3c-runtime-evidence src/engine/vm/mod.rs \
     $'#[cfg(test)]\nmod tests;' \
@@ -181,7 +196,7 @@ expect_full_rewrite_rejected stage3c-required-module-inner-cfg-excluded \
     'use super::{' \
     $'#![cfg(any())]\n\nuse super::{'
 expect_full_rewrite_rejected stage3c-required-test-macro-shadow \
-    stage3c-runtime-evidence src/engine/heap/runtime/tests.rs \
+    stage3c-runtime-evidence src/engine/heap/runtime/tests/binary_calls.rs \
     $'fn trusted_quickjs_ordinary_tail_invocations_use_exact_bc5_wires_and_semantics() {\n    assert_eq!(QUICKJS_ORDINARY_TAIL_CALL_BC5.len(), 57);' \
     $'fn trusted_quickjs_ordinary_tail_invocations_use_exact_bc5_wires_and_semantics() {\n    macro_rules! assert_eq { ($($tokens:tt)*) => {}; }\n    assert_eq!(QUICKJS_ORDINARY_TAIL_CALL_BC5.len(), 57);'
 

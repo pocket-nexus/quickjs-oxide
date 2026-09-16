@@ -90,6 +90,9 @@ impl ArrayLengthResume {
     }
 }
 
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<ArrayLengthStep>() <= 64);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +134,3 @@ mod tests {
         }
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<ArrayLengthStep>() <= 64);

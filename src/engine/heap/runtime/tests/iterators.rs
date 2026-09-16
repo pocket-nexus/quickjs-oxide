@@ -435,50 +435,27 @@ fn iterator_from_wraps_a_string_when_its_iterator_method_is_missing() {
 }
 
 #[test]
-fn iterator_close_skips_only_result_brand_check_for_pending_exception() {
+fn iterator_close_preserves_pending_throw_and_checks_normal_result_brand() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    let primitive_return = eval_callable(&runtime, &mut context, "(function(){ return 1; })");
-    let return_key = runtime.intern_property_key("return").unwrap();
-    let iterator = context.new_object().unwrap();
-    assert!(
-        runtime
-            .define_own_property(
-                &iterator,
-                &return_key,
-                &data_descriptor(
-                    Value::Object(primitive_return.as_object().clone()),
-                    true,
-                    true,
-                    true,
-                ),
-            )
-            .unwrap()
-    );
-    let mut host = RuntimeVmHost::empty_for_test(runtime.clone(), context.realm);
-    assert!(matches!(
-        VmHost::iterator_close(&mut host, Value::Object(iterator.clone()), true).unwrap(),
-        IteratorCloseOutcome::Closed
-    ));
-    assert!(matches!(
-        VmHost::iterator_close(&mut host, Value::Object(iterator), false).unwrap(),
-        IteratorCloseOutcome::Throw(Value::Object(_))
-    ));
-
-    let non_callable = context.new_object().unwrap();
-    assert!(
-        runtime
-            .define_own_property(
-                &non_callable,
-                &return_key,
-                &data_descriptor(Value::Int(1), true, true, true),
-            )
-            .unwrap()
-    );
-    assert!(matches!(
-        VmHost::iterator_close(&mut host, Value::Object(non_callable), true).unwrap(),
-        IteratorCloseOutcome::Throw(Value::Object(_))
-    ));
+    assert_eq!(context.eval(r#"
+        (function() {
+            let calls=0, marker={};
+            function iterable(ret) {
+                return { [Symbol.iterator]() { return this; },
+                    next() { return {value:1,done:false}; }, return:ret };
+            }
+            try { for (let x of iterable(function(){ calls++; return 1; })) { throw marker; } }
+            catch(e) { if(e !== marker) return false; }
+            try { for (let x of iterable(function(){ calls++; return 1; })) { break; } return false; }
+            catch(e) { if(!(e instanceof TypeError)) return false; }
+            try { for (let x of iterable(1)) { break; } return false; }
+            catch(e) { if(!(e instanceof TypeError)) return false; }
+            try { for (let x of iterable(1)) { throw marker; } }
+            catch(e) { if(e !== marker) return false; }
+            return calls === 2;
+        })()
+    "#).unwrap(), Value::Bool(true));
 }
 
 #[test]

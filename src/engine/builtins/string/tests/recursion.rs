@@ -1,356 +1,6 @@
 use super::*;
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::api::context::Context;
-
-#[test]
-#[cfg(not(feature = "stack-vm"))]
-fn recursive_string_conversion_family_is_guarded_on_libtest_stack_and_recovers() {
-    std::thread::Builder::new()
-        .name("string-conversion-stack-proof".into())
-        .stack_size(2 * 1024 * 1024)
-        .spawn(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context();
-            context.eval(SOURCE_STRING_SUBRANGE_RECURSE).unwrap();
-
-            for kind in 0..3 {
-                assert_eq!(
-                    context
-                        .eval(&format!("stringSubrangeRecurse({kind},3)"))
-                        .unwrap(),
-                    Value::String(JsString::from_static("x")),
-                    "the proven-safe four-frame subrange chain was rejected for kind {kind}"
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                        try{{stringSubrangeRecurse({kind},4);return "missing"}}
-                        catch(error){{return error.name+":"+error.message}}
-                    }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "the fifth subrange family frame was not rejected for kind {kind}"
-                );
-            }
-
-            context.eval(SOURCE_MIXED_STRING_SEARCH_RECURSE).unwrap();
-            assert_eq!(
-                context.eval("mixedStringSearchRecurse(0,3)").unwrap(),
-                Value::Bool(true),
-                "the proven-safe four-frame includes/subrange chain was rejected"
-            );
-            assert_eq!(
-                context.eval("mixedStringSearchRecurse(1,3)").unwrap(),
-                Value::String(JsString::from_static("x")),
-                "the reverse four-frame includes/subrange chain was rejected"
-            );
-            assert_eq!(
-                context
-                    .eval(
-                        r#"(function(){
-                            try{mixedStringSearchRecurse(0,4);return "missing"}
-                            catch(error){return error.name+":"+error.message}
-                        })()"#,
-                    )
-                    .unwrap(),
-                Value::String(JsString::from_static("InternalError:stack overflow")),
-                "alternating includes/subrange calls bypassed the shared fifth-frame guard"
-            );
-
-            context.eval(SOURCE_MIXED_STRING_REPEAT_RECURSE).unwrap();
-            for kind in 0..2 {
-                assert_eq!(
-                    context
-                        .eval(&format!("mixedStringRepeatRecurse({kind},3)"))
-                        .unwrap(),
-                    Value::String(JsString::from_static("x")),
-                    "the proven-safe repeat/subrange chain was rejected for kind {kind}"
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{mixedStringRepeatRecurse({kind},4);return "missing"}}
-                                catch(error){{return error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "alternating repeat/subrange calls bypassed the shared fifth-frame guard"
-                );
-            }
-
-            context.eval(SOURCE_MIXED_STRING_PAD_RECURSE).unwrap();
-            for (kind, expected) in [(0, "x "), (1, "x"), (2, "x"), (3, "_x")] {
-                assert_eq!(
-                    context
-                        .eval(&format!("mixedStringPadRecurse({kind},3)"))
-                        .unwrap(),
-                    Value::String(JsString::try_from_utf8(expected).unwrap()),
-                    "the proven-safe pad/repeat/slice chain was rejected for kind {kind}"
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{mixedStringPadRecurse({kind},4);return "missing"}}
-                                catch(error){{return error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "alternating pad/repeat/slice calls bypassed the shared fifth-frame guard"
-                );
-            }
-
-            context.eval(SOURCE_MIXED_STRING_TRIM_RECURSE).unwrap();
-            for kind in 0..5 {
-                assert_eq!(
-                    context
-                        .eval(&format!("mixedStringTrimRecurse({kind},3)"))
-                        .unwrap(),
-                    Value::String(JsString::from_static("x")),
-                    "the proven-safe trim/shared-String chain was rejected for kind {kind}",
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{mixedStringTrimRecurse({kind},4);return "missing"}}
-                                catch(error){{return error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "trim alternation bypassed the shared fifth-frame guard for kind {kind}",
-                );
-            }
-
-            context
-                .eval(SOURCE_MIXED_STRING_CREATE_HTML_RECURSE)
-                .unwrap();
-            for (kind, expected) in [
-                (0, "<a name=\"n\">x</a>"),
-                (1, "<a href=\"u\">x</a>"),
-                (2, "<big>x</big>"),
-                (3, "x"),
-                (4, "x"),
-                (5, "x"),
-                (6, "x"),
-            ] {
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{return mixedStringCreateHtmlRecurse({kind},3)}}
-                                catch(error){{return "ERROR:"+error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::try_from_utf8(expected).unwrap()),
-                    "the proven-safe CreateHTML/shared-String chain was rejected for kind {kind}",
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{mixedStringCreateHtmlRecurse({kind},4);return "missing"}}
-                                catch(error){{return error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "CreateHTML alternation bypassed the shared fifth-frame guard for kind {kind}",
-                );
-            }
-
-            context.eval(SOURCE_MIXED_STRING_CASE_RECURSE).unwrap();
-            for (kind, expected) in [(0, "a"), (1, "x")] {
-                assert_eq!(
-                    context
-                        .eval(&format!("mixedStringCaseRecurse({kind},3)"))
-                        .unwrap(),
-                    Value::String(JsString::from_static(expected)),
-                    "the proven-safe case/trim chain was rejected for kind {kind}",
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{mixedStringCaseRecurse({kind},4);return "missing"}}
-                                catch(error){{return error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "case/trim alternation bypassed the shared fifth-frame guard for kind {kind}",
-                );
-            }
-            context.eval(SOURCE_MIXED_STRING_NORMALIZE_RECURSE).unwrap();
-            for kind in 0..2 {
-                assert_eq!(
-                    context
-                        .eval(&format!("mixedStringNormalizeRecurse({kind},3)"))
-                        .unwrap(),
-                    Value::String(JsString::from_static("Å")),
-                    "the proven-safe normalize conversion chain was rejected for kind {kind}",
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{mixedStringNormalizeRecurse({kind},4);return "missing"}}
-                                catch(error){{return error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "normalize conversion bypassed the shared fifth-frame guard for kind {kind}",
-                );
-            }
-            assert_eq!(
-                context
-                    .eval(
-                        r#""abc".includes("b")+"|"+"abc".slice(1)+"|"+
-                           "ab".repeat(2)+"|"+"a".padEnd(3,"x")+"|"+"a".padStart(3,"x")+"|"+
-                           " z ".trim()+"|"+"z".bold()+"|"+"AbΣ".toLocaleLowerCase()+"|"+
-                           "A\u030a".normalize()"#,
-                    )
-                    .unwrap(),
-                Value::String(JsString::from_static(
-                    "true|bc|abab|axx|xxa|z|<b>z</b>|abς|Å",
-                )),
-                "the runtime did not recover after mixed String-family overflow"
-            );
-        })
-        .expect("2 MiB String conversion stack-proof thread did not start")
-        .join()
-        .expect("2 MiB String conversion stack-proof thread panicked");
-}
-
-#[test]
-#[cfg(not(feature = "stack-vm"))]
-fn recursive_string_constructor_family_is_guarded_and_runtime_recovers() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    context.eval(SOURCE_STRING_CONSTRUCTOR_RECURSE).unwrap();
-
-    for (call, expected) in [
-        ("stringConstructorRecurse(8)", "x"),
-        ("stringFromCharCodeRecurse(8)", "A"),
-        ("stringFromCodePointRecurse(8)", "A"),
-        ("stringRawRecurse(8)", "x"),
-    ] {
-        assert_eq!(
-            context.eval(call).unwrap(),
-            Value::String(JsString::from_static(expected)),
-            "safe String-family recursion drifted for {call}",
-        );
-    }
-    for call in [
-        "stringConstructorRecurse(9)",
-        "stringFromCharCodeRecurse(9)",
-        "stringFromCodePointRecurse(9)",
-        "stringRawRecurse(9)",
-    ] {
-        let value = context
-            .eval(&format!(
-                r#"(function(){{
-                    try{{{call};return "missing"}}
-                    catch(error){{return error.name+":"+error.message}}
-                }})()"#,
-            ))
-            .unwrap();
-        assert_eq!(
-            value,
-            Value::String(JsString::from_static("InternalError:stack overflow")),
-            "String-family recursion guard drifted for {call}",
-        );
-    }
-    assert_eq!(context.eval("1+1").unwrap(), Value::Int(2));
-}
-
-#[test]
-#[cfg(not(feature = "stack-vm"))]
-fn recursive_string_includes_family_match_getter_is_guarded_and_runtime_recovers() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    context.eval(SOURCE_STRING_INCLUDES_FAMILY_RECURSE).unwrap();
-
-    for (method, kind) in [("includes", 0), ("endsWith", 1), ("startsWith", 2)] {
-        assert_eq!(
-            context
-                .eval(&format!("stringIncludesFamilyRecurse({kind},3)"))
-                .unwrap(),
-            Value::Bool(true),
-            "the proven-safe four-frame {method} chain was rejected",
-        );
-        assert_eq!(
-            context
-                .eval(&format!(
-                    r#"(function(){{
-                        try{{stringIncludesFamilyRecurse({kind},4);return "missing"}}
-                        catch(error){{return error.name+":"+error.message}}
-                    }})()"#,
-                ))
-                .unwrap(),
-            Value::String(JsString::from_static("InternalError:stack overflow")),
-        );
-    }
-    assert_eq!(context.eval("1+1").unwrap(), Value::Int(2));
-}
-
-#[test]
-#[cfg(not(feature = "stack-vm"))]
-fn mixed_string_and_regexp_search_recursion_is_guarded_and_runtime_recovers() {
-    std::thread::Builder::new()
-        .name("string-regexp-search-stack-proof".into())
-        .stack_size(2 * 1024 * 1024)
-        .spawn(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context();
-            context.eval(SOURCE_MIXED_SEARCH_RECURSE).unwrap();
-
-            for (entry, kind) in [("String.prototype.search", 0), ("RegExp @@search", 1)] {
-                assert_eq!(
-                    context
-                        .eval(&format!("mixedSearchRecurse({kind},3)"))
-                        .unwrap(),
-                    Value::Int(0),
-                    "the proven-safe four-frame {entry} chain was rejected",
-                );
-                assert_eq!(
-                    context
-                        .eval(&format!(
-                            r#"(function(){{
-                                try{{mixedSearchRecurse({kind},4);return "missing"}}
-                                catch(error){{return error.name+":"+error.message}}
-                            }})()"#,
-                        ))
-                        .unwrap(),
-                    Value::String(JsString::from_static("InternalError:stack overflow")),
-                    "the fifth mixed search frame was not rejected from {entry}",
-                );
-            }
-            assert_eq!(
-                context
-                    .eval(
-                        r#""abc".search("b")+"|"+
-                           RegExp.prototype[Symbol.search].call({
-                               lastIndex:0,exec:function(){return null}
-                           },"x")"#,
-                    )
-                    .unwrap(),
-                Value::String(JsString::from_static("1|-1")),
-                "the runtime did not recover after mixed search overflow",
-            );
-        })
-        .expect("2 MiB String/RegExp search stack-proof thread did not start")
-        .join()
-        .expect("2 MiB String/RegExp search stack-proof thread panicked");
-}
 
 // Reuse the same scripts for physical-stack and owned-frame assertions.
 const SOURCE_STRING_SUBRANGE_RECURSE: &str = r#"function stringSubrangeRecurse(kind,depth){
@@ -635,7 +285,7 @@ const SOURCE_MIXED_SEARCH_RECURSE: &str = r#"function mixedSearchRecurse(kind,de
 
 // Implementation plan §9 separates the preserved physical native budgets from
 // owned VM limits. These checks use the unchanged default execution limits.
-#[cfg(feature = "stack-vm")]
+
 fn on_owned_string_stack(run: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .name("owned-string-logical-stack-proof".to_owned())
@@ -645,7 +295,7 @@ fn on_owned_string_stack(run: impl FnOnce() + Send + 'static) {
         .join()
         .expect("owned String proof failed on a 2 MiB stack");
 }
-#[cfg(feature = "stack-vm")]
+
 fn assert_owned_infinite_recursion_recovers(context: &mut Context, call: &str) {
     assert_eq!(
         context.eval(&format!(r#"(function(){{try{{{call};return "missing"}}catch(error){{return error.name+":"+error.message}}}})()"#)).unwrap(),
@@ -655,7 +305,7 @@ fn assert_owned_infinite_recursion_recovers(context: &mut Context, call: &str) {
     assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
 }
 #[test]
-#[cfg(feature = "stack-vm")]
+
 fn owned_string_conversion_families_fit_small_stack_and_enforce_logical_limit() {
     on_owned_string_stack(|| {
         let runtime = Runtime::new();
@@ -712,7 +362,7 @@ fn owned_string_conversion_families_fit_small_stack_and_enforce_logical_limit() 
     });
 }
 #[test]
-#[cfg(feature = "stack-vm")]
+
 fn owned_string_constructor_families_fit_small_stack_and_enforce_logical_limit() {
     on_owned_string_stack(|| {
         let runtime = Runtime::new();
@@ -733,7 +383,7 @@ fn owned_string_constructor_families_fit_small_stack_and_enforce_logical_limit()
     });
 }
 #[test]
-#[cfg(feature = "stack-vm")]
+
 fn owned_string_match_getters_fit_small_stack_and_enforce_logical_limit() {
     on_owned_string_stack(|| {
         let runtime = Runtime::new();
@@ -751,7 +401,7 @@ fn owned_string_match_getters_fit_small_stack_and_enforce_logical_limit() {
     });
 }
 #[test]
-#[cfg(feature = "stack-vm")]
+
 fn owned_string_regexp_search_fits_small_stack_and_enforces_logical_limit() {
     on_owned_string_stack(|| {
         let runtime = Runtime::new();

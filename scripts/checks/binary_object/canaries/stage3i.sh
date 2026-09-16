@@ -11,21 +11,21 @@ expect_full_rewrite_rejected stage3j-raw8-validator-narrowing \
     '        if matches!(instruction.operation(), FunctionOp::PushThis) {' \
     '        if matches!(instruction.operation(), FunctionOp::PushThis | FunctionOp::ToPropKey) {'
 expect_full_rewrite_rejected stage3j-host-primitive-fast-path-narrowed \
-    stage3j-to-propkey-host-semantics src/engine/vm/host_bridge.rs \
-    '            key @ (Value::Int(_) | Value::String(_)) => return Ok(Completion::Return(key)),' \
-    '            key @ Value::String(_) => return Ok(Completion::Return(key)),'
+    s13-owned-route src/engine/vm/run.rs \
+    $'                Value::Int(_) | Value::String(_) => true,' \
+    $'                Value::String(_) => true,'
 expect_full_rewrite_rejected stage3j-host-symbol-identity-erased \
-    stage3j-to-propkey-host-semantics src/engine/vm/host_bridge.rs \
-    '                return Ok(Completion::Return(Value::Symbol(symbol)));' \
-    '                return Ok(Completion::Return(Value::Undefined));'
+    stage3j-to-propkey-host-semantics src/engine/vm/conversion_driver.rs \
+    $'            Value::Symbol(symbol)\n        }' \
+    $'            Value::Undefined\n        }'
 expect_full_rewrite_rejected stage3j-host-string-hint-drift \
-    stage3j-to-propkey-host-semantics src/engine/vm/host_bridge.rs \
-    '                .to_primitive(self.current_realm, key, ToPrimitiveHint::String)' \
-    '                .to_primitive(self.current_realm, key, ToPrimitiveHint::Default)'
+    stage3j-to-propkey-host-semantics src/engine/vm/conversion_driver.rs \
+    $'(right, Finish::PropertyKey, ToPrimitiveHint::String)' \
+    $'(right, Finish::PropertyKey, ToPrimitiveHint::Default)'
 expect_full_rewrite_rejected stage3j-host-throw-identity-erased \
-    stage3j-to-propkey-host-semantics src/engine/vm/host_bridge.rs \
-    $'                Completion::Return(key) => key,\n                Completion::Throw(value) => return Ok(Completion::Throw(value)),' \
-    $'                Completion::Return(key) => key,\n                Completion::Throw(_value) => return Ok(Completion::Return(Value::Undefined)),'
+    stage3j-to-propkey-host-semantics src/engine/vm/conversion_driver.rs \
+    $'                    Completion::Throw(value) => Completion::Throw(value),' \
+    $'                    Completion::Throw(_value) => Completion::Return(Value::Undefined),'
 expect_full_rewrite_rejected stage3j-to-primitive-string-literal-drift \
     stage3j-to-propkey-primitive-semantics src/engine/value/conversion/primitive.rs \
     '                    ToPrimitiveHint::String => "string",' \
@@ -123,21 +123,21 @@ expect_full_rewrite_rejected stage3h-to-object-verifier-fallthrough-bypass \
     $'            Instruction::ThrowReadOnly(_)\n            | Instruction::ThrowRedeclaration(_)' \
     $'            Instruction::ToObject\n            | Instruction::ThrowReadOnly(_)\n            | Instruction::ThrowRedeclaration(_)'
 expect_full_rewrite_rejected stage3h-vm-to-object-nullish-bypass \
-    stage3h-to-object-vm src/engine/vm/mod.rs \
-    $'                    Value::Null | Value::Undefined => {\n                        return Err(Error::new(ErrorKind::Type, "cannot convert to object"));\n                    }' \
-    $'                    Value::Null | Value::Undefined => {\n                        self.stack.push(Value::Undefined);\n                    }'
+    s13-owned-route src/engine/vm/run.rs \
+    $'                if matches!(slots.peek(0)?, Value::Object(_)) {' \
+    $'                if matches!(slots.peek(0)?, Value::Object(_) | Value::Null | Value::Undefined) {'
 expect_full_rewrite_rejected stage3h-vm-to-object-pre-match-diversion \
-    stage3h-to-object-vm src/engine/vm/mod.rs \
-    $'    ) -> Result<Option<Completion>, Error> {\n        match instruction {\n            Instruction::Arguments(kind) =>' \
-    $'    ) -> Result<Option<Completion>, Error> {\n        if matches!(instruction, Instruction::ToObject) {\n            return Ok(None);\n        }\n        match instruction {\n            Instruction::Arguments(kind) =>'
+    s13-owned-route src/engine/vm/run.rs \
+    $'            Instruction::ToObject => {' \
+    $'            Instruction::ToObject => { return Ok(RunExit::Complete);'
 expect_full_rewrite_rejected stage3h-vm-to-object-alias-pre-match-diversion \
-    stage3h-to-object-vm src/engine/vm/mod.rs \
-    $'    ) -> Result<Option<Completion>, Error> {\n        match instruction {\n            Instruction::Arguments(kind) =>' \
-    $'    ) -> Result<Option<Completion>, Error> {\n        use Instruction as I;\n        if matches!(instruction, I::ToObject) {\n            return Ok(None);\n        }\n        match instruction {\n            Instruction::Arguments(kind) =>'
+    s13-owned-route src/engine/vm/run.rs \
+    $'            Instruction::ToObject => {' \
+    $'            Instruction::ToObject => { use RunExit as Exit; return Ok(Exit::Complete);'
 expect_full_rewrite_rejected stage3h-vm-to-object-helper-pre-match-diversion \
-    stage3h-to-object-vm src/engine/vm/mod.rs \
-    $'    ) -> Result<Option<Completion>, Error> {\n        match instruction {\n            Instruction::Arguments(kind) =>' \
-    $'    ) -> Result<Option<Completion>, Error> {\n        fn diverts_to_object(instruction: &Instruction) -> bool {\n            matches!(instruction, Instruction::ToObject)\n        }\n        if diverts_to_object(instruction) {\n            return Ok(None);\n        }\n        match instruction {\n            Instruction::Arguments(kind) =>'
+    s13-owned-route src/engine/vm/run.rs \
+    $'            Instruction::ToObject => {' \
+    $'            Instruction::ToObject => { fn bypass() -> RunExit { RunExit::Complete } return Ok(bypass());'
 expect_full_rewrite_rejected stage3h-runtime-test-macro-shadow \
     stage3h-runtime-evidence src/engine/heap/runtime/tests.rs \
     $'fn trusted_quickjs_ordinary_to_object_verification_rolls_back_and_retries() {\n    let mut fallthrough = QUICKJS_ORDINARY_TO_OBJECT_BC5.to_vec();' \
@@ -215,9 +215,9 @@ expect_full_rewrite_rejected stage3e-read-only-verifier-fallthrough \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses' \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        if matches!(instruction, Instruction::ThrowReadOnly(_)) {\n            enqueue_fallthrough(\n                &mut worklist,\n                pc,\n                VerificationState {\n                    depth: next_depth,\n                    regions: next_regions.clone(),\n                    return_addresses: next_return_addresses.clone(),\n                    super_call_bases: next_super_call_bases.clone(),\n                },\n                code.len(),\n            )?;\n        }\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses'
 expect_full_rewrite_rejected stage3e-vm-read-only-pop-bypass \
-    stage3e-read-only-completion src/engine/vm/mod.rs \
-    $'            Instruction::ThrowReadOnly(index) => {\n                return Err(host.read_only_error(*index)?);\n            }' \
-    $'            Instruction::ThrowReadOnly(index) => {\n                self.pop()?;\n                return Err(host.read_only_error(*index)?);\n            }'
+    s13-owned-route src/engine/vm/run.rs \
+    $'            Instruction::ThrowReadOnly(index) | Instruction::ThrowRedeclaration(index) => {' \
+    $'            Instruction::ThrowReadOnly(index) | Instruction::ThrowRedeclaration(index) => { slots.pop()?;'
 expect_full_rewrite_rejected stage3e-status-source-stale-appended \
     stage3i-status docs/status.md \
     $'raw-177 coverage, and makes no new conformance claim.\n\nThe Stage 3J raw112 `ToPropKey` Rust6/C3 working tree described above is' \
@@ -257,9 +257,9 @@ expect_full_rewrite_rejected stage3e-status-stage-first-stale-appended \
     'The latest promoted Stage 3I lifecycle receipt' \
     $'Stage 3E is source-stale and unauthenticated by this receipt.\n\nThe latest promoted Stage 3I lifecycle receipt'
 expect_full_rewrite_rejected stage3d-vm-throw-to-return \
-    stage3d-throw-completion src/engine/vm/mod.rs \
-    '                return self.pop().map(|value| Some(Completion::Throw(value)));' \
-    '                return self.pop().map(|value| Some(Completion::Return(value)));'
+    s13-owned-route src/engine/vm/run.rs \
+    $'            Instruction::Throw => return Ok(RunExit::Throw),' \
+    $'            Instruction::Throw => return Ok(RunExit::Complete),'
 expect_full_rewrite_rejected stage3d-translate-helper-bypass \
     function-translate-semantic-dispatch \
     src/engine/code/binary_object/function_translate/mod.rs \
@@ -289,57 +289,57 @@ expect_full_rewrite_rejected stage3d-throw-verifier-fallthrough \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses' \
     $'        record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;\n        if matches!(instruction, Instruction::Throw) {\n            enqueue_fallthrough(\n                &mut worklist,\n                pc,\n                VerificationState {\n                    depth: next_depth,\n                    regions: next_regions.clone(),\n                    return_addresses: next_return_addresses.clone(),\n                    super_call_bases: next_super_call_bases.clone(),\n                },\n                code.len(),\n            )?;\n        }\n        // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses'
 expect_full_rewrite_rejected stage3d-execute-throw-bypass \
-    stage3d-throw-completion src/engine/vm/mod.rs \
-    $'                Ok(InterpreterExit::Complete(Completion::Throw(value))) => value,\n                Ok(InterpreterExit::Suspend(_)) =>' \
-    $'                Ok(InterpreterExit::Complete(Completion::Throw(value)))\n                    if matches!(&value, Value::Undefined) => {\n                        return Ok(Completion::Return(value));\n                    }\n                Ok(InterpreterExit::Complete(Completion::Throw(value))) => value,\n                Ok(InterpreterExit::Suspend(_)) =>'
+    s13-owned-route src/engine/vm/driver.rs \
+    $'            let Some(Completion::Throw(value)) = forwarded.take() else {' \
+    $'            let Some(Completion::Return(value)) = forwarded.take() else {'
 expect_full_rewrite_rejected stage3d-raise-bypass \
-    stage3d-throw-completion src/engine/vm/mod.rs \
-    $'    ) -> Result<Option<Completion>, Error> {\n        host.ensure_backtrace(&value)?;\n        loop {' \
-    $'    ) -> Result<Option<Completion>, Error> {\n        if matches!(value, Value::Undefined) {\n            return Ok(Some(Completion::Throw(value)));\n        }\n        host.ensure_backtrace(&value)?;\n        loop {'
+    s13-owned-route src/engine/vm/iterator_driver/regions.rs \
+    $'    loop {\n        let frame = execution.frames.current_mut(id)?;' \
+    $'    return Ok(CallStep::Complete(Completion::Return(value)));\n    loop {\n        let frame = execution.frames.current_mut(id)?;'
 expect_full_rewrite_rejected stage3d-execute-inner-post-route-throw-return \
-    stage3d-throw-critical-route src/engine/vm/mod.rs \
-    '            let completion = match instruction {' \
-    $'            if matches!(instruction, Instruction::Throw) {\n                return Ok(InterpreterExit::Complete(Completion::Return(Value::Undefined)));\n            }\n            let completion = match instruction {'
+    s13-owned-route src/engine/vm/run.rs \
+    $'            Instruction::Throw => return Ok(RunExit::Throw),' \
+    $'            Instruction::Throw => return Ok(RunExit::Complete),'
 expect_full_rewrite_rejected stage3d-execute-hot-entry-throw-return \
-    stage3d-throw-critical-route src/engine/vm/mod.rs \
-    $'    ) -> Result<Option<Completion>, Error> {\n        match instruction {\n            Instruction::Nop => {}' \
-    $'    ) -> Result<Option<Completion>, Error> {\n        if matches!(instruction, Instruction::Throw) {\n            return self.pop().map(|value| Some(Completion::Return(value)));\n        }\n        match instruction {\n            Instruction::Nop => {}'
+    s13-owned-route src/engine/vm/run.rs \
+    $'            Instruction::Throw => return Ok(RunExit::Throw),' \
+    $'            Instruction::Throw => { slots.pop()?; return Ok(RunExit::Complete); },'
 expect_full_rewrite_rejected stage3d-execute-published-throw-return \
-    stage3d-throw-critical-route src/engine/vm/mod.rs \
-    $'        activation.execute(&code, host)\n    }' \
-    $'        activation.execute(&code, host)\n        .map(|completion| match completion {\n            Completion::Throw(value) => Completion::Return(value),\n            completion => completion,\n        })\n    }'
+    s13-owned-route src/engine/vm/root_call.rs \
+    $'        result.finish(self.clone()).map_err(RuntimeError::Engine)' \
+    $'        result.finish(self.clone()).map(|_| Completion::Return(Value::Undefined)).map_err(RuntimeError::Engine)'
 expect_full_rewrite_rejected stage3d-bytecode-normal-bridge-throw-return \
-    stage3d-throw-critical-route src/engine/vm/host_bridge.rs \
-    $'        let result = Vm::new().execute_published(input, &mut host);\n        active_frame.finish()?;\n        result.map_err(RuntimeError::Engine)\n    }\n}' \
-    $'        let result = Vm::new().execute_published(input, &mut host);\n        active_frame.finish()?;\n        result\n            .map(|completion| match completion {\n                Completion::Throw(value) => Completion::Return(value),\n                completion => completion,\n            })\n            .map_err(RuntimeError::Engine)\n    }\n}'
+    s13-owned-route src/engine/vm/frame_exit.rs \
+    $'        Some(completion) => completion,' \
+    $'        Some(Completion::Throw(value)) => Completion::Return(value),\n        Some(completion) => completion,'
 expect_full_rewrite_rejected stage3d-bytecode-module-bridge-throw-return \
-    stage3d-throw-critical-route src/engine/vm/host_bridge.rs \
-    '            return result.map_err(RuntimeError::Engine);' \
-    $'            return result\n                .map(|completion| match completion {\n                    Completion::Throw(value) => Completion::Return(value),\n                    completion => completion,\n                })\n                .map_err(RuntimeError::Engine);'
+    s13-owned-route src/engine/vm/root_call.rs \
+    $'        let module_link = metadata.is_module && entry.cold.input.this_value == Value::Bool(true);' \
+    $'        let module_link = metadata.is_module && entry.cold.input.this_value == Value::Bool(true);\n        if module_link { return Ok(Completion::Return(Value::Undefined)); }'
 expect_full_rewrite_rejected stage3d-call-internal-cleanup-throw-return \
-    stage3d-throw-critical-route src/engine/builtins/dispatch.rs \
-    '        frame_error.map_or(result, Err)' \
-    $'        frame_error.map_or(result, Err).map(|completion| match completion {\n            Completion::Throw(value) => Completion::Return(value),\n            completion => completion,\n        })'
+    s13-owned-route src/engine/vm/frame_exit.rs \
+    $'    if let Some(guard) = guard {\n        guard.finish().map_err(runtime_error_to_vm_error)?;\n    }' \
+    $'    if let Some(guard) = guard { let _ = guard; }'
 expect_full_rewrite_rejected stage3d-vm-host-call-throw-return \
-    stage3d-throw-critical-route src/engine/vm/host_bridge.rs \
-    $'        self.runtime\n            .call_value_internal(self.current_realm, function, this_value, arguments)\n            .map_err(runtime_error_to_vm_error)' \
-    $'        self.runtime\n            .call_value_internal(self.current_realm, function, this_value, arguments)\n            .map(|completion| match completion {\n                Completion::Throw(value) => Completion::Return(value),\n                completion => completion,\n            })\n            .map_err(runtime_error_to_vm_error)'
+    s13-owned-route src/engine/vm/driver.rs \
+    $'            let Some(Completion::Throw(value)) = forwarded.take() else {' \
+    $'            let Some(Completion::Throw(_value)) = forwarded.take() else {'
 expect_full_rewrite_rejected stage3d-call-value-throw-return \
-    stage3d-throw-critical-route src/engine/object/internal_methods.rs \
-    $'            DirectCallTarget::Callable(callable) => {\n                self.call_internal(caller_realm, &callable, this_value, arguments)\n            }' \
-    $'            DirectCallTarget::Callable(callable) => self\n                .call_internal(caller_realm, &callable, this_value, arguments)\n                .map(|completion| match completion {\n                    Completion::Throw(value) => Completion::Return(value),\n                    completion => completion,\n                }),'
+    s13-owned-route src/engine/vm/frame_exit.rs \
+    $'        (completion, _) => completion,' \
+    $'        (Completion::Throw(value), _) => Completion::Return(value),\n        (completion, _) => completion,'
 expect_full_rewrite_rejected stage3d-context-call-throw-return \
-    stage3d-throw-critical-route src/engine/api/context/calls.rs \
-    $'        let completion = self\n            .runtime\n            .call_internal(self.realm, callable, this_value, arguments)?;\n        self.finish_completion(completion)' \
-    $'        let completion = self\n            .runtime\n            .call_internal(self.realm, callable, this_value, arguments)?;\n        let completion = match completion {\n            Completion::Throw(value) => Completion::Return(value),\n            completion => completion,\n        };\n        self.finish_completion(completion)'
+    s13-owned-route src/engine/vm/root_call.rs \
+    $'        result.finish(self.clone()).map_err(RuntimeError::Engine)' \
+    $'        result.finish(self.clone()).map(|completion| match completion { Completion::Throw(value) => Completion::Return(value), other => other }).map_err(RuntimeError::Engine)'
 expect_full_rewrite_rejected stage3d-backtrace-hook-noop \
-    stage3d-throw-critical-route src/engine/vm/host_bridge.rs \
-    $'    fn ensure_backtrace(&mut self, value: &Value) -> Result<(), Error> {\n        self.runtime' \
-    $'    fn ensure_backtrace(&mut self, value: &Value) -> Result<(), Error> {\n        let _ = value;\n        return Ok(());\n        self.runtime'
+    s13-owned-route src/engine/vm/iterator_driver/regions.rs \
+    $'        .ensure_error_backtrace(&value, false, None)' \
+    $'        .ensure_error_backtrace(&Value::Undefined, false, None)'
 expect_full_rewrite_rejected stage3d-iterator-close-hook-noop \
-    stage3d-throw-critical-route src/engine/vm/host_bridge.rs \
-    $'    ) -> Result<IteratorCloseOutcome, Error> {\n        let return_key = self' \
-    $'    ) -> Result<IteratorCloseOutcome, Error> {\n        return Ok(IteratorCloseOutcome::Closed);\n        let return_key = self'
+    s13-owned-route src/engine/vm/iterator_driver/regions.rs \
+    $'                    match super::close_unwind(runtime, execution, id, iterator, value)? {' \
+    $'                    match CallStep::Complete(Completion::Throw(value)) {'
 expect_full_rewrite_rejected stage3d-pending-writer-noop \
     stage3d-throw-pending src/engine/heap/runtime/mod.rs \
     $'    pub(crate) fn set_pending_exception(&self, value: Value) -> Result<(), RuntimeError> {\n        let _operation = self.operation();' \
@@ -673,9 +673,9 @@ expect_full_rewrite_rejected stage3i-status-focused-summary-drift \
 run_stage3i_receipt_escape_canaries \
     "$tmp_dir/stage3i-receipt-escape-canaries"
 expect_full_rewrite_rejected ordinary-typeof-undefined-html-dda-collapse \
-    ordinary-leaf-engine-semantics src/engine/vm/mod.rs \
-    '                let is_undefined = matches!(value, Value::Undefined) || host.is_html_dda(&value)?;' \
-    '                let is_undefined = matches!(value, Value::Undefined);'
+    ordinary-leaf-engine-semantics src/engine/vm/pure_operations.rs \
+    $'                P::TypeOfIsUndefined => Value::Bool(\n                    matches!(value, Value::Undefined)\n                        || runtime\n                            .value_is_html_dda(&value)\n                            .map_err(runtime_error_to_vm_error)?,\n                ),' \
+    $'                P::TypeOfIsUndefined => Value::Bool(matches!(value, Value::Undefined)),'
 expect_full_rewrite_rejected translate-resolve-target-offset \
     function-translate-control-flow src/engine/code/binary_object/function_translate/mod.rs \
     $'        .copied()\n        .ok_or_else(FunctionTranslateError::invalid_branch_target)' \

@@ -524,7 +524,7 @@ pub(super) fn start_selected_into(
         .map_err(runtime_error_to_vm_error)?
     else {
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_sync_call_bridge();
+        crate::engine::api::profiling::record_owned_execution_event("native_leaf_completion");
         let native_realm = if matches!(mode, super::super::call::NativeInvokeMode::IteratorNextRaw)
             || target.uses_calling_realm()
         {

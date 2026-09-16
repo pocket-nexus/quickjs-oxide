@@ -1,5 +1,5 @@
 //! Object string conversions retain tag fallback and method lookup across callbacks.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -17,7 +17,6 @@ pub(crate) enum ObjectStringKind {
     Locale,
 }
 impl ObjectStringKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::ObjectPrototypeToString => Self::Tag,
@@ -119,7 +118,8 @@ impl ObjectStringStep {
                 }
                 Ok(Self::request_read(
                     this_value.clone(),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?,
+                    runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?,
                     ObjectStringResume(Box::new(ObjectStringResumeState {
                         pending_effect: ObjectStringStepPending::default(),
                         realm,

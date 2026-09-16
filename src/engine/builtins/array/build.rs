@@ -122,6 +122,8 @@ impl BuildStep {
         if matches!(kind, BuildKind::Of) {
             let length = u32::try_from(arguments.actual_arg_count)
                 .map_err(|_| RuntimeError::Invariant("Array.of argument count exceeded Uint32"))?;
+            // Snapshot argv because constructor/callback requests outlive this borrow.
+            let values = arguments.readable[..arguments.actual_arg_count].to_vec();
             let resume = BuildResume(Box::new(BuildResumeState {
                 pending_effect: BuildStepPending::default(),
                 scheduler_set_key: None,
@@ -131,9 +133,7 @@ impl BuildStep {
                 mapfn: None,
                 map_this: Value::Undefined,
                 mode: Mode::Of {
-                    values: arguments.readable[..arguments.actual_arg_count]
-                        .to_vec()
-                        .into_iter(),
+                    values: values.into_iter(),
                     length,
                 },
                 index: 0,
@@ -369,7 +369,8 @@ impl BuildResume {
                     self.0.phase = Phase::Length;
                     return Ok(BuildStep::request_read(
                         Value::Object(source),
-                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+                        runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                         self,
                     ));
                 }

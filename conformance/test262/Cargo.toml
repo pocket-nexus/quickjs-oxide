@@ -20,4 +20,3 @@ name = "run-test262"
 path = "src/main.rs"
 
 [features]
-stack-vm = ["quickjs-oxide/stack-vm", "quickjs-oxide-host/stack-vm"]

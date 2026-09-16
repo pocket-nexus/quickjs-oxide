@@ -298,12 +298,12 @@ impl ConcatStep {
                     "Iterator.concat did not receive a generic invocation",
                 ));
             }
+            // The continuation owns its inputs after the native argv expires.
+            let inputs = arguments.readable[..arguments.actual_arg_count].to_vec();
             return ConcatResume::input(
                 runtime,
                 realm,
-                arguments.readable[..arguments.actual_arg_count]
-                    .to_vec()
-                    .into_iter(),
+                inputs.into_iter(),
                 Vec::with_capacity(arguments.actual_arg_count),
             );
         }
@@ -361,7 +361,8 @@ impl ConcatStep {
             resume.phase = ConcatPhase::ReturnMethod(iterator.clone());
             return Ok({
                 let __pending_field_object = iterator;
-                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?;
+                let __pending_field_key =
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?;
                 let __pending_field_resume = resume;
                 Self::request_read(
                     __pending_field_object,
@@ -498,7 +499,8 @@ impl ConcatResume {
             self.0.phase = ConcatPhase::Method(iterator.clone());
             return Ok({
                 let __pending_field_object = iterator;
-                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
+                let __pending_field_key =
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                 let __pending_field_resume = self;
                 ConcatStep::request_read(
                     __pending_field_object,

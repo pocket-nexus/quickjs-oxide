@@ -1,5 +1,5 @@
 //! Global parsers and codecs keep their converted input until later argument conversion ends.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
@@ -21,7 +21,6 @@ pub(crate) enum GlobalKind {
     SymbolFor,
 }
 impl GlobalKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::GlobalNumberParse(kind) => Self::Parse(kind),
@@ -94,7 +93,6 @@ impl GlobalStep {
     }
     /// Advance only primitive conversion stages, retaining the original request
     /// before an object lookup or callback. Parse input precedes radix conversion.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn advance_primitive(
         mut self,
         runtime: &Runtime,

@@ -181,7 +181,9 @@ mod tests {
             panic!("expected proxy")
         };
         let value = context.new_object().unwrap();
-        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+        let key = runtime
+            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+            .unwrap();
         let descriptor = OrdinaryPropertyDescriptor {
             value: DescriptorField::Present(Value::Object(value.clone())),
             writable: DescriptorField::Present(true),
@@ -224,8 +226,12 @@ mod tests {
         let input = context.new_array_from_values(vec![Value::Int(2)]).unwrap();
         let Value::Object(constructor) = context.eval("new Proxy(function C(x){this.x=x},{construct(t,a,n){$262.gc();return Reflect.construct(t,a,n)}})").unwrap() else { panic!("expected constructor") };
         let constructor = runtime.as_callable(&constructor).unwrap().unwrap();
-        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
-        let index = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap();
+        let key = runtime
+            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+            .unwrap();
+        let index = runtime
+            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+            .unwrap();
         let profile = CostProfile::start();
         let Value::Object(result) = context
             .call(&map, Value::Object(input), &[callback])
@@ -268,12 +274,19 @@ mod tests {
             panic!("expected template object")
         };
         let raw = context
-            .get_property(&first, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Raw).unwrap())
+            .get_property(
+                &first,
+                &runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Raw)
+                    .unwrap(),
+            )
             .unwrap();
         let Value::Object(raw) = raw else {
             panic!("expected raw template")
         };
-        let zero = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap();
+        let zero = runtime
+            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+            .unwrap();
         assert_eq!(
             context.get_property(&first, &zero).unwrap(),
             Value::String(crate::engine::value::JsString::from_static("alive"))

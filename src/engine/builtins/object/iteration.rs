@@ -24,7 +24,6 @@ pub(crate) enum IterationKind {
     MapGroup,
 }
 impl IterationKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::ObjectFromEntries => Some(Self::Entries),
@@ -267,7 +266,8 @@ impl IterationResume {
                 self.0.phase = Phase::EntryKey(item.clone());
                 Ok(IterationStep::request_read(
                     Value::Object(item),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?,
+                    runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?,
                     self,
                 ))
             }
@@ -354,7 +354,8 @@ impl IterationResume {
                 self.0.phase = Phase::EntryValue(value);
                 Ok(IterationStep::request_read(
                     Value::Object(item),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)?,
+                    runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)?,
                     self,
                 ))
             }

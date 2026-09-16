@@ -12,16 +12,10 @@ use crate::engine::{
 };
 pub(crate) enum ArrayNextStep {
     Complete(NativeInvokeOutcome),
-    #[cfg(feature = "stack-vm")]
-    PreparedRead {
-        resume: ArrayNextResume,
-    },
-    Read {
-        resume: ArrayNextResume,
-    },
-    Number {
-        resume: ArrayNextResume,
-    },
+
+    PreparedRead { resume: ArrayNextResume },
+    Read { resume: ArrayNextResume },
+    Number { resume: ArrayNextResume },
 }
 const _: () = assert!(std::mem::size_of::<ArrayNextStep>() <= 64);
 pub(crate) struct ArrayNextResume(Box<ArrayNextResumeState>);
@@ -47,7 +41,7 @@ pub(crate) struct ArrayNextResumeState {
     requested_object: Option<ObjectRef>,
     requested_key: Option<PropertyKey>,
     requested_value: Option<Value>,
-    #[cfg(feature = "stack-vm")]
+
     requested_read: Option<crate::engine::object::OrdinaryRead>,
 }
 enum Phase {
@@ -86,7 +80,7 @@ impl ArrayNextStep {
                 done: true,
             }));
         };
-        #[cfg(feature = "stack-vm")]
+
         if let Some(value) = Self::dense_immediate_next(runtime, iterator, source, index, kind)? {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
@@ -108,7 +102,7 @@ impl ArrayNextStep {
             requested_object: None,
             requested_key: None,
             requested_value: None,
-            #[cfg(feature = "stack-vm")]
+
             requested_read: None,
         }));
         if runtime.typed_array_is_object(&resume.source)? {
@@ -249,7 +243,6 @@ impl ArrayNextResume {
         mut action: NextAction,
     ) -> Result<ArrayNextStep, RuntimeError> {
         loop {
-            #[cfg(feature = "stack-vm")]
             {
                 use crate::engine::object::OrdinaryRead;
                 use crate::engine::value::conversion::number::NumberStep;
@@ -287,11 +280,9 @@ impl ArrayNextResume {
                     "array_next_resident_stage",
                 );
             }
-            #[cfg(not(feature = "stack-vm"))]
-            return Ok(self.wait(action));
         }
     }
-    #[cfg(feature = "stack-vm")]
+
     fn prepared(
         mut self,
         read: crate::engine::object::OrdinaryRead,
@@ -301,13 +292,13 @@ impl ArrayNextResume {
         self.requested_key = Some(key);
         ArrayNextStep::PreparedRead { resume: self }
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn take_prepared(&mut self) -> crate::engine::object::OrdinaryRead {
         self.requested_read
             .take()
             .expect("array next prepared read")
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn take_key(&mut self) -> PropertyKey {
         self.requested_key.take().expect("array next key")
     }
@@ -350,7 +341,7 @@ pub(crate) fn finish(
     loop {
         step = match step {
             ArrayNextStep::Complete(result) => return Ok(result),
-            #[cfg(feature = "stack-vm")]
+
             ArrayNextStep::PreparedRead { mut resume } => {
                 let read = resume.take_prepared();
                 let key = resume.take_key();
@@ -377,10 +368,9 @@ pub(crate) fn finish(
     }
 }
 
-#[cfg(feature = "stack-vm")]
 mod local;
 
-#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+#[cfg(all(test, feature = "profiling"))]
 mod tests;
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.

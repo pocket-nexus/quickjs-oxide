@@ -61,7 +61,6 @@ pub(super) fn computed_name(
     })
 }
 
-#[cfg(feature = "stack-vm")]
 #[inline(never)]
 pub(super) fn set_name(
     runtime: &Runtime,

@@ -6,7 +6,7 @@ stage3f-publisher-nop-drop|ordinary-leaf-consumer-lowering|src/engine/code/binar
 stage3f-publisher-nop-push|ordinary-leaf-consumer-lowering|src/engine/code/binary_object_publish.rs|        OrdinaryLeafOp::Nop => Instruction::Nop,|        OrdinaryLeafOp::Nop => Instruction::Undefined,
 stage3f-publisher-nop-synthetic-index|ordinary-leaf-consumer-lowering|src/engine/code/binary_object_publish.rs|        OrdinaryLeafOp::Nop => Instruction::Nop,|        OrdinaryLeafOp::Nop => { *next_synthetic_index += 1; Instruction::Nop },
 stage3f-runtime-branch-index-collapse|stage3f-runtime-evidence|src/engine/heap/runtime/tests.rs|            Instruction::Goto(1),\n            Instruction::Nop,|            Instruction::Goto(0),\n            Instruction::Nop,
-stage3f-vm-nop-push-effect|stage3f-nop-vm|src/engine/vm/mod.rs|            Instruction::Nop => {}|            Instruction::Nop => { self.stack.push(Value::Undefined); }
+stage3f-vm-nop-push-effect|s13-owned-route|src/engine/vm/run.rs|Instruction::MarkSuperCall => true,|Instruction::MarkSuperCall => { slots.push(Value::Undefined)?; true },
 stage3f-wire-code-len-one|stage3f-runtime-evidence|src/engine/heap/runtime/tests.rs|    0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0xb1, 0x29,|    0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0xb1, 0x29,
 stage3f-wire-raw177-aliased|stage3f-runtime-evidence|src/engine/heap/runtime/tests.rs|    0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0xb1, 0x29,|    0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x29, 0x29,
 stage3f-wire-terminal-removed|stage3f-runtime-evidence|src/engine/heap/runtime/tests.rs|    0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0xb1, 0x29,|    0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0xb1, 0xb1,

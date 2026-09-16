@@ -163,7 +163,8 @@ impl PromiseStep {
                         ))?;
                 Ok({
                     let __pending_field_receiver = this_value.clone();
-                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
+                    let __pending_field_key = runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
                         pending_effect: PromiseStepPending::default(),
                         realm,
@@ -298,7 +299,8 @@ impl PromiseStep {
             } else {
                 return Ok({
                     let __pending_field_receiver = Value::Object(object.clone());
-                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
+                    let __pending_field_key = runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
                         pending_effect: PromiseStepPending::default(),
                         realm,
@@ -325,98 +327,13 @@ impl PromiseStep {
         runtime: &Runtime,
         realm: ContextId,
     ) -> Result<Completion, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         {
-            return crate::engine::vm::execute_root(
+            crate::engine::vm::execute_root(
                 runtime.clone(),
                 realm,
                 crate::engine::vm::RootOperation::Promise(self),
             )
-            .map_err(RuntimeError::Engine);
-        }
-        #[cfg(not(feature = "stack-vm"))]
-        {
-            self.finish_legacy(runtime, realm)
-        }
-    }
-
-    #[cfg(not(feature = "stack-vm"))]
-    fn finish_legacy(
-        self,
-        runtime: &Runtime,
-        realm: ContextId,
-    ) -> Result<Completion, RuntimeError> {
-        let mut step = self;
-        loop {
-            step = match step {
-                Self::Complete(completion) => return Ok(completion),
-                Self::Next { mut resume } => {
-                    let iterator = resume.take_next_iterator();
-                    let method = resume.take_next_method();
-                    resume.next(
-                        runtime,
-                        runtime.object_iterator_next(realm, &iterator, method)?,
-                    )?
-                }
-                Self::Close { mut resume } => {
-                    let iterator = resume.take_close_iterator();
-                    let completion = resume.take_close_completion();
-                    {
-                        let step = crate::engine::builtins::iterator::step::CloseStep::start(
-                            runtime, realm, iterator, completion,
-                        )?;
-                        resume.resume(
-                            runtime,
-                            crate::engine::builtins::iterator::step::finish_close(
-                                runtime, realm, step,
-                            )?,
-                        )?
-                    }
-                }
-                Self::Nested { mut resume } => {
-                    let step = resume.take_nested_step();
-                    { resume.resume(runtime, step.finish_legacy(runtime, realm)?)? }
-                }
-                Self::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    resume.resume(
-                        runtime,
-                        runtime.get_value_property_in_realm(realm, receiver, &key)?,
-                    )?
-                }
-                Self::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    resume.resume(
-                        runtime,
-                        runtime.call_internal(realm, &callable, receiver, &arguments)?,
-                    )?
-                }
-                Self::Construct { mut resume } => {
-                    let target = resume.take_construct_target();
-                    let arguments = resume.take_construct_arguments();
-                    resume.resume(
-                        runtime,
-                        runtime
-                            .construct_constructor_internal(realm, &target, &target, &arguments)?,
-                    )?
-                }
-                Self::Prototype { mut resume } => {
-                    let new_target = resume.take_prototype_new_target();
-                    {
-                        let source = crate::engine::vm::call::prototype::finish(
-                            runtime,
-                            realm,
-                            crate::engine::vm::call::prototype::ProtoSourceStep::start(
-                                runtime, realm, new_target,
-                            )?,
-                        )?;
-                        resume.prototype(runtime, source)?
-                    }
-                }
-            };
+            .map_err(RuntimeError::Engine)
         }
     }
 }

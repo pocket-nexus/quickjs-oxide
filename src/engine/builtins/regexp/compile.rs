@@ -59,7 +59,8 @@ impl Runtime {
             ));
         }
 
-        let last_index = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let last_index =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) =
             self.set_property_or_throw(realm, regexp, &last_index, Value::Int(0))?
         {

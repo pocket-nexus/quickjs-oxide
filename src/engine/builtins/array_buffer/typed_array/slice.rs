@@ -6,7 +6,7 @@
 //! when a detached or resized source currently reports length zero.
 
 use super::{TypedArraySnapshot, typed_array_absolute_byte_offset};
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::{NativeFunctionId, TypedArrayNativeKind};
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
@@ -155,7 +155,6 @@ pub(crate) enum TypedSliceKind {
     Subarray,
 }
 impl TypedSliceKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::TypedArray(TypedArrayNativeKind::Slice) => Self::Slice,

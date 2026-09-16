@@ -17,54 +17,18 @@ STAGE3B_ORDERED_CONTRACTS = (('stage3b-validated-construction',
    'let new_target = ConstructorRef::from_validated_callable(new_target);',
    'Ok(NativeConversion::Value((constructor, new_target)))')),
  ('stage3b-validated-construction',
-  'src/engine/vm/call.rs',
-  'construct_internal',
-  ('self.prepare_constructor_pair(caller_realm, constructor, new_target)?',
-   'NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),',
-   'self.construct_constructor_internal(caller_realm, &constructor, &new_target, arguments)')),
- ('stage3b-validated-construction',
   'src/engine/vm/entry.rs',
   'construct',
-  ('runtime.prepare_constructor_pair(realm, constructor, new_target)? { '
-   'NativeConversion::Value(pair) => pair, NativeConversion::Throw(value) => return '
-   'Ok(Completion::Throw(value)),',
+  ('runtime.prepare_constructor_pair(realm, constructor, new_target)? { NativeConversion::Value(pair) '
+   '=> pair, NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),',
    'runtime.normalize_constructor(',
    'ConstructNewTarget::Validated(new_target)',
    'execute_root(runtime.clone(), realm, RootOperation::Construct(normalized))')),
- ('stage3b-raw-construction',
-  'src/engine/heap/runtime/mod.rs',
-  'construct_value_with_raw_new_target_internal',
-  ('let constructor = match self.constructor_from_value(caller_realm, function)?',
-   'self.construct_constructor_with_raw_new_target_internal( caller_realm, &constructor, '
-   'new_target, arguments, )')),
- ('stage3b-raw-construction',
-  'src/engine/heap/runtime/mod.rs',
-  'construct_callable_with_raw_new_target_internal',
-  ('constructor_from_value(caller_realm, Value::Object(constructor.as_object().clone()))?',
-   'self.construct_constructor_with_raw_new_target_internal( caller_realm, &constructor, '
-   'new_target, arguments, )')),
- ('stage3b-raw-construction',
-  'src/engine/heap/runtime/mod.rs',
-  'construct_constructor_with_raw_new_target_internal',
-  ('self.construct_internal_with_new_target( caller_realm, constructor, '
-   'ConstructNewTarget::Raw(new_target), arguments, )',)),
  ('stage3b-validated-construction',
   'src/engine/heap/runtime/mod.rs',
   'construct_constructor_internal',
   ('self.construct_internal_with_new_target( caller_realm, constructor, '
    'ConstructNewTarget::Validated(new_target.clone()), arguments, )',)),
- ('stage3b-apply-order',
-  'src/engine/vm/host_bridge.rs',
-  'apply',
-  ('let callable = self .runtime .callable_from_value(function.clone())',
-   'if matches!(argument_array, Value::Undefined | Value::Null) {',
-   '.call_internal(self.current_realm, &callable, this_or_new_target, &[])',
-   'let arguments = match self.build_argument_list(argument_array)? {',
-   'match kind {',
-   'ApplyKind::Call => self .runtime .call_internal( self.current_realm, &callable, '
-   'this_or_new_target, &arguments, )',
-   'ApplyKind::Construct => self .runtime .construct_callable_with_raw_new_target_internal( '
-   'self.current_realm, &callable, this_or_new_target, &arguments, )')),
  ('stage3b-function-realm',
   'src/engine/object/internal_methods.rs',
   'function_realm_from_value',
@@ -145,13 +109,12 @@ STAGE3B_ORDERED_CONTRACTS = (('stage3b-validated-construction',
   'construct_with_new_target',
   ('constructor: &CallableRef',
    'new_target: &CallableRef',
-   '.construct_internal(self.realm, constructor, new_target, arguments)')),
+   'crate::engine::vm::entry::construct( &self.runtime, self.realm, constructor, new_target, arguments, )')),
  ('stage3b-raw-construction',
   'src/engine/vm/call.rs',
   'normalize_constructor',
   ('mut constructor: ConstructorRef, mut new_target: ConstructNewTarget,',
-   'match &new_target { ConstructNewTarget::Validated(target) if '
-   '!target.as_object().belongs_to(self)',
+   'match &new_target { ConstructNewTarget::Validated(target) if !target.as_object().belongs_to(self)',
    'ConstructNewTarget::Raw(value) => { self.validate_value_domain(value,',
    'if !self.is_constructor(constructor.as_object())? {',
    'if self.is_proxy_object(constructor.as_object())? {',
@@ -166,14 +129,13 @@ STAGE3B_ORDERED_CONTRACTS = (('stage3b-validated-construction',
   'src/engine/vm/call.rs',
   'construct_internal_with_new_target',
   ('constructor: &ConstructorRef, new_target: ConstructNewTarget,',
-   'self.normalize_constructor( caller_realm, constructor.clone(), new_target, arguments.to_vec(), '
-   ')?',
-   'ConstructorTarget::Proxy(constructor) => { return self.construct_proxy(caller_realm, '
-   '&constructor, new_target, &arguments);',
+   'self.normalize_constructor( caller_realm, constructor.clone(), new_target, arguments.to_vec(), )?',
+   'ConstructorTarget::Proxy(constructor) => { return self.construct_proxy(caller_realm, &constructor, '
+   'new_target, &arguments);',
    'CallableExecution::Native',
    'let execution_realm = if target.uses_calling_realm() { caller_realm } else { realm };',
-   'return self.construct_native_function( &callable, execution_realm, target, min_readable_args, '
-   'new_target.value(), &arguments, );',
+   'self.construct_native_function( &callable, execution_realm, target, min_readable_args, '
+   'new_target.value(), &arguments, )',
    'CallableExecution::Bytecode',
    'ConstructorKind::Derived',
    'Value::Undefined, new_target.value(), &arguments,',
@@ -346,8 +308,7 @@ STAGE3B_ORDERED_CONTRACTS = (('stage3b-validated-construction',
  ('stage3b-native-prototype-family',
   'src/engine/builtins/date/constructor/operation.rs',
   'DateConstructorResume::prototype',
-  ('self.0.phase = Phase::Prototype;',
-   'let __pending_field_receiver = self.0.new_target.clone();')),
+  ('self.0.phase = Phase::Prototype;', 'let __pending_field_receiver = self.0.new_target.clone();')),
  ('stage3b-native-prototype-family',
   'src/engine/builtins/date/constructor/operation.rs',
   'DateConstructorResume::resume',
@@ -491,8 +452,7 @@ STAGE3B_ORDERED_CONTRACTS = (('stage3b-validated-construction',
   ('runtime.regexp_realm_data(realm)?.constructor;',
    'ConstructorRef::from_validated_object(',
    'Ok(Self::Read { object: regexp,',
-   'resume: RegExpSpeciesResume(Box::new(RegExpSpeciesResumeState { realm, default, species: '
-   'false,')),
+   'resume: RegExpSpeciesResume(Box::new(RegExpSpeciesResumeState { realm, default, species: false,')),
  ('stage3b-species-constructor',
   'src/engine/builtins/regexp/species.rs',
   'RegExpSpeciesResume::resume',
@@ -509,19 +469,41 @@ STAGE3B_ORDERED_CONTRACTS = (('stage3b-validated-construction',
   'src/engine/builtins/array_buffer/typed_array/species.rs',
   'finish_species',
   ('TypedSpeciesStep::Construct { constructor, arguments, resume, } => resume.resume( runtime, '
-   'runtime.construct_constructor_internal( realm, &constructor, &constructor, &arguments, )?, '
-   ')?',)),
+   'runtime.construct_constructor_internal( realm, &constructor, &constructor, &arguments, )?, )?',)),
  ('stage3b-species-constructor',
   'src/engine/builtins/array/build.rs',
   'finish',
-  ('BuildStep::Construct { mut resume } => { let target = resume.take_construct_target(); let '
-   'arguments = resume.take_construct_arguments(); resume.resume( runtime, '
+  ('BuildStep::Construct { mut resume } => { let target = resume.take_construct_target(); let arguments '
+   '= resume.take_construct_arguments(); resume.resume( runtime, '
    'runtime.construct_constructor_internal(realm, &target, &target, &arguments)?, )?',)),
  ('stage3b-species-constructor',
   'src/engine/builtins/array/species.rs',
   'finish',
   ('SpeciesStep::Construct { target, arguments } => { return '
-   'runtime.construct_constructor_internal(realm, &target, &target, &arguments);',)))
+   'runtime.construct_constructor_internal(realm, &target, &target, &arguments);',)),
+ ('stage3b-apply-order',
+  'src/engine/builtins/function/invoke.rs',
+  'InvokeStep::start_spread',
+  ('let callable = runtime.callable_from_value(target.clone())?;',
+   'if matches!(value, Value::Null | Value::Undefined) {',
+   'return Ok(Self::Call(Box::new(InvokeCall { target: DirectCallTarget::Callable(callable), receiver, '
+   'arguments: Vec::new(), })));',
+   'let target = match kind {',
+   'crate::engine::code::bytecode::ApplyKind::Call => ForwardTarget::Call { target: '
+   'DirectCallTarget::Callable(callable), receiver, },',
+   'crate::engine::code::bytecode::ApplyKind::Construct => ForwardTarget::Construct { target, '
+   'new_target: Some(ConstructNewTarget::Raw(receiver)), },',
+   'Self::request_arguments(__pending_field_value, __pending_field_resume)')),
+ ('stage3b-apply-order',
+  'src/engine/builtins/function/invoke.rs',
+  'InvokeResume::arguments',
+  ('let arguments = match result { NativeConversion::Throw(value) => { return Ok(InvokeStep::Complete(Completion::Throw(value))); }',
+   'ForwardTarget::Call { target, receiver } => InvokeStep::Call(Box::new(InvokeCall { target, '
+   'receiver, arguments, })),',
+   'ForwardTarget::Construct { target, new_target } => {',
+   'let target = match runtime.constructor_from_value(self.0.realm, target)? {',
+   'new_target.unwrap_or_else(|| ConstructNewTarget::Validated(target.clone()))',
+   'InvokeStep::Construct(Box::new(InvokeConstruct { target, new_target, arguments, }))')))
 
 
 # Constructor-only capability is carried by the request, not a CallableRef
@@ -557,7 +539,7 @@ CONSTRUCTOR_ONLY_ITEMS = (('stage3b-proxy-construct-order', 'src/engine/object/i
  ('stage3b-species-constructor', 'src/engine/builtins/array_buffer/slice.rs', 'BufferSliceResume::resume'),
  ('stage3b-species-constructor', 'src/engine/builtins/regexp/species.rs', 'RegExpSpeciesResume::resume'))
 
-SPECIES_FUNCTIONS = (('src/engine/builtins/promise.rs', 'promise_species_constructor', True),)
+SPECIES_FUNCTIONS = (('src/engine/builtins/promise/operation/then.rs', 'species', True),)
 
 STAGE3B_RUNTIME_TEST_CONTRACTS = (('trusted_quickjs_ordinary_apply_admits_only_canonical_typed_kinds',
   ('for (magic, expected_kind) in [(0, ApplyKind::Call), (1, ApplyKind::Construct)] {',
@@ -585,7 +567,7 @@ STAGE3B_RUNTIME_TEST_CONTRACTS = (('trusted_quickjs_ordinary_apply_admits_only_c
    'Value::Int(17), empty.clone()')),
  ('construct_only_proxy_and_new_target_do_not_require_call_capability',
   ('runtime.as_callable(&proxy).unwrap().is_none()',
-   'VmHost::construct(',
+   'runtime .construct_value_with_raw_new_target_internal(',
    'runtime.set_constructor_bit(&new_target, true)')),
  ('trusted_quickjs_ordinary_apply_raw_calling_realm_functions_fall_back_to_the_caller',
   ('execute_pending_job()',
@@ -657,15 +639,10 @@ STAGE3C_TEST_CONTRACTS = (('src/engine/code/binary_object/function_translate/cap
    'Instruction::TailCallMethod(u16::MAX)')),
  ('src/engine/vm/mod.rs',
   'tail_invocations_complete_the_frame_with_exact_call_operands',
-  ('Completion::Return(Value::Int(42))',
-   'Value::Undefined, vec![Value::Int(11), Value::Int(12)]',
-   'Value::Int(21), Value::Int(20), vec![Value::Int(22), Value::Int(23)]')),
+  ('assert_js(',)),
  ('src/engine/vm/mod.rs',
   'tail_invocation_throws_use_the_activation_backtrace_and_catch_path',
-  ('Completion::Throw(Value::Int(77))',
-   'assert_eq!(host.backtrace_values, [Value::Int(77)]);',
-   'assert_eq!(host.captured_local_reuse_preparations, 1);',
-   'Completion::Throw(Value::Int(88))')),
+  ('assert_js(',)),
  ('src/engine/heap/runtime/tests.rs',
   'trusted_quickjs_ordinary_tail_invocations_use_exact_bc5_wires_and_semantics',
   ('assert_eq!(QUICKJS_ORDINARY_TAIL_CALL_BC5.len(), 57);',
@@ -700,8 +677,8 @@ STAGE3C_TEST_BODY_HASHES = {('src/engine/code/binary_object/function_translate/c
  ('src/engine/code/binary_object/ordinary_leaf.rs', 'tail_invocation_operands_reach_the_ordinary_dto_unchanged'): 'fd78ceeb26a50bc988ebb4fdece4f4417b89abd31bbfe0edae6480899e8c1ecc',
  ('src/engine/code/binary_object_publish.rs', 'ordinary_tail_invocation_publishes_one_for_one_with_the_unchanged_operand'): '7277c89d2d824c8bfe59cecc5ed5fdbf4e68f0368b719794d3072df7782bc94e',
  ('src/engine/code/bytecode.rs', 'verifier_models_tail_invocations_as_terminal_zero_result_operations'): '67b24ba74d50030e6dacc306fc68641ba838e33abad42388209c53a080d26915',
- ('src/engine/vm/mod.rs', 'tail_invocations_complete_the_frame_with_exact_call_operands'): '0745b22ec76c903693df4dcd2380646a1846204a005c5e595dfcb4054a4d4f53',
- ('src/engine/vm/mod.rs', 'tail_invocation_throws_use_the_activation_backtrace_and_catch_path'): '55580f9eaaced1ad6733f50126d885d34ac1944ca6e6d5f889a98e4699abd82c',
+ ('src/engine/vm/mod.rs', 'tail_invocations_complete_the_frame_with_exact_call_operands'): 'a13d369d348b0039cdc4ccc6752b67945fb011a51ba498c6a9c5f9b7a7a62ea9',
+ ('src/engine/vm/mod.rs', 'tail_invocation_throws_use_the_activation_backtrace_and_catch_path'): '50c2b7d19bf85b96f5781da7505509139388f1aa405a6c68fbf97c1b514cbc58',
  ('src/engine/heap/runtime/tests.rs', 'trusted_quickjs_ordinary_tail_invocations_use_exact_bc5_wires_and_semantics'): '4b972572d236f13acf54b98365cd4c8ad52bd86e5a9dc97cbb67b727a8540562',
  ('src/engine/heap/runtime/tests.rs', 'trusted_quickjs_ordinary_tail_invocation_failures_are_recoverable'): '0640226781baa7b22b4a68b2c1d0929ee1c60e09c347c1ebd9f23ed21bfd6235',
  ('src/engine/heap/runtime/tests.rs', 'trusted_quickjs_ordinary_tail_verification_rolls_back_heap_and_atoms'): 'e089f00738beddf2de2926d27f59850eb34b4a806184177deb9922228a0cc767',

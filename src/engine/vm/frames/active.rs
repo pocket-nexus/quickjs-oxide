@@ -32,25 +32,50 @@ impl ActiveFrames {
             ..Self::default()
         }
     }
-    pub(crate) fn len(&self) -> usize { self.records.len() + usize::from(self.pending_native.is_some()) }
-    pub(crate) fn is_empty(&self) -> bool { self.len() == 0 }
+    pub(crate) fn len(&self) -> usize {
+        self.records.len() + usize::from(self.pending_native.is_some())
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     pub(crate) fn get(&self, index: usize) -> Option<&ActiveFrameRecord> {
-        if index == self.records.len() { self.pending_native.as_ref() } else { self.records.get(index) }
+        if index == self.records.len() {
+            self.pending_native.as_ref()
+        } else {
+            self.records.get(index)
+        }
     }
     pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut ActiveFrameRecord> {
-        if index == self.records.len() { self.pending_native.as_mut() } else { self.records.get_mut(index) }
+        if index == self.records.len() {
+            self.pending_native.as_mut()
+        } else {
+            self.records.get_mut(index)
+        }
     }
-    pub(crate) fn last(&self) -> Option<&ActiveFrameRecord> { self.pending_native.as_ref().or_else(|| self.records.last()) }
+    pub(crate) fn last(&self) -> Option<&ActiveFrameRecord> {
+        self.pending_native.as_ref().or_else(|| self.records.last())
+    }
     pub(crate) fn last_mut(&mut self) -> Option<&mut ActiveFrameRecord> {
-        if self.pending_native.is_some() { self.pending_native.as_mut() } else { self.records.last_mut() }
+        if self.pending_native.is_some() {
+            self.pending_native.as_mut()
+        } else {
+            self.records.last_mut()
+        }
     }
-    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item=&ActiveFrameRecord> + ExactSizeIterator {
+    pub(crate) fn iter(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &ActiveFrameRecord> + ExactSizeIterator {
         (0..self.len()).map(|index| self.get(index).unwrap())
     }
-    pub(crate) fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item=&mut ActiveFrameRecord> {
-        self.records.iter_mut().chain(self.pending_native.iter_mut())
+    pub(crate) fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut ActiveFrameRecord> {
+        self.records
+            .iter_mut()
+            .chain(self.pending_native.iter_mut())
     }
-    pub(crate) fn to_vec(&self) -> Vec<ActiveFrameRecord> { self.iter().copied().collect() }
+    #[cfg(test)]
+    pub(crate) fn to_vec(&self) -> Vec<ActiveFrameRecord> {
+        self.iter().copied().collect()
+    }
     fn materialize_native_tail(&mut self) {
         if self.pending_native.is_some() {
             self.records.reserve(1);
@@ -112,7 +137,9 @@ impl ActiveFrames {
         let record = *self.get(depth).expect("native frame index");
         assert_eq!(record.token, token);
         self.charge(record, false);
-        self.get_mut(depth).expect("native frame index").native_continuation = true;
+        self.get_mut(depth)
+            .expect("native frame index")
+            .native_continuation = true;
     }
 }
 impl ActiveFrames {
@@ -120,7 +147,9 @@ impl ActiveFrames {
         let position = if self.get(depth).is_some_and(|frame| frame.token == token) {
             depth
         } else {
-            self.iter().position(|frame| frame.token == token).unwrap_or(depth)
+            self.iter()
+                .position(|frame| frame.token == token)
+                .unwrap_or(depth)
         };
         self.truncate(position);
     }

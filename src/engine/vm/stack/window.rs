@@ -142,6 +142,7 @@ impl SlotStore {
     /// during lookup. It can only select a getter, never execute one. Exclusive
     /// store/window borrows prove that no slot or identity can change between
     /// authentication and the subsequent short output window.
+    #[cfg(test)]
     pub(in crate::engine::vm) fn with_linked_own_read(
         &mut self,
         window: &mut FrameWindow,
@@ -225,7 +226,6 @@ pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) window: &'a mut FrameWindow,
 }
 impl RunSlots<'_> {
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,
@@ -395,7 +395,6 @@ impl RunSlots<'_> {
             .release_operand_current(self.window, from_top, runtime)
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn typed_array_number_write(
         &mut self,
         runtime: &Runtime,
@@ -404,24 +403,41 @@ impl RunSlots<'_> {
             .typed_array_number_write_current(self.window, runtime)
     }
 
-    pub(in crate::engine::vm) fn array_kept_immediate_read(&mut self, runtime: &Runtime, keep_key: bool) -> Result<bool, Error> {
+    pub(in crate::engine::vm) fn array_kept_immediate_read(
+        &mut self,
+        runtime: &Runtime,
+        keep_key: bool,
+    ) -> Result<bool, Error> {
         let index = match self.peek(0)? {
             Value::Int(index) if *index >= 0 => *index as u32,
             Value::String(key) if keep_key || key.release_keeps_storage_alive() => {
-                let Some(index)=crate::engine::atom::AtomTable::canonical_array_index(key) else {return Ok(false)};
+                let Some(index) = crate::engine::atom::AtomTable::canonical_array_index(key) else {
+                    return Ok(false);
+                };
                 index
             }
-            _=>return Ok(false),
+            _ => return Ok(false),
         };
-        let Some(value)=runtime.try_dense_array_kept_read(self.peek(1)?,index) else {return Ok(false)};
-        if !keep_key { self.pop()?; }
+        let Some(value) = runtime.try_dense_array_kept_read(self.peek(1)?, index) else {
+            return Ok(false);
+        };
+        if !keep_key {
+            self.pop()?;
+        }
         self.push(value)?;
         Ok(true)
     }
-    pub(in crate::engine::vm) fn property_ic_write_scalar(&mut self, runtime: &Runtime, executable: &crate::engine::code::runtime::PublishedFunctionSnapshot, pc: usize, key: u32) -> Result<bool, Error> {
-        self.store.property_ic_write_scalar_current(self.window,runtime,executable,pc,key)
+    pub(in crate::engine::vm) fn property_ic_write_scalar(
+        &mut self,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        pc: usize,
+        key: u32,
+    ) -> Result<bool, Error> {
+        self.store
+            .property_ic_write_scalar_current(self.window, runtime, executable, pc, key)
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(in crate::engine::vm) fn array_immediate_read(
         &mut self,
         runtime: &Runtime,
@@ -430,7 +446,6 @@ impl RunSlots<'_> {
             .array_immediate_read_current(self.window, runtime)
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn ordinary_field_immediate_read(
         &mut self,
         runtime: &Runtime,
@@ -444,8 +459,6 @@ impl RunSlots<'_> {
             key_index,
         )
     }
-
-
 
     pub(in crate::engine::vm) fn binary_number(
         &mut self,
@@ -480,6 +493,13 @@ impl RunSlots<'_> {
         self.store
             .update_number_local_current(self.window, index, operation)
     }
+}
+
+fn local_add_values(left: &Value, right: &Value) -> bool {
+    !matches!(left, Value::Object(_))
+        && !matches!(right, Value::Object(_))
+        && (matches!(left, Value::String(_) | Value::BigInt(_))
+            || matches!(right, Value::String(_) | Value::BigInt(_)))
 }
 
 #[cfg(test)]
@@ -794,11 +814,4 @@ mod primitive_transaction_tests {
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(object_id).is_err());
     }
-}
-
-fn local_add_values(left: &Value, right: &Value) -> bool {
-    !matches!(left, Value::Object(_))
-        && !matches!(right, Value::Object(_))
-        && (matches!(left, Value::String(_) | Value::BigInt(_))
-            || matches!(right, Value::String(_) | Value::BigInt(_)))
 }

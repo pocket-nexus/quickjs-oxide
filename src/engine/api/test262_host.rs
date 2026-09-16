@@ -199,7 +199,7 @@ impl Runtime {
 
     pub(crate) fn call_test262_create_realm(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
             return Err(RuntimeError::Invariant(
@@ -214,7 +214,7 @@ impl Runtime {
 
     pub(crate) fn call_test262_is_html_dda(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
             return Err(RuntimeError::Invariant(

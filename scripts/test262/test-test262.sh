@@ -11,7 +11,7 @@ root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 default_spec=dev-support/test262/current.conf
 
 usage() {
-    printf 'usage: %s [--spec FILE] [--stack-vm] [--check|--runner-provenance|--focused|--full]\n' "${0##*/}"
+    printf 'usage: %s [--spec FILE] [--check|--runner-provenance|--focused|--full]\n' "${0##*/}"
     printf '  --check    authenticate the baseline and report source freshness\n'
     printf '  --runner-provenance  build and authenticate the current Rust runner\n'
     printf '  --focused  rerun and byte-compare the focused milestone receipt\n'
@@ -20,19 +20,13 @@ usage() {
 
 die() { echo "error: $*" >&2; exit 1; }
 
-vm_configuration=default
+vm_configuration=stack-vm
 vm_features=()
 mode=check
 spec_arg=$default_spec
 mode_seen=false
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --stack-vm)
-            [[ "$vm_configuration" == default ]] || { usage >&2; exit 2; }
-            vm_configuration=stack-vm
-            vm_features=(--features stack-vm)
-            shift
-            ;;
         --spec)
             [[ $# -ge 2 ]] || { usage >&2; exit 2; }
             spec_arg=$2
@@ -440,10 +434,7 @@ output_dir=$root/target
     || die 'target output directory must not be a symbolic link'
 full_report=$output_dir/test262-full.tsv
 full_json=$output_dir/test262-full.jsonl
-if [[ "$vm_configuration" == stack-vm ]]; then
-    full_report=$output_dir/test262-stack-vm-full.tsv
-    full_json=$output_dir/test262-stack-vm-full.jsonl
-fi
+
 
 check_file "$engine_fingerprint_tool" "$(spec_value engine_fingerprint_tool_lines)" \
     "$(spec_value engine_fingerprint_tool_sha256)" 'engine fingerprint tool'
@@ -549,7 +540,7 @@ python3 - "$tmp/runner-build.jsonl" "$vm_configuration" <<'PY_BUILD'
 import json, sys
 artifacts = [r for line in open(sys.argv[1]) if (r := json.loads(line)).get("reason") == "compiler-artifact" and r.get("target", {}).get("name") == "run-test262"]
 assert len(artifacts) == 1, "expected one authenticated runner artifact"
-assert ("stack-vm" in artifacts[0]["features"]) == (sys.argv[2] == "stack-vm"), "runner VM feature mismatch"
+assert "stack-vm" not in artifacts[0]["features"], "retired VM feature selected"
 PY_BUILD
 assert_workspace_engine_unchanged 'runner build'
 built_runner=$target_dir/$build_host/release/run-test262

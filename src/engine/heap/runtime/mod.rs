@@ -288,8 +288,16 @@ impl RuntimeState {
     }
 
     /// Append-only edges borrow both shapes; collection/mutation unlinks them.
-    pub(crate) fn append_transition(&mut self, parent: ShapeId, entry: ShapeEntry) -> Result<ShapeId, RuntimeError> {
-        if let Some(&target) = self.shape_transitions.get(&parent).and_then(|edges| edges.get(&entry)) {
+    pub(crate) fn append_transition(
+        &mut self,
+        parent: ShapeId,
+        entry: ShapeEntry,
+    ) -> Result<ShapeId, RuntimeError> {
+        if let Some(&target) = self
+            .shape_transitions
+            .get(&parent)
+            .and_then(|edges| edges.get(&entry))
+        {
             if self.heap.shape(target).is_ok() {
                 self.heap.retain_shape(target)?;
                 return Ok(target);
@@ -303,8 +311,14 @@ impl RuntimeState {
         let mut entries = source.entries().to_vec();
         entries.push(entry);
         let target = self.get_or_create_shape(prototype, &entries)?;
-        self.shape_transitions.entry(parent).or_default().insert(entry, target);
-        self.shape_transition_parents.entry(target).or_default().push((parent, entry));
+        self.shape_transitions
+            .entry(parent)
+            .or_default()
+            .insert(entry, target);
+        self.shape_transition_parents
+            .entry(target)
+            .or_default()
+            .push((parent, entry));
         Ok(target)
     }
 
@@ -313,7 +327,9 @@ impl RuntimeState {
             for (entry, target) in edges {
                 if let Some(parents) = self.shape_transition_parents.get_mut(&target) {
                     parents.retain(|pair| *pair != (shape, entry));
-                    if parents.is_empty() { self.shape_transition_parents.remove(&target); }
+                    if parents.is_empty() {
+                        self.shape_transition_parents.remove(&target);
+                    }
                 }
             }
         }
@@ -321,7 +337,9 @@ impl RuntimeState {
             for (parent, entry) in parents {
                 if let Some(edges) = self.shape_transitions.get_mut(&parent) {
                     edges.remove(&entry);
-                    if edges.is_empty() { self.shape_transitions.remove(&parent); }
+                    if edges.is_empty() {
+                        self.shape_transitions.remove(&parent);
+                    }
                 }
             }
         }
@@ -373,12 +391,10 @@ impl RuntimeState {
         &mut self,
         values: impl IntoIterator<Item = &'a RawValue>,
     ) -> Result<Vec<Atom>, RuntimeError> {
-        let atoms = values
-            .into_iter()
-            .filter_map(|value| match value {
-                RawValue::Symbol(atom) | RawValue::Private(atom) => Some(*atom),
-                _ => None,
-            });
+        let atoms = values.into_iter().filter_map(|value| match value {
+            RawValue::Symbol(atom) | RawValue::Private(atom) => Some(*atom),
+            _ => None,
+        });
         let mut retained = Vec::new();
         for atom in atoms {
             if let Err(error) = self.atoms.retain(atom) {

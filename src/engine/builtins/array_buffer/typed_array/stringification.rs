@@ -97,7 +97,6 @@ enum Phase {
     Element,
 }
 impl TypedStringStep {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
@@ -189,7 +188,9 @@ impl TypedStringResume {
                     self.0.index += 1;
                 }
                 ArrayJoinKind::ToLocaleString => {
-                    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToLocaleString)?;
+                    let key = runtime.pinned_property_key(
+                        crate::engine::atom::pinned::PinnedAtom::ToLocaleString,
+                    )?;
                     self.0.phase = Phase::LocaleMethod(element.clone());
                     return Ok(TypedStringStep::request_read(element, key, self));
                 }

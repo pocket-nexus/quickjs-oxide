@@ -4,7 +4,6 @@ impl Heap {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            #[cfg(feature = "stack-vm")]
             property_layout_epoch: 0,
             #[cfg(not(feature = "profiling"))]
             slots: Vec::new(),

@@ -39,6 +39,8 @@ impl Context<'_> {
 }
 
 #[inline(never)]
+// Pass the exit and its publication/conversion facts separately without constructing another dispatch payload.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -312,9 +314,8 @@ pub(super) fn dispatch(
         } => get_element(&mut context, keep_receiver, keep_key)?,
         RunExit::ConvertPlus => convert(&mut context, false, false)?,
         RunExit::ConvertPropertyKey => convert(&mut context, false, true)?,
-        exit @ (RunExit::ReplaceBinding { .. } | RunExit::ReleaseOperand { .. }) => {
-            direct(&mut context, exit)?
-        }
+        #[cfg(test)]
+        exit @ RunExit::ReleaseOperand { .. } => direct(&mut context, exit)?,
         RunExit::Complete => {
             if matches!(context.forwarded, Some(Completion::Throw(_))) {
                 Disposition::Rethrow
@@ -331,6 +332,7 @@ pub(super) fn dispatch(
 }
 
 #[inline(never)]
+#[cfg(test)]
 fn direct(context: &mut Context<'_>, exit: RunExit) -> Result<Disposition, Error> {
     if super::super::frame_operations::complete_owned_slot(context.execution, context.id, exit)? {
         Ok(Disposition::Entered)
@@ -351,11 +353,9 @@ fn call(
     let id = context.id;
 
     match super::enter_call(runtime, execution, id, arguments, method, tail)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -370,11 +370,9 @@ fn with_has(
     let id = context.id;
 
     match super::super::with_driver::start(runtime, execution, id, source, name)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -388,11 +386,9 @@ fn environment(
     let id = context.id;
 
     match super::super::environment_driver::step(runtime, execution, id, op)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -407,11 +403,9 @@ fn define_property(
     let id = context.id;
 
     match super::super::construct_driver::define_property(runtime, execution, id, key, method)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -436,11 +430,9 @@ fn define_class(
         has_heritage,
         *context.next_operation,
     )? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -454,13 +446,9 @@ fn class_initializer(
     let id = context.id;
 
     match super::super::construct_driver::initializer(runtime, execution, id, mode)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => {
-            return Err(Error::internal("class initialization attempted replay"));
-        }
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Err(Error::internal("class initialization attempted replay")),
     }
 }
 
@@ -487,7 +475,7 @@ fn convert(
         }
     }
     if invalid {
-        return Ok(Disposition::Bridge);
+        Ok(Disposition::Bridge)
     } else {
         if !context.conversion_prepared {
             (*context.next_operation) = (*context.next_operation)
@@ -502,7 +490,7 @@ fn convert(
             addition,
             property_key,
         )?);
-        return Ok(Disposition::Entered);
+        Ok(Disposition::Entered)
     }
 }
 
@@ -513,11 +501,9 @@ fn apply_eval(context: &mut Context<'_>, environment: u16) -> Result<Disposition
     let id = context.id;
 
     match super::super::eval_driver::apply(runtime, execution, id, environment)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -528,11 +514,9 @@ fn eval(context: &mut Context<'_>, arguments: u16, environment: u16) -> Result<D
     let id = context.id;
 
     match super::super::eval_driver::step(runtime, execution, id, arguments, environment)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -543,11 +527,9 @@ fn import(context: &mut Context<'_>) -> Result<Disposition, Error> {
     let id = context.id;
 
     match super::super::proxy_get_driver::start_import(runtime, execution, id)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Err(Error::internal("dynamic import attempted replay")),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Err(Error::internal("dynamic import attempted replay")),
     }
 }
 
@@ -574,16 +556,16 @@ fn predicate(
                     input,
                 )?,
             );
-            return Ok(Disposition::Entered);
+            Ok(Disposition::Entered)
         }
         super::super::predicate_driver::Progress::Call(CallStep::Entered) => {
-            return Ok(Disposition::Entered);
+            Ok(Disposition::Entered)
         }
         super::super::predicate_driver::Progress::Call(CallStep::Complete(completion)) => {
-            return Ok(context.complete(completion));
+            Ok(context.complete(completion))
         }
         super::super::predicate_driver::Progress::Call(CallStep::Bridge) => {
-            return Err(Error::internal("predicate attempted replay"));
+            Err(Error::internal("predicate attempted replay"))
         }
     }
 }
@@ -611,16 +593,16 @@ fn super_property(
                     input,
                 )?,
             );
-            return Ok(Disposition::Entered);
+            Ok(Disposition::Entered)
         }
         super::super::super_property_driver::Progress::Call(CallStep::Entered) => {
-            return Ok(Disposition::Entered);
+            Ok(Disposition::Entered)
         }
         super::super::super_property_driver::Progress::Call(CallStep::Complete(completion)) => {
-            return Ok(context.complete(completion));
+            Ok(context.complete(completion))
         }
         super::super::super_property_driver::Progress::Call(CallStep::Bridge) => {
-            return Err(Error::internal("super property attempted replay"));
+            Err(Error::internal("super property attempted replay"))
         }
     }
 }
@@ -647,11 +629,9 @@ fn set_property(context: &mut Context<'_>, key: Option<u32>) -> Result<Dispositi
         return Ok(Disposition::Entered);
     }
     match super::super::property_write_driver::write(runtime, execution, id, key)? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -672,11 +652,9 @@ fn get_field(
         super::super::property_driver::ReadKey::Static(index),
         keep_receiver,
     )? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 
@@ -718,11 +696,9 @@ fn get_element(
         super::super::property_driver::ReadKey::Computed { keep_key },
         keep_receiver,
     )? {
-        CallStep::Entered => return Ok(Disposition::Entered),
-        CallStep::Complete(completion) => {
-            return Ok(context.complete(completion));
-        }
-        CallStep::Bridge => return Ok(Disposition::Bridge),
+        CallStep::Entered => Ok(Disposition::Entered),
+        CallStep::Complete(completion) => Ok(context.complete(completion)),
+        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 

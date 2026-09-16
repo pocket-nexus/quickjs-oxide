@@ -81,28 +81,6 @@ impl BodyStep {
             ModuleRecordBody::Aborted => Err(RuntimeError::AbortedModule),
         }
     }
-    #[cfg(not(feature = "stack-vm"))]
-    pub(super) fn finish(
-        self,
-        runtime: &Runtime,
-        realm: ContextId,
-    ) -> Result<Completion, RuntimeError> {
-        {
-            let mut step = self;
-            loop {
-                step = match step {
-                    Self::Complete(result) => return Ok(result),
-                    Self::Call { callable, resume } => resume.resume(
-                        runtime,
-                        runtime.call_internal(realm, &callable, Value::Undefined, &[])?,
-                    )?,
-                    Self::Promise { step, resume } => {
-                        resume.resume(runtime, step.finish(runtime, realm)?)?
-                    }
-                };
-            }
-        }
-    }
 }
 impl BodyResume {
     pub(crate) fn resume(

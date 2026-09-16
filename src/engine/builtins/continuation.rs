@@ -33,11 +33,7 @@ impl SynchronousNative {
     ) -> Result<crate::engine::vm::Completion, RuntimeError> {
         match self {
             Self::Pure(target) => runtime.dispatch_synchronous_native_borrowed(
-                callable,
-                target,
-                realm,
-                invocation,
-                arguments,
+                callable, target, realm, invocation, arguments,
             ),
             Self::PrimitiveConstructor(kind) => match super::PrimitiveConstructorStep::start(
                 runtime, realm, kind, invocation, arguments,
@@ -478,8 +474,8 @@ impl NativeOperation {
             }
             _ => {}
         }
-        match target {
-            NativeFunctionId::TypedArray(kind) => match kind {
+        if let NativeFunctionId::TypedArray(kind) = target {
+            match kind {
                 super::native::TypedArrayNativeKind::Constructor(_)
                 | super::native::TypedArrayNativeKind::From
                 | super::native::TypedArrayNativeKind::Of => return Some(Self::TypedCreate(kind)),
@@ -494,8 +490,7 @@ impl NativeOperation {
                     return Some(Self::Pure(target));
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         match target {
             NativeFunctionId::Atomics(kind) => return Some(Self::Atomics(kind)),
@@ -810,34 +805,6 @@ impl NativeOperation {
             .or_else(|| DefinitionsKind::for_target(target).map(Self::Definitions))
             .or_else(|| PredicateKind::for_target(target).map(Self::Predicate))
     }
-    /// Compatibility adapter; execution uses start_into to keep immediate
-    /// outcomes out of the generic waiting payload.
-    #[expect(
-        dead_code,
-        reason = "compatibility adapter for callers requiring an owned NativeStep"
-    )]
-    pub(crate) fn start(
-        self,
-        runtime: &Runtime,
-        realm: ContextId,
-        invocation: &NativeInvocation,
-        arguments: &NativeArguments,
-        callable: &crate::engine::object::CallableRef,
-    ) -> Result<NativeStep, RuntimeError> {
-        let mut pending = None;
-        match self.start_into(runtime, realm, invocation, arguments, callable, |step| {
-            pending = Some(step)
-        })? {
-            Some(crate::engine::vm::call::NativeInvokeOutcome::Completion(completion)) => {
-                Ok(NativeStep::Complete(completion))
-            }
-            Some(result) => Ok(NativeStep::Raw(result)),
-            None => pending.ok_or(RuntimeError::Invariant(
-                "native start omitted its waiting step",
-            )),
-        }
-    }
-
     pub(crate) fn start_into(
         self,
         runtime: &Runtime,
@@ -1089,11 +1056,7 @@ impl NativeOperation {
                 // This registered domain cannot wait. Keep its completion in
                 // the small result channel, without constructing NativeStep.
                 let completion = runtime.dispatch_synchronous_native_borrowed(
-                    callable,
-                    target,
-                    realm,
-                    invocation,
-                    arguments,
+                    callable, target, realm, invocation, arguments,
                 )?;
                 return Ok(Some(
                     crate::engine::vm::call::NativeInvokeOutcome::Completion(completion),
@@ -1397,3 +1360,6 @@ const _: () = assert!(std::mem::size_of::<PredicateStep>() <= 56);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<NativeStep>() <= 64);
+
+#[cfg(test)]
+mod inventory_tests;

@@ -1,6 +1,6 @@
 //! Short, non-reentrant access to ordinary own slots. Slot positions never
 //! leave this module and a write locates and commits under one state borrow.
-#[cfg(feature = "stack-vm")]
+
 mod ic;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
@@ -83,7 +83,7 @@ fn select_set_slot(
 ) -> Result<BorrowedSet, RuntimeError> {
     let data = state.heap.object(id)?;
     let ordinary = is_ordinary(data);
-    #[cfg(feature = "stack-vm")]
+
     let ordinary = ordinary
         || match &data.payload {
             // RegExp's lastIndex is an ordinary data property. The branded
@@ -114,13 +114,12 @@ fn select_set_slot(
     })
 }
 
-#[cfg(feature = "stack-vm")]
 enum MissingSelection {
     Define,
     Complete(SetProbe),
     Special(ObjectId, SpecialKind),
 }
-#[cfg(feature = "stack-vm")]
+
 fn select_missing_prototypes(
     state: &RuntimeState,
     atom: Atom,
@@ -168,7 +167,6 @@ fn select_missing_prototypes(
 }
 
 /// Only a proof for the current uninterrupted borrow, never cached.
-#[cfg(feature = "stack-vm")]
 pub(super) fn prototypes_allow_dense_append(
     state: &RuntimeState,
     atom: Atom,
@@ -183,7 +181,6 @@ pub(super) fn prototypes_allow_dense_append(
 /// Continue an already-selected missing own property without releasing the
 /// borrow. Any exotic boundary declines before changing the receiver; the
 /// ordinary state machine then performs its original observable protocol.
-#[cfg(feature = "stack-vm")]
 fn set_missing_local(
     runtime: &Runtime,
     state: &mut RuntimeState,
@@ -256,9 +253,9 @@ fn special_kind(data: &crate::engine::heap::ObjectData) -> SpecialKind {
 
 pub(super) enum SetProbe {
     Stored(bool),
-    #[cfg(feature = "stack-vm")]
+
     Rejected(crate::engine::object::operations::PropertySetRejection),
-    #[cfg(feature = "stack-vm")]
+
     SpecialAt(ObjectRef, SpecialKind),
     Writable,
     Setter(Option<ObjectId>),
@@ -300,22 +297,22 @@ impl Runtime {
         receiver_is_target: bool,
         _walk_missing: bool,
     ) -> Result<SetProbe, RuntimeError> {
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("property_storage_set_probe");
         enum Selected {
             Setter(Option<ObjectId>),
             Missing(Option<ObjectId>),
             Dense(u32),
-            #[cfg(feature = "stack-vm")]
+
             DenseAppend(u32),
-            #[cfg(feature = "stack-vm")]
+
             SpecialAt(ObjectId, SpecialKind),
         }
         let selected = {
             let mut state = self.0.state.borrow_mut();
             let id = object.object_id();
             let data = state.heap.object(id)?;
-            #[cfg(feature = "stack-vm")]
+
             let dense_index = if receiver_is_target && matches!(data.kind, ObjectKind::Array) {
                 key.atom().immediate_integer().and_then(|index| {
                     if let ObjectPayload::Array { dense: Some(dense) } = &data.payload {
@@ -327,13 +324,11 @@ impl Runtime {
             } else {
                 None
             };
-            #[cfg(not(feature = "stack-vm"))]
-            let dense_index: Option<(u32, usize)> = None;
+
             if let Some((index, dense_len)) = dense_index {
                 if (index as usize) < dense_len {
                     Selected::Dense(index)
                 } else {
-                    #[cfg(feature = "stack-vm")]
                     {
                         let prototype = if _walk_missing {
                             state.heap.shape(data.shape)?.prototype()
@@ -346,13 +341,10 @@ impl Runtime {
                             MissingSelection::Special(id, kind) => Selected::SpecialAt(id, kind),
                         }
                     }
-                    #[cfg(not(feature = "stack-vm"))]
-                    unreachable!("dense local selection is stack-vm only")
                 }
             } else {
                 match select_set_slot(&state, id, key.atom())? {
                     BorrowedSet::Missing(prototype) => {
-                        #[cfg(feature = "stack-vm")]
                         if receiver_is_target {
                             match set_missing_local(
                                 self,
@@ -373,8 +365,6 @@ impl Runtime {
                         } else {
                             Selected::Missing(prototype)
                         }
-                        #[cfg(not(feature = "stack-vm"))]
-                        Selected::Missing(prototype)
                     }
                     BorrowedSet::Data(slot) => {
                         if !slot.flags.writable {
@@ -399,11 +389,11 @@ impl Runtime {
                 self.replace_dense_array_value(object, index, value)?;
                 SetProbe::Stored(true)
             }
-            #[cfg(feature = "stack-vm")]
+
             Selected::SpecialAt(id, kind) => {
                 SetProbe::SpecialAt(ObjectRef::from_borrowed_handle(self.clone(), id)?, kind)
             }
-            #[cfg(feature = "stack-vm")]
+
             Selected::DenseAppend(index) => {
                 // This is the exact missing element selected above, with no
                 // callback or owner release before the shared Array definition.
@@ -500,6 +490,7 @@ impl Runtime {
         )))
     }
 
+    #[cfg(test)]
     pub(super) fn ordinary_read_probe(
         &self,
         object: &ObjectRef,
@@ -509,7 +500,9 @@ impl Runtime {
     }
 
     pub(super) fn ordinary_read_probe_selected(
-        &self, object: &ObjectRef, key: &PropertyKey,
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
         native: Option<&mut Option<LinkedNativeSelection>>,
     ) -> Result<ReadProbe, RuntimeError> {
         self.ordinary_read_probe_atom(object, key.atom(), false, native)
@@ -522,7 +515,7 @@ impl Runtime {
         own_only: bool,
         mut native: Option<&mut Option<LinkedNativeSelection>>,
     ) -> Result<ReadProbe, RuntimeError> {
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("property_storage_read_probe");
         enum Selected {
             Value(crate::engine::heap::RawValue),
@@ -568,7 +561,7 @@ impl Runtime {
                     },
                 }
             };
-            #[cfg(feature = "stack-vm")]
+
             if native.is_some()
                 && let Selected::Value(crate::engine::heap::RawValue::Object(id)) = &selected
             {
@@ -597,7 +590,7 @@ impl Runtime {
                         data,
                     });
                 }
-                #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(match &value {
                     Value::Object(_) => "property_read_root_materialized.Object",
                     Value::Symbol(_) => "property_read_root_materialized.Symbol",
@@ -742,7 +735,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod dense_set_tests {
     use super::*;
     use crate::engine::object::operations::PropertySetAction;
@@ -860,7 +853,6 @@ mod dense_set_tests {
     }
 }
 
-#[cfg(feature = "stack-vm")]
 fn immediate_value(raw: &crate::engine::heap::RawValue) -> Option<Value> {
     use crate::engine::heap::RawValue;
     Some(match raw {
@@ -873,7 +865,6 @@ fn immediate_value(raw: &crate::engine::heap::RawValue) -> Option<Value> {
     })
 }
 
-#[cfg(feature = "stack-vm")]
 fn linked_field_atom(
     runtime: &Runtime,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
@@ -894,7 +885,6 @@ impl Runtime {
     /// A published same-domain bytecode root owns this linked static atom.
     /// Own-slot classification and projection share the ordinary read kernel;
     /// every decline leaves input owners, lazy properties and prototypes alone.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_ordinary_field_immediate_read(
         &self,
         base: &Value,
@@ -948,7 +938,7 @@ impl Runtime {
     }
     /// A published function already owns its static key. Only the selected
     /// result/getter is promoted here; fallback will acquire an owning key.
-    #[cfg(feature = "stack-vm")]
+    #[cfg(test)]
     pub(crate) fn prepare_linked_own_read(
         &self,
         base: &Value,
@@ -957,7 +947,7 @@ impl Runtime {
     ) -> Result<Option<crate::engine::object::OrdinaryRead>, RuntimeError> {
         self.prepare_linked_own_read_selected(base, executable, index, None)
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn prepare_linked_own_read_selected(
         &self,
         base: &Value,
@@ -983,7 +973,7 @@ impl Runtime {
                 )),
                 ReadProbe::Getter(Some(getter)) => {
                     let receiver = base.clone();
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "linked_read_owner_clone.ReceiverObject",
                     );
@@ -995,7 +985,7 @@ impl Runtime {
     }
     /// Only an existing writable own scalar slot reaches the ordinary Set
     /// replacement transaction. There are no callback or owner-bearing edges.
-    #[cfg(feature = "stack-vm")]
+    #[cfg(test)]
     pub(crate) fn try_ordinary_field_immediate_write(
         &self,
         base: &Value,
@@ -1059,18 +1049,16 @@ impl Runtime {
     /// can subsequently release its base operand without draining heap work.
     /// Every decline leaves owners and storage untouched; the general property
     /// lookup retains all missing/exotic/reference-valued cases.
-    #[cfg(feature = "stack-vm")]
+    #[cfg(test)]
     pub(crate) fn try_dense_array_immediate_read(&self, base: &Value, index: u32) -> Option<Value> {
         self.try_array_immediate_read_kind(base, index, false)
     }
 
     /// One release proof and heap borrow select either existing array kernel.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_array_immediate_read(&self, base: &Value, index: u32) -> Option<Value> {
         self.try_array_immediate_read_kind(base, index, true)
     }
 
-    #[cfg(feature = "stack-vm")]
     fn try_array_immediate_read_kind(
         &self,
         base: &Value,
@@ -1111,13 +1099,13 @@ impl Runtime {
         }
         let value =
             Self::typed_array_number_read_in_heap(&mut state.heap, object.object_id(), index)?;
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("typed_array_number_read_leaf");
         Some(value)
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod dense_array_read_tests {
     use super::*;
 
@@ -1290,7 +1278,7 @@ mod dense_array_read_tests {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod ordinary_field_leaf_tests {
     use super::*;
     use crate::engine::code::{bytecode::Instruction, runtime::PublishedFunctionSnapshot};

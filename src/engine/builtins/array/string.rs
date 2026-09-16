@@ -1,5 +1,5 @@
 //! Array stringification retains partial output and failure ordering across callbacks.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -18,7 +18,6 @@ pub(crate) enum ArrayStringKind {
     ToString,
 }
 impl ArrayStringKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::ArrayPrototypeJoin(kind) => Some(Self::Join(kind)),
@@ -160,7 +159,9 @@ impl ArrayStringResume {
                     self.0.phase = Phase::LocaleMethod;
                     return Ok({
                         let __pending_field_receiver = value;
-                        let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToLocaleString)?;
+                        let __pending_field_key = runtime.pinned_property_key(
+                            crate::engine::atom::pinned::PinnedAtom::ToLocaleString,
+                        )?;
                         let __pending_field_resume = self;
                         ArrayStringStep::request_read(
                             __pending_field_receiver,

@@ -326,8 +326,7 @@ pub(super) fn get(
                 };
                 *step = resume
                     .converted(runtime, result)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
             Step::Has {

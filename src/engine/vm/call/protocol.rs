@@ -27,6 +27,9 @@ mod tests {
         let mut context = runtime.new_context();
         context.eval("function lazyLeaf(x) { return x; }").unwrap();
         let profile = CostProfile::start();
+        // S13 enters the evaluated script through the same authenticated
+        // callback path. Its one root publication/authentication is startup;
+        // all twenty leaf calls still share one authentication and stay lazy.
         assert_eq!(
             context
                 .eval("var lazyTotal=0; for(var i=0;i<20;i++) lazyTotal=lazyLeaf(i); lazyTotal")
@@ -37,16 +40,16 @@ mod tests {
         let events = &cost.owned_execution_events;
         assert_eq!(
             events.get("lazy_frame_materialized").copied().unwrap_or(0),
-            0,
-            "{events:?}"
+            1,
+            "one root activation only; leaf loop must stay lazy: {events:?}"
         );
         assert_eq!(
             events
                 .get("ordinary_call_authenticated")
                 .copied()
                 .unwrap_or(0),
-            1,
-            "{events:?}"
+            2,
+            "one root authentication plus one leaf authentication: {events:?}"
         );
         assert_eq!(
             events

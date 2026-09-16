@@ -159,7 +159,8 @@ impl ImportResume {
                 };
                 Ok(ImportStep::Read {
                     object,
-                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::With)?,
+                    key: runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::With)?,
                     resume: self,
                 })
             }
@@ -279,52 +280,6 @@ impl ImportResume {
         }
         let entries = std::mem::take(&mut self.entries).into_boxed_slice();
         self.enqueue(runtime, ModuleImportAttributes::Present(entries))
-    }
-}
-
-pub(crate) fn finish(
-    runtime: &Runtime,
-    realm: ContextId,
-    mut step: ImportStep,
-) -> Result<Completion, RuntimeError> {
-    loop {
-        step = match step {
-            ImportStep::Complete(result) => return Ok(result),
-            ImportStep::String { value, resume } => {
-                let result = match runtime.native_to_js_string(realm, &value)? {
-                    NativeConversion::Value(value) => Completion::Return(Value::String(value)),
-                    NativeConversion::Throw(value) => Completion::Throw(value),
-                };
-                resume.resume(runtime, result)?
-            }
-            ImportStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            ImportStep::Keys { object, resume } => {
-                resume.keys(runtime, runtime.internal_own_property_keys(realm, &object)?)?
-            }
-            ImportStep::Enumerable {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_snapshot_own_property_is_enumerable(realm, &object, &key)?,
-            )?,
-            ImportStep::Call {
-                callable,
-                reason,
-                resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, Value::Undefined, &[reason])?,
-            )?,
-        };
     }
 }
 

@@ -228,7 +228,6 @@ pub(crate) fn record_call_preparation(
     }
 }
 
-#[cfg(feature = "stack-vm")]
 pub(crate) fn record_owned_call_storage(
     frame_bytes: usize,
     reuse_bytes: usize,
@@ -290,22 +289,6 @@ pub(crate) fn record_lowered_function(
     }
 }
 
-pub(crate) fn record_legacy_dispatch(operand_depth: usize) {
-    if let Some(collector) = current() {
-        let mut costs = collector.borrow_mut();
-        costs.legacy_dispatches = costs.legacy_dispatches.saturating_add(1);
-        costs.legacy_max_operand_depth = costs.legacy_max_operand_depth.max(operand_depth);
-    }
-}
-
-pub(crate) fn record_legacy_pc_publication() {
-    if let Some(collector) = current() {
-        let mut costs = collector.borrow_mut();
-        costs.legacy_pc_publications = costs.legacy_pc_publications.saturating_add(1);
-    }
-}
-
-#[cfg(feature = "stack-vm")]
 pub(crate) fn record_owned_instruction(operand_depth: usize) {
     if let Some(collector) = current() {
         let mut costs = collector.borrow_mut();
@@ -314,23 +297,6 @@ pub(crate) fn record_owned_instruction(operand_depth: usize) {
     }
 }
 
-#[cfg(feature = "stack-vm")]
-pub(crate) fn record_owned_bridge() {
-    if let Some(collector) = current() {
-        let mut costs = collector.borrow_mut();
-        costs.owned_bridge_exits = costs.owned_bridge_exits.saturating_add(1);
-    }
-}
-
-#[cfg(feature = "stack-vm")]
-pub(crate) fn record_owned_sync_call_bridge() {
-    if let Some(collector) = current() {
-        let mut costs = collector.borrow_mut();
-        costs.owned_sync_call_bridges = costs.owned_sync_call_bridges.saturating_add(1);
-    }
-}
-
-#[cfg(feature = "stack-vm")]
 pub(crate) enum OwnedStorageEvent {
     SlotCapacity { before: usize, after: usize },
     FrameCapacity { before: usize, after: usize },
@@ -344,7 +310,6 @@ pub(crate) enum OwnedStorageEvent {
     HotRelease { heap_root: bool },
 }
 
-#[cfg(feature = "stack-vm")]
 pub(crate) fn record_owned_execution_layout<T>(name: &'static str) {
     if let Some(collector) = current() {
         collector
@@ -355,7 +320,6 @@ pub(crate) fn record_owned_execution_layout<T>(name: &'static str) {
     }
 }
 
-#[cfg(feature = "stack-vm")]
 pub(crate) fn record_owned_execution_event(name: &'static str) {
     let Some(collector) = current() else {
         return;
@@ -365,7 +329,6 @@ pub(crate) fn record_owned_execution_event(name: &'static str) {
     *count = count.saturating_add(1);
 }
 
-#[cfg(feature = "stack-vm")]
 pub(crate) fn record_owned_storage(event: OwnedStorageEvent) {
     let Some(collector) = current() else {
         return;
@@ -445,12 +408,8 @@ mod tests {
         assert_eq!(before.lowering.storage_samples, 1);
         assert!(before.parse.maximum_observed_ir_capacity_bytes > 0);
         assert!(before.code_instructions > 0);
-        if cfg!(feature = "stack-vm") {
+        {
             assert!(before.owned_instructions > 0);
-        } else {
-            assert!(before.legacy_dispatches > 0);
-            assert_eq!(before.owned_instructions, 0);
-            assert_eq!(before.owned_bridge_exits, 0);
         }
         assert_eq!(before.legacy_dispatches, before.legacy_pc_publications);
         {
@@ -503,10 +462,7 @@ mod tests {
             );
             let cost = profile.snapshot().call_preparation;
             assert_eq!(cost.frames_prepared, 1);
-            assert_eq!(
-                cost.parameter_buffer_allocations,
-                u64::from(!cfg!(feature = "stack-vm"))
-            );
+            assert_eq!(cost.parameter_buffer_allocations, 0);
             assert_eq!(cost.parameter_slots_initialized, values.len().max(2) as u64);
             assert_eq!(cost.parameter_value_copies, values.len() as u64);
             assert_eq!(
@@ -514,7 +470,7 @@ mod tests {
                 u64::from(values.len() == 1)
             );
             assert_eq!(cost.callee_heap_root_copies, 1);
-            if cfg!(feature = "stack-vm") {
+            {
                 assert_eq!(cost.owned_frame_allocations, 1);
                 assert!(cost.owned_frame_bytes > 0);
                 assert_eq!(
@@ -522,9 +478,6 @@ mod tests {
                     u64::from(!values.is_empty())
                 );
                 assert_eq!(cost.owned_argument_capacity_bytes == 0, values.is_empty());
-            } else {
-                assert_eq!(cost.owned_frame_allocations, 0);
-                assert_eq!(cost.owned_argument_buffers_observed, 0);
             }
         }
     }

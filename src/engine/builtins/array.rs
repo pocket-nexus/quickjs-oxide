@@ -608,10 +608,6 @@ impl Runtime {
         }
     }
 
-    /// Array construction uses ordinary `Set`, not CreateDataProperty. A
-    /// custom `newTarget.prototype` can therefore intercept an element with
-    /// an inherited setter or reject it with a fixed data/accessor property.
-
     fn create_indexed_data_property(
         &self,
         realm: ContextId,
@@ -652,7 +648,8 @@ impl Runtime {
                         false
                     };
                 let error = if array_length_read_only {
-                    let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+                    let length =
+                        self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                     self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?
                 } else if !self.has_own_property(&target, &key)? && !self.is_extensible(&target)? {
                     Error::new(ErrorKind::Type, "object is not extensible")
@@ -764,24 +761,6 @@ impl Runtime {
             }
         }
         Ok(Completion::Return(Value::Object(array)))
-    }
-
-    pub(crate) fn close_iterator_preserving_throw(
-        &self,
-        realm: ContextId,
-        iterator: &ObjectRef,
-    ) -> Result<(), RuntimeError> {
-        super::iterator::step::finish_close(
-            self,
-            realm,
-            super::iterator::step::CloseStep::start(
-                self,
-                realm,
-                iterator.clone(),
-                Completion::Throw(Value::Undefined),
-            )?,
-        )?;
-        Ok(())
     }
 
     pub(crate) fn call_array_of(
@@ -910,10 +889,6 @@ impl Runtime {
             )?,
         )
     }
-
-    /// QuickJS `JS_ArraySpeciesCreate`: generic receivers always allocate a
-    /// defining-realm base Array, while genuine Arrays observe constructor and
-    /// @@species with the cross-realm default-Array compatibility exception.
 
     pub(crate) fn call_array_prototype_reduce(
         &self,

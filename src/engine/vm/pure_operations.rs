@@ -157,7 +157,6 @@ pub(super) fn set_object_prototype(
     Ok(Completion::Return(Value::Undefined))
 }
 
-#[cfg(feature = "stack-vm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PureOperation {
     Constant(u32),
@@ -178,7 +177,7 @@ pub(super) enum PureOperation {
     TypeOfIsFunction,
     Branch { target: u32, when: bool },
 }
-#[cfg(feature = "stack-vm")]
+
 pub(super) fn step(
     runtime: &Runtime,
     execution: &mut super::execution::RunningExecution,
@@ -218,7 +217,7 @@ pub(super) fn step(
         }
     }
 }
-#[cfg(feature = "stack-vm")]
+
 fn perform(
     runtime: &Runtime,
     execution: &mut super::execution::RunningExecution,

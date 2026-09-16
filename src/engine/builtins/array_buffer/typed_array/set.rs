@@ -180,7 +180,8 @@ impl TypedSetResume {
                         return Ok(TypedSetStep::Complete(Completion::Throw(value)));
                     }
                 };
-                let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+                let key =
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                 Ok(TypedSetStep::Read {
                     object: source.clone(),
                     key,

@@ -275,8 +275,10 @@ mod tests {
 
     #[test]
     fn collection_record_identity_exhaustion_rejects_before_mutation() {
-        let mut records = CollectionRecords::default();
-        records.next_id = usize::MAX;
+        let records = CollectionRecords {
+            next_id: usize::MAX,
+            ..Default::default()
+        };
         assert!(matches!(
             records.preflight_insert(),
             Err(HeapError::Overflow { .. })

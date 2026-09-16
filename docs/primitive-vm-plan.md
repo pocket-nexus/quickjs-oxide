@@ -1,6 +1,6 @@
 # 栈 VM 优化计划：执行架构与代码职责
 
-状态：2026-09-15，已确定继续使用**栈虚拟机**。S01–S08 已验收，S09 与其 N1–N3 后续、新 S10–S12（惰性帧/窄状态机/属性读 IC）已实施；性能退出条件未全部通过，58 fixed 仍有 25 项高于 S0（见[联合报告](performance/README.md)）。残余差值的实现层根因与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)；原退役旧路径阶段顺延为 S13。具体证据以[逐 commit 计划](primitive-vm-commit-plan.md)和迁移清单为准。
+状态：2026-09-16。S14–S20 的计划内代码及 S13 旧执行路径退役已实现，额外覆盖 review 发现的遗漏已补齐。当前只有 SlotStore/FrameEntry/driver 执行核心，已移除 stack-vm feature 开关。最终联合语义门禁进行中，唯一一轮 benchmark/Profile 尚未执行；性能退出条件仍待最终数据判定。实施与验证记录见[逐 commit 计划](primitive-vm-commit-plan.md)、[工序覆盖核对](primitive-vm-s14-s20-execution-plan.md)和[迁移账本](primitive-vm-migration.md#s13-单执行核心退役实现与测试迁移)。
 
 面向实现者和审查者。目标是在一个 PR 内改进执行架构，解决 issue #16 的栈深、数值执行、调用存储、局部更新与 PC 管理问题。算法和模块设计见[实施设计](primitive-vm-implementation-plan.md)，顺序见[逐 commit 计划](primitive-vm-commit-plan.md)，范围见[迁移清单](primitive-vm-migration.md)。
 

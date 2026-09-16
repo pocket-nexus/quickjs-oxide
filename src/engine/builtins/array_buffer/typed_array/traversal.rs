@@ -1,5 +1,5 @@
 //! TypedArray callbacks own their traversal and reacquire each live element.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::{NativeFunctionId, TypedArrayNativeKind};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -18,7 +18,6 @@ pub(crate) enum TypedTraversalKind {
     Reduce(ArrayReduceKind),
 }
 impl TypedTraversalKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::TypedArray(TypedArrayNativeKind::Find(kind)) => Self::Find(kind),

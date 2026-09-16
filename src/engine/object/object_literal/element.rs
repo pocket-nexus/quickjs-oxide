@@ -3,11 +3,10 @@ use crate::engine::{
     api::{Error, ErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{
-        ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-        operations::{InternalDefineResult, PropertyDefineOutcome},
+        ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, operations::InternalDefineResult,
     },
     value::{Value, conversion::NativeConversion},
-    vm::{Completion, ToPrimitiveHint},
+    vm::Completion,
 };
 
 pub(crate) enum LiteralDefinitionStep {
@@ -135,42 +134,9 @@ impl LiteralDefinitionResume {
         }))
     }
 }
-pub(crate) fn finish(
-    runtime: &Runtime,
-    realm: ContextId,
-    mut step: LiteralDefinitionStep,
-) -> Result<Completion, RuntimeError> {
-    loop {
-        step = match step {
-            LiteralDefinitionStep::Complete(result) => return Ok(result),
-            LiteralDefinitionStep::Primitive { mut resume } => {
-                let value = resume.take_primitive();
-                resume.resume(
-                    runtime,
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::String)?,
-                )?
-            }
-            LiteralDefinitionStep::Define { mut resume } => {
-                let (object, key, descriptor) = resume.take_define();
-                let result = match runtime.define_own_property_in_realm(
-                    Some(realm),
-                    &object,
-                    &key,
-                    &descriptor,
-                )? {
-                    PropertyDefineOutcome::Defined(true) => {
-                        NativeConversion::Value(InternalDefineResult::Defined)
-                    }
-                    PropertyDefineOutcome::Defined(false) => {
-                        NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object))
-                    }
-                    PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
-                };
-                resume.defined(result)?
-            }
-        };
-    }
-}
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<LiteralDefinitionStep>() <= 64);
 
 #[cfg(test)]
 mod resident_tests {
@@ -214,6 +180,3 @@ mod resident_tests {
         ));
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<LiteralDefinitionStep>() <= 64);

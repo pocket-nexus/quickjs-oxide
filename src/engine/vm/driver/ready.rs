@@ -79,7 +79,8 @@ pub(super) fn run(
                     return Err(invariant("property return attempted replay"));
                 }
             },
-            RunExit::ReplaceBinding { .. } | RunExit::ReleaseOperand { .. } => {
+            #[cfg(test)]
+            RunExit::ReleaseOperand { .. } => {
                 if !crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)? {
                     return Err(invariant(
                         "direct slot completion changed its frame protocol",
@@ -138,9 +139,6 @@ pub(super) fn run(
                     PrimitiveCompletion::Completed => {}
                     PrimitiveCompletion::Throw(value) => {
                         return Ok(Boundary::Complete(Completion::Throw(value)));
-                    }
-                    PrimitiveCompletion::InvalidDomain => {
-                        return Ok(Boundary::Exit(RunExit::Bridge));
                     }
                     PrimitiveCompletion::Declined => return Ok(Boundary::Conversion(exit)),
                 }

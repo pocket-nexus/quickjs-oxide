@@ -207,11 +207,13 @@ mod tests {
 
     #[test]
     fn short_string_hash_is_memoized_without_owning_the_key() {
-        let index=CollectionIndex::default();
-        let key=JsString::try_from_utf8("short").unwrap();
-        let weak=key.downgrade();
-        for _ in 0..3 {index.hash(&RawValue::String(key.clone()));}
-        assert_eq!(index.hash_computations.get(),1);
+        let index = CollectionIndex::default();
+        let key = JsString::try_from_utf8("short").unwrap();
+        let weak = key.downgrade();
+        for _ in 0..3 {
+            index.hash(&RawValue::String(key.clone()));
+        }
+        assert_eq!(index.hash_computations.get(), 1);
         drop(key);
         assert!(weak.upgrade().is_none());
     }

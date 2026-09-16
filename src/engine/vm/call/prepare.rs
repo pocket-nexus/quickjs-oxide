@@ -12,6 +12,7 @@ use crate::engine::vm::CallInput;
 use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::frames::ActiveFrameGuard;
 
+#[cfg(test)]
 pub(in crate::engine::vm) struct PreparedBytecodeFrame {
     pub executable: PublishedFunctionSnapshot,
     pub active_frame: ActiveFrameGuard,
@@ -28,6 +29,7 @@ pub(in crate::engine::vm) struct PreparedBytecodeHeader {
 }
 
 impl Runtime {
+    #[cfg(test)]
     pub(in crate::engine::vm) fn prepare_bytecode_frame(
         &self,
         callable: &CallableRef,
@@ -89,7 +91,6 @@ impl Runtime {
         })
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn prepare_owned_bytecode_frame(
         &self,
         callable: &CallableRef,

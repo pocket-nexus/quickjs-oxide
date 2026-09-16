@@ -4,8 +4,7 @@ use crate::engine::api::{Error, runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::value::Value;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::{FrameEntry, FrameId};
-use crate::engine::vm::host_bridge::{RuntimeVmHost, owned};
-use crate::engine::vm::{CallInput, VmResume, VmSuspendKind, VmSuspension};
+use crate::engine::vm::{VmResume, VmSuspendKind};
 
 pub(in crate::engine::vm) struct OwnedSuspension {
     entry: FrameEntry,
@@ -79,21 +78,32 @@ impl OwnedSuspension {
             kind,
             return_to: _,
         } = *self;
-        // This is a representation adapter only; no old interpreter runs.
-        let (host, activation, originals) =
-            owned::detach_frame(runtime, entry, pc).map_err(RuntimeError::Engine)?;
-        let suspension = VmSuspension::new(kind, activation).map_err(RuntimeError::Engine)?;
-        super::finish_suspension(host, suspension, originals)
+        let mut entry = entry;
+        let value = if kind == VmSuspendKind::Initial {
+            Value::Undefined
+        } else {
+            std::mem::replace(
+                entry
+                    .storage
+                    .operands
+                    .last_mut()
+                    .ok_or(RuntimeError::Invariant("suspension has no output operand"))?,
+                Value::Undefined,
+            )
+        };
+        Ok(VmRunOutcome::Suspend {
+            value,
+            activation: Box::new(super::freeze_entry(&runtime, entry, kind, pc)?),
+        })
     }
 }
 
 pub(super) fn prepare(
-    host: RuntimeVmHost,
-    suspension: VmSuspension,
-    original_arguments: Vec<Value>,
+    mut entry: FrameEntry,
+    kind: VmSuspendKind,
+    pc: usize,
     resume: VmActivationResume,
 ) -> Result<PreparedResume, RuntimeError> {
-    let (kind, mut parts) = suspension.into_parts().map_err(RuntimeError::Engine)?;
     let mut abrupt = None;
     let injection = match (kind, resume) {
         (VmSuspendKind::Initial, VmActivationResume::Initial) => None,
@@ -120,43 +130,30 @@ pub(super) fn prepare(
             ));
         }
     };
-    if kind != VmSuspendKind::Initial && !matches!(parts.stack.last(), Some(Value::Undefined)) {
+    if kind != VmSuspendKind::Initial
+        && !matches!(entry.storage.operands.last(), Some(Value::Undefined))
+    {
         return Err(RuntimeError::Invariant(
             "suspension resume operand was not cleared",
         ));
     }
     if let Some((value, magic)) = injection {
-        *parts
-            .stack
+        *entry
+            .storage
+            .operands
             .last_mut()
             .ok_or(RuntimeError::Invariant("suspension has no resume operand"))? = value;
         if let Some(magic) = magic {
-            parts
-                .stack
+            entry
+                .storage
+                .operands
                 .try_reserve(1)
                 .map_err(|_| RuntimeError::Invariant("resume operand allocation failed"))?;
-            parts.stack.push(Value::Int(magic));
+            entry.storage.operands.push(Value::Int(magic));
         }
     }
-    let input = CallInput {
-        this_value: parts.this_value,
-        new_target: parts.new_target,
-        callee_global: Some(
-            parts
-                .callee_global
-                .ok_or(RuntimeError::Invariant("suspension has no callee global"))?,
-        ),
-    };
-    let (_runtime, mut entry) =
-        owned::prepare(host, input, &original_arguments).map_err(RuntimeError::Engine)?;
-    entry.cold.regions = parts.regions;
-    entry.cold.normalized_this = parts.normalized_this;
-    entry.storage.operands = parts.stack;
     entry.cold.resume_throw = abrupt;
-    Ok(PreparedResume {
-        entry,
-        pc: parts.pc,
-    })
+    Ok(PreparedResume { entry, pc })
 }
 
 pub(in crate::engine::vm) struct PreparedResume {

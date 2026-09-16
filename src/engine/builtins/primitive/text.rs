@@ -1,5 +1,5 @@
 //! String scalar operations retain the converted receiver before argument coercions.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{
@@ -25,7 +25,6 @@ pub(crate) enum ScalarTextKind {
     Iterator,
 }
 impl ScalarTextKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::StringPrototypeCharAt(kind) => Self::CharAt(kind),

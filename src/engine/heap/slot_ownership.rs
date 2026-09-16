@@ -18,6 +18,109 @@ pub(crate) enum SlotReleaseReadiness {
     PrimitiveStorage,
 }
 
+impl Heap {
+    pub(crate) fn slot_object_release_readiness(
+        &self,
+        object: super::ObjectId,
+    ) -> Result<SlotReleaseReadiness, HeapError> {
+        self.slot_release_readiness(RawId::Object(object))
+    }
+
+    fn slot_release_readiness(&self, id: RawId) -> Result<SlotReleaseReadiness, HeapError> {
+        let index = self.validate_slot_identity(id)?;
+        if !self.zero_queue.is_empty() {
+            return Ok(SlotReleaseReadiness::Drain);
+        }
+        match &self.slots[index].state {
+            SlotState::Live(node) if node.strong > 1 => Ok(SlotReleaseReadiness::Ready),
+            SlotState::Live(node) if node.strong == 1 => {
+                // release_raw_no_drain would push to this queue. Do not commit
+                // its decrement before deciding whether that push can allocate.
+                Ok(if self.zero_queue.len() == self.zero_queue.capacity() {
+                    SlotReleaseReadiness::QueueCapacity
+                } else {
+                    SlotReleaseReadiness::Drain
+                })
+            }
+            // Zombie reclamation and in-progress heap transitions also require
+            // a driver boundary; they do not satisfy the ordinary live proof.
+            _ => Ok(SlotReleaseReadiness::Drain),
+        }
+    }
+}
+
+impl Runtime {
+    pub(crate) fn slot_value_release_readiness(
+        &self,
+        value: &Value,
+    ) -> Result<SlotReleaseReadiness, RuntimeError> {
+        match value {
+            Value::Undefined | Value::Null | Value::Bool(_) | Value::Int(_) | Value::Float(_) => {
+                return Ok(SlotReleaseReadiness::Ready);
+            }
+            Value::String(value) => {
+                return Ok(if value.release_keeps_storage_alive() {
+                    SlotReleaseReadiness::Ready
+                } else {
+                    SlotReleaseReadiness::PrimitiveStorage
+                });
+            }
+            Value::BigInt(value) => {
+                return Ok(if value.release_keeps_storage_alive() {
+                    SlotReleaseReadiness::Ready
+                } else {
+                    SlotReleaseReadiness::PrimitiveStorage
+                });
+            }
+            Value::Object(root) if !root.belongs_to(self) => {
+                return Err(RuntimeError::WrongRuntime("owned object slot"));
+            }
+            Value::Symbol(root) if !root.belongs_to(self) => {
+                return Err(RuntimeError::WrongRuntime("owned symbol slot"));
+            }
+            Value::Object(_) | Value::Symbol(_) => {}
+        }
+        if self.0.deferred_references.has_pending() {
+            return Ok(SlotReleaseReadiness::Deferred);
+        }
+        // A successful shared borrow would not prove that Drop can acquire
+        // its mutable runtime borrow. Acquire that exact permission here.
+        let Ok(state) = self.0.state.try_borrow_mut() else {
+            return Ok(SlotReleaseReadiness::Borrowed);
+        };
+        match value {
+            Value::Object(root) => Ok(state
+                .heap
+                .slot_release_readiness(RawId::Object(root.object_id()))?),
+            Value::Symbol(root) => Ok(match state.atoms.resolve(root.atom())?.ref_count {
+                None => SlotReleaseReadiness::Ready,
+                Some(count) if count > 1 => SlotReleaseReadiness::Ready,
+                Some(_) => SlotReleaseReadiness::PrimitiveStorage,
+            }),
+            _ => unreachable!("primitive slots returned before borrowing runtime state"),
+        }
+    }
+
+    /// Commit exactly one ordinary owning-root release after the no-drain
+    /// proof. No callback or reference decrease can intervene between the
+    /// preflight and Drop. Ready consumes the Value; every other outcome leaves
+    /// it untouched, so the caller may move it to a pending operation safely.
+    pub(crate) fn try_release_slot_value(&self, value: &mut Value) -> Result<bool, RuntimeError> {
+        if self.slot_value_release_readiness(value)? != SlotReleaseReadiness::Ready {
+            return Ok(false);
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_storage(
+            crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
+                heap_root: matches!(value, Value::Object(_) | Value::Symbol(_)),
+            },
+        );
+        let old = std::mem::replace(value, Value::Undefined);
+        drop(old);
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,7 +250,6 @@ mod tests {
         assert_eq!(runtime.0.state.borrow().heap.strong_count(id).unwrap(), 1);
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn resident_field_leaves_preserve_zero_queue_and_ordinary_slot() {
         use crate::engine::code::bytecode::Instruction;
@@ -198,7 +300,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn resident_array_leaves_preserve_existing_zero_queue_and_storage() {
         let runtime = Runtime::new();
@@ -317,109 +418,5 @@ mod tests {
         ));
         assert!(matches!(value, Value::Object(_)));
         assert_eq!(foreign.0.state.borrow().heap.strong_count(id).unwrap(), 1);
-    }
-}
-
-impl Heap {
-    #[cfg(feature = "stack-vm")]
-    pub(crate) fn slot_object_release_readiness(
-        &self,
-        object: super::ObjectId,
-    ) -> Result<SlotReleaseReadiness, HeapError> {
-        self.slot_release_readiness(RawId::Object(object))
-    }
-
-    fn slot_release_readiness(&self, id: RawId) -> Result<SlotReleaseReadiness, HeapError> {
-        let index = self.validate_slot_identity(id)?;
-        if !self.zero_queue.is_empty() {
-            return Ok(SlotReleaseReadiness::Drain);
-        }
-        match &self.slots[index].state {
-            SlotState::Live(node) if node.strong > 1 => Ok(SlotReleaseReadiness::Ready),
-            SlotState::Live(node) if node.strong == 1 => {
-                // release_raw_no_drain would push to this queue. Do not commit
-                // its decrement before deciding whether that push can allocate.
-                Ok(if self.zero_queue.len() == self.zero_queue.capacity() {
-                    SlotReleaseReadiness::QueueCapacity
-                } else {
-                    SlotReleaseReadiness::Drain
-                })
-            }
-            // Zombie reclamation and in-progress heap transitions also require
-            // a driver boundary; they do not satisfy the ordinary live proof.
-            _ => Ok(SlotReleaseReadiness::Drain),
-        }
-    }
-}
-
-impl Runtime {
-    pub(crate) fn slot_value_release_readiness(
-        &self,
-        value: &Value,
-    ) -> Result<SlotReleaseReadiness, RuntimeError> {
-        match value {
-            Value::Undefined | Value::Null | Value::Bool(_) | Value::Int(_) | Value::Float(_) => {
-                return Ok(SlotReleaseReadiness::Ready);
-            }
-            Value::String(value) => {
-                return Ok(if value.release_keeps_storage_alive() {
-                    SlotReleaseReadiness::Ready
-                } else {
-                    SlotReleaseReadiness::PrimitiveStorage
-                });
-            }
-            Value::BigInt(value) => {
-                return Ok(if value.release_keeps_storage_alive() {
-                    SlotReleaseReadiness::Ready
-                } else {
-                    SlotReleaseReadiness::PrimitiveStorage
-                });
-            }
-            Value::Object(root) if !root.belongs_to(self) => {
-                return Err(RuntimeError::WrongRuntime("owned object slot"));
-            }
-            Value::Symbol(root) if !root.belongs_to(self) => {
-                return Err(RuntimeError::WrongRuntime("owned symbol slot"));
-            }
-            Value::Object(_) | Value::Symbol(_) => {}
-        }
-        if self.0.deferred_references.has_pending() {
-            return Ok(SlotReleaseReadiness::Deferred);
-        }
-        // A successful shared borrow would not prove that Drop can acquire
-        // its mutable runtime borrow. Acquire that exact permission here.
-        let Ok(state) = self.0.state.try_borrow_mut() else {
-            return Ok(SlotReleaseReadiness::Borrowed);
-        };
-        match value {
-            Value::Object(root) => Ok(state
-                .heap
-                .slot_release_readiness(RawId::Object(root.object_id()))?),
-            Value::Symbol(root) => Ok(match state.atoms.resolve(root.atom())?.ref_count {
-                None => SlotReleaseReadiness::Ready,
-                Some(count) if count > 1 => SlotReleaseReadiness::Ready,
-                Some(_) => SlotReleaseReadiness::PrimitiveStorage,
-            }),
-            _ => unreachable!("primitive slots returned before borrowing runtime state"),
-        }
-    }
-
-    /// Commit exactly one ordinary owning-root release after the no-drain
-    /// proof. No callback or reference decrease can intervene between the
-    /// preflight and Drop. Ready consumes the Value; every other outcome leaves
-    /// it untouched, so the caller may move it to a pending operation safely.
-    pub(crate) fn try_release_slot_value(&self, value: &mut Value) -> Result<bool, RuntimeError> {
-        if self.slot_value_release_readiness(value)? != SlotReleaseReadiness::Ready {
-            return Ok(false);
-        }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_storage(
-            crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
-                heap_root: matches!(value, Value::Object(_) | Value::Symbol(_)),
-            },
-        );
-        let old = std::mem::replace(value, Value::Undefined);
-        drop(old);
-        Ok(true)
     }
 }

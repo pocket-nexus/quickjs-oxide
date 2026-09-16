@@ -32,7 +32,7 @@ DEPENDENCY_HASHES = {'src/engine/modules/namespace.rs::module_namespace_own_prop
  'src/engine/object/properties.rs::get_prototype_of': '460ff734ab71d51c00e138687d691da1da0fda3dd8323f80bdc8e2c5efc520d8',
  'src/engine/object/properties.rs::has_own_property': '38b67d97a3433823e20db8b10e56bb0dfff07d7eb1e4319726750cafff19e14d',
  'src/engine/object/properties.rs::own_property_is_enumerable': '9a4762441b03bf62025bff8b27b1e2e4be26f7c10848d2198e2e2d1f76b8556a',
- 'src/engine/object/properties.rs::own_property_keys': 'bbb27c3305e09c99e33752a709277442e70af2dbf45f815ef03389ba89c0fd54'}
+ 'src/engine/object/properties.rs::own_property_keys': '7bb40209c229dcdb6024ffaf44faeb8d635d39a8e230be35f1fc3f568240eb7b'}
 
 
 def check_local_dependencies(ctx, sources):

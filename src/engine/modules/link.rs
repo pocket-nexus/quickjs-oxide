@@ -153,7 +153,7 @@ impl LinkResume {
     fn finish_frame(
         runtime: &Runtime,
         dfs: &mut ModuleLinkDfs,
-        frames: &mut Vec<ModuleDfsFrame>,
+        frames: &mut [ModuleDfsFrame],
         frame: ModuleDfsFrame,
         completion: Completion,
     ) -> Result<(), RuntimeError> {
@@ -286,32 +286,6 @@ pub(crate) fn resume_reply(
             Ok(LinkStep::Complete(Completion::Throw(reason)))
         }
         result => result,
-    }
-}
-
-#[cfg(not(feature = "stack-vm"))]
-pub(super) fn finish(runtime: &Runtime, mut step: LinkStep) -> Result<(), RuntimeError> {
-    loop {
-        step = match step {
-            LinkStep::Complete(Completion::Return(Value::Undefined)) => return Ok(()),
-            LinkStep::Complete(Completion::Throw(value)) => {
-                runtime.set_pending_exception(value)?;
-                return Err(RuntimeError::Exception);
-            }
-            LinkStep::Complete(_) => {
-                return Err(RuntimeError::Invariant(
-                    "module link entry returned a non-undefined value",
-                ));
-            }
-            LinkStep::Call {
-                realm,
-                callable,
-                resume,
-            } => {
-                let completion = runtime.call_internal(realm, &callable, Value::Bool(true), &[])?;
-                resume.resume(completion)?
-            }
-        };
     }
 }
 

@@ -204,7 +204,6 @@ impl FromSyncStep {
         runtime: &Runtime,
         realm: ContextId,
     ) -> Result<Completion, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         {
             super::super::driver::execute_root(
                 runtime.clone(),
@@ -212,55 +211,6 @@ impl FromSyncStep {
                 super::super::driver::RootOperation::FromSync(self),
             )
             .map_err(RuntimeError::Engine)
-        }
-        #[cfg(not(feature = "stack-vm"))]
-        {
-            let mut step = self;
-            loop {
-                step = match step {
-                    Self::Complete(completion) => return Ok(completion),
-                    Self::Read { mut resume } => {
-                        let receiver = resume.take_read_receiver();
-                        let key = resume.take_read_key();
-                        resume.resume(
-                            runtime,
-                            runtime.get_value_property_in_realm(realm, receiver, &key)?,
-                        )?
-                    }
-                    Self::Call { mut resume } => {
-                        let callable = resume.take_call_callable();
-                        let receiver = resume.take_call_receiver();
-                        let arguments = resume.take_call_arguments();
-                        resume.resume(
-                            runtime,
-                            runtime.call_internal(realm, &callable, receiver, &arguments)?,
-                        )?
-                    }
-                    Self::Resolve { mut resume } => {
-                        let value = resume.take_resolve_value();
-                        let realm = resume.take_resolve_realm();
-                        {
-                            resume
-                                .resume(runtime, runtime.promise_resolve_intrinsic(realm, value)?)?
-                        }
-                    }
-                    Self::Close { mut resume } => {
-                        let iterator = resume.take_close_iterator();
-                        let completion = resume.take_close_completion();
-                        {
-                            let close = crate::engine::builtins::IteratorCloseStep::start(
-                                runtime, realm, iterator, completion,
-                            )?;
-                            resume.resume(
-                                runtime,
-                                crate::engine::builtins::finish_iterator_close(
-                                    runtime, realm, close,
-                                )?,
-                            )?
-                        }
-                    }
-                };
-            }
         }
     }
 }
@@ -381,7 +331,8 @@ impl FromSyncResume {
                 };
                 Ok({
                     let __pending_field_receiver = Value::Object(result.clone());
-                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?;
+                    let __pending_field_key = runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?;
                     let __pending_field_resume = self.continue_with(Phase::Done { state, result });
                     FromSyncStep::request_read(
                         __pending_field_receiver,
@@ -394,7 +345,8 @@ impl FromSyncResume {
                 let done = runtime.value_to_boolean(&value)?;
                 Ok({
                     let __pending_field_receiver = Value::Object(result);
-                    let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?;
+                    let __pending_field_key = runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?;
                     let __pending_field_resume = self.continue_with(Phase::Value { state, done });
                     FromSyncStep::request_read(
                         __pending_field_receiver,

@@ -36,9 +36,7 @@ impl ClosureSlots {
             Environment::Rooted(roots) => roots.len(),
         }
     }
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+
     pub(crate) fn borrowed_cell(
         &self,
         index: usize,
@@ -53,18 +51,7 @@ impl ClosureSlots {
     }
 }
 #[cfg(test)]
-impl ClosureSlots {
-    pub(super) fn test_roots_mut(&mut self) -> &mut Vec<VarRefRoot> {
-        match &mut self.0 {
-            Environment::Rooted(roots) => roots,
-            _ => panic!("published closure is immutable"),
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::*;
     use crate::engine::{
         api::{Runtime, Value},
         object::CallableRef,

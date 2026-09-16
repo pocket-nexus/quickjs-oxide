@@ -7,21 +7,21 @@ use super::*;
 #[inline]
 fn clone_set_object(value: &ObjectRef) -> ObjectRef {
     let copy = value.clone();
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.ObjectRef");
     copy
 }
 #[inline]
 fn clone_set_key(value: &PropertyKey) -> PropertyKey {
     let copy = value.clone();
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.PropertyKey");
     copy
 }
 #[inline]
 fn clone_set_value(value: &Value) -> Value {
     let copy = value.clone();
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event(match value {
         Value::Object(_) => "set_value_clone.Object",
         Value::Symbol(_) => "set_value_clone.Symbol",
@@ -112,7 +112,7 @@ fn initial_set(
     if let SetProbe::Stored(accepted) = probe {
         return Ok(InitialSet::Action(stored_action(accepted)));
     }
-    #[cfg(feature = "stack-vm")]
+
     if same_receiver
         && matches!(probe, SetProbe::Special(SpecialKind::Other))
         && matches!(
@@ -142,7 +142,7 @@ fn initial_set(
         );
         return Ok(InitialSet::Action(action));
     }
-    #[cfg(feature = "stack-vm")]
+
     if matches!(probe, SetProbe::Special(SpecialKind::TypedArray))
         && let Some(realm) = realm
         && !matches!(value, Value::Object(_))
@@ -152,7 +152,7 @@ fn initial_set(
         // The shared converter reacquires the view before writing. Object
         // conversion, Proxy receivers and non-canonical keys retain their
         // original state machine; no callback is hidden in this shortcut.
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "typed_write_completed_without_set_state",
         );
@@ -211,7 +211,6 @@ impl SetStep {
 
     /// Borrow the finalization key and use the receiver's existing target root.
     /// Only a pending state acquires a separate target and domain-key owner.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn start_receiver_into(
         runtime: &Runtime,
         realm: ContextId,
@@ -236,8 +235,8 @@ impl SetStep {
             return start_waiting(
                 runtime,
                 Some(realm),
-                clone_set_object(&object),
-                clone_set_key(&key),
+                clone_set_object(object),
+                clone_set_key(key),
                 value,
                 receiver,
                 probe,
@@ -259,7 +258,6 @@ impl SetStep {
 
     /// Finish local storage phases without installing scheduler parents. Stop
     /// before any Proxy, descriptor, setter or user conversion request.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn advance_without_callback(
         mut self,
         runtime: &Runtime,
@@ -404,7 +402,7 @@ impl SetStep {
                         }
                         PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
                     };
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "set_definition_completed_without_query",
                     );
@@ -521,7 +519,7 @@ fn start_waiting(
         value,
         receiver,
     };
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("set_state_created");
     let selected = state.select_walk_probe(runtime, object, probe)?;
     if let SelectedSet::Complete(action) = selected {
@@ -566,11 +564,6 @@ enum SelectedSet {
 }
 
 impl State {
-    fn walk(mut self, runtime: &Runtime, current: ObjectRef) -> Result<SetStep, RuntimeError> {
-        let selected = self.select_walk(runtime, current)?;
-        self.finish_selected(runtime, selected)
-    }
-
     fn select_walk(
         &mut self,
         runtime: &Runtime,
@@ -588,12 +581,11 @@ impl State {
         mut probe: SetProbe,
     ) -> Result<SelectedSet, RuntimeError> {
         loop {
-            #[cfg(feature = "stack-vm")]
             if let SetProbe::SpecialAt(object, kind) = probe {
                 current = object;
                 probe = SetProbe::Special(kind);
             }
-            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(match &probe {
                 SetProbe::Stored(_) => "set_selected.Stored",
                 SetProbe::Rejected(_) => "set_selected.Rejected",
@@ -604,11 +596,10 @@ impl State {
                 SetProbe::Special(_) => "set_selected.Special",
             });
             match probe {
-                #[cfg(feature = "stack-vm")]
                 SetProbe::Rejected(reason) => {
                     return Ok(SelectedSet::Complete(PropertySetAction::Rejected(reason)));
                 }
-                #[cfg(feature = "stack-vm")]
+
                 SetProbe::SpecialAt(..) => unreachable!("selected special normalized above"),
                 SetProbe::Stored(accepted) => {
                     return Ok(SelectedSet::Complete(stored_action(accepted)));
@@ -678,15 +669,6 @@ impl State {
         }
     }
 
-    fn special_own(
-        mut self,
-        runtime: &Runtime,
-        current: ObjectRef,
-    ) -> Result<SetStep, RuntimeError> {
-        let selected = self.select_special_own(runtime, current)?;
-        self.finish_selected(runtime, selected)
-    }
-
     fn select_special_own(
         &mut self,
         runtime: &Runtime,
@@ -742,11 +724,11 @@ impl State {
         Ok(
             match runtime.ordinary_set_receiver_probe(receiver, &self.key, &self.value)? {
                 SetProbe::Stored(accepted) => SelectedSet::Complete(stored_action(accepted)),
-                #[cfg(feature = "stack-vm")]
+
                 SetProbe::Rejected(reason) => {
                     SelectedSet::Complete(PropertySetAction::Rejected(reason))
                 }
-                #[cfg(feature = "stack-vm")]
+
                 SetProbe::SpecialAt(..) => {
                     unreachable!("receiver own selection does not walk prototypes")
                 }
@@ -853,21 +835,11 @@ impl State {
         ))
     }
 
-    fn finish_selected(
-        mut self,
-        runtime: &Runtime,
-        selected: SelectedSet,
-    ) -> Result<SetStep, RuntimeError> {
-        let selected = self.advance_selected(runtime, selected)?;
-        self.publish_selected(selected)
-    }
-
     fn advance_selected(
         &mut self,
         runtime: &Runtime,
         #[allow(unused_mut)] mut selected: SelectedSet,
     ) -> Result<SelectedSet, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         loop {
             selected = match selected {
                 SelectedSet::Walk(object) => self.select_walk(runtime, object)?,
@@ -877,7 +849,7 @@ impl State {
                         ArrayOwnKey::Index(_)
                     ) =>
                 {
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "set_local_descriptor_read",
                     );
@@ -893,7 +865,7 @@ impl State {
                         Some(None)
                     ) =>
                 {
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "set_local_define_attempt",
                     );
@@ -912,7 +884,7 @@ impl State {
                         ),
                         PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
                     };
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "set_definition_completed_without_query",
                     );
@@ -922,7 +894,7 @@ impl State {
                     // to_array_length itself drives the authoritative ArrayLengthStep;
                     // non-objects cannot call JS. It re-reads writable/length only
                     // after both conversions and uses the canonical truncate kernel.
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "set_local_array_length_attempt",
                     );
@@ -932,7 +904,7 @@ impl State {
                         &self.key,
                         clone_set_value(&self.value),
                     )?;
-                    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "set_array_length_completed_without_query",
                     );
@@ -940,11 +912,6 @@ impl State {
                 }
                 selected => break Ok(selected),
             };
-        }
-        #[cfg(not(feature = "stack-vm"))]
-        {
-            let _ = runtime;
-            Ok(selected)
         }
     }
 
@@ -969,7 +936,7 @@ impl SetResume {
     // Effect owners live in the same continuation allocation across local and
     // scheduler transitions. SetStep transports only the phase and pointer.
     fn publish_selected(mut self, selected: SelectedSet) -> Result<SetStep, RuntimeError> {
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(match &selected {
             SelectedSet::Complete(_) => "set_completion_adapter",
             SelectedSet::Walk(_) => "set_request_publish.Walk",
@@ -1062,7 +1029,6 @@ impl SetResume {
         self.publish_selected(selected)
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn array_length(
         self,
         runtime: &Runtime,
@@ -1178,7 +1144,8 @@ impl Runtime {
             NativeConversion::Value(InternalSetResult::Rejected(
                 PropertySetRejection::ArrayLengthReadOnly,
             )) => {
-                let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+                let length =
+                    self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                 let error =
                     self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?;
                 Err(error.into())
@@ -1200,11 +1167,13 @@ impl Runtime {
     }
 }
 
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn initial_actions_bypass_waiting_transport_and_match_owned_wrapper() {
         for entry in 0..3 {
@@ -1270,7 +1239,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn initial_waiting_transport_preserves_conversion_throw_and_roots() {
         for entry in 0..3 {
@@ -1341,7 +1309,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn outlined_waiting_delivery_drains_initial_operation_before_advancing() {
         let runtime = Runtime::new();
@@ -1396,7 +1363,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn outlined_start_keeps_immediate_throw_root_until_its_action_is_released() {
         let runtime = Runtime::new();
@@ -1428,7 +1394,6 @@ mod tests {
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn borrowed_set_validates_target_key_and_value_before_storage() {
         let runtime = Runtime::new();
@@ -1457,7 +1422,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn resident_set_array_length_primitive_completion_uses_original_conversion() {
         for (source, expected) in [("2", 2), ("' 2 '", 2), ("true", 1), ("null", 0), ("-0", 0)] {
@@ -1481,7 +1445,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn resident_set_array_length_keeps_callbacks_partial_shrink_and_readonly_order() {
         let runtime = Runtime::new();
@@ -1588,7 +1551,6 @@ mod tests {
         })()"#).unwrap(), Value::Bool(true));
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn local_new_property_definition_uses_selected_receiver_and_shared_rejection() {
         for (source, name, rejected) in [
@@ -1606,7 +1568,7 @@ mod tests {
             let key = runtime.intern_property_key(name).unwrap();
             let mut deliveries = 0;
             let mut action = None;
-            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            #[cfg(feature = "profiling")]
             let profile = crate::engine::api::profiling::CostProfile::start();
             let initial = SetStep::start_receiver_into(
                 &runtime,
@@ -1626,7 +1588,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(deliveries, 0, "ordinary definition stays resident");
-            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            #[cfg(feature = "profiling")]
             {
                 let costs = profile.snapshot();
                 assert_eq!(
@@ -1695,12 +1657,11 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn local_new_property_definition_preserves_prototype_callbacks_and_key_order() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context
@@ -1728,7 +1689,7 @@ mod tests {
                 .unwrap(),
             Value::Bool(true)
         );
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         assert!(
             profile
                 .snapshot()
@@ -1843,6 +1804,3 @@ mod tests {
         assert_eq!(runtime.0.proxy_method_depth.get(), 0);
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);

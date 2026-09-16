@@ -6,7 +6,7 @@
 //! distinguishes these two starts, without claiming native argument storage or
 //! every primitive conversion is allocation-free.
 use super::{quickjs_binary, quickjs_max, quickjs_min, quickjs_unary};
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
@@ -28,7 +28,6 @@ pub(crate) enum MathKind {
     Clz32,
 }
 impl MathKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::MathUnary(kind) => Self::Unary(kind),
@@ -84,7 +83,7 @@ impl MathStep {
             .readable
             .get(..count)
             .ok_or(RuntimeError::Invariant("Math argv was not padded"))?;
-        #[cfg(feature = "stack-vm")]
+
         {
             let mut resume = MathResumeState {
                 kind,
@@ -96,7 +95,8 @@ impl MathStep {
                 if matches!(value, Value::Object(_)) {
                     // The native activation owns original argv. A suspended
                     // continuation needs only the not-yet-converted suffix.
-                    resume.arguments = values[index..].to_vec().into_iter();
+                    let remaining = values[index..].to_vec();
+                    resume.arguments = remaining.into_iter();
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "math_remaining_arguments_owned",
@@ -120,17 +120,6 @@ impl MathStep {
                 "math_completed_without_argument_storage",
             );
             resume.finish()
-        }
-        #[cfg(not(feature = "stack-vm"))]
-        {
-            let _ = (runtime, realm);
-            MathResume(Box::new(MathResumeState {
-                kind,
-                arguments: values.to_vec().into_iter(),
-                result: None,
-                count,
-            }))
-            .next()
         }
     }
 }
@@ -257,7 +246,7 @@ pub(crate) fn finish(
     }
 }
 
-#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+#[cfg(all(test, feature = "profiling"))]
 mod tests;
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.

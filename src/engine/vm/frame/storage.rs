@@ -39,6 +39,7 @@ impl ColdFrame {
         );
         cold
     }
+    #[cfg(test)]
     pub(in crate::engine::vm) fn into_inner(self) -> FrameCold {
         self.0.owners
     }
@@ -58,6 +59,8 @@ impl DerefMut for ColdFrame {
 #[derive(Default)]
 pub(in crate::engine::vm) struct CallStorage {
     prepared_depth: usize,
+    // Cache the Box allocations themselves, not newly allocated frame values.
+    #[allow(clippy::vec_box)]
     empty_frames: Vec<Box<FrameBody>>,
     capture_flags: Vec<Vec<bool>>,
     regions: Vec<Vec<crate::engine::vm::VmUnwindRegion>>,
@@ -142,18 +145,16 @@ impl CallStorage {
         Ok((flags, grown))
     }
     pub(in crate::engine::vm) fn install(&mut self, mut frame: FrameCold) -> (ColdFrame, usize) {
-        if let Some(rare) = frame.rare.get_mut() {
-            if rare.regions.is_empty() {
-                if let Some(regions) = self.regions.pop() {
-                    if regions.capacity() > rare.regions.capacity() {
-                        rare.regions = regions;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "call_region_buffer_reused",
-                        );
-                    }
-                }
-            }
+        if let Some(rare) = frame.rare.get_mut()
+            && rare.regions.is_empty()
+            && let Some(regions) = self.regions.pop()
+            && regions.capacity() > rare.regions.capacity()
+        {
+            rare.regions = regions;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "call_region_buffer_reused",
+            );
         }
         if let Some(mut empty) = self.empty_frames.pop() {
             if frame.rare.get().is_none() {
@@ -365,9 +366,6 @@ impl<T> From<T> for Resident<T> {
 impl<T> Resident<T> {
     pub(in crate::engine::vm) fn take(&mut self) -> T {
         self.0.take().expect("resident owner already taken")
-    }
-    pub(in crate::engine::vm) fn into_inner(self) -> T {
-        self.0.unwrap()
     }
 }
 impl<T> Deref for Resident<T> {

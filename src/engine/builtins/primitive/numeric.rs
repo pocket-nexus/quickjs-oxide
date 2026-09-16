@@ -1,5 +1,5 @@
 //! Branded scalar formatting and BigInt widths preserve argument conversion order.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -18,7 +18,6 @@ pub(crate) enum NumericKind {
     BigIntAsN(BigIntAsNKind),
 }
 impl NumericKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::PrimitivePrototypeToString(kind) => Some(Self::ToString(kind)),

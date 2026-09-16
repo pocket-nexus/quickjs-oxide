@@ -168,7 +168,9 @@ impl Runtime {
             }
             DataViewNativeKind::Buffer
             | DataViewNativeKind::ByteLength
-            | DataViewNativeKind::ByteOffset => self.call_data_view_getter(realm, kind, &invocation),
+            | DataViewNativeKind::ByteOffset => {
+                self.call_data_view_getter(realm, kind, &invocation)
+            }
             DataViewNativeKind::Get(element) => {
                 self.call_data_view_get(realm, element, invocation, arguments)
             }
@@ -240,7 +242,7 @@ impl Runtime {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
-        let view = self.data_view_snapshot(&object)?;
+        let view = self.data_view_snapshot(object)?;
         if kind == DataViewNativeKind::Buffer {
             let buffer = ObjectRef::from_borrowed_handle(self.clone(), view.buffer)?;
             return Ok(Completion::Return(Value::Object(buffer)));
@@ -494,7 +496,13 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_data_view_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        self.require_data_view_borrowed(realm, &value)
+            .map(|result| match result {
+                NativeConversion::Value(object) => NativeConversion::Value(object.clone()),
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
+            })
+    }
     fn require_data_view_borrowed<'a>(
         &self,
         realm: ContextId,

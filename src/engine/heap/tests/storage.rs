@@ -590,6 +590,7 @@ impl RegExpFixture {
             constructor: self.constructor,
             string_iterator_prototype: self.string_iterator_prototype,
             object_shape: self.object_shape,
+            result_shapes: None,
         }
     }
 

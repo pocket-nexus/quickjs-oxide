@@ -1,4 +1,4 @@
-use super::*;
+use crate::engine::value::Value;
 
 /// Private JavaScript control completion. A thrown value remains a rooted
 /// ordinary [`Value`]; no exception sentinel is exposed through the public
@@ -41,14 +41,6 @@ pub(crate) enum VmResume {
     Throw(Value),
 }
 
-/// A resumable VM run either completes normally/abruptly or transfers its
-/// owned activation to the generator driver.
-#[derive(Debug, PartialEq)]
-pub(crate) enum VmExit {
-    Complete(Completion),
-    Suspend(VmSuspension),
-}
-
 /// Result of QuickJS `OP_define_class` at the VM/runtime boundary.
 ///
 /// A successful definition replaces the two input operands with two freshly
@@ -69,66 +61,6 @@ pub(crate) enum ToPrimitiveHint {
     Default,
     Number,
     String,
-}
-
-pub(in crate::engine::vm) enum OperationOutcome<T> {
-    Value(T),
-    Throw(Value),
-}
-
-/// Result of the observable `GetIterator` and `Get(iterator, "next")`
-/// operations used by `ForOfStart`.
-pub(crate) enum ForOfStartOutcome {
-    Record { iterator: Value, next_method: Value },
-    Throw(Value),
-}
-
-/// Append-specific iterator start. Pinned QuickJS performs one additional
-/// `@@iterator` Get and may snapshot a genuine fast Array after creating the
-/// second iterator record; ordinary for-of must not inherit those quirks.
-pub(crate) enum AppendStartOutcome {
-    Record {
-        iterator: Value,
-        next_method: Value,
-        fast_values: Option<Vec<Value>>,
-    },
-    Throw(Value),
-}
-
-/// Result of calling an iterator record's cached `next` method and reading its
-/// `done`/`value` properties.
-pub(crate) enum ForOfNextOutcome {
-    Result { value: Value, done: bool },
-    Throw(Value),
-}
-
-/// Result of creating the hidden object used by a for-in loop.
-pub(crate) enum ForInStartOutcome {
-    Iterator(Value),
-    Throw(Value),
-}
-
-/// Result of advancing a hidden for-in enumeration object.
-pub(crate) enum ForInNextOutcome {
-    Result { value: Value, done: bool },
-    Throw(Value),
-}
-
-/// Result of `IteratorClose`. Engine failures remain [`Error`]s; JavaScript
-/// throws are explicit so the VM can apply completion precedence itself.
-pub(crate) enum IteratorCloseOutcome {
-    Closed,
-    Throw(Value),
-}
-
-/// Result of QuickJS `build_arg_list` at the VM/runtime boundary.
-///
-/// The compiler-created spread Array is still a JavaScript value, so length
-/// and indexed reads may throw. Keep those throws explicit so `ApplyEval` can
-/// preserve upstream's ordering before the original-eval identity check.
-pub(crate) enum ArgumentListOutcome {
-    Values(Vec<Value>),
-    Throw(Value),
 }
 
 /// Stable instruction offset recorded on an active bytecode frame.

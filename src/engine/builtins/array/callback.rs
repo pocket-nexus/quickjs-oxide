@@ -1,5 +1,5 @@
 //! Array callback loops retain the captured length and reread each observable property.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -22,7 +22,6 @@ pub(crate) enum CallbackKind {
     Find(ArrayFindKind),
 }
 impl CallbackKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::ArrayPrototypeIteration(kind) => Some(Self::Iteration(kind)),

@@ -9,7 +9,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::StringReplaceKind,
     heap::ContextId,
-    object::{ObjectRef, PropertyKey, WellKnownSymbol},
+    object::{PropertyKey, WellKnownSymbol},
     value::{JsString, Value, conversion::NativeConversion},
     vm::{
         Completion,
@@ -20,7 +20,6 @@ use crate::engine::{
 pub(crate) enum StringReplaceStep {
     Complete(Completion),
     PreparedRead { resume: StringReplaceResume },
-    Read { resume: StringReplaceResume },
     Primitive { resume: StringReplaceResume },
     Call { resume: StringReplaceResume },
 }
@@ -151,7 +150,7 @@ impl StringReplaceStep {
         if let StringReplaceAction::Complete(result) = action {
             return Ok(Self::Complete(result));
         }
-        #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "stringreplace_resident_allocated",
         );
@@ -161,7 +160,6 @@ impl StringReplaceStep {
 impl StringReplaceResume {
     /// Only the already-selected @@replace protocol call is eligible for the
     /// VM local native handoff; functional replacers remain real calls.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn awaits_protocol_result(&self) -> bool {
         matches!(self.0.phase, Phase::ProtocolResult)
     }
@@ -233,7 +231,7 @@ impl StringReplaceResumeState {
                         &self.search_value,
                     )? {
                         crate::engine::object::OrdinaryRead::Complete(value) => {
-                            #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+                            #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_execution_event(
                                 "stringreplace_read_local",
                             );
@@ -248,7 +246,7 @@ impl StringReplaceResumeState {
                     }
                 }
                 StringReplaceAction::Primitive(value) if !matches!(value, Value::Object(_)) => {
-                    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "stringreplace_primitive_local",
                     );
@@ -281,9 +279,9 @@ impl StringReplaceResumeState {
                 };
                 if runtime.is_regexp_from_match(object, &value)? {
                     self.phase = Phase::Flags;
-                    Ok(StringReplaceAction::Read(
-                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
-                    ))
+                    Ok(StringReplaceAction::Read(runtime.pinned_property_key(
+                        crate::engine::atom::pinned::PinnedAtom::Flags,
+                    )?))
                 } else {
                     self.method(runtime)
                 }
@@ -606,11 +604,6 @@ impl Runtime {
                         resume.resume(self, result)?
                     }
                 }
-                StringReplaceStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
-                }
                 StringReplaceStep::Primitive { mut resume } => {
                     let value = resume.take_primitive_value();
                     {
@@ -646,7 +639,7 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     #[test]
     fn completed_string_replacement_never_allocates_a_resident_owner() {
         let runtime = Runtime::new();
@@ -782,7 +775,6 @@ mod local_replace_tests {
 pub(crate) struct StringReplaceStepPending {
     read: Option<crate::engine::object::OrdinaryRead>,
     key: Option<PropertyKey>,
-    object: Option<ObjectRef>,
     value: Option<Value>,
     target: Option<DirectCallTarget>,
     receiver: Option<Value>,
@@ -797,15 +789,6 @@ impl StringReplaceStep {
         resume.0.step_pending.read = Some(read);
         resume.0.step_pending.key = Some(key);
         Self::PreparedRead { resume }
-    }
-    pub(crate) fn make_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        mut resume: StringReplaceResume,
-    ) -> Self {
-        resume.0.step_pending.object = Some(object);
-        resume.0.step_pending.key = Some(key);
-        Self::Read { resume }
     }
     pub(crate) fn make_primitive(value: Value, mut resume: StringReplaceResume) -> Self {
         resume.0.step_pending.value = Some(value);
@@ -837,21 +820,6 @@ impl StringReplaceResume {
             .key
             .take()
             .expect("StringReplaceStep::PreparedRead lost key")
-    }
-
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .step_pending
-            .object
-            .take()
-            .expect("StringReplaceStep::Read lost object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .step_pending
-            .key
-            .take()
-            .expect("StringReplaceStep::Read lost key")
     }
 
     pub(crate) fn take_primitive_value(&mut self) -> Value {

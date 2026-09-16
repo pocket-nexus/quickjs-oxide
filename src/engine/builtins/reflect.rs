@@ -309,18 +309,6 @@ impl Runtime {
             .map(|values| values.map(NativeConversion::Value))
     }
 
-    pub(crate) fn build_array_like_argument_list(
-        &self,
-        realm: ContextId,
-        array_argument: &Value,
-    ) -> Result<NativeConversion<Vec<Value>>, RuntimeError> {
-        super::function::arguments::finish(
-            self,
-            realm,
-            super::function::arguments::ArgumentsStep::start(self, realm, array_argument.clone())?,
-        )
-    }
-
     pub(crate) fn call_reflect(
         &self,
         realm: ContextId,

@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-vm_configuration=default
+vm_configuration=stack-vm
 vm_features=()
-if [[ $# -gt 0 ]]; then
-  [[ $# -eq 1 && "$1" == --stack-vm ]] || { echo 'usage: build-web-playground.sh [--stack-vm]' >&2; exit 2; }
-  vm_configuration=stack-vm
-  vm_features=(--features stack-vm)
-fi
+[[ $# -eq 0 ]] || { echo 'usage: build-web-playground.sh' >&2; exit 2; }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 wasm_bindgen_version="0.2.126"

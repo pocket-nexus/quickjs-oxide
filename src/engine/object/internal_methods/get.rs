@@ -30,6 +30,8 @@ impl std::ops::DerefMut for ProxyGetResume {
     }
 }
 thread_local! {
+    // Preserve and reuse the continuation Box allocation across callbacks.
+    #[allow(clippy::vec_box)]
     static EMPTY_CONTINUATIONS: std::cell::RefCell<Vec<Box<Option<ProxyGetResumeState>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 impl super::reuse::Reusable for ProxyGetResumeState {

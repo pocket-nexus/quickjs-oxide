@@ -146,7 +146,6 @@ impl Runtime {
     /// Pinned QuickJS `iterator_to_array`, used only by AggregateError.
     /// Iterator-step and indexed-definition failures close an acquired
     /// iterator while preserving the original abrupt completion.
-
     pub(crate) fn call_error_prototype_to_string(
         &self,
         realm: ContextId,

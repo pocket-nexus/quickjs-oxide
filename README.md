@@ -62,7 +62,7 @@ Neither is a general untrusted-bytecode loader or Feature Parity claim.
 - [Engine module responsibilities](docs/architecture.md)
 - [Current implementation status](docs/status.md)
 - [Stack VM redesign: goals and architecture](docs/primitive-vm-plan.md)
-- [Stack VM redesign: 10-commit implementation plan](docs/primitive-vm-commit-plan.md)
+- [Stack VM redesign: staged implementation plan](docs/primitive-vm-commit-plan.md)
 - [Profiling and external benchmarks](docs/profiling.md)
 - [Pinned Test262 baseline and metric definitions](docs/test262.md)
 - [Parity acceptance contract](docs/parity.md)

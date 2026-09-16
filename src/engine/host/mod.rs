@@ -65,11 +65,11 @@ impl crate::engine::api::runtime::Runtime {
         use crate::engine::api::{error::Error, runtime_error::RuntimeError};
         let _stack = crate::engine::vm::native_stack::ModuleHostCallbackGuard::enter(self)
             .map_err(|_| RuntimeError::Engine(Error::internal("stack overflow")))?;
-        #[cfg(feature = "stack-vm")]
+
         let boundary =
             crate::engine::vm::HostBoundaryGuard::enter(self).map_err(RuntimeError::Engine)?;
         let result = callback();
-        #[cfg(feature = "stack-vm")]
+
         boundary.finish(self).map_err(RuntimeError::Engine)?;
         Ok(result)
     }

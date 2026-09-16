@@ -27,3 +27,11 @@ Dropping a live continuation releases all roots and depth guards before caching 
 allocation; caches are bounded and never retain a Runtime or property value. Pending
 query boxes are execution-local and similarly cleared before reuse. Cached capacity
 is not a cached JavaScript lookup result.
+
+Native calls use an inline pending descriptor in ActiveFrames instead of a second
+unmaterialized-token protocol. Its checked identity and budget charge exist from
+entry, and get/last/iter include it immediately. The common synchronous tail does
+not enter the records Vec; nested entry moves it there before appending the child.
+Authenticated NoJS inputs skip ancestor materialization, while observable calls
+and errors retain publication boundaries. This is delayed container insertion,
+not absence from the logical activation registry; performance remains to be measured.

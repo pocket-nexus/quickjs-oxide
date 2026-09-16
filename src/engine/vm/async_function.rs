@@ -21,10 +21,8 @@ use crate::engine::object::{
 };
 use crate::engine::value::{JsString, Value};
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
-use crate::engine::vm::frames::ActiveFrameGuard;
-use crate::engine::vm::host_bridge::RuntimeVmHost;
 use crate::engine::vm::suspend::{self, EncodedVmActivation, VmActivationResume};
-use crate::engine::vm::{CallInput, Completion, VmSuspendKind};
+use crate::engine::vm::{Completion, VmSuspendKind};
 
 mod operation;
 pub(crate) use operation::{AsyncResume, AsyncStep};
@@ -128,17 +126,19 @@ impl Runtime {
     /// throws from the body are converted to rejection after the active
     /// bytecode frame has been popped.
     #[inline(never)]
-    pub(crate) fn start_async_bytecode_callable(
+    pub(in crate::engine::vm) fn start_async_bytecode_callable(
         &self,
         caller_realm: ContextId,
-        host: RuntimeVmHost,
-        input: CallInput,
-        active_frame: ActiveFrameGuard,
-        arguments: &[Value],
+        entry: super::frame::FrameEntry,
     ) -> Result<Completion, RuntimeError> {
         let resume = AsyncResume::start(self, caller_realm)?;
-        let outcome = suspend::start(host, input, arguments);
-        active_frame.finish()?;
+        let outcome = super::driver::execute(
+            self.clone(),
+            entry,
+            super::execution::ExecutionLimits::default(),
+        )
+        .and_then(|exit| exit.finish_suspending(self.clone()))
+        .map_err(RuntimeError::Engine);
         resume.body(outcome?)?.finish(self, caller_realm)
     }
 

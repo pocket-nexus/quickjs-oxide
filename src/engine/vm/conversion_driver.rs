@@ -117,7 +117,6 @@ pub(super) enum PrimitiveCompletion {
     Completed,
     Throw(Value),
     Declined,
-    InvalidDomain,
 }
 
 /// The fault PC is published before entry. The input borrow owns no values
@@ -140,17 +139,17 @@ pub(super) fn complete_primitives(
         let mut slots = transaction.slots();
         // Preserve left-to-right domain validation, including checking a later
         // malformed slot after an earlier invalid domain, before identity issue.
-        let mut invalid = false;
+        let mut invalid = None;
         let mut has_object = false;
         for offset in (0..=usize::from(addition)).rev() {
             let value = slots.peek(offset)?;
-            invalid |= runtime
-                .validate_value_domain(value, "conversion operand")
-                .is_err();
+            if let Err(error) = runtime.validate_value_domain(value, "conversion operand") {
+                invalid.get_or_insert(error);
+            }
             has_object |= matches!(value, Value::Object(_));
         }
-        if invalid {
-            return Ok(PrimitiveCompletion::InvalidDomain);
+        if let Some(error) = invalid {
+            return Err(super::exception::runtime_error_to_vm_error(error));
         }
         *next_operation = next_operation
             .checked_add(1)
@@ -721,8 +720,7 @@ fn invoke(
         }
     };
     let is_proxy = matches!(classification, CallableExecution::Proxy);
-    let is_owned_native = matches!(&classification, CallableExecution::Native { .. }
-        if super::frames::native_operation(runtime, &callable).map_err(runtime_error_to_vm_error)?.is_some());
+    let is_native = matches!(classification, CallableExecution::Native { .. });
     let is_resumable = if let CallableExecution::Bytecode { bytecode, .. } = &classification {
         runtime
             .0
@@ -737,7 +735,7 @@ fn invoke(
     } else {
         false
     };
-    if is_proxy || is_owned_native || is_resumable {
+    if is_proxy || is_native || is_resumable {
         let wait = task.waiting(resume);
         let progress = if is_proxy {
             super::proxy_get_driver::start_conversion_call(
@@ -821,17 +819,8 @@ fn invoke(
             return Ok(Progress::Entered);
         }
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_sync_call_bridge();
-    let completion = runtime
-        .call_internal(realm, &callable, receiver, &arguments)
-        .map_err(runtime_error_to_vm_error)?;
-    Ok(Progress::Ready(
-        task.with_step(
-            resume
-                .resume(runtime, completion)
-                .map_err(runtime_error_to_vm_error)?,
-        ),
+    Err(Error::internal(
+        "conversion callback lost its normalized classification",
     ))
 }
 
@@ -856,7 +845,9 @@ mod primitive_store_tests {
             profile
                 .snapshot()
                 .owned_execution_events
-                .get("conversion_task_allocated").copied().unwrap_or(0),
+                .get("conversion_task_allocated")
+                .copied()
+                .unwrap_or(0),
             0
         );
         drop(profile);

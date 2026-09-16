@@ -131,7 +131,8 @@ pub(super) fn ready(
 ) -> Result<PromiseStep, RuntimeError> {
     Ok({
         let __pending_field_receiver = Value::Object(constructor.clone());
-        let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Resolve)?;
+        let __pending_field_key =
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Resolve)?;
         let __pending_field_resume = continuation(
             realm,
             Phase::Resolve(Acquire {
@@ -219,7 +220,8 @@ pub(super) fn resume(
             };
             Ok({
                 let __pending_field_receiver = Value::Object(iterator.clone());
-                let __pending_field_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
+                let __pending_field_key =
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                 let __pending_field_resume = continuation(
                     realm,
                     Phase::NextMethod {
@@ -325,6 +327,8 @@ impl Loop {
             )
         }
     }
+    // Consume the existing suspended-loop box here, keeping its payload out of the reply transport.
+    #[allow(clippy::boxed_local)]
     fn close(
         self: Box<Self>,
         realm: ContextId,

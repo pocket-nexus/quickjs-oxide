@@ -4,9 +4,7 @@ use std::cell::Cell;
 
 use crate::engine::atom::{Atom, AtomTable};
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::heap::{
-    ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId,
-};
+use crate::engine::heap::{ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Location {
@@ -49,7 +47,9 @@ impl PropertyReadCache {
     ) -> Option<&'a RawValue> {
         match self.state.get() {
             State::Cold => None,
-            State::Monomorphic(location) => Self::read_location(location, heap, domain, realm, receiver),
+            State::Monomorphic(location) => {
+                Self::read_location(location, heap, domain, realm, receiver)
+            }
             State::Polymorphic([first, second]) => {
                 if let Some(value) = Self::read_location(first, heap, domain, realm, receiver) {
                     Some(value)
@@ -71,8 +71,13 @@ impl PropertyReadCache {
         }
     }
 
-    fn read_location(location: Location, heap: &Heap, domain: u64, realm: ContextId,
-        receiver: ObjectId) -> Option<&RawValue> {
+    fn read_location(
+        location: Location,
+        heap: &Heap,
+        domain: u64,
+        realm: ContextId,
+        receiver: ObjectId,
+    ) -> Option<&RawValue> {
         if location.domain != domain || location.realm != realm {
             return None;
         }
@@ -122,22 +127,36 @@ impl PropertyReadCache {
         atom: Atom,
     ) {
         let state = self.state.get();
-        if matches!(state, State::Megamorphic(_)) { return; }
-        let Some(location) = receiver.and_then(|r| locate(heap, atoms, domain, realm, r, atom)) else {
+        if matches!(state, State::Megamorphic(_)) {
+            return;
+        }
+        let Some(location) = receiver.and_then(|r| locate(heap, atoms, domain, realm, r, atom))
+        else {
             self.state.set(State::Megamorphic(1024));
             event("property_ic.megamorphic");
             return;
         };
         // A revision change of the same shape replaces stale knowledge instead
         // of spending another polymorphic slot on an unreachable old revision.
-        let same_key = |old: Location| old.domain == location.domain && old.realm == location.realm && old.shape == location.shape;
+        let same_key = |old: Location| {
+            old.domain == location.domain
+                && old.realm == location.realm
+                && old.shape == location.shape
+        };
         let next = match state {
             State::Cold => State::Monomorphic(location),
             State::Monomorphic(old) if same_key(old) => State::Monomorphic(location),
             State::Monomorphic(old) => State::Polymorphic([location, old]),
-            State::Polymorphic([first, second]) if same_key(first) => State::Polymorphic([location, second]),
-            State::Polymorphic([first, second]) if same_key(second) => State::Polymorphic([location, first]),
-            _ => { event("property_ic.megamorphic"); State::Megamorphic(1024) }
+            State::Polymorphic([first, second]) if same_key(first) => {
+                State::Polymorphic([location, second])
+            }
+            State::Polymorphic([first, second]) if same_key(second) => {
+                State::Polymorphic([location, first])
+            }
+            _ => {
+                event("property_ic.megamorphic");
+                State::Megamorphic(1024)
+            }
         };
         self.state.set(next);
         event("property_ic.miss");
@@ -148,17 +167,41 @@ fn ordinary_receiver(data: &crate::engine::heap::ObjectData, numeric: bool) -> b
     match data.kind {
         ObjectKind::Proxy | ObjectKind::ModuleNamespace => false,
         // Indexed exotics may intercept keys before ordinary shape lookup.
-        ObjectKind::Array | ObjectKind::Arguments | ObjectKind::Primitive | ObjectKind::TypedArray => !numeric,
-        ObjectKind::Ordinary | ObjectKind::Iterator | ObjectKind::ArrayIterator
-        | ObjectKind::ForInIterator | ObjectKind::Date | ObjectKind::RegExp
-        | ObjectKind::RegExpStringIterator | ObjectKind::Map | ObjectKind::MapIterator
-        | ObjectKind::Set | ObjectKind::SetIterator | ObjectKind::WeakMap | ObjectKind::WeakSet
-        | ObjectKind::WeakRef | ObjectKind::FinalizationRegistry | ObjectKind::GlobalObject
-        | ObjectKind::Error | ObjectKind::StringIterator | ObjectKind::IteratorHelper
-        | ObjectKind::IteratorWrap | ObjectKind::AsyncFromSyncIterator | ObjectKind::IteratorConcat
-        | ObjectKind::ArrayBuffer | ObjectKind::SharedArrayBuffer | ObjectKind::DataView
-        | ObjectKind::NativeFunction | ObjectKind::BoundFunction | ObjectKind::BytecodeFunction
-        | ObjectKind::Generator | ObjectKind::AsyncGenerator | ObjectKind::AsyncFunctionState
+        ObjectKind::Array
+        | ObjectKind::Arguments
+        | ObjectKind::Primitive
+        | ObjectKind::TypedArray => !numeric,
+        ObjectKind::Ordinary
+        | ObjectKind::Iterator
+        | ObjectKind::ArrayIterator
+        | ObjectKind::ForInIterator
+        | ObjectKind::Date
+        | ObjectKind::RegExp
+        | ObjectKind::RegExpStringIterator
+        | ObjectKind::Map
+        | ObjectKind::MapIterator
+        | ObjectKind::Set
+        | ObjectKind::SetIterator
+        | ObjectKind::WeakMap
+        | ObjectKind::WeakSet
+        | ObjectKind::WeakRef
+        | ObjectKind::FinalizationRegistry
+        | ObjectKind::GlobalObject
+        | ObjectKind::Error
+        | ObjectKind::StringIterator
+        | ObjectKind::IteratorHelper
+        | ObjectKind::IteratorWrap
+        | ObjectKind::AsyncFromSyncIterator
+        | ObjectKind::IteratorConcat
+        | ObjectKind::ArrayBuffer
+        | ObjectKind::SharedArrayBuffer
+        | ObjectKind::DataView
+        | ObjectKind::NativeFunction
+        | ObjectKind::BoundFunction
+        | ObjectKind::BytecodeFunction
+        | ObjectKind::Generator
+        | ObjectKind::AsyncGenerator
+        | ObjectKind::AsyncFunctionState
         | ObjectKind::Promise => true,
     }
 }
@@ -179,15 +222,16 @@ fn locate(
         return None;
     }
     let numeric = atoms.array_index(atom).ok()?.is_some()
-        || (atoms.property_key_kind(atom).ok()? == crate::engine::atom::PropertyKeyKind::String && {
-            // Conservative, allocation-free superset of CanonicalNumericIndexString.
-            // TypedArray intercepts -0/NaN/Infinity and non-array-index numbers.
-            let spelling = atoms.to_js_string(atom).ok()?;
-            let first = spelling.utf16_units().next();
-            matches!(first, Some(43 | 45 | 46 | 48..=57))
-                || spelling.utf16_units().eq("NaN".encode_utf16())
-                || spelling.utf16_units().eq("Infinity".encode_utf16())
-        });
+        || (atoms.property_key_kind(atom).ok()? == crate::engine::atom::PropertyKeyKind::String
+            && {
+                // Conservative, allocation-free superset of CanonicalNumericIndexString.
+                // TypedArray intercepts -0/NaN/Infinity and non-array-index numbers.
+                let spelling = atoms.to_js_string(atom).ok()?;
+                let first = spelling.utf16_units().next();
+                matches!(first, Some(43 | 45 | 46 | 48..=57))
+                    || spelling.utf16_units().eq("NaN".encode_utf16())
+                    || spelling.utf16_units().eq("Infinity".encode_utf16())
+            });
     let mut holder = receiver;
     let mut depth = 0u32;
     loop {
@@ -219,24 +263,51 @@ fn locate(
 #[derive(Debug, Default)]
 pub(crate) struct PropertyWriteCache(PropertyReadCache);
 impl PropertyWriteCache {
-    pub(crate) fn slot(&self, heap: &Heap, domain: u64, realm: ContextId, receiver: ObjectId) -> Option<usize> {
+    pub(crate) fn slot(
+        &self,
+        heap: &Heap,
+        domain: u64,
+        realm: ContextId,
+        receiver: ObjectId,
+    ) -> Option<usize> {
         self.0.read(heap, domain, realm, receiver)?;
         let location = match self.0.state.get() {
             State::Monomorphic(location) => location,
             State::Polymorphic([first, _]) => first,
             _ => return None,
         };
-        if location.depth != 0 { return None; }
-        if heap.object(receiver).ok()?.kind == ObjectKind::Array && location.slot == 0 { return None; }
+        if location.depth != 0 {
+            return None;
+        }
+        if heap.object(receiver).ok()?.kind == ObjectKind::Array && location.slot == 0 {
+            return None;
+        }
         let shape = heap.shape(location.shape).ok()?;
-        shape.entries().get(location.slot as usize)?.flags.writable.then_some(location.slot as usize)
+        shape
+            .entries()
+            .get(location.slot as usize)?
+            .flags
+            .writable
+            .then_some(location.slot as usize)
     }
-    pub(crate) fn miss(&self, heap: &Heap, atoms: &AtomTable, domain: u64, realm: ContextId, receiver: ObjectId, atom: Atom) {
-        self.0.miss(heap, atoms, domain, realm, Some(receiver), atom);
+    pub(crate) fn miss(
+        &self,
+        heap: &Heap,
+        atoms: &AtomTable,
+        domain: u64,
+        realm: ContextId,
+        receiver: ObjectId,
+        atom: Atom,
+    ) {
+        self.0
+            .miss(heap, atoms, domain, realm, Some(receiver), atom);
     }
 }
 #[derive(Debug)]
-enum PropertyCache { Read(PropertyReadCache), Write(PropertyWriteCache) }
+enum PropertyCache {
+    Read(PropertyReadCache),
+    Write(PropertyWriteCache),
+}
 #[derive(Debug)]
 pub(crate) struct PropertyReadCacheTable {
     site_bits: Box<[u64]>,
@@ -245,34 +316,57 @@ pub(crate) struct PropertyReadCacheTable {
 }
 impl PropertyReadCacheTable {
     pub(crate) fn new(code: &[Instruction]) -> Self {
-        let count = code.iter().filter(|instruction| matches!(instruction,
-            Instruction::GetField(_) | Instruction::GetField2(_) | Instruction::PutField(_))).count();
+        let count = code
+            .iter()
+            .filter(|instruction| {
+                matches!(
+                    instruction,
+                    Instruction::GetField(_) | Instruction::GetField2(_) | Instruction::PutField(_)
+                )
+            })
+            .count();
         let mut sites = Vec::with_capacity(count);
         let mut bits = vec![0u64; code.len().div_ceil(64)];
         let mut ranks = vec![0u32; bits.len()];
         for (pc, instruction) in code.iter().enumerate() {
-            if pc % 64 == 0 { ranks[pc / 64] = u32::try_from(sites.len()).expect("bytecode site count fits u32"); }
+            if pc % 64 == 0 {
+                ranks[pc / 64] = u32::try_from(sites.len()).expect("bytecode site count fits u32");
+            }
             let cache = match instruction {
-                Instruction::GetField(_) | Instruction::GetField2(_) => PropertyCache::Read(PropertyReadCache::default()),
+                Instruction::GetField(_) | Instruction::GetField2(_) => {
+                    PropertyCache::Read(PropertyReadCache::default())
+                }
                 Instruction::PutField(_) => PropertyCache::Write(PropertyWriteCache::default()),
                 _ => continue,
             };
             bits[pc / 64] |= 1u64 << (pc % 64);
             sites.push(cache);
         }
-        Self { site_bits: bits.into_boxed_slice(), block_ranks: ranks.into_boxed_slice(), sites: sites.into_boxed_slice() }
+        Self {
+            site_bits: bits.into_boxed_slice(),
+            block_ranks: ranks.into_boxed_slice(),
+            sites: sites.into_boxed_slice(),
+        }
     }
     fn site_index(&self, pc: usize) -> Option<usize> {
         let bits = *self.site_bits.get(pc / 64)?;
         let mask = 1u64 << (pc % 64);
-        if bits & mask == 0 { return None; }
+        if bits & mask == 0 {
+            return None;
+        }
         Some(self.block_ranks[pc / 64] as usize + (bits & (mask - 1)).count_ones() as usize)
     }
     pub(crate) fn site(&self, pc: usize) -> Option<&PropertyReadCache> {
-        match self.sites.get(self.site_index(pc)?)? { PropertyCache::Read(cache) => Some(cache), _ => None }
+        match self.sites.get(self.site_index(pc)?)? {
+            PropertyCache::Read(cache) => Some(cache),
+            _ => None,
+        }
     }
     pub(crate) fn write_site(&self, pc: usize) -> Option<&PropertyWriteCache> {
-        match self.sites.get(self.site_index(pc)?)? { PropertyCache::Write(cache) => Some(cache), _ => None }
+        match self.sites.get(self.site_index(pc)?)? {
+            PropertyCache::Write(cache) => Some(cache),
+            _ => None,
+        }
     }
 }
 
@@ -371,7 +465,9 @@ mod tests {
         }
         install(&cache, &runtime, realm, &third, key.atom());
         assert!(matches!(cache.state.get(), State::Megamorphic(_)));
-        for _ in 0..1024 { assert_eq!(number(&cache, &runtime, realm, &first), None); }
+        for _ in 0..1024 {
+            assert_eq!(number(&cache, &runtime, realm, &first), None);
+        }
         assert!(matches!(cache.state.get(), State::Cold));
         install(&cache, &runtime, realm, &third, key.atom());
         assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
@@ -383,10 +479,17 @@ mod tests {
         let mut context = runtime.new_context();
         let key = runtime.intern_property_key("x").unwrap();
         for expression in ["new Map()", "new Date()", "new Uint8Array(2)"] {
-            let receiver = object(context.eval(&format!("var exotic={expression}; exotic.x=7; exotic")).unwrap());
+            let receiver = object(
+                context
+                    .eval(&format!("var exotic={expression}; exotic.x=7; exotic"))
+                    .unwrap(),
+            );
             let cache = PropertyReadCache::default();
             install(&cache, &runtime, context.realm_id(), &receiver, key.atom());
-            assert_eq!(number(&cache, &runtime, context.realm_id(), &receiver), Some(7.0));
+            assert_eq!(
+                number(&cache, &runtime, context.realm_id(), &receiver),
+                Some(7.0)
+            );
         }
         let typed = object(context.eval("new Uint8Array(2)").unwrap());
         for spelling in ["0", "-0", "NaN", "Infinity", "1.5"] {

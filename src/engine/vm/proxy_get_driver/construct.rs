@@ -9,6 +9,8 @@ use crate::engine::{
     vm::call::{ConstructNewTarget, ConstructorRef, ConstructorTarget, NormalizedConstructor},
 };
 
+// Keep the return owner, reply identity and original constructor operands explicit at this suspension boundary.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn start(
     runtime: &Runtime,
     owner: ReturnOwner,

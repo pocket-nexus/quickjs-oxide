@@ -189,7 +189,7 @@ impl InvokeStep {
             Self::request_arguments(__pending_field_value, __pending_field_resume)
         })
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn start_spread(
         runtime: &Runtime,
         realm: ContextId,

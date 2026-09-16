@@ -16,6 +16,7 @@ pub(super) enum Entry {
     General,
 }
 
+#[cfg(test)]
 pub(super) fn enter(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -27,6 +28,9 @@ pub(super) fn enter(
     enter_selected(runtime, execution, id, count, method, tail, None)
 }
 
+// These explicit drops end the authenticated slot lease before installing a
+// child or entering native code; keep the boundary visible to reviewers.
+#[allow(clippy::drop_non_drop)]
 pub(super) fn enter_selected(
     runtime: &Runtime,
     execution: &mut RunningExecution,

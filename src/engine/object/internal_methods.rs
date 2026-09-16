@@ -30,42 +30,42 @@ use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarget};
 
-mod reuse;
 mod boolean;
 mod prototype;
-#[cfg(feature = "stack-vm")]
+mod reuse;
+
 pub(crate) use prototype::ProxyPrototypeResume;
 pub(crate) use prototype::{ProxyPrototypeKind, ProxyPrototypeStep};
 mod define;
 mod set;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use define::ProxyDefineResume;
 pub(crate) use define::ProxyDefineStep;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use set::ProxySetResume;
 pub(crate) use set::ProxySetStep;
 mod call;
 mod construct;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use call::ProxyCallResume;
 pub(crate) use call::ProxyCallStep;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use construct::{ProxyConstructResume, ProxyConstructStep};
 mod get;
 mod method;
 mod own_keys;
 mod own_property;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use boolean::ProxyBooleanResume;
 pub(crate) use boolean::{ProxyBooleanKind, ProxyBooleanStep};
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use get::ProxyGetResume;
 use get::ProxyGetStep;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use get::ProxyGetStep as OwnedProxyGetStep;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use own_keys::{KeysResume, KeysStep};
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use own_property::ProxyOwnResume;
 pub(crate) use own_property::ProxyOwnStep;
 
@@ -161,23 +161,6 @@ impl Runtime {
             ErrorKind::Type,
             "not a function",
         )))
-    }
-
-    pub(crate) fn call_value_internal(
-        &self,
-        caller_realm: ContextId,
-        function: Value,
-        this_value: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        match self.direct_call_target_from_value(function)? {
-            DirectCallTarget::Callable(callable) => {
-                self.call_internal(caller_realm, &callable, this_value, arguments)
-            }
-            DirectCallTarget::NonCallableProxy(proxy) => {
-                self.call_proxy(caller_realm, &proxy, this_value, arguments)
-            }
-        }
     }
 
     /// Raw realm lookup retained for internal callers which have already
@@ -937,7 +920,6 @@ impl Runtime {
                 NativeConversion::Value(true),
             ))),
             TypedSetSelection::Element(index) => {
-                #[cfg(feature = "stack-vm")]
                 if let Some(realm) = _realm
                     && !matches!(value, Value::Object(_))
                 {
@@ -949,7 +931,6 @@ impl Runtime {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_typed_array_set_primitive(
         &self,
         realm: ContextId,

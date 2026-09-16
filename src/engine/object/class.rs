@@ -49,7 +49,8 @@ impl Runtime {
                 }
                 Value::Object(parent_constructor) => {
                     self.validate_class_parent(&parent_constructor)?;
-                    let prototype_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
+                    let prototype_key = self
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
                     let parent_prototype = match self.get_property_in_realm(
                         realm,
                         &parent_constructor,
@@ -272,7 +273,8 @@ impl Runtime {
             ));
         }
 
-        let prototype_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
+        let prototype_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
         if self
             .get_own_property(constructor.as_object(), &prototype_key)?
             .is_some()

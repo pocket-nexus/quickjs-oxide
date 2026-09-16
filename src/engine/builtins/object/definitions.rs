@@ -1,5 +1,5 @@
 //! Object.create/defineProperties: snapshot enumerable keys, then convert and publish each.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -16,7 +16,6 @@ pub(crate) enum DefinitionsKind {
     Define,
 }
 impl DefinitionsKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::ObjectCreate => Self::Create,

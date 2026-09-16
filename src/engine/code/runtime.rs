@@ -229,7 +229,7 @@ impl Runtime {
                 let owned_atoms = auxiliary_atoms.clone();
                 let bytecode = FunctionBytecodeData {
                     executable: Default::default(),
-                    #[cfg(feature = "stack-vm")]
+
                     fusion: Default::default(),
                     code: function.code.into(),
                     constants: linked_constants.into(),

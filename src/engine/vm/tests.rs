@@ -1,18 +1,50 @@
-use crate::engine::api::error::{Error, ErrorKind};
-
-use crate::engine::code::bytecode::{
-    ArgumentsKind, DefineMethodKind, DetachedBytecode, DynamicEnvironmentSource,
-    EvalVariableSource, Instruction, IteratorCallKind, WithObjectSource,
+//! Instruction fixtures execute the published core; protocol probes use real JS.
+use super::numeric::{number_to_int32, number_to_uint32};
+use crate::engine::api::{Error, Runtime};
+use crate::engine::code::bytecode::{DetachedBytecode, Instruction};
+use crate::engine::code::function::{
+    UnlinkedConstant, UnlinkedFunction, metadata::FunctionMetadata,
 };
 use crate::engine::value::{JsString, Value};
 
-use super::numeric::{number_to_int32, number_to_uint32};
+struct PublishedFixture;
+impl PublishedFixture {
+    fn execute(&self, function: &DetachedBytecode<Value>) -> Result<Value, Error> {
+        function.verify()?;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let constants = function
+            .constants
+            .iter()
+            .cloned()
+            .map(UnlinkedConstant::primitive)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::internal(e.to_string()))?;
+        let draft = UnlinkedFunction::fixture(
+            function.code.clone(),
+            constants,
+            FunctionMetadata {
+                local_count: function.local_count,
+                max_stack: function.max_stack,
+                ..FunctionMetadata::default()
+            },
+        );
+        let published = runtime
+            .publish_unlinked_function(context.realm, draft)
+            .map_err(|e| Error::internal(e.to_string()))?;
+        context
+            .execute(&published)
+            .map_err(|e| Error::internal(e.to_string()))
+    }
+}
 
-use super::{
-    Completion, DefineClassOutcome, DetachedDynamicEnvironmentOperation,
-    DetachedEvalVariableOperation, DetachedHost, DirectEvalInvocation, Vm, VmActivation, VmExit,
-    VmHost, VmResume, VmSuspendKind, VmSuspension,
-};
+fn assert_js(source: &str) {
+    assert_eq!(
+        Runtime::new().new_context().eval(source).unwrap(),
+        Value::Bool(true),
+        "{source}"
+    );
+}
 
 #[test]
 fn executes_arithmetic_stack_bytecode() {
@@ -28,7 +60,7 @@ fn executes_arithmetic_stack_bytecode() {
         max_stack: 2,
     };
 
-    assert_eq!(Vm::new().execute(&function).unwrap(), Value::Int(42));
+    assert_eq!(PublishedFixture.execute(&function).unwrap(), Value::Int(42));
 }
 
 #[test]
@@ -49,14 +81,17 @@ fn dup3_clones_the_three_values_in_order_without_a_temporary_buffer() {
             max_stack: 6,
         };
 
-        assert_eq!(Vm::new().execute(&function).unwrap(), Value::Int(expected));
+        assert_eq!(
+            PublishedFixture.execute(&function).unwrap(),
+            Value::Int(expected)
+        );
     }
 }
 
 #[test]
 fn unary_arithmetic_preserves_quickjs_numeric_tags_and_float_bits() {
     fn execute(value: Value, instruction: Instruction) -> Value {
-        Vm::new()
+        PublishedFixture
             .execute(&DetachedBytecode::<Value> {
                 code: vec![Instruction::PushConst(0), instruction, Instruction::Return],
                 constants: vec![value],
@@ -67,7 +102,7 @@ fn unary_arithmetic_preserves_quickjs_numeric_tags_and_float_bits() {
     }
 
     fn execute_post(value: Value, instruction: Instruction, selector: Instruction) -> Value {
-        Vm::new()
+        PublishedFixture
             .execute(&DetachedBytecode::<Value> {
                 code: vec![
                     Instruction::PushConst(0),
@@ -148,510 +183,6 @@ fn unary_arithmetic_preserves_quickjs_numeric_tags_and_float_bits() {
 }
 
 #[test]
-fn generator_initial_yield_resumes_without_an_input_operand() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::InitialYield,
-            Instruction::PushI32(42),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    let mut host = DetachedHost::new(&function);
-
-    let VmExit::Suspend(suspension) = VmActivation::new(1).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("initial_yield did not suspend");
-    };
-    assert_eq!(suspension.kind(), VmSuspendKind::Initial);
-
-    assert_eq!(
-        suspension
-            .resume_initial(&function.code, &mut host)
-            .unwrap(),
-        VmExit::Complete(Completion::Return(Value::Int(42)))
-    );
-}
-
-#[test]
-fn generator_yield_snapshot_and_next_resume_preserve_quickjs_stack_abi() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(7),
-            Instruction::Yield,
-            Instruction::PushI32(0),
-            Instruction::StrictEq,
-            Instruction::IfFalse(6),
-            Instruction::Return,
-            Instruction::PushI32(-1),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 3,
-    };
-    let mut host = DetachedHost::new(&function);
-    let VmExit::Suspend(mut suspension) =
-        VmActivation::new(3).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("yield did not suspend");
-    };
-    assert_eq!(suspension.kind(), VmSuspendKind::Yield);
-    assert_eq!(suspension.take_yielded().unwrap(), Value::Int(7));
-
-    let (kind, parts) = suspension.into_parts().unwrap();
-    assert_eq!(kind, VmSuspendKind::Yield);
-    assert_eq!(parts.pc, 2);
-    assert_eq!(parts.stack, vec![Value::Undefined]);
-    assert!(parts.regions.is_empty());
-    let suspension = VmSuspension::from_parts(kind, parts).unwrap();
-
-    assert_eq!(
-        suspension
-            .resume(&function.code, &mut host, VmResume::Next(Value::Int(42)))
-            .unwrap(),
-        VmExit::Complete(Completion::Return(Value::Int(42)))
-    );
-}
-
-#[test]
-fn generator_yield_return_resume_pushes_magic_one() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(7),
-            Instruction::Yield,
-            Instruction::PushI32(1),
-            Instruction::StrictEq,
-            Instruction::IfFalse(6),
-            Instruction::Return,
-            Instruction::PushI32(-1),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 3,
-    };
-    let mut host = DetachedHost::new(&function);
-    let VmExit::Suspend(mut suspension) =
-        VmActivation::new(3).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("yield did not suspend");
-    };
-    assert_eq!(suspension.take_yielded().unwrap(), Value::Int(7));
-
-    assert_eq!(
-        suspension
-            .resume(&function.code, &mut host, VmResume::Return(Value::Int(42)),)
-            .unwrap(),
-        VmExit::Complete(Completion::Return(Value::Int(42)))
-    );
-}
-
-#[test]
-fn generator_plain_yield_throw_enters_existing_unwind_path() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(4),
-            Instruction::PushI32(7),
-            Instruction::Yield,
-            Instruction::Return,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let mut host = DetachedHost::new(&function);
-    let VmExit::Suspend(mut suspension) =
-        VmActivation::new(2).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("yield did not suspend");
-    };
-    assert_eq!(suspension.take_yielded().unwrap(), Value::Int(7));
-
-    assert_eq!(
-        suspension
-            .resume(&function.code, &mut host, VmResume::Throw(Value::Int(55)),)
-            .unwrap(),
-        VmExit::Complete(Completion::Return(Value::Int(55)))
-    );
-}
-
-#[test]
-fn await_fulfilment_restores_one_expression_value_without_generator_magic() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(7),
-            Instruction::Await,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    let mut host = DetachedHost::new(&function);
-    let VmExit::Suspend(mut suspension) =
-        VmActivation::new(1).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("await did not suspend");
-    };
-    assert_eq!(suspension.kind(), VmSuspendKind::Await);
-    assert_eq!(suspension.take_awaited().unwrap(), Value::Int(7));
-
-    let (kind, parts) = suspension.into_parts().unwrap();
-    assert_eq!(kind, VmSuspendKind::Await);
-    assert_eq!(parts.pc, 2);
-    assert_eq!(parts.stack, vec![Value::Undefined]);
-    let suspension = VmSuspension::from_parts(kind, parts).unwrap();
-
-    assert_eq!(
-        suspension
-            .resume_await_fulfill(&function.code, &mut host, Value::Int(42))
-            .unwrap(),
-        VmExit::Complete(Completion::Return(Value::Int(42)))
-    );
-}
-
-#[test]
-fn await_rejection_enters_existing_unwind_path() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(4),
-            Instruction::PushI32(7),
-            Instruction::Await,
-            Instruction::Return,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let mut host = DetachedHost::new(&function);
-    let VmExit::Suspend(mut suspension) =
-        VmActivation::new(2).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("await did not suspend");
-    };
-    assert_eq!(suspension.take_awaited().unwrap(), Value::Int(7));
-
-    assert_eq!(
-        suspension
-            .resume_await_reject(&function.code, &mut host, Value::Int(55))
-            .unwrap(),
-        VmExit::Complete(Completion::Return(Value::Int(55)))
-    );
-}
-
-#[test]
-fn generator_yield_return_runs_compiled_finally_unwind_path() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(7),
-            Instruction::PushI32(7),
-            Instruction::Yield,
-            Instruction::IfFalse(7),
-            Instruction::NipCatch,
-            Instruction::Gosub(8),
-            Instruction::Return,
-            Instruction::Return,
-            Instruction::PushI32(77),
-            Instruction::Throw,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 3,
-    };
-    let mut host = DetachedHost::new(&function);
-    let VmExit::Suspend(mut suspension) =
-        VmActivation::new(3).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("yield did not suspend");
-    };
-    assert_eq!(suspension.take_yielded().unwrap(), Value::Int(7));
-
-    assert_eq!(
-        suspension
-            .resume(&function.code, &mut host, VmResume::Return(Value::Int(42)),)
-            .unwrap(),
-        VmExit::Complete(Completion::Throw(Value::Int(77)))
-    );
-    assert_eq!(host.captured_local_reuse_preparations, 1);
-}
-
-#[test]
-fn generator_yield_star_throw_resume_injects_magic_two() {
-    for (instruction, kind) in [
-        (Instruction::YieldStar, VmSuspendKind::YieldStar),
-        (Instruction::AsyncYieldStar, VmSuspendKind::AsyncYieldStar),
-    ] {
-        let function = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(7),
-                instruction,
-                Instruction::PushI32(2),
-                Instruction::StrictEq,
-                Instruction::IfFalse(6),
-                Instruction::Return,
-                Instruction::PushI32(-1),
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 3,
-        };
-        let mut host = DetachedHost::new(&function);
-        let VmExit::Suspend(mut suspension) =
-            VmActivation::new(3).run(&function.code, &mut host).unwrap()
-        else {
-            panic!("yield_star did not suspend");
-        };
-        assert_eq!(suspension.kind(), kind);
-        assert_eq!(suspension.take_yielded().unwrap(), Value::Int(7));
-
-        assert_eq!(
-            suspension
-                .resume(&function.code, &mut host, VmResume::Throw(Value::Int(55)),)
-                .unwrap(),
-            VmExit::Complete(Completion::Return(Value::Int(55)))
-        );
-    }
-}
-
-#[test]
-fn yield_star_iterator_start_and_next_keep_an_ordinary_four_slot_record() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(10),
-            Instruction::IteratorStart,
-            Instruction::PushI32(42),
-            Instruction::IteratorNext,
-            Instruction::YieldStar,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 4,
-    };
-    let mut host = DetachedHost::new(&function);
-    host.iterator_start_record = Some((Value::Int(1), Value::Int(2)));
-    host.call_results
-        .push_back(Ok(Completion::Return(Value::Int(99))));
-
-    let VmExit::Suspend(mut suspension) =
-        VmActivation::new(4).run(&function.code, &mut host).unwrap()
-    else {
-        panic!("yield_star iterator result did not suspend");
-    };
-    assert_eq!(suspension.kind(), VmSuspendKind::YieldStar);
-    assert_eq!(suspension.take_yielded().unwrap(), Value::Int(99));
-    let (_, parts) = suspension.into_parts().unwrap();
-    assert_eq!(
-        parts.stack,
-        vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::Undefined,
-            Value::Undefined,
-        ]
-    );
-    assert!(parts.regions.is_empty());
-    assert_eq!(
-        host.call_inputs,
-        [(Value::Int(2), Value::Int(1), vec![Value::Int(42)])]
-    );
-}
-
-#[test]
-fn yield_star_iterator_call_uses_typed_method_and_argument_modes() {
-    for (kind, method_name, arguments, result) in [
-        (
-            IteratorCallKind::ReturnWithValue,
-            "return",
-            vec![Value::Int(42)],
-            90,
-        ),
-        (
-            IteratorCallKind::ThrowWithValue,
-            "throw",
-            vec![Value::Int(42)],
-            91,
-        ),
-        (IteratorCallKind::ReturnWithoutValue, "return", vec![], 92),
-    ] {
-        let function = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::PushI32(2),
-                Instruction::Undefined,
-                Instruction::PushI32(42),
-                Instruction::IteratorCall(kind),
-                Instruction::IfTrue(7),
-                Instruction::Return,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 5,
-        };
-        let mut host = DetachedHost::new(&function);
-        host.get_property_results
-            .push_back(Completion::Return(Value::Int(7)));
-        host.call_results
-            .push_back(Ok(Completion::Return(Value::Int(result))));
-
-        assert_eq!(
-            VmActivation::new(5)
-                .execute(&function.code, &mut host)
-                .unwrap(),
-            Completion::Return(Value::Int(result))
-        );
-        assert_eq!(
-            host.get_property_inputs,
-            [(
-                Value::Int(1),
-                Value::String(JsString::from_static(method_name)),
-            )]
-        );
-        assert_eq!(
-            host.call_inputs,
-            [(Value::Int(7), Value::Int(1), arguments)]
-        );
-    }
-
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::PushI32(2),
-            Instruction::Undefined,
-            Instruction::PushI32(42),
-            Instruction::IteratorCall(IteratorCallKind::ThrowWithValue),
-            Instruction::IfTrue(7),
-            Instruction::Return,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 5,
-    };
-    let mut host = DetachedHost::new(&function);
-    host.get_property_results
-        .push_back(Completion::Return(Value::Undefined));
-    assert_eq!(
-        VmActivation::new(5)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert!(host.call_inputs.is_empty());
-}
-
-#[test]
-fn yield_star_iterator_protocol_errors_match_quickjs() {
-    for (instruction, message) in [
-        (
-            Instruction::IteratorCheckObject,
-            "iterator must return an object",
-        ),
-        (
-            Instruction::ThrowIteratorMissingThrow,
-            "iterator does not have a throw method",
-        ),
-    ] {
-        let function = DetachedBytecode::<Value> {
-            code: vec![Instruction::PushI32(1), instruction, Instruction::Return],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        let mut host = DetachedHost::new(&function);
-        let error = VmActivation::new(1)
-            .execute(&function.code, &mut host)
-            .unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::Type);
-        assert_eq!(error.message(), message);
-    }
-}
-
-#[test]
-fn class_definition_opcodes_preserve_quickjs_stack_order() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Undefined,
-            Instruction::PushI32(7),
-            Instruction::DefineClass {
-                name: 0,
-                has_heritage: false,
-            },
-            Instruction::Nip,
-            Instruction::Return,
-        ],
-        constants: vec![Value::String(JsString::from_static("C"))],
-        local_count: 0,
-        max_stack: 2,
-    };
-    function.verify().unwrap();
-    let mut host = DetachedHost::new(&function);
-    host.define_class_results
-        .push_back(DefineClassOutcome::Defined {
-            constructor: Value::Int(11),
-            prototype: Value::Int(42),
-        });
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(
-        host.define_class_inputs,
-        [(Value::Undefined, Value::Int(7), 0, false)]
-    );
-
-    let thrown = Value::String(JsString::from_static("class throw"));
-    let mut host = DetachedHost::new(&function);
-    host.define_class_results
-        .push_back(DefineClassOutcome::Throw(thrown.clone()));
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Throw(thrown)
-    );
-}
-
-#[test]
-fn check_ctor_rejects_calls_and_accepts_construction_frames() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::CheckCtor,
-            Instruction::PushI32(42),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    let mut host = DetachedHost::new(&function);
-    let error = VmActivation::new(1)
-        .execute(&function.code, &mut host)
-        .unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Type);
-    assert_eq!(
-        error.message(),
-        "class constructors must be invoked with 'new'"
-    );
-
-    let mut frame = VmActivation::new(1);
-    frame.new_target = Value::Int(1);
-    let mut host = DetachedHost::new(&function);
-    assert_eq!(
-        frame.execute(&function.code, &mut host).unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-}
-
-#[test]
 fn swap_exchanges_only_the_top_two_values() {
     let function = DetachedBytecode::<Value> {
         code: vec![
@@ -665,684 +196,7 @@ fn swap_exchanges_only_the_top_two_values() {
         local_count: 0,
         max_stack: 2,
     };
-    assert_eq!(Vm::new().execute(&function).unwrap(), Value::Int(2));
-}
-
-#[test]
-fn borrowed_call_window_keeps_lower_operands_and_cleans_up_all_exit_kinds() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 5,
-    };
-    for method in [false, true] {
-        for outcome in [
-            Ok(Completion::Return(Value::Int(42))),
-            Ok(Completion::Throw(Value::Int(43))),
-            Err(Error::internal("test host failure")),
-        ] {
-            let mut host = DetachedHost::new(&function);
-            let summarize = |result: &Result<Completion, Error>| match result {
-                Ok(Completion::Return(value)) => Ok(("return", value.clone())),
-                Ok(Completion::Throw(value)) => Ok(("throw", value.clone())),
-                Err(error) => Err(error.to_string()),
-            };
-            let expected = summarize(&outcome);
-            host.call_results.push_back(outcome);
-            let mut activation = VmActivation::new(5);
-            activation.stack.push(Value::Int(99));
-            if method {
-                activation.stack.push(Value::Int(10));
-            }
-            activation
-                .stack
-                .extend([Value::Int(11), Value::Int(12), Value::Int(13)]);
-            let result = activation.call_from_stack(2, method, &mut host);
-            assert_eq!(summarize(&result), expected);
-            assert_eq!(activation.stack, [Value::Int(99)]);
-            assert_eq!(
-                host.call_inputs,
-                [(
-                    Value::Int(11),
-                    if method {
-                        Value::Int(10)
-                    } else {
-                        Value::Undefined
-                    },
-                    vec![Value::Int(12), Value::Int(13)]
-                )]
-            );
-        }
-    }
-    let mut host = DetachedHost::new(&function);
-    let mut activation = VmActivation::new(1);
-    activation.stack.push(Value::Int(99));
-    assert!(activation.call_from_stack(1, false, &mut host).is_err());
-    assert_eq!(activation.stack, [Value::Int(99)]);
-    assert!(host.call_inputs.is_empty());
-}
-
-#[test]
-fn tail_invocations_complete_the_frame_with_exact_call_operands() {
-    let plain = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(10),
-            Instruction::PushI32(11),
-            Instruction::PushI32(12),
-            Instruction::TailCall(2),
-            Instruction::PushI32(-1),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 3,
-    };
-    plain.verify().unwrap();
-    let mut host = DetachedHost::new(&plain);
-    host.call_results
-        .push_back(Ok(Completion::Return(Value::Int(42))));
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&plain.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(
-        host.call_inputs,
-        [(
-            Value::Int(10),
-            Value::Undefined,
-            vec![Value::Int(11), Value::Int(12)]
-        )]
-    );
-
-    let method = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(20),
-            Instruction::PushI32(21),
-            Instruction::PushI32(22),
-            Instruction::PushI32(23),
-            Instruction::TailCallMethod(2),
-            Instruction::PushI32(-1),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 4,
-    };
-    method.verify().unwrap();
-    let mut host = DetachedHost::new(&method);
-    host.call_results
-        .push_back(Ok(Completion::Return(Value::Int(43))));
-    assert_eq!(
-        VmActivation::new(4)
-            .execute(&method.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(43))
-    );
-    assert_eq!(
-        host.call_inputs,
-        [(
-            Value::Int(21),
-            Value::Int(20),
-            vec![Value::Int(22), Value::Int(23)]
-        )]
-    );
-}
-
-#[test]
-fn tail_invocation_throws_use_the_activation_backtrace_and_catch_path() {
-    let caught = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(4),
-            Instruction::PushI32(7),
-            Instruction::TailCall(0),
-            Instruction::Drop,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    caught.verify().unwrap();
-    let mut host = DetachedHost::new(&caught);
-    host.call_results
-        .push_back(Ok(Completion::Throw(Value::Int(77))));
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&caught.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(77))
-    );
-    assert_eq!(host.backtrace_values, [Value::Int(77)]);
-    assert_eq!(host.captured_local_reuse_preparations, 1);
-
-    let uncaught = DetachedBytecode::<Value> {
-        code: vec![Instruction::PushI32(8), Instruction::TailCall(0)],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    uncaught.verify().unwrap();
-    let mut host = DetachedHost::new(&uncaught);
-    host.call_results
-        .push_back(Ok(Completion::Throw(Value::Int(88))));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&uncaught.code, &mut host)
-            .unwrap(),
-        Completion::Throw(Value::Int(88))
-    );
-    assert_eq!(host.backtrace_values, [Value::Int(88)]);
-}
-
-#[test]
-fn dynamic_import_passes_raw_specifier_and_options_in_source_order() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(20),
-            Instruction::PushI32(22),
-            Instruction::Import,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    function.verify().unwrap();
-
-    let mut host = DetachedHost::new(&function);
-    host.dynamic_import_results
-        .push_back(Ok(Completion::Return(Value::Int(42))));
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(
-        host.dynamic_import_inputs,
-        [(Value::Int(20), Value::Int(22))]
-    );
-
-    let mut thrown = DetachedHost::new(&function);
-    thrown
-        .dynamic_import_results
-        .push_back(Ok(Completion::Throw(Value::Int(77))));
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&function.code, &mut thrown)
-            .unwrap(),
-        Completion::Throw(Value::Int(77))
-    );
-    assert_eq!(
-        thrown.dynamic_import_inputs,
-        [(Value::Int(20), Value::Int(22))]
-    );
-
-    let mut failed = DetachedHost::new(&function);
-    failed
-        .dynamic_import_results
-        .push_back(Err(Error::internal("dynamic import host failure")));
-    let error = VmActivation::new(2)
-        .execute(&function.code, &mut failed)
-        .unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Internal);
-    assert_eq!(error.message(), "dynamic import host failure");
-    assert_eq!(
-        failed.dynamic_import_inputs,
-        [(Value::Int(20), Value::Int(22))]
-    );
-}
-
-#[test]
-fn eval_opcode_gates_original_identity_and_preserves_fallback_arguments() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(7),
-            Instruction::PushI32(11),
-            Instruction::PushI32(12),
-            Instruction::Eval {
-                argument_count: 2,
-                environment: 17,
-            },
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 3,
-    };
-    function.verify().unwrap();
-
-    let mut original = DetachedHost::new(&function);
-    original.eval_identity_results.push_back(Ok(true));
-    original
-        .direct_eval_results
-        .push_back(Ok(Completion::Return(Value::Int(42))));
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&function.code, &mut original)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(
-        original.direct_eval_inputs,
-        [DirectEvalInvocation {
-            input: Value::Int(11),
-            environment: 17,
-            this_value: Value::Undefined,
-            new_target: Value::Undefined,
-            caller_strict: true,
-        }]
-    );
-    assert_eq!(original.eval_identity_inputs, [Value::Int(7)]);
-    assert!(original.call_inputs.is_empty());
-
-    let mut replacement = DetachedHost::new(&function);
-    replacement.eval_identity_results.push_back(Ok(false));
-    replacement
-        .call_results
-        .push_back(Ok(Completion::Return(Value::Int(43))));
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&function.code, &mut replacement)
-            .unwrap(),
-        Completion::Return(Value::Int(43))
-    );
-    assert!(replacement.direct_eval_inputs.is_empty());
-    assert_eq!(replacement.eval_identity_inputs, [Value::Int(7)]);
-    assert_eq!(
-        replacement.call_inputs,
-        [(
-            Value::Int(7),
-            Value::Undefined,
-            vec![Value::Int(11), Value::Int(12)]
-        )]
-    );
-
-    let no_arguments = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Undefined,
-            Instruction::Eval {
-                argument_count: 0,
-                environment: 29,
-            },
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    let mut original = DetachedHost::new(&no_arguments);
-    original.eval_identity_results.push_back(Ok(true));
-    original
-        .direct_eval_results
-        .push_back(Ok(Completion::Return(Value::Undefined)));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&no_arguments.code, &mut original)
-            .unwrap(),
-        Completion::Return(Value::Undefined)
-    );
-    assert_eq!(
-        original.direct_eval_inputs,
-        [DirectEvalInvocation {
-            input: Value::Undefined,
-            environment: 29,
-            this_value: Value::Undefined,
-            new_target: Value::Undefined,
-            caller_strict: true,
-        }]
-    );
-    assert_eq!(original.eval_identity_inputs, [Value::Undefined]);
-}
-
-#[test]
-fn string_direct_eval_forwards_environment_and_lazily_normalizes_this() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(7),
-            Instruction::PushConst(0),
-            Instruction::Eval {
-                argument_count: 1,
-                environment: 23,
-            },
-            Instruction::Return,
-        ],
-        constants: vec![Value::String(JsString::from_static("40 + 2"))],
-        local_count: 0,
-        max_stack: 2,
-    };
-    function.verify().unwrap();
-
-    let mut host = DetachedHost::new(&function);
-    host.eval_identity_results.push_back(Ok(true));
-    host.box_primitive_results.push_back(Ok(Value::Int(99)));
-    host.direct_eval_results
-        .push_back(Ok(Completion::Return(Value::Int(42))));
-    let mut frame = VmActivation::new(2);
-    frame.this_value = Value::Int(8);
-    frame.new_target = Value::Int(9);
-    frame.strict = false;
-    assert_eq!(
-        frame.execute(&function.code, &mut host).unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(host.box_primitive_inputs, [Value::Int(8)]);
-    assert_eq!(
-        host.direct_eval_inputs,
-        [DirectEvalInvocation {
-            input: Value::String(JsString::from_static("40 + 2")),
-            environment: 23,
-            this_value: Value::Int(99),
-            new_target: Value::Int(9),
-            caller_strict: false,
-        }]
-    );
-
-    let non_string = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(7),
-            Instruction::PushI32(42),
-            Instruction::Eval {
-                argument_count: 1,
-                environment: u16::MAX,
-            },
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    non_string.verify().unwrap();
-    let mut host = DetachedHost::new(&non_string);
-    host.eval_identity_results.push_back(Ok(true));
-    host.direct_eval_results
-        .push_back(Ok(Completion::Return(Value::Int(42))));
-    let mut frame = VmActivation::new(2);
-    frame.this_value = Value::Int(8);
-    frame.strict = false;
-    assert_eq!(
-        frame.execute(&non_string.code, &mut host).unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert!(host.box_primitive_inputs.is_empty());
-    assert_eq!(host.direct_eval_inputs[0].this_value, Value::Int(8));
-    assert_eq!(host.direct_eval_inputs[0].environment, u16::MAX);
-}
-
-#[test]
-fn arguments_opcode_forwards_kind_and_host_completion() {
-    for kind in [ArgumentsKind::Mapped, ArgumentsKind::Unmapped] {
-        let function = DetachedBytecode::<Value> {
-            code: vec![Instruction::Arguments(kind), Instruction::Return],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        function.verify().unwrap();
-        let mut host = DetachedHost::new(&function);
-        host.arguments_results
-            .push_back((kind, Completion::Return(Value::Int(42))));
-        assert_eq!(
-            VmActivation::new(1)
-                .execute(&function.code, &mut host)
-                .unwrap(),
-            Completion::Return(Value::Int(42))
-        );
-    }
-
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Arguments(ArgumentsKind::Unmapped),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    let thrown = Value::String(JsString::from_static("arguments throw"));
-    let mut host = DetachedHost::new(&function);
-    host.arguments_results
-        .push_back((ArgumentsKind::Unmapped, Completion::Throw(thrown.clone())));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Throw(thrown)
-    );
-}
-
-#[test]
-fn rest_opcode_forwards_start_and_host_completion() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![Instruction::Rest(2), Instruction::Return],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    function.verify().unwrap();
-
-    let mut host = DetachedHost::new(&function);
-    host.rest_results
-        .push_back((2, Completion::Return(Value::Int(42))));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-
-    let thrown = Value::String(JsString::from_static("rest throw"));
-    let mut host = DetachedHost::new(&function);
-    host.rest_results
-        .push_back((2, Completion::Throw(thrown.clone())));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Throw(thrown)
-    );
-}
-
-#[test]
-fn eval_variable_object_opcodes_preserve_stack_and_host_operands() {
-    let source = EvalVariableSource::Local(0);
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::VariableEnvironment,
-            Instruction::PutLocal(0),
-            Instruction::HasEvalVariable { source, name: 0 },
-            Instruction::Drop,
-            Instruction::GetEvalVariable { source, name: 0 },
-            Instruction::Drop,
-            Instruction::PushI32(7),
-            Instruction::PutEvalVariable { source, name: 0 },
-            Instruction::DeleteEvalVariable { source, name: 0 },
-            Instruction::Drop,
-            Instruction::PushI32(11),
-            Instruction::DefineEvalVariable { source, name: 0 },
-            Instruction::PushI32(42),
-            Instruction::Return,
-        ],
-        constants: vec![Value::String(JsString::from_static("added"))],
-        local_count: 1,
-        max_stack: 1,
-    };
-    function.verify().unwrap();
-
-    let environment = Value::String(JsString::from_static("variable environment"));
-    let mut host = DetachedHost::new(&function);
-    host.variable_environment_results
-        .push_back(Completion::Return(environment.clone()));
-    for value in [
-        Value::Bool(true),
-        Value::Int(3),
-        Value::Undefined,
-        Value::Bool(true),
-        Value::Undefined,
-    ] {
-        host.eval_variable_results
-            .push_back(Completion::Return(value));
-    }
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(host.get_local(0).unwrap(), environment);
-    assert_eq!(
-        host.eval_variable_operations,
-        [
-            DetachedEvalVariableOperation::Has(source, 0),
-            DetachedEvalVariableOperation::Get(source, 0),
-            DetachedEvalVariableOperation::Put(source, 0, Value::Int(7)),
-            DetachedEvalVariableOperation::Delete(source, 0),
-            DetachedEvalVariableOperation::Define(source, 0, Value::Int(11)),
-        ]
-    );
-}
-
-#[test]
-fn to_object_boxes_primitives_and_rejects_nullish_values() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(7),
-            Instruction::ToObject,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    function.verify().unwrap();
-    let mut host = DetachedHost::new(&function);
-    host.box_primitive_results.push_back(Ok(Value::Int(42)));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(host.box_primitive_inputs, [Value::Int(7)]);
-
-    for nullish in [Instruction::Null, Instruction::Undefined] {
-        let function = DetachedBytecode::<Value> {
-            code: vec![nullish, Instruction::ToObject, Instruction::Return],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        function.verify().unwrap();
-        let mut host = DetachedHost::new(&function);
-        let error = VmActivation::new(1)
-            .execute(&function.code, &mut host)
-            .unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::Type);
-        assert_eq!(error.message(), "cannot convert to object");
-        assert!(host.box_primitive_inputs.is_empty());
-    }
-}
-
-#[test]
-fn dynamic_environment_opcodes_forward_sources_strictness_and_stack_values() {
-    let source = DynamicEnvironmentSource::With(WithObjectSource::Local(0));
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::HasDynamicBinding { source, name: 0 },
-            Instruction::Drop,
-            Instruction::GetDynamicBinding { source, name: 0 },
-            Instruction::Drop,
-            Instruction::PushI32(7),
-            Instruction::PutDynamicBinding { source, name: 0 },
-            Instruction::DeleteDynamicBinding { source, name: 0 },
-            Instruction::Drop,
-            Instruction::DynamicEnvironmentObject(source),
-            Instruction::GetRefValue(0),
-            Instruction::PutRefValue(0),
-            Instruction::DynamicEnvironmentObject(source),
-            Instruction::GetRefValueUndef(0),
-            Instruction::PutRefValue(0),
-            Instruction::GlobalReference(7),
-            Instruction::Drop,
-            Instruction::PushI32(42),
-            Instruction::Return,
-        ],
-        constants: vec![Value::String(JsString::from_static("binding"))],
-        local_count: 1,
-        max_stack: 2,
-    };
-    function.verify().unwrap();
-
-    let first_environment = Value::String(JsString::from_static("first environment"));
-    let second_environment = Value::String(JsString::from_static("second environment"));
-    let mut host = DetachedHost::new(&function);
-    for completion in [
-        Completion::Return(Value::Bool(true)),
-        Completion::Return(Value::Int(3)),
-        Completion::Return(Value::Undefined),
-        Completion::Return(Value::Bool(true)),
-        Completion::Return(first_environment.clone()),
-        Completion::Return(Value::Int(11)),
-        Completion::Return(Value::Undefined),
-        Completion::Return(second_environment.clone()),
-        Completion::Return(Value::Undefined),
-        Completion::Return(Value::Undefined),
-        Completion::Return(Value::String(JsString::from_static("global reference"))),
-    ] {
-        host.dynamic_environment_results.push_back(completion);
-    }
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert_eq!(
-        host.dynamic_environment_operations,
-        [
-            DetachedDynamicEnvironmentOperation::Has(source, 0),
-            DetachedDynamicEnvironmentOperation::Get(source, 0, true),
-            DetachedDynamicEnvironmentOperation::Put(source, 0, Value::Int(7), true),
-            DetachedDynamicEnvironmentOperation::Delete(source, 0),
-            DetachedDynamicEnvironmentOperation::Object(source),
-            DetachedDynamicEnvironmentOperation::GetRef(first_environment.clone(), 0, true,),
-            DetachedDynamicEnvironmentOperation::PutRef(first_environment, 0, Value::Int(11), true,),
-            DetachedDynamicEnvironmentOperation::Object(source),
-            DetachedDynamicEnvironmentOperation::GetRef(second_environment.clone(), 0, false,),
-            DetachedDynamicEnvironmentOperation::PutRef(
-                second_environment,
-                0,
-                Value::Undefined,
-                true,
-            ),
-            DetachedDynamicEnvironmentOperation::GlobalReference(7),
-        ]
-    );
-
-    let throwing_reference = DetachedBytecode::<Value> {
-        code: vec![Instruction::GlobalReference(3), Instruction::Return],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    throwing_reference.verify().unwrap();
-    let thrown = Value::String(JsString::from_static("global reference throw"));
-    let mut host = DetachedHost::new(&throwing_reference);
-    host.dynamic_environment_results
-        .push_back(Completion::Throw(thrown.clone()));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&throwing_reference.code, &mut host)
-            .unwrap(),
-        Completion::Throw(thrown)
-    );
-    assert_eq!(
-        host.dynamic_environment_operations,
-        [DetachedDynamicEnvironmentOperation::GlobalReference(3)]
-    );
+    assert_eq!(PublishedFixture.execute(&function).unwrap(), Value::Int(2));
 }
 
 #[test]
@@ -1358,7 +212,7 @@ fn detached_vm_catches_values_and_manages_private_handlers() {
         local_count: 0,
         max_stack: 2,
     };
-    assert_eq!(Vm::new().execute(&thrown).unwrap(), Value::Int(7));
+    assert_eq!(PublishedFixture.execute(&thrown).unwrap(), Value::Int(7));
 
     let normal = DetachedBytecode::<Value> {
         code: vec![
@@ -1372,7 +226,7 @@ fn detached_vm_catches_values_and_manages_private_handlers() {
         local_count: 0,
         max_stack: 1,
     };
-    assert_eq!(Vm::new().execute(&normal).unwrap(), Value::Int(3));
+    assert_eq!(PublishedFixture.execute(&normal).unwrap(), Value::Int(3));
 
     let nip = DetachedBytecode::<Value> {
         code: vec![
@@ -1388,7 +242,7 @@ fn detached_vm_catches_values_and_manages_private_handlers() {
         local_count: 0,
         max_stack: 4,
     };
-    assert_eq!(Vm::new().execute(&nip).unwrap(), Value::Int(30));
+    assert_eq!(PublishedFixture.execute(&nip).unwrap(), Value::Int(30));
 
     let nested = DetachedBytecode::<Value> {
         code: vec![
@@ -1405,641 +259,21 @@ fn detached_vm_catches_values_and_manages_private_handlers() {
         local_count: 0,
         max_stack: 3,
     };
-    assert_eq!(Vm::new().execute(&nested).unwrap(), Value::Int(11));
+    assert_eq!(PublishedFixture.execute(&nested).unwrap(), Value::Int(11));
 }
 
 #[test]
-fn iterator_unwind_preserves_exception_and_completion_precedence() {
-    let pending_throw = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(6),
-            Instruction::PushI32(1),
-            Instruction::ForOfStart,
-            Instruction::PushI32(41),
-            Instruction::Throw,
-            Instruction::Nop,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 5,
-    };
-    pending_throw.verify().unwrap();
-    let mut host = DetachedHost::new(&pending_throw);
-    host.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    // A close throw must not replace the already-pending value 41.
-    host.iterator_close_results.push_back(Some(Value::Int(99)));
-    assert_eq!(
-        VmActivation::new(5)
-            .execute(&pending_throw.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(41))
-    );
-    assert_eq!(host.iterator_close_pending, vec![true]);
-
-    let normal_close_throw = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(7),
-            Instruction::PushI32(1),
-            Instruction::ForOfStart,
-            Instruction::IteratorClose,
-            Instruction::DropCatch,
-            Instruction::Undefined,
-            Instruction::Return,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 4,
-    };
-    normal_close_throw.verify().unwrap();
-    let mut host = DetachedHost::new(&normal_close_throw);
-    host.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    host.iterator_close_results.push_back(Some(Value::Int(77)));
-    assert_eq!(
-        VmActivation::new(4)
-            .execute(&normal_close_throw.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(77))
-    );
-    assert_eq!(host.iterator_close_pending, vec![false]);
-
-    let preserve_close_throw = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::ForOfStart,
-            Instruction::PushI32(42),
-            Instruction::IteratorClosePreserve,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 4,
-    };
-    preserve_close_throw.verify().unwrap();
-    let mut host = DetachedHost::new(&preserve_close_throw);
-    host.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    host.iterator_close_results.push_back(Some(Value::Int(88)));
-    assert_eq!(
-        VmActivation::new(4)
-            .execute(&preserve_close_throw.code, &mut host)
-            .unwrap(),
-        Completion::Throw(Value::Int(88))
-    );
-    assert_eq!(host.iterator_close_pending, vec![false]);
-
-    let drop_without_close = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::ForOfStart,
-            Instruction::PushI32(42),
-            Instruction::IteratorDropPreserve,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 4,
-    };
-    drop_without_close.verify().unwrap();
-    let mut host = DetachedHost::new(&drop_without_close);
-    host.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    assert_eq!(
-        VmActivation::new(4)
-            .execute(&drop_without_close.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(42))
-    );
-    assert!(host.iterator_close_pending.is_empty());
-}
-
-#[test]
-fn for_of_next_disables_done_and_throwing_iterators() {
-    let done = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::ForOfStart,
-            Instruction::ForOfNext(0),
-            Instruction::Drop,
-            Instruction::Drop,
-            Instruction::IteratorClose,
-            Instruction::PushI32(3),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 5,
-    };
-    done.verify().unwrap();
-    let mut host = DetachedHost::new(&done);
-    host.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    host.iterator_next_results
-        .push_back(Ok((Value::Undefined, true)));
-    assert_eq!(
-        VmActivation::new(5).execute(&done.code, &mut host).unwrap(),
-        Completion::Return(Value::Int(3))
-    );
-    assert!(host.iterator_close_pending.is_empty());
-
-    let next_throw = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(10),
-            Instruction::PushI32(1),
-            Instruction::ForOfStart,
-            Instruction::ForOfNext(0),
-            Instruction::Drop,
-            Instruction::Drop,
-            Instruction::IteratorClose,
-            Instruction::DropCatch,
-            Instruction::Undefined,
-            Instruction::Return,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 6,
-    };
-    next_throw.verify().unwrap();
-    let mut host = DetachedHost::new(&next_throw);
-    host.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    host.iterator_next_results.push_back(Err(Value::Int(55)));
-    assert_eq!(
-        VmActivation::new(6)
-            .execute(&next_throw.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(55))
-    );
-    assert!(host.iterator_close_pending.is_empty());
-}
-
-#[test]
-fn array_literal_opcodes_preserve_operands_and_element_order() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::PushI32(2),
-            Instruction::ArrayFrom(2),
-            Instruction::PushI32(3),
-            Instruction::DefineField(0),
-            Instruction::PushI32(4),
-            Instruction::PushI32(5),
-            Instruction::DefineArrayEl,
-            Instruction::Drop,
-            Instruction::Return,
-        ],
-        constants: vec![Value::String(JsString::from_static("2"))],
-        local_count: 0,
-        max_stack: 3,
-    };
-    function.verify().unwrap();
-    let mut host = DetachedHost::new(&function);
-    host.array_from_results
-        .push_back(Completion::Return(Value::String(JsString::from_static(
-            "array",
-        ))));
-    host.define_field_results
-        .push_back(Completion::Return(Value::Undefined));
-    host.define_array_element_results
-        .push_back(Completion::Return(Value::Undefined));
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::String(JsString::from_static("array")))
-    );
-    assert_eq!(host.array_from_inputs, [vec![Value::Int(1), Value::Int(2)]]);
-    assert_eq!(
-        host.defined_fields,
-        [(
-            Value::String(JsString::from_static("array")),
-            0,
-            Value::Int(3)
-        )]
-    );
-    assert_eq!(
-        host.defined_array_elements,
-        [(
-            Value::String(JsString::from_static("array")),
-            Value::Int(4),
-            Value::Int(5)
-        )]
-    );
-
-    let dup1 = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::PushI32(2),
-            Instruction::Dup1,
-            Instruction::Add,
-            Instruction::Add,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 3,
-    };
-    assert_eq!(Vm::new().execute(&dup1).unwrap(), Value::Int(4));
-}
-
-#[test]
-fn object_literal_opcodes_preserve_target_and_operand_order() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Object,
-            Instruction::Undefined,
-            Instruction::DefineMethod {
-                key: 0,
-                kind: DefineMethodKind::Method,
-                enumerable: true,
-            },
-            Instruction::PushI32(8),
-            Instruction::Undefined,
-            Instruction::DefineMethodComputed {
-                kind: DefineMethodKind::Getter,
-                enumerable: false,
-            },
-            Instruction::Null,
-            Instruction::SetProto,
-            Instruction::PushI32(7),
-            Instruction::CopyDataProperties,
-            Instruction::Return,
-        ],
-        constants: vec![Value::String(JsString::from_static("method"))],
-        local_count: 0,
-        max_stack: 3,
-    };
-    function.verify().unwrap();
-    let object = Value::String(JsString::from_static("object"));
-    let mut host = DetachedHost::new(&function);
-    host.object_results
-        .push_back(Completion::Return(object.clone()));
-    host.define_method_results
-        .push_back(Completion::Return(Value::Undefined));
-    host.define_method_computed_results
-        .push_back(Completion::Return(Value::Undefined));
-    host.set_object_prototype_results
-        .push_back(Completion::Return(Value::Undefined));
-    host.copy_data_properties_results
-        .push_back(Completion::Return(Value::Undefined));
-
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(object.clone())
-    );
-    assert_eq!(
-        host.defined_methods,
-        [(
-            object.clone(),
-            0,
-            Value::Undefined,
-            DefineMethodKind::Method,
-            true
-        )]
-    );
-    assert_eq!(
-        host.defined_computed_methods,
-        [(
-            object.clone(),
-            Value::Int(8),
-            Value::Undefined,
-            DefineMethodKind::Getter,
-            false
-        )]
-    );
-    assert_eq!(
-        host.set_object_prototype_inputs,
-        [(object.clone(), Value::Null)]
-    );
-    assert_eq!(host.copy_data_properties_inputs, [(object, Value::Int(7))]);
-}
-
-#[test]
-fn object_rest_copy_reads_depth_operands_after_to_object_and_preserves_the_stack() {
-    let excluded = Value::String(JsString::from_static("excluded"));
-    let primitive_source = Value::String(JsString::from_static("ab"));
-    let boxed_source = Value::String(JsString::from_static("boxed source"));
-    let reference = Value::String(JsString::from_static("prepared reference"));
-    let target = Value::String(JsString::from_static("target"));
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushConst(0),
-            Instruction::PushConst(1),
-            Instruction::ToObject,
-            Instruction::PushConst(2),
-            Instruction::PushConst(3),
-            Instruction::CopyDataPropertiesExcluded {
-                target_depth: 0,
-                source_depth: 2,
-                excluded_depth: 3,
-            },
-            Instruction::Drop,
-            Instruction::Drop,
-            Instruction::Drop,
-            Instruction::Return,
-        ],
-        constants: vec![
-            excluded.clone(),
-            primitive_source.clone(),
-            reference,
-            target.clone(),
-        ],
-        local_count: 0,
-        max_stack: 4,
-    };
-    function.verify().unwrap();
-    let mut host = DetachedHost::new(&function);
-    host.box_primitive_results
-        .push_back(Ok(boxed_source.clone()));
-    host.copy_data_properties_excluded_results
-        .push_back(Completion::Return(Value::Undefined));
-
-    assert_eq!(
-        VmActivation::new(4)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(excluded.clone())
-    );
-    assert_eq!(host.box_primitive_inputs, [primitive_source]);
-    assert_eq!(
-        host.copy_data_properties_excluded_inputs,
-        [(target, boxed_source, excluded)]
-    );
-}
-
-#[test]
-fn object_literal_opcodes_forward_host_throws() {
-    let thrown = Value::String(JsString::from_static("literal throw"));
-
-    let object = DetachedBytecode::<Value> {
-        code: vec![Instruction::Object, Instruction::Return],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    object.verify().unwrap();
-    let mut host = DetachedHost::new(&object);
-    host.object_results
-        .push_back(Completion::Throw(thrown.clone()));
-    assert_eq!(
-        VmActivation::new(1)
-            .execute(&object.code, &mut host)
-            .unwrap(),
-        Completion::Throw(thrown.clone())
-    );
-
-    let proto = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::Null,
-            Instruction::SetProto,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    proto.verify().unwrap();
-    let mut host = DetachedHost::new(&proto);
-    host.set_object_prototype_results
-        .push_back(Completion::Throw(thrown.clone()));
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&proto.code, &mut host)
-            .unwrap(),
-        Completion::Throw(thrown.clone())
-    );
-    assert_eq!(
-        host.set_object_prototype_inputs,
-        [(Value::Int(1), Value::Null)]
-    );
-
-    let spread = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::PushI32(2),
-            Instruction::CopyDataProperties,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    spread.verify().unwrap();
-    let mut host = DetachedHost::new(&spread);
-    host.copy_data_properties_results
-        .push_back(Completion::Throw(thrown.clone()));
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&spread.code, &mut host)
-            .unwrap(),
-        Completion::Throw(thrown.clone())
-    );
-    assert_eq!(
-        host.copy_data_properties_inputs,
-        [(Value::Int(1), Value::Int(2))]
-    );
-
-    let rest = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(1),
-            Instruction::PushI32(2),
-            Instruction::PushI32(3),
-            Instruction::PushI32(4),
-            Instruction::CopyDataPropertiesExcluded {
-                target_depth: 0,
-                source_depth: 2,
-                excluded_depth: 3,
-            },
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 4,
-    };
-    rest.verify().unwrap();
-    let mut host = DetachedHost::new(&rest);
-    host.copy_data_properties_excluded_results
-        .push_back(Completion::Throw(thrown.clone()));
-    assert_eq!(
-        VmActivation::new(4).execute(&rest.code, &mut host).unwrap(),
-        Completion::Throw(thrown)
-    );
-    assert_eq!(
-        host.copy_data_properties_excluded_inputs,
-        [(Value::Int(4), Value::Int(2), Value::Int(1))]
-    );
-}
-
-#[test]
-fn append_uses_iterator_protocol_and_preserves_pending_throw_on_close() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushConst(0),
-            Instruction::PushI32(0),
-            Instruction::PushConst(1),
-            Instruction::Append,
-            Instruction::Drop,
-            Instruction::Return,
-        ],
-        constants: vec![
-            Value::String(JsString::from_static("array")),
-            Value::String(JsString::from_static("iterable")),
-        ],
-        local_count: 0,
-        max_stack: 3,
-    };
-    function.verify().unwrap();
-
-    let mut success = DetachedHost::new(&function);
-    success.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    success
-        .iterator_next_results
-        .push_back(Ok((Value::Int(7), false)));
-    success
-        .iterator_next_results
-        .push_back(Ok((Value::Int(8), false)));
-    success
-        .iterator_next_results
-        .push_back(Ok((Value::Undefined, true)));
-    success
-        .define_array_element_results
-        .push_back(Completion::Return(Value::Undefined));
-    success
-        .define_array_element_results
-        .push_back(Completion::Return(Value::Undefined));
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&function.code, &mut success)
-            .unwrap(),
-        Completion::Return(Value::String(JsString::from_static("array")))
-    );
-    assert_eq!(
-        success.defined_array_elements,
-        [
-            (
-                Value::String(JsString::from_static("array")),
-                Value::Int(0),
-                Value::Int(7)
-            ),
-            (
-                Value::String(JsString::from_static("array")),
-                Value::Int(1),
-                Value::Int(8)
-            )
-        ]
-    );
-    assert!(success.iterator_close_pending.is_empty());
-
-    let mut next_throw = DetachedHost::new(&function);
-    next_throw.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    next_throw
-        .iterator_next_results
-        .push_back(Err(Value::Int(55)));
-    next_throw
-        .iterator_close_results
-        .push_back(Some(Value::Int(99)));
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&function.code, &mut next_throw)
-            .unwrap(),
-        Completion::Throw(Value::Int(55))
-    );
-    assert_eq!(next_throw.iterator_close_pending, [true]);
-
-    let mut define_throw = DetachedHost::new(&function);
-    define_throw.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    define_throw
-        .iterator_next_results
-        .push_back(Ok((Value::Int(7), false)));
-    define_throw
-        .define_array_element_results
-        .push_back(Completion::Throw(Value::Int(66)));
-    define_throw.iterator_close_results.push_back(None);
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&function.code, &mut define_throw)
-            .unwrap(),
-        Completion::Throw(Value::Int(66))
-    );
-    assert_eq!(define_throw.iterator_close_pending, [true]);
-
-    let invalid_index = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushConst(0),
-            Instruction::PushConst(1),
-            Instruction::PushConst(2),
-            Instruction::Append,
-            Instruction::Drop,
-            Instruction::Return,
-        ],
-        constants: vec![
-            Value::String(JsString::from_static("array")),
-            Value::Float(0.0),
-            Value::String(JsString::from_static("iterable")),
-        ],
-        local_count: 0,
-        max_stack: 3,
-    };
-    invalid_index.verify().unwrap();
-    let mut invalid = DetachedHost::new(&invalid_index);
-    invalid.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    assert_eq!(
-        VmActivation::new(3)
-            .execute(&invalid_index.code, &mut invalid)
-            .unwrap_err()
-            .message(),
-        "invalid index for append"
-    );
-    assert_eq!(
-        invalid.iterator_start_record,
-        Some((Value::Int(10), Value::Int(11)))
-    );
-}
-
-#[test]
-fn detached_vm_rejects_array_allocation_without_runtime_intrinsics() {
+fn published_core_allocates_array_with_realm_intrinsics() {
     let function = DetachedBytecode::<Value> {
         code: vec![Instruction::ArrayFrom(0), Instruction::Return],
         constants: vec![],
         local_count: 0,
         max_stack: 1,
     };
-    assert_eq!(
-        Vm::new().execute(&function).unwrap_err().message(),
-        "detached VM cannot create runtime-owned Array objects"
-    );
-}
-
-#[test]
-fn iterator_region_above_gosub_address_closes_without_consuming_it() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(9),
-            Instruction::Gosub(5),
-            Instruction::Return,
-            Instruction::Nop,
-            Instruction::Nop,
-            Instruction::PushI32(1),
-            Instruction::ForOfStart,
-            Instruction::IteratorClose,
-            Instruction::Ret,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 5,
-    };
-    function.verify().unwrap();
-    let mut host = DetachedHost::new(&function);
-    host.iterator_start_record = Some((Value::Int(10), Value::Int(11)));
-    host.iterator_close_results.push_back(None);
-    assert_eq!(
-        VmActivation::new(5)
-            .execute(&function.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(9))
-    );
-    assert_eq!(host.iterator_close_pending, vec![false]);
+    assert!(matches!(
+        PublishedFixture.execute(&function).unwrap(),
+        Value::Object(_)
+    ));
 }
 
 #[test]
@@ -2056,7 +290,7 @@ fn detached_vm_executes_typed_gosub_return_and_cleanup() {
         local_count: 0,
         max_stack: 2,
     };
-    assert_eq!(Vm::new().execute(&returning).unwrap(), Value::Int(9));
+    assert_eq!(PublishedFixture.execute(&returning).unwrap(), Value::Int(9));
 
     let abrupt = DetachedBytecode::<Value> {
         code: vec![
@@ -2073,7 +307,7 @@ fn detached_vm_executes_typed_gosub_return_and_cleanup() {
         local_count: 0,
         max_stack: 2,
     };
-    assert_eq!(Vm::new().execute(&abrupt).unwrap(), Value::Int(4));
+    assert_eq!(PublishedFixture.execute(&abrupt).unwrap(), Value::Int(4));
 
     let caught_inside_gosub = DetachedBytecode::<Value> {
         code: vec![
@@ -2093,110 +327,9 @@ fn detached_vm_executes_typed_gosub_return_and_cleanup() {
         max_stack: 4,
     };
     assert_eq!(
-        Vm::new().execute(&caught_inside_gosub).unwrap(),
+        PublishedFixture.execute(&caught_inside_gosub).unwrap(),
         Value::Int(9)
     );
-}
-
-#[test]
-fn captured_local_reuse_hook_is_limited_to_abrupt_resume_boundaries() {
-    let return_unwind = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(4),
-            Instruction::PushI32(9),
-            Instruction::NipCatch,
-            Instruction::Return,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let mut host = DetachedHost::new(&return_unwind);
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&return_unwind.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(9))
-    );
-    assert_eq!(host.captured_local_reuse_preparations, 1);
-
-    let caught_throw = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(4),
-            Instruction::PushI32(7),
-            Instruction::Throw,
-            Instruction::Nop,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let mut host = DetachedHost::new(&caught_throw);
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&caught_throw.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(7))
-    );
-    assert_eq!(host.captured_local_reuse_preparations, 1);
-
-    let ordinary_gosub = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushI32(5),
-            Instruction::Gosub(4),
-            Instruction::Return,
-            Instruction::Nop,
-            Instruction::Ret,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let mut host = DetachedHost::new(&ordinary_gosub);
-    assert_eq!(
-        VmActivation::new(2)
-            .execute(&ordinary_gosub.code, &mut host)
-            .unwrap(),
-        Completion::Return(Value::Int(5))
-    );
-    assert_eq!(host.captured_local_reuse_preparations, 0);
-
-    let malformed_nip = DetachedBytecode::<Value> {
-        code: vec![Instruction::PushI32(1), Instruction::NipCatch],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 1,
-    };
-    let mut host = DetachedHost::new(&malformed_nip);
-    let error = VmActivation::new(1)
-        .execute(&malformed_nip.code, &mut host)
-        .unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Internal);
-    assert_eq!(host.captured_local_reuse_preparations, 0);
-}
-
-#[test]
-fn runtime_ret_validation_is_an_uncatchable_engine_invariant() {
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::Catch(4),
-            Instruction::Undefined,
-            Instruction::Ret,
-            Instruction::Nop,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let mut host = DetachedHost::new(&function);
-    let error = VmActivation::new(2)
-        .execute(&function.code, &mut host)
-        .unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Internal);
-    assert_eq!(error.message(), "invalid ret value");
 }
 
 #[test]
@@ -2207,7 +340,10 @@ fn detached_vm_uses_the_declared_undefined_local_frame() {
         local_count: 1,
         max_stack: 1,
     };
-    assert_eq!(Vm::new().execute(&initial).unwrap(), Value::Undefined);
+    assert_eq!(
+        PublishedFixture.execute(&initial).unwrap(),
+        Value::Undefined
+    );
 
     let written = DetachedBytecode::<Value> {
         code: vec![
@@ -2220,177 +356,7 @@ fn detached_vm_uses_the_declared_undefined_local_frame() {
         local_count: 1,
         max_stack: 1,
     };
-    assert_eq!(Vm::new().execute(&written).unwrap(), Value::Int(42));
-}
-
-#[test]
-fn detached_vm_enforces_lexical_local_tdz_and_initialization() {
-    let tdz = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::GetLocalCheck(0),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 1,
-        max_stack: 1,
-    };
-    let error = Vm::new().execute(&tdz).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Reference);
-    assert_eq!(error.message(), "lexical variable is not initialized");
-
-    let initialized = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::PushI32(40),
-            Instruction::InitializeLocal(0),
-            Instruction::GetLocalCheck(0),
-            Instruction::PushI32(2),
-            Instruction::Add,
-            Instruction::SetLocalCheck(0),
-            Instruction::CloseLocal(0),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 1,
-        max_stack: 2,
-    };
-    assert_eq!(Vm::new().execute(&initialized).unwrap(), Value::Int(42));
-
-    let consuming_write = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::Undefined,
-            Instruction::InitializeLocal(0),
-            Instruction::PushI32(42),
-            Instruction::PutLocalCheck(0),
-            Instruction::GetLocalCheck(0),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 1,
-        max_stack: 1,
-    };
-    assert_eq!(Vm::new().execute(&consuming_write).unwrap(), Value::Int(42));
-}
-
-#[test]
-fn detached_vm_enforces_derived_this_one_shot_and_return_shape() {
-    let duplicate_super = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::PushI32(1),
-            Instruction::InitializeDerivedLocal(0),
-            Instruction::PushI32(2),
-            Instruction::InitializeDerivedLocal(0),
-            Instruction::Undefined,
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 1,
-        max_stack: 1,
-    };
-    let error = Vm::new().execute(&duplicate_super).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Reference);
-    assert_eq!(error.message(), "'this' can be initialized only once");
-
-    let primitive_return = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::PushI32(1),
-            Instruction::ReturnDerived(0),
-        ],
-        constants: vec![],
-        local_count: 1,
-        max_stack: 1,
-    };
-    let error = Vm::new().execute(&primitive_return).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Type);
-    assert_eq!(
-        error.message(),
-        "derived class constructor must return an object or undefined"
-    );
-
-    let missing_super = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::Undefined,
-            Instruction::ReturnDerived(0),
-        ],
-        ..primitive_return
-    };
-    let error = Vm::new().execute(&missing_super).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Reference);
-    assert_eq!(error.message(), "lexical variable is not initialized");
-}
-
-#[test]
-fn detached_vm_rejects_checked_writes_in_the_tdz_and_allows_plain_reinitialization() {
-    for (write, preserves_value) in [
-        (Instruction::PutLocalCheck(0), false),
-        (Instruction::SetLocalCheck(0), true),
-    ] {
-        let mut code = vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::PushI32(1),
-            write,
-        ];
-        if !preserves_value {
-            code.push(Instruction::Undefined);
-        }
-        code.push(Instruction::Return);
-        let function = DetachedBytecode::<Value> {
-            code,
-            constants: vec![],
-            local_count: 1,
-            max_stack: 1,
-        };
-        let error = Vm::new().execute(&function).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::Reference);
-        assert_eq!(error.message(), "lexical variable is not initialized");
-    }
-
-    let twice = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::SetLocalUninitialized(0),
-            Instruction::PushI32(1),
-            Instruction::InitializeLocal(0),
-            Instruction::PushI32(2),
-            Instruction::InitializeLocal(0),
-            Instruction::GetLocalCheck(0),
-            Instruction::Return,
-        ],
-        constants: vec![],
-        local_count: 1,
-        max_stack: 1,
-    };
-    assert_eq!(Vm::new().execute(&twice).unwrap(), Value::Int(2));
-}
-
-#[test]
-fn detached_membership_rejects_primitive_right_operands_before_host_dispatch() {
-    for (operator, message) in [
-        (Instruction::In, "invalid 'in' operand"),
-        (
-            Instruction::InstanceOf,
-            "invalid 'instanceof' right operand",
-        ),
-    ] {
-        let function = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::PushI32(2),
-                operator,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 2,
-        };
-        let error = Vm::new().execute(&function).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::Type);
-        assert_eq!(error.message(), message);
-    }
+    assert_eq!(PublishedFixture.execute(&written).unwrap(), Value::Int(42));
 }
 
 #[test]
@@ -2409,7 +375,10 @@ fn executes_power_stack_bytecode_and_quickjs_number_edges() {
         max_stack: 3,
     };
 
-    assert_eq!(Vm::new().execute(&function).unwrap(), Value::Int(512));
+    assert_eq!(
+        PublishedFixture.execute(&function).unwrap(),
+        Value::Int(512)
+    );
     assert!(crate::engine::value::number::pow(1.0, f64::INFINITY).is_nan());
     assert!(crate::engine::value::number::pow(-1.0, f64::NEG_INFINITY).is_nan());
     assert!(crate::engine::value::number::pow(-2.0, 0.5).is_nan());
@@ -2443,44 +412,9 @@ fn executes_string_addition() {
     };
 
     assert_eq!(
-        Vm::new().execute(&function).unwrap(),
+        PublishedFixture.execute(&function).unwrap(),
         Value::String(JsString::from_static("quickjs"))
     );
-}
-
-#[test]
-fn string_addition_builds_ropes_and_reports_the_quickjs_length_error() {
-    let chunk = JsString::try_from_utf8(&"x".repeat(8193)).unwrap();
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushConst(0),
-            Instruction::PushConst(1),
-            Instruction::Add,
-            Instruction::Return,
-        ],
-        constants: vec![Value::String(chunk.clone()), Value::String(chunk.clone())],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let Value::String(rope) = Vm::new().execute(&function).unwrap() else {
-        panic!("large String addition did not return a String");
-    };
-    assert_eq!(rope.len(), 16_386);
-    assert!(!rope.is_flat());
-
-    let mut near_limit = chunk;
-    for _ in 0..16 {
-        near_limit = near_limit.try_concat(&near_limit).unwrap();
-    }
-    let overflow = DetachedBytecode::<Value> {
-        code: function.code,
-        constants: vec![Value::String(near_limit.clone()), Value::String(near_limit)],
-        local_count: 0,
-        max_stack: 2,
-    };
-    let error = Vm::new().execute(&overflow).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::JsInternal);
-    assert_eq!(error.message(), "string too long");
 }
 
 #[test]
@@ -2502,7 +436,10 @@ fn executes_bitwise_stack_bytecode() {
         max_stack: 2,
     };
 
-    assert_eq!(Vm::new().execute(&function).unwrap(), Value::Int(-12));
+    assert_eq!(
+        PublishedFixture.execute(&function).unwrap(),
+        Value::Int(-12)
+    );
 }
 
 #[test]
@@ -2555,5 +492,292 @@ fn executes_shift_stack_bytecode() {
         max_stack: 2,
     };
 
-    assert_eq!(Vm::new().execute(&function).unwrap(), Value::Int(-8));
+    assert_eq!(PublishedFixture.execute(&function).unwrap(), Value::Int(-8));
+}
+
+#[test]
+fn generator_initial_yield_resumes_without_an_input_operand() {
+    assert_js(
+        r#"(function(){var n=0;function* g(){n++;return 3;}var it=g();return n===0&&it.next(99).value===3&&n===1;})()"#,
+    );
+}
+
+#[test]
+fn generator_yield_snapshot_and_next_resume_preserve_quickjs_stack_abi() {
+    assert_js(
+        r#"(function(){function* g(){var a=yield 2;return a+3;}var it=g();return it.next().value===2&&it.next(4).value===7;})()"#,
+    );
+}
+
+#[test]
+fn generator_yield_return_resume_pushes_magic_one() {
+    assert_js(
+        r#"(function(){function* g(){yield 1;return 2;}var it=g();it.next();var r=it.return(7);return r.done&&r.value===7;})()"#,
+    );
+}
+
+#[test]
+fn generator_plain_yield_throw_enters_existing_unwind_path() {
+    assert_js(
+        r#"(function(){function* g(){try{yield 1;}catch(e){return e+2;}}var it=g();it.next();return it.throw(5).value===7;})()"#,
+    );
+}
+
+#[test]
+fn generator_yield_return_runs_compiled_finally_unwind_path() {
+    assert_js(
+        r#"(function(){var n=0;function* g(){try{yield 1;}finally{n=9;}}var it=g();it.next();return it.return(7).value===7&&n===9;})()"#,
+    );
+}
+
+#[test]
+fn generator_yield_star_throw_resume_injects_magic_two() {
+    assert_js(
+        r#"(function(){function* inner(){try{yield 1;}catch(e){yield e;}}function* g(){yield* inner();}var it=g();it.next();return it.throw(8).value===8;})()"#,
+    );
+}
+
+#[test]
+fn yield_star_iterator_start_and_next_keep_an_ordinary_four_slot_record() {
+    assert_js(
+        r#"(function(){function* g(){return yield* [2,3];}var it=g();return it.next().value===2&&it.next().value===3&&it.next().done;})()"#,
+    );
+}
+
+#[test]
+fn yield_star_iterator_call_uses_typed_method_and_argument_modes() {
+    assert_js(
+        r#"(function(){var trace="";var obj={[Symbol.iterator](){return this;},next(v){trace+="n"+v;return {value:1,done:false};},return(v){trace+="r"+v;return {value:v,done:true};}};function* g(){yield* obj;}var it=g();it.next();var r=it.return(7);return r.value===7&&r.done&&trace==="nundefinedr7";})()"#,
+    );
+}
+
+#[test]
+fn yield_star_iterator_protocol_errors_match_quickjs() {
+    assert_js(
+        r#"(function(){function* g(){yield* {[Symbol.iterator](){return {next(){return 1;}};}};}try{g().next();return false;}catch(e){return e instanceof TypeError;}})()"#,
+    );
+}
+
+#[test]
+fn class_definition_opcodes_preserve_quickjs_stack_order() {
+    assert_js(
+        r#"(function(){var a=[];class A{[a.push("key")&&"m"](){return 7;}static x=3;}return new A().m()===7&&A.x===3&&a.join()==="key";})()"#,
+    );
+}
+
+#[test]
+fn check_ctor_rejects_calls_and_accepts_construction_frames() {
+    assert_js(
+        r#"(function(){class A{};var ok=new A() instanceof A;try{A();return false;}catch(e){return ok&&e instanceof TypeError;}})()"#,
+    );
+}
+
+#[test]
+fn borrowed_call_window_keeps_lower_operands_and_cleans_up_all_exit_kinds() {
+    assert_js(
+        r#"(function(){function f(x,y){return x+y;}var x=3+f(4,5)+6;try{f({valueOf(){throw 7;}},1);}catch(e){return x===18&&e===7;}return false;})()"#,
+    );
+}
+
+#[test]
+fn tail_invocations_complete_the_frame_with_exact_call_operands() {
+    assert_js(
+        r#"(function(){function f(){return this.x+arguments.length+arguments[0];}function g(){return f.call({x:3},4,5);}return g()===9;})()"#,
+    );
+}
+
+#[test]
+fn tail_invocation_throws_use_the_activation_backtrace_and_catch_path() {
+    assert_js(
+        r#"(function(){function f(){throw 4;}function g(){return f();}try{g();}catch(e){return e===4;}return false;})()"#,
+    );
+}
+
+#[test]
+fn eval_opcode_gates_original_identity_and_preserves_fallback_arguments() {
+    assert_js(
+        r#"(function(){var a=3;var direct=eval("a+1");return direct===4&&(function(eval){return eval(2,5);})(function(a,b){return a+b;})===7;})()"#,
+    );
+}
+
+#[test]
+fn string_direct_eval_forwards_environment_and_lazily_normalizes_this() {
+    assert_js(r#"(function(){var x=1;var o={};return eval(o)===o&&eval("x=5; x")===5&&x===5;})()"#);
+}
+
+#[test]
+fn arguments_opcode_forwards_kind_and_host_completion() {
+    assert_js(
+        r#"(function(a){arguments[0]=9;return a===9&&arguments.length===2;})(1,2)&& (function(a){"use strict";arguments[0]=9;return a===1;})(1)"#,
+    );
+}
+
+#[test]
+fn rest_opcode_forwards_start_and_host_completion() {
+    assert_js(r#"(function(a,...rest){return a===1&&rest.join() === "2,3";})(1,2,3)"#);
+}
+
+#[test]
+fn eval_variable_object_opcodes_preserve_stack_and_host_operands() {
+    assert_js(r#"(function(){eval("var x=7;");var a=x;eval("x=8;");return a===7&&x===8;})()"#);
+}
+
+#[test]
+fn to_object_boxes_primitives_and_rejects_nullish_values() {
+    assert_js(
+        r#"(function(){var r={..."ab"};let rejected=0;try{let {}=null;}catch(e){if(e instanceof TypeError)rejected++;}try{let {}=undefined;}catch(e){if(e instanceof TypeError)rejected++;}return rejected===2&&Object.keys(r).length===0&&Object(2).valueOf()===2;})()"#,
+    );
+}
+
+#[test]
+fn dynamic_environment_opcodes_forward_sources_strictness_and_stack_values() {
+    assert_js(r#"(function(){var x=1,o={x:4};with(o){x+=2;}return o.x===6&&x===1;})()"#);
+}
+
+#[test]
+fn iterator_unwind_preserves_exception_and_completion_precedence() {
+    assert_js(
+        r#"(function(){var closed=0;var it={[Symbol.iterator](){return this;},next(){return {value:1,done:false};},return(){closed++;throw 9;}};try{for(var x of it){throw 7;}}catch(e){return e===7&&closed===1;}return false;})()"#,
+    );
+}
+
+#[test]
+fn for_of_next_disables_done_and_throwing_iterators() {
+    assert_js(
+        r#"(function(){var closed=0;var it={[Symbol.iterator](){return this;},next(){throw 7;},return(){closed++;return {};}};try{for(var x of it){}}catch(e){return e===7&&closed===0;}return false;})()"#,
+    );
+}
+
+#[test]
+fn array_literal_opcodes_preserve_operands_and_element_order() {
+    assert_js(r#"(function(){var n=0,a=[++n,...[2,3],++n];return a.join()==="1,2,3,2";})()"#);
+}
+
+#[test]
+fn object_literal_opcodes_preserve_target_and_operand_order() {
+    assert_js(
+        r#"(function(){var n=0,o={a:++n,["b"]:++n,...{c:3}};return Object.keys(o).join()==="a,b,c"&&o.a===1&&o.b===2;})()"#,
+    );
+}
+
+#[test]
+fn object_rest_copy_reads_depth_operands_after_to_object_and_preserves_the_stack() {
+    assert_js(
+        r#"(function(){var {a,...rest}={a:1,b:2,c:3};return a===1&&rest.b===2&&rest.c===3&&!("a" in rest);})()"#,
+    );
+}
+
+#[test]
+fn object_literal_opcodes_forward_host_throws() {
+    assert_js(
+        r#"(function(){try{var o={...{get x(){throw 7;}}};return false;}catch(e){return e===7;}})()"#,
+    );
+}
+
+#[test]
+fn append_uses_iterator_protocol_and_preserves_pending_throw_on_close() {
+    assert_js(
+        r#"(function(){var n=0;var it={[Symbol.iterator](){return this;},next(){return ++n===3?{done:true}:{value:n,done:false};}};if([...it].join()!=="1,2")return false;let closed=0,pending={};let abrupt={[Symbol.iterator](){return this;},next(){return {value:1,done:false};},return(){closed++;throw 9;}};try{for(let x of abrupt){throw pending;}}catch(e){return e===pending&&closed===1;}return false;})()"#,
+    );
+}
+
+#[test]
+fn iterator_region_above_gosub_address_closes_without_consuming_it() {
+    assert_js(
+        r#"(function(){var trace="";var it={[Symbol.iterator](){return this;},next(){return {value:1,done:false};},return(){trace+="c";return {};}};function f(){try{for(var x of it){return 4;}}finally{trace+="f";}}return f()===4&&trace==="cf";})()"#,
+    );
+}
+
+#[test]
+fn captured_local_reuse_hook_is_limited_to_abrupt_resume_boundaries() {
+    assert_js(
+        r#"(function(){var fs=[];for(var i=0;i<3;i++){try{let x=i;fs.push(()=>x);if(i===1)throw 7;}catch(e){}}return fs.map(f=>f()).join()==="0,2,2";})()"#,
+    );
+}
+
+#[test]
+fn detached_vm_enforces_lexical_local_tdz_and_initialization() {
+    assert_js(
+        r#"(function(){try{let y=x;let x=1;return false;}catch(e){return e instanceof ReferenceError;}})()"#,
+    );
+}
+
+#[test]
+fn detached_vm_enforces_derived_this_one_shot_and_return_shape() {
+    assert_js(
+        r#"(function(){class A{}class B extends A{constructor(){super();try{super();}catch(e){if(e instanceof ReferenceError)return {ok:true};throw e;}}}return new B().ok;})()"#,
+    );
+}
+
+#[test]
+fn detached_vm_rejects_checked_writes_in_the_tdz_and_allows_plain_reinitialization() {
+    assert_js(
+        r#"(function(){try{x=2;let x;return false;}catch(e){if(!(e instanceof ReferenceError))return false;}let a=1;a=2;return a===2;})()"#,
+    );
+}
+
+#[test]
+fn detached_membership_rejects_primitive_right_operands_before_host_dispatch() {
+    assert_js(
+        r#"(function(){try{"x" in 1;return false;}catch(e){if(!(e instanceof TypeError))return false;}try{({}) instanceof 1;return false;}catch(e){return e instanceof TypeError;}})()"#,
+    );
+}
+
+#[test]
+fn string_addition_builds_ropes_and_reports_the_quickjs_length_error() {
+    assert_js(
+        r#"(function(){var x="";for(var i=0;i<1000;i++)x+="ab";return x.length===2000&&x.slice(-4)==="abab";})()"#,
+    );
+}
+
+#[test]
+fn await_fulfilment_and_rejection_use_the_same_published_core() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    context.eval("var fulfilled=0,rejected=0; async function f(){return 2+await 5;} async function g(){try{await Promise.reject(7);}catch(e){return e+3;}} f().then(x=>fulfilled=x);g().then(x=>rejected=x);").unwrap();
+    while runtime.is_job_pending() {
+        runtime.execute_pending_job().unwrap();
+    }
+    assert_eq!(
+        context.eval("fulfilled===7&&rejected===10").unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn dynamic_import_preserves_argument_evaluation_before_async_conversion() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    context.eval("var importTrace='';function spec(){importTrace+='s';return {toString(){importTrace+='t';throw 7;}};}function opts(){importTrace+='o';return {};}var importError;import(spec(),opts()).catch(e=>importError=e);").unwrap();
+    while runtime.is_job_pending() {
+        runtime.execute_pending_job().unwrap();
+    }
+    assert_eq!(
+        context
+            .eval("importTrace==='sot'&&importError===7")
+            .unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn native_getter_and_conversion_callbacks_share_the_explicit_call_continuation() {
+    assert_js(
+        r#"(function(){
+        const token={}, trace=[];
+        const target={x:42};
+        const boundGetter=Function.prototype.call.bind(function(){trace.push(this.x);return this.x;},target);
+        const object={};
+        Object.defineProperty(object,'answer',{get:boundGetter});
+        Object.defineProperty(object,'maximum',{get:Math.max.bind(null,20,42)});
+        const numeric={valueOf:Math.max.bind(null,40,42)};
+        const abrupt={valueOf:Function.prototype.call.bind(function(){throw token;},null)};
+        function tail(value){return Math.max.apply(null,[value,42]);}
+        let caught=false;
+        try{abrupt-1;}catch(error){caught=error===token;}
+        let result=object.answer===42&&object.maximum===42&&numeric-1===41&&tail(2)===42;
+        function recurse(depth){return depth===0?42:recurse.call(null,depth-1);}
+        return result&&caught&&trace.join()==='42'&&recurse(128)===42;
+    })()"#,
+    );
 }

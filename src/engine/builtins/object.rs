@@ -132,19 +132,6 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn object_iterator_next(
-        &self,
-        realm: ContextId,
-        iterator: &ObjectRef,
-        next_method: Value,
-    ) -> Result<ObjectIteratorStep, RuntimeError> {
-        super::iterator::step::finish_next(
-            self,
-            realm,
-            super::iterator::step::NextStep::start(self, realm, iterator.clone(), next_method)?,
-        )
-    }
-
     pub(crate) fn initialize_object_prototype_intrinsics(
         &self,
         realm: ContextId,
@@ -706,7 +693,8 @@ impl Runtime {
         if let ArrayOwnKey::Index(index) = self.array_own_key(object, key)? {
             let (length, writable) = self.array_length_state(object)?;
             if index >= length && !writable {
-                let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+                let length =
+                    self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                 let error =
                     self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?;
                 return self.new_native_error_from_error(realm, NativeErrorKind::Type, &error);
@@ -1051,52 +1039,6 @@ impl Runtime {
             .get(1)
             .ok_or(RuntimeError::Invariant("Object.is rhs argv was not padded"))?;
         Ok(Completion::Return(Value::Bool(left.same_value(right))))
-    }
-
-    /// Pinned QuickJS `JS_CopyDataProperties(..., setprop = 0)` as used by an
-    /// Object literal spread. This intentionally preserves two upstream
-    /// details which differ from a naive spec helper reuse:
-    ///
-    /// - primitive sources are ignored instead of being boxed;
-    /// - ordinary sources snapshot their enumerable key set before any getter
-    ///   runs, while each value lookup remains live and may reach a prototype
-    ///   after an earlier getter deletes an own property.
-    pub(crate) fn copy_object_literal_data_properties(
-        &self,
-        realm: ContextId,
-        target: &ObjectRef,
-        source: Value,
-    ) -> Result<Completion, RuntimeError> {
-        copy::finish(
-            self,
-            realm,
-            copy::CopyStep::start(self, target.clone(), source, None)?,
-        )
-    }
-
-    /// Exclusion-aware `JS_CopyDataProperties(..., setprop = 0)` for Object
-    /// rest. The caller has already performed the binding pattern's leading
-    /// `ToObject`, and `excluded` is the private fresh Object populated with
-    /// every String/Symbol key consumed by an earlier binding property. The
-    /// Ordinary sources follow QuickJS's enumerable-at-snapshot path; Proxy
-    /// sources select the live descriptor path in the shared helper above.
-    pub(crate) fn copy_object_rest_data_properties(
-        &self,
-        realm: ContextId,
-        target: &ObjectRef,
-        source: &ObjectRef,
-        excluded: &ObjectRef,
-    ) -> Result<Completion, RuntimeError> {
-        copy::finish(
-            self,
-            realm,
-            copy::CopyStep::start(
-                self,
-                target.clone(),
-                Value::Object(source.clone()),
-                Some(excluded.clone()),
-            )?,
-        )
     }
 
     pub(crate) fn call_object_assign(

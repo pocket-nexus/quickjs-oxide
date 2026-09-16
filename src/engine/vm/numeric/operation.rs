@@ -534,7 +534,7 @@ fn equality(
     }
 }
 
-#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+#[cfg(all(test, feature = "profiling"))]
 mod tests {
     use crate::engine::{
         api::{profiling::CostProfile, runtime::Runtime},

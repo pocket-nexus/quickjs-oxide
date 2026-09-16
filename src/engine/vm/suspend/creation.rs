@@ -65,6 +65,8 @@ impl GeneratorCreation {
 }
 
 impl GeneratorPrototype {
+    // The suspended activation stays boxed across prototype lookup and is consumed only in this reply handler.
+    #[allow(clippy::boxed_local)]
     pub(in crate::engine::vm) fn resume(
         self: Box<Self>,
         runtime: &Runtime,

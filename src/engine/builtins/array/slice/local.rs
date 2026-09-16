@@ -1,6 +1,6 @@
 //! Finish no-callback slice stages before transporting a waiting domain state.
 use super::*;
-use crate::engine::object::{OrdinaryRead, PreparedHas};
+use crate::engine::object::OrdinaryRead;
 use crate::engine::value::conversion::number::NumberStep;
 
 impl SliceStep {
@@ -19,7 +19,7 @@ impl SliceStep {
                     };
                     match runtime.prepare_ordinary_read_borrowed(object, &key, &receiver)? {
                         OrdinaryRead::Complete(value) => {
-                            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                            #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_execution_event(
                                 "array_slice_local_read",
                             );
@@ -29,19 +29,6 @@ impl SliceStep {
                             )?
                         }
                         read => return Ok(Self::make_preparedread(read, key, resume)),
-                    }
-                }
-                Self::Has { mut resume } => {
-                    let (object, key) = resume.take_has();
-                    match runtime.prepare_has_property(&object, &key)? {
-                        PreparedHas::Complete(value) => {
-                            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
-                            crate::engine::api::profiling::record_owned_execution_event(
-                                "array_slice_local_has",
-                            );
-                            resume.boolean_once(runtime, NativeConversion::Value(value))?
-                        }
-                        probe => return Ok(Self::make_preparedhas(probe, key, resume)),
                     }
                 }
                 Self::Number { mut resume }
@@ -101,7 +88,7 @@ pub(super) fn define_local(
             NativeConversion::Throw(value)
         }
     };
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("array_slice_local_define");
     Ok(result)
 }
@@ -208,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     fn slice_local_progress_reports_shared_read_has_define_hits() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -217,16 +204,60 @@ mod tests {
             context.eval("[1,2,3].slice().length").unwrap(),
             Value::Int(3)
         );
-        let cost = profile.snapshot();
-        for event in [
-            "array_slice_local_read",
-            "array_slice_local_has",
-            "array_slice_local_define",
-        ] {
-            assert!(
-                cost.owned_execution_events.get(event).copied().unwrap_or(0) >= 3,
-                "missing {event}"
+        let dense = profile.snapshot();
+        assert_eq!(
+            dense
+                .owned_execution_events
+                .get("array_slice_dense_batch")
+                .copied()
+                .unwrap_or(0),
+            1
+        );
+        // The initial length Get precedes species selection and the dense
+        // payload guard. Batching removes element reads, not that required Get.
+        assert_eq!(
+            dense
+                .owned_execution_events
+                .get("array_slice_local_read")
+                .copied()
+                .unwrap_or(0),
+            1
+        );
+        for event in ["array_slice_local_has", "array_slice_local_define"] {
+            assert_eq!(
+                dense
+                    .owned_execution_events
+                    .get(event)
+                    .copied()
+                    .unwrap_or(0),
+                0,
+                "{event}"
             );
         }
+        // Generic array-like storage cannot use the dense Array payload path.
+        assert_eq!(
+            context
+                .eval("Array.prototype.slice.call({0:1,1:2,2:3,length:3}).length")
+                .unwrap(),
+            Value::Int(3)
+        );
+        let cost = profile.snapshot();
+        for (event, expected) in [
+            ("array_slice_local_read", 4), // length plus three present elements
+            ("array_slice_local_has", 3),
+            ("array_slice_local_define", 3),
+        ] {
+            let before = dense
+                .owned_execution_events
+                .get(event)
+                .copied()
+                .unwrap_or(0);
+            let after = cost.owned_execution_events.get(event).copied().unwrap_or(0);
+            assert_eq!(after - before, expected, "{event}");
+        }
+        assert_eq!(
+            cost.owned_execution_events.get("array_slice_dense_batch"),
+            dense.owned_execution_events.get("array_slice_dense_batch")
+        );
     }
 }

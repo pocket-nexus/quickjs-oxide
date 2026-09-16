@@ -28,3 +28,15 @@ or exclusive append. It keeps the receiver stack operand and consumes the value.
 Delete admits ordinary own configurable Data slots (or an absent own key), uses
 the dictionary-aware delete transaction and produces true. Nonconfigurable and
 exotic cases retain canonical strict-mode and callback behavior.
+
+## Observation protocol assessment (S15.6)
+
+A universal pull protocol would need every error, backtrace, host reentry,
+suspension and owner-release observer to reach the currently borrowed FrameStore.
+The current Runtime-only observers cannot safely recover that mutable store;
+adding a second registry or a hidden pointer would duplicate frame identity and
+unwind ownership. This stage therefore retains explicit observation boundaries,
+centralizes exit classification, and skips unchanged published PCs. S18 narrows
+native ancestor publication using authenticated NoJS inputs while retaining an
+inline logical native descriptor for existing observers and budget accounting.
+A broader pull redesign is not needed for the implemented residency paths.

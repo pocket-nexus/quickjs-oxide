@@ -1,6 +1,6 @@
 //! Ordered text coercions share the existing callback-free string kernels.
 use super::create_html_definition;
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -24,7 +24,6 @@ pub(crate) enum StringTextKind {
     Html(StringCreateHtmlKind),
 }
 impl StringTextKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::StringPrototypeTrim(kind) => Self::Trim(kind),
@@ -85,7 +84,6 @@ enum TextPhase {
     },
 }
 impl StringTextStep {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,

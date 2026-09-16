@@ -313,7 +313,8 @@ impl RegExpSplitResume {
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpSplitStep, RuntimeError> {
-        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let key =
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let result = match runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             Some(value) => Completion::Throw(value),
             None => Completion::Return(Value::Undefined),
@@ -484,7 +485,8 @@ impl RegExpSplitResume {
                 }
                 Value::Object(matched) => Ok(RegExpSplitStep::make_read(
                     state.splitter.clone(),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
+                    runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     Self(Box::new(RegExpSplitResumeState {
                         step_pending: RegExpSplitStepPending::default(),
                         realm,

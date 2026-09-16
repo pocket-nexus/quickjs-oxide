@@ -39,14 +39,14 @@ impl Number {
             Self::Float(value)
         }
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn float(self) -> f64 {
         match self {
             Self::Int(value) => f64::from(value),
             Self::Float(value) => value,
         }
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn add(self, rhs: Self) -> Self {
         if let (Self::Int(a), Self::Int(b)) = (self, rhs) {
             if let Some(value) = a.checked_add(b) {
@@ -55,7 +55,7 @@ impl Number {
         }
         Self::compact(self.float() + rhs.float())
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn sub(self, rhs: Self) -> Self {
         if let (Self::Int(a), Self::Int(b)) = (self, rhs) {
             if let Some(value) = a.checked_sub(b) {
@@ -64,23 +64,23 @@ impl Number {
         }
         Self::compact(self.float() - rhs.float())
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn mul(self, rhs: Self) -> Self {
         Self::compact(self.float() * rhs.float())
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn div(self, rhs: Self) -> Self {
         Self::compact(self.float() / rhs.float())
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn rem(self, rhs: Self) -> Self {
         Self::compact(self.float() % rhs.float())
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn pow(self, rhs: Self) -> Self {
         Self::compact(pow(self.float(), rhs.float()))
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fn int32(self) -> i32 {
         super::integer::to_int32(self.float())
     }

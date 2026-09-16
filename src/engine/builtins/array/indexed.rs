@@ -1,5 +1,5 @@
 //! Indexed Array algorithms expose property and numeric conversion boundaries.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -22,7 +22,6 @@ pub(crate) enum IndexedKind {
     ToReversed,
 }
 impl IndexedKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::ArrayPrototypeAt => Self::At,

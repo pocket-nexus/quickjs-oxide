@@ -14,6 +14,9 @@ printf '%s\n' 'mod binary_object;' > "$fixture/src/engine/code/mod.rs"
 cp -- "$repository_root/src/engine/code/bytecode.rs" "$fixture/src/engine/code/bytecode.rs"
 cp -- "$repository_root/src/engine/code/instruction.rs" "$fixture/src/engine/code/instruction.rs"
 cp -- "$repository_root/src/engine/vm/mod.rs" "$fixture/src/engine/vm/mod.rs"
+# S13 primitive publication is consumed by run and its pure-operation driver.
+cp -- "$repository_root/src/engine/vm/run.rs" "$fixture/src/engine/vm/run.rs"
+cp -- "$repository_root/src/engine/vm/pure_operations.rs" "$fixture/src/engine/vm/pure_operations.rs"
 cp -- "$repository_root/src/engine/value/mod.rs" "$fixture/src/engine/value/mod.rs"
 cp -- "$repository_root/src/engine/atom/mod.rs" "$fixture/src/engine/atom/mod.rs"
 cp -- "$repository_root/src/engine/code/function.rs" "$fixture/src/engine/code/function.rs"
@@ -350,15 +353,11 @@ printf '%s\n' \
     > "$fixture/src/engine/code/binary_object/graph/sab_transport.rs"
 
 # VM evidence is split across its registered implementation owners.
+cp -- "$repository_root/src/engine/vm/root_call.rs" "$fixture/src/engine/vm/root_call.rs"
 cp -- "$repository_root/src/engine/vm/protocol.rs" "$fixture/src/engine/vm/protocol.rs"
 cp -- "$repository_root/src/engine/vm/completion.rs" "$fixture/src/engine/vm/completion.rs"
 cp -- "$repository_root/src/engine/vm/numeric.rs" "$fixture/src/engine/vm/numeric.rs"
-cp -- "$repository_root/src/engine/vm/detached.rs" "$fixture/src/engine/vm/detached.rs"
 cp -- "$repository_root/src/engine/vm/activation.rs" "$fixture/src/engine/vm/activation.rs"
-cp -- "$repository_root/src/engine/vm/dispatch.rs" "$fixture/src/engine/vm/dispatch.rs"
-cp -- "$repository_root/src/engine/vm/numeric_execution.rs" "$fixture/src/engine/vm/numeric_execution.rs"
-cp -- "$repository_root/src/engine/vm/unwind.rs" "$fixture/src/engine/vm/unwind.rs"
-cp -- "$repository_root/src/engine/vm/frame_execution.rs" "$fixture/src/engine/vm/frame_execution.rs"
 cp -- "$repository_root/src/engine/vm/tests.rs" "$fixture/src/engine/vm/tests.rs"
 
 scan_root "$fixture" "$boundary_self_test_token" \

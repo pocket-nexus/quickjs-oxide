@@ -1,5 +1,5 @@
 //! Shared Object/Reflect prototype algorithms, returning internal-method requests.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::{NativeFunctionId, ReflectKind};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -23,7 +23,6 @@ pub(crate) enum BuiltinPrototypeKind {
     ReflectSet,
 }
 impl BuiltinPrototypeKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::ObjectPrototypeProtoGetter => Self::Getter,

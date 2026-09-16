@@ -4,9 +4,11 @@
 
 **阶段指引的适用范围：**本文中的技术选型、覆盖顺序和实现策略描述对应阶段的实施方案与历史结果，不构成项目级优化禁令。后续可以采用运行期 shape/位置/属性值缓存、解析结果缓存、多态 IC、PGO 及其他优化；按语义、失效、所有权和性能证据评估方案。用户明确的执行约束继续有效。
 
-状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](performance/README.md)，[N1–N3 报告](performance/README.md)保留为直接前版证据。全部残余差值（fixed/探针/Score/RSS/编译五类清单）的实现层根因（十类，含 Profile 计数、probe 事件计数与 file:line 证据；其中编译 5 项判定为单轮测量伪影、RSS 2 项判定为映像差归 S13）与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)，对应提交单元见文末[《S14–S20 修复阶段》](#s14s20-修复阶段2026-09-15-立项)。
+状态：S14–S20 的计划内实现已分别落地；S13 已删除旧 VmHost/activation/驱动及 stack-vm 配置开关，所有入口使用新核心。当前正在完成联合语义门禁与额外覆盖核对，尚未执行本轮最终 benchmark/Profile，不能据此宣称性能退出条件已通过。阶段覆盖记录见文末及[执行计划](primitive-vm-s14-s20-execution-plan.md)。
 
-**用户最新执行约束（2026-09-15）：后续仅构建、测试、benchmark 和 Profile 新执行核心（当前 `--features stack-vm`）。不再构建或运行旧 default 执行路径，也不重跑 S0/S07/S08 等历史候选；旧数据只读取已有记录。本文以前要求 default/stack-vm 双配置或新旧对跑的流程不再适用。历史已执行记录保留，但不能据此再次启动旧路径。Test262/语义 oracle 仍用于核对新核心，不把它们误称为另一个性能候选。**
+**上一轮历史状态（S10–S12 被测版本，不代表当前代码）：**状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](performance/README.md)，[N1–N3 报告](performance/README.md)保留为直接前版证据。全部残余差值（fixed/探针/Score/RSS/编译五类清单）的实现层根因（十类，含 Profile 计数、probe 事件计数与 file:line 证据；其中编译 5 项判定为单轮测量伪影、RSS 2 项判定为映像差归 S13）与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)，对应提交单元见文末[《S14–S20 修复阶段》](#s14s20-修复阶段2026-09-15-立项)。
+
+**用户最新执行约束（2026-09-15）：后续仅构建、测试、benchmark 和 Profile 新执行核心（S13 后为唯一默认执行核心，无需 feature 开关）。不再构建或运行旧 default 执行路径，也不重跑 S0/S07/S08 等历史候选；旧数据只读取已有记录。本文以前要求 default/stack-vm 双配置或新旧对跑的流程不再适用。历史已执行记录保留，但不能据此再次启动旧路径。Test262/语义 oracle 仍用于核对新核心，不把它们误称为另一个性能候选。**
 
 **本次明确例外（三轮公平复测，2026-09-15，已完成）：**用户随后明确要求重新运行 S0 与当前实现各三轮完整 benchmark/Profile。本次允许构建和运行精确 S0（`c52d4dc`，与历史 S0 普通二进制源码 `1cc51bb5` 的差异仅为 Markdown）和当前新核心两个候选；不加入当前旧 default 路径或 S07/S08 等中间版本。两边同工具链、release 参数、相同编译探针源码和冻结输入，逐用例交错，正式耗时与 Profile 分开；58 fixed、67 compile、原始八项/combined、33 探针及内存控制各三轮，CPU/成本 Profile 覆盖全部 58 fixed。原始单项上限 180 秒、combined 600 秒，两边相同，失败与超时原样保留，不补样替换。新报告以两边本次三轮中位数、配对差值及原始范围为准；旧单轮报告保留为历史，不混入新统计。此例外不恢复以后例行运行旧 default 的流程。
 
@@ -793,3 +795,24 @@ S12 证据：[布局失效审计](performance/README.md)。SetProperty own-data 
 | S20 | `perf(heap): box context payloads and reduce per-value bookkeeping` | R6 | ArenaSlot 904B→约 100B；memcpy/`release_raw_no_drain` self 收敛（RSS 不在本单元，见 S13/R9） |
 
 每个提交单元的逐工序步骤（文件/函数级改动、测试与验证命令、内部执行顺序）见[执行计划](primitive-vm-s14-s20-execution-plan.md)。每个提交单元沿用本文的验收纪律：机械计数先于耗时结论、三轮公平复测（S0 复用旧三轮）、单变量归因、全部语义门禁；实现期间不做中途 benchmark/Profile。新增测量口径约束（修复计划 §4）：对比一律三轮中位对三轮中位，正式轮要求 performance governor 且记录 loadavg/频率，超限样本作废——单轮对历史中位曾制造 v8-deltablue 编译 +95.89% 的假回退。设计文档先行修订项（owned-fusion 的 ConvertAdd 条款、写 IC 失效语义、shape 转移表字典化边界、S18 的属性驱动被调帧惰性观察边界）在对应阶段动代码前完成。第 5 节的"10 个完整提交单元"描述原 PR 组织，本序列作为后续提交单元延续同一审查规则。
+
+
+## S13–S20 本次交付账本（2026-09-16）
+
+全部代码已完成额外逐项覆盖复核；补齐内容包括静态 key 缓存回收、延后 DefineField/delete、native 选择完整性与最后同步迁移桥退役。旧 VmHost/activation/重复驱动及配置开关已删除，根调用和挂起恢复直接进入唯一新核心。阶段代码按以下提交组织，S13 清理提交承接全配置整理、实际路径门禁迁移和最终覆盖补漏：
+
+| 阶段 | 提交 | 交付 |
+| --- | --- | --- |
+| S14 | `51183152` | ASCII 直通、独占字符串追加、Math 冷布局 |
+| S15 | `50e3a9dc` | 原语驻留、PC 发布去重 |
+| S16 读 | `836818cc` | exotic 命名读、双态 IC、全局 cell |
+| S17 | `d949185e` | 弱 shape 转移、atom/集合查找、dense slice |
+| S16 写 / 延后 S15 | `8198f0d7` | 写 IC、元素读写、DefineField/delete |
+| S18 | `197bd2d2` | getter/Proxy/native 惰性观察及借用调用 |
+| S19 | `4e8171f8` | 正则借用输入、验证事实与结果布局复用 |
+| S20 | `429effc7` | Context 装箱、零引用回收、inline edges、稀疏 IC |
+| S13 | 本次后续提交 | 唯一执行核心、旧桥退役、语义测试/静态反例迁移 |
+
+覆盖表见[执行计划](primitive-vm-s14-s20-execution-plan.md)、[S16/S17/S20 复核](primitive-vm-s16-s17-s20-coverage.md)及[迁移账本](primitive-vm-migration.md#s13-单执行核心退役实现与测试迁移)。S18 内联 native 描述符与 S20 实际布局尺寸已如实修订方案说明；实现完成不等于原性能目标已通过。
+
+联合语义门禁进行中；测量只允许最终代码单轮，S0 与 QuickJS 读取本地留存数据。性能结果及原始证据仅写入本地忽略目录，索引见[本地产物说明](performance/README.md)。

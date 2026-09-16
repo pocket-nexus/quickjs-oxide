@@ -127,7 +127,8 @@ impl ConstructorResume {
                         return Ok(ConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
-            let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+            let key =
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
             // Fresh Array own length and an already validated Number cannot invoke JavaScript.
             match runtime.define_own_property_in_realm(
                 Some(self.0.realm),

@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const stackVm = process.argv[2] === "--stack-vm";
-assert.deepEqual(process.argv.slice(2), stackVm ? ["--stack-vm"] : []);
+const stackVm = true;
+assert.deepEqual(process.argv.slice(2), []);
 
 const require = createRequire(import.meta.url);
 const metricsModulePath = path.resolve(

@@ -252,6 +252,9 @@ impl Runtime {
     }
 }
 
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<PrimitiveStep>() <= 64);
+
 #[cfg(test)]
 mod resident_request_tests {
     use super::*;
@@ -295,6 +298,3 @@ mod resident_request_tests {
         ));
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<PrimitiveStep>() <= 64);

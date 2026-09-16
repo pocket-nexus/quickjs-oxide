@@ -335,7 +335,8 @@ impl TypedSpeciesStep {
     ) -> Result<Self, RuntimeError> {
         Ok(Self::Read {
             object: input.source.clone(),
-            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
+            key: runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
             resume: TypedSpeciesResume(Box::new(TypedSpeciesResumeState {
                 realm,
                 phase: SpeciesPhase::Constructor(input),

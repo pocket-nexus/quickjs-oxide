@@ -403,7 +403,7 @@ fn import_declaration_collisions_match_pinned_quickjs_single_slot_semantics() {
     assert_eq!(snapshot.state, PromiseState::Rejected);
     assert!(matches!(snapshot.result, RawValue::Object(_)));
 }
-#[cfg(all(feature = "stack-vm", feature = "profiling"))]
+#[cfg(feature = "profiling")]
 #[test]
 fn normal_calls_keep_import_views_readonly_in_the_owned_driver() {
     use crate::engine::api::profiling::CostProfile;

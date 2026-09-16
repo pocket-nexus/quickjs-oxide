@@ -8,40 +8,40 @@
 //! syntax remains a separate parity slice.
 
 mod compile;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use compile::{RegExpCompileResume, RegExpCompileStep};
 mod constructor;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use constructor::{RegExpConstructorResume, RegExpConstructorStep};
 mod escape;
 mod exec;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use exec::{RegExpExecResume, RegExpExecStep};
 mod iterator_next;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use iterator_next::{RegExpIteratorResume, RegExpIteratorStep};
 mod match_all;
 mod match_all_protocol;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use match_all_protocol::{RegExpMatchAllResume, RegExpMatchAllStep};
 mod match_protocol;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use match_protocol::{RegExpMatchResume, RegExpMatchStep};
 mod prototype;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use prototype::{RegExpPresentationResume, RegExpPresentationStep};
 mod replace;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use replace::{RegExpReplaceResume, RegExpReplaceStep};
 mod result;
 mod search;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use search::{RegExpSearchResume, RegExpSearchStep};
 mod species;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use species::{RegExpSpeciesResume, RegExpSpeciesStep};
 mod split;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use split::{RegExpSplitResume, RegExpSplitStep};
 #[cfg(test)]
 mod tests;
@@ -271,7 +271,8 @@ impl Runtime {
         // QuickJS retains a realm-local canonical shape for literal-created
         // RegExp objects.  Constructors with a custom derived prototype use a
         // shape with the same property layout but that explicit prototype.
-        let last_index = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let last_index =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let entries = [ShapeEntry {
             atom: last_index.atom(),
             flags: PropertyFlags::data(true, false, false),
@@ -287,10 +288,22 @@ impl Runtime {
             &["index", "input", "groups", "indices"][..],
             &["groups"][..],
         ] {
-            let keys = std::iter::once("length").chain(names.iter().copied()).map(|name| self.intern_property_key(name)).collect::<Result<Vec<_>, _>>()?;
-            let entries = keys.iter().enumerate().map(|(index, key)| ShapeEntry {
-                atom: key.atom(), flags: if index == 0 { PropertyFlags::data(true, false, false) } else { PropertyFlags::data(true, true, true) }
-            }).collect::<Vec<_>>();
+            let keys = std::iter::once("length")
+                .chain(names.iter().copied())
+                .map(|name| self.intern_property_key(name))
+                .collect::<Result<Vec<_>, _>>()?;
+            let entries = keys
+                .iter()
+                .enumerate()
+                .map(|(index, key)| ShapeEntry {
+                    atom: key.atom(),
+                    flags: if index == 0 {
+                        PropertyFlags::data(true, false, false)
+                    } else {
+                        PropertyFlags::data(true, true, true)
+                    },
+                })
+                .collect::<Vec<_>>();
             let mut state = self.0.state.borrow_mut();
             let prototype = state.heap.context(realm)?.array_prototype;
             match state.get_or_create_shape(Some(prototype), &entries) {

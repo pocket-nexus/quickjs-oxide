@@ -157,10 +157,16 @@ impl FrameStore {
     }
 
     pub(super) fn can_reply_property_directly(&self, target: ReturnTarget) -> bool {
-        let Some((id, parent)) = self.frames.get(self.frames.len().saturating_sub(2)) else { return false; };
-        target.frame().ok() == Some(*id) && parent.cold.rare.get()
-            .and_then(|rare| rare.property_wait.as_ref())
-            .is_some_and(|pending| pending.is_direct_property_read(target.operation))
+        let Some((id, parent)) = self.frames.get(self.frames.len().saturating_sub(2)) else {
+            return false;
+        };
+        target.frame().ok() == Some(*id)
+            && parent
+                .cold
+                .rare
+                .get()
+                .and_then(|rare| rare.property_wait.as_ref())
+                .is_some_and(|pending| pending.is_direct_property_read(target.operation))
     }
 
     pub(super) fn depth(&self) -> usize {
@@ -354,6 +360,55 @@ impl Drop for FrameStore {
         while let Some(frame) = self.pop_current() {
             drop(frame);
         }
+    }
+}
+
+impl FrameCold {
+    pub(super) fn has_pending_query(&self) -> bool {
+        self.rare
+            .get()
+            .is_some_and(|rare| rare.property_wait.is_some())
+    }
+    fn pending_depth(&self) -> usize {
+        self.rare
+            .get()
+            .and_then(|rare| rare.property_wait.as_ref())
+            .map_or(0, |wait| wait.continuation_depth())
+    }
+    pub(super) fn ordinary_return(&self) -> Option<ReturnTarget> {
+        let target = self.return_to?;
+        if target.tail
+            || (target.operation.is_some()
+                && !matches!(target.operation, Some(OperationTarget::PropertyGet(_))))
+            || !matches!(target.owner, ReturnOwner::Frame(_))
+        {
+            return None;
+        }
+        if self.rare.get().is_some_and(|rare| {
+            rare.constructor_return.is_some()
+                || rare.property_wait.is_some()
+                || rare.iterator_wait.is_some()
+                || rare.conversion.is_some()
+                || !rare.regions.is_empty()
+                || rare.resume_throw.is_some()
+        }) {
+            return None;
+        }
+        Some(target)
+    }
+}
+impl std::ops::Deref for FrameCold {
+    type Target = FrameRare;
+    fn deref(&self) -> &FrameRare {
+        self.rare.get_or_init(Default::default)
+    }
+}
+impl std::ops::DerefMut for FrameCold {
+    fn deref_mut(&mut self) -> &mut FrameRare {
+        if self.rare.get().is_none() {
+            self.rare.set(Default::default()).ok();
+        }
+        self.rare.get_mut().unwrap()
     }
 }
 
@@ -755,53 +810,5 @@ mod tests {
         assert!(events.borrow().is_empty());
         drop(execution);
         assert_eq!(*events.borrow(), ["child-slot", "child", "parent"]);
-    }
-}
-
-impl FrameCold {
-    pub(super) fn has_pending_query(&self) -> bool {
-        self.rare
-            .get()
-            .is_some_and(|rare| rare.property_wait.is_some())
-    }
-    fn pending_depth(&self) -> usize {
-        self.rare
-            .get()
-            .and_then(|rare| rare.property_wait.as_ref())
-            .map_or(0, |wait| wait.continuation_depth())
-    }
-    pub(super) fn ordinary_return(&self) -> Option<ReturnTarget> {
-        let target = self.return_to?;
-        if target.tail
-            || (target.operation.is_some() && !matches!(target.operation, Some(OperationTarget::PropertyGet(_))))
-            || !matches!(target.owner, ReturnOwner::Frame(_))
-        {
-            return None;
-        }
-        if self.rare.get().is_some_and(|rare| {
-            rare.constructor_return.is_some()
-                || rare.property_wait.is_some()
-                || rare.iterator_wait.is_some()
-                || rare.conversion.is_some()
-                || !rare.regions.is_empty()
-                || rare.resume_throw.is_some()
-        }) {
-            return None;
-        }
-        Some(target)
-    }
-}
-impl std::ops::Deref for FrameCold {
-    type Target = FrameRare;
-    fn deref(&self) -> &FrameRare {
-        self.rare.get_or_init(Default::default)
-    }
-}
-impl std::ops::DerefMut for FrameCold {
-    fn deref_mut(&mut self) -> &mut FrameRare {
-        if self.rare.get().is_none() {
-            self.rare.set(Default::default()).ok();
-        }
-        self.rare.get_mut().unwrap()
     }
 }

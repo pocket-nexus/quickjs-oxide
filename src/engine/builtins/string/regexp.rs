@@ -1,6 +1,5 @@
 //! RegExp-backed String prototype methods.
 
-#[cfg(feature = "stack-vm")]
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -99,7 +98,6 @@ impl Runtime {
 }
 
 impl StringProtocolKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::StringPrototypeMatch => Self::Match,
@@ -283,7 +281,8 @@ impl StringProtocolResume {
                 if regexp {
                     Ok(StringProtocolStep::make_read(
                         object.clone(),
-                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
+                        runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                         {
                             let updated_0 = ProtocolPhase::Flags(method);
                             self.0.phase = updated_0;

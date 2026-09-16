@@ -1,8 +1,9 @@
 //! Object spread/rest share the pinned enumerable snapshot and live-read rules.
+#[cfg(test)]
+use crate::engine::heap::ContextId;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     atom::PropertyKeyKind,
-    heap::ContextId,
     object::{ObjectRef, PropertyKey},
     value::{Value, conversion::NativeConversion},
     vm::Completion,
@@ -12,21 +13,21 @@ use crate::engine::{
 #[inline]
 fn clone_copy_object(value: &ObjectRef) -> ObjectRef {
     let copy = value.clone();
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.ObjectRef");
     copy
 }
 #[inline]
 fn clone_copy_key(value: &PropertyKey) -> PropertyKey {
     let copy = value.clone();
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.PropertyKey");
     copy
 }
 
 pub(crate) enum CopyStep {
     Complete(Completion),
-    #[cfg(feature = "stack-vm")]
+
     PreparedRead(Box<PreparedCopyRead>),
     Keys {
         object: ObjectRef,
@@ -43,7 +44,7 @@ pub(crate) enum CopyStep {
         resume: CopyResume,
     },
 }
-#[cfg(feature = "stack-vm")]
+
 pub(crate) struct PreparedCopyRead {
     pub(crate) read: crate::engine::object::OrdinaryRead,
     pub(crate) key: PropertyKey,
@@ -109,7 +110,7 @@ impl CopyStep {
             key: None,
             rejection,
         }));
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("copy_cursor_created");
         Ok(Self::Keys {
             object: clone_copy_object(&resume.source),
@@ -118,11 +119,10 @@ impl CopyStep {
     }
     /// Initial validation selects a cursor without reading or defining any key.
     /// The VM consumes its source operand before advancing that cursor here.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn advance_without_callback(self, runtime: &Runtime) -> Result<Self, RuntimeError> {
         match self {
             Self::Keys { object: _, resume } if resume.snapshot => {
-                #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event("copy_local_own_keys");
                 let keys = runtime.own_property_keys(&resume.source)?;
                 resume.keys(runtime, NativeConversion::Value(keys))
@@ -157,7 +157,7 @@ impl CopyResume {
             // This optimization is only selected for non-Proxy sources. It
             // observes every descriptor before the first value getter runs.
             if self.0.snapshot {
-                #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "copy_snapshot_descriptor_read",
                 );
@@ -171,7 +171,6 @@ impl CopyResume {
         self.next(runtime)
     }
     fn next(mut self, runtime: &Runtime) -> Result<CopyStep, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         let receiver = Value::Object(clone_copy_object(&self.0.source));
         while let Some(key) = self.0.remaining.next() {
             // Own membership never walks prototypes or calls getters.
@@ -181,16 +180,15 @@ impl CopyResume {
                 continue;
             }
 
-            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            #[cfg(feature = "profiling")]
             if self.0.key.is_some() {
                 crate::engine::api::profiling::record_owned_execution_event(
                     "copy_cursor_key_owner_replaced",
                 );
             }
 
-            #[cfg(feature = "stack-vm")]
             if self.0.snapshot {
-                #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event("copy_local_live_read");
                 let read =
                     runtime.prepare_ordinary_read_borrowed(&self.0.source, &key, &receiver)?;
@@ -198,7 +196,7 @@ impl CopyResume {
                     crate::engine::object::OrdinaryRead::Complete(value) => {
                         self.0.key = Some(key);
                         self.define_value(runtime, value.unwrap_or(Value::Undefined))?;
-                        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                        #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "object_copy_value_completed_locally",
                         );
@@ -206,7 +204,7 @@ impl CopyResume {
                     }
                     read => {
                         self.0.key = Some(clone_copy_key(&key));
-                        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+                        #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "copy_selected_read_publish",
                         );
@@ -242,7 +240,7 @@ impl CopyResume {
             .key
             .as_ref()
             .ok_or(RuntimeError::Invariant("Object copy key missing"))?;
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("copy_define_attempt");
         runtime.define_fresh_object_descriptor_property(
             &self.0.target,
@@ -285,6 +283,8 @@ impl CopyResume {
         self.next(runtime)
     }
 }
+
+#[cfg(test)]
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
@@ -293,7 +293,6 @@ pub(crate) fn finish(
     loop {
         step = match step {
             CopyStep::Complete(result) => return Ok(result),
-            #[cfg(feature = "stack-vm")]
             CopyStep::PreparedRead(prepared) => {
                 let PreparedCopyRead { read, key, resume } = *prepared;
                 let completion = match runtime.finish_prepared_read(realm, &key, read)? {
@@ -327,7 +326,10 @@ pub(crate) fn finish(
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CopyStep>() <= 64);
+
+#[cfg(test)]
 mod recovery_tests {
     use super::*;
 
@@ -339,7 +341,7 @@ mod recovery_tests {
         let source = context
             .eval("globalThis.copyTrace=0;({a:1,get b(){copyTrace++;return 2}})")
             .unwrap();
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         let step = CopyStep::start(&runtime, target.clone(), source, None).unwrap();
         assert!(runtime.own_property_keys(&target).unwrap().is_empty());
@@ -353,7 +355,7 @@ mod recovery_tests {
         ));
         assert_eq!(context.eval("copyTrace").unwrap(), Value::Int(1));
         assert_eq!(runtime.own_property_keys(&target).unwrap().len(), 2);
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         {
             let costs = profile.snapshot();
             for (event, count) in [
@@ -420,6 +422,3 @@ mod recovery_tests {
         );
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<CopyStep>() <= 64);

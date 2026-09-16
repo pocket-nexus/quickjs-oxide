@@ -193,7 +193,8 @@ impl RegExpIteratorResume {
                 self.0.phase = Phase::MatchString;
                 Ok(RegExpIteratorStep::make_read(
                     self.0.matched.as_ref().unwrap().clone(),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?,
+                    runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?,
                     self,
                 ))
             }
@@ -220,7 +221,8 @@ impl RegExpIteratorResume {
                 self.0.phase = Phase::Set;
                 Ok(RegExpIteratorStep::make_set(
                     self.0.regexp.clone(),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
+                    runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     Value::number(next as f64),
                     self,
                 ))

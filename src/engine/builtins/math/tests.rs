@@ -240,7 +240,9 @@ fn global_math_is_realm_aware_and_materializes_only_on_get() {
     let mut second = runtime.new_context();
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Math).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Math)
+        .unwrap();
 
     assert!(runtime.has_property(&first_global, &key).unwrap());
     assert!(
@@ -317,7 +319,9 @@ fn deleting_lazy_global_math_releases_its_realm_edge_without_materializing() {
     let runtime = Runtime::new();
     let context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Math).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Math)
+        .unwrap();
     let count_before = runtime
         .0
         .state

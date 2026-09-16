@@ -889,7 +889,8 @@ def check(ctx):
 
     bytecode_production_code = ctx.bytecode_code.split('#[cfg(test)]\nmod tests', 1)[0]
 
-    ctx.vm_code = ctx.rust_code_only(ctx.read_source("src/engine/vm/mod.rs"))
+    ctx.vm_code = ctx.rust_code_only(ctx.read_source("src/engine/vm/run.rs"))
+    pure_code = ctx.rust_code_only(ctx.read_source("src/engine/vm/pure_operations.rs"))
 
     value_code = ctx.rust_code_only(ctx.read_source("src/engine/value/primitive.rs"))
 
@@ -899,11 +900,12 @@ def check(ctx):
         (ctx.bytecode_code, "PushAtomValueIndex(u32),"),
         (ctx.bytecode_code, "Self::PushI32(_) | Self::PushAtomValueIndex(_) | Self::PushConst(_)"),
         (ctx.bytecode_code, "Instruction::PushAtomValueIndex(index) if *index > crate::engine::atom::ATOM_MAX_INT"),
-        (ctx.vm_code, "Instruction::PushAtomValueIndex(value) => self.stack.push(Value::String( crate::engine::value::JsString::from_fresh_decimal_u32(*value), ))"),
+        (ctx.vm_code, "Instruction::PushAtomValueIndex(value) => { return Ok(RunExit::Pure( super::pure_operations::PureOperation::AtomValue(*value), )); }"),
+        (pure_code, "P::AtomValue(value) => Value::String(JsString::from_fresh_decimal_u32(value)),"),
         (atom_code, "AtomSpelling::Integer(value) => Ok(JsString::from_fresh_decimal_u32(value))"),
         (value_code, "pub fn from_fresh_decimal_u32(mut value: u32) -> Self"),
         (value_code, "digits[start] = b'0' + (value % 10) as u8;"),
-        (value_code, "Self(Rc::new(StringRepr::Latin1( digits[start..].to_vec().into_boxed_slice(), )))"),
+        (value_code, "Self(Rc::new(StringRepr::Latin1(digits[start..].to_vec())))"),
     )
 
     if any(" ".join(code.split()).count(fragment) != 1 for code, fragment in engine_string_fragments):
@@ -953,25 +955,30 @@ def check(ctx):
             "Instruction must retain exactly one operand-free Throw completion",
         )
 
-    predicate_requirements = deepcopy(evidence.PREDICATE_REQUIREMENTS)
+    # The single S13 core dispatches these five predicates to a shared pure
+    # kernel. Authenticate both halves: no tag or HTMLDDA behavior is inferred
+    # from the opcode names, and the kernel must still consume exactly one slot.
+    predicate_code, ctx._, ctx._ = ctx.unique_braced_item(
+        ctx.rust_code_only(ctx.read_source("src/engine/vm/run.rs")),
+        re.compile('Instruction::TypeOf\\s*\\|\\s*Instruction::IsUndefinedOrNull[^{]*=>\\s*\\{'),
+        "ordinary-leaf-engine-semantics", "predicate dispatcher",
+    )
+    ctx.require_normalized_code_sha256(
+        "ordinary-leaf-engine-semantics",
+        "predicate dispatcher must preserve exact tag checks, HTMLDDA handling and slot consumption",
+        predicate_code, "d8eb598f2aec64d3e754cea2f9973e5768cd54e988a6782ce60c918cde788fd0",
+    )
 
-    for instruction, (required, uses_html_dda) in predicate_requirements.items():
-        ctx.arm, ctx._, ctx._ = ctx.unique_braced_item(
-            ctx.vm_code,
-            re.compile(rf"\bInstruction[ \t\n]*::[ \t\n]*{instruction}[ \t\n]*=>[ \t\n]*\{{"),
-            "ordinary-leaf-engine-semantics",
-            f"VM {instruction} arm",
-        )
-        normalized_arm = " ".join(ctx.arm.split())
-        if (
-            normalized_arm.count("let value = self.pop()?;") != 1
-            or normalized_arm.count(required) != 1
-            or ("host.is_html_dda" in normalized_arm) != uses_html_dda
-        ):
-            ctx.fail(
-                "ordinary-leaf-engine-semantics",
-                f"VM {instruction} must retain its exact QuickJS tag/HTMLDDA predicate",
-            )
+    predicate_code, ctx._, ctx._ = ctx.unique_braced_item(
+        ctx.rust_code_only(ctx.read_source("src/engine/vm/pure_operations.rs")),
+        re.compile('P::TypeOf\\s*\\|\\s*P::IsUndefinedOrNull[^{]*=>\\s*\\{'),
+        "ordinary-leaf-engine-semantics", "predicate kernel",
+    )
+    ctx.require_normalized_code_sha256(
+        "ordinary-leaf-engine-semantics",
+        "predicate kernel must preserve exact tag checks, HTMLDDA handling and slot consumption",
+        predicate_code, "22a631ebb511e5426bd3d1950c26e130c077b38380a5215a01fcf9d573f32a88",
+    )
 
     return_undefined_arm, ctx._, ctx._ = ctx.unique_braced_item(
         ctx.vm_code,
@@ -981,8 +988,8 @@ def check(ctx):
     )
 
     if " ".join(return_undefined_arm.split()).count(
-        "return Ok(Some(Completion::Return(Value::Undefined)));"
-    ) != 1:
+        "execution.pending = Some(Value::Undefined);"
+    ) != 1 or "slots.pop" in return_undefined_arm or "return Ok(RunExit::Complete);" not in " ".join(return_undefined_arm.split()):
         ctx.fail(
             "ordinary-leaf-engine-semantics",
             "ReturnUndefined must complete directly with undefined without reading the operand stack",

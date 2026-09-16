@@ -3,7 +3,6 @@
 use super::{
     Completion,
     call::{BytecodeCallRequest, CallableExecution},
-    call_bridge::Action,
     driver::{CallStep, push_frame},
     exception::runtime_error_to_vm_error,
     execution::RunningExecution,
@@ -114,7 +113,7 @@ pub(super) fn read_progress_selected(
         let result = execution.slots.with_linked_own_read_selected(
             &mut body.window,
             runtime,
-            &executable,
+            executable,
             index,
             candidate.map(|_| &mut *native),
             |slots, value| {
@@ -327,6 +326,8 @@ pub(super) fn read_progress_selected(
     }
 }
 
+// The conversion reply already owns this boxed operand bundle; avoid moving it through the driver stack.
+#[allow(clippy::boxed_local)]
 pub(super) fn read_converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -605,7 +606,6 @@ fn read_pending(
     let realm = execution.frames.current_mut(id)?.executable.realm;
     let mut request = None;
     let mut ordinary_callback = None;
-    let mut deferred = None;
     let mut proxy = None;
     let mut proxy_callback = None;
     let mut native_callback = None;
@@ -660,11 +660,7 @@ fn read_pending(
                     }
                     _ => false,
                 };
-                let is_resumable =
-                    matches!(classification, CallableExecution::Bytecode { .. }) && !normal;
                 let is_proxy = matches!(classification, CallableExecution::Proxy);
-                let is_owned_native = matches!(&classification, CallableExecution::Native { .. }
-                if super::frames::native_operation(runtime, &callable).map_err(runtime_error_to_vm_error)?.is_some());
                 if let CallableExecution::Bytecode {
                     bytecode,
                     closure_slots,
@@ -694,14 +690,8 @@ fn read_pending(
                     });
                 } else if is_proxy {
                     proxy_callback = Some((callable, receiver, arguments));
-                } else if is_owned_native || is_resumable {
-                    native_callback = Some((callable, receiver, arguments));
                 } else {
-                    deferred = Some(Action::Call {
-                        callable,
-                        receiver,
-                        arguments,
-                    });
+                    native_callback = Some((callable, receiver, arguments));
                 }
             }
             None
@@ -752,9 +742,6 @@ fn read_pending(
         return super::proxy_get_driver::start_callback_call(
             runtime, execution, id, callable, receiver, arguments, false, depth,
         );
-    }
-    if let Some(action) = deferred {
-        return super::call_bridge::prepare_property(execution, id, realm, action, depth);
     }
     frame.resume_pc = frame
         .fault_pc

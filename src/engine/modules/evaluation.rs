@@ -158,33 +158,13 @@ impl EvaluationStep {
         runtime: &Runtime,
         realm: ContextId,
     ) -> Result<ObjectRef, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         let completion = crate::engine::vm::execute_root(
             runtime.clone(),
             realm,
             crate::engine::vm::RootOperation::ModuleEvaluation(self),
         )
         .map_err(RuntimeError::Engine)?;
-        #[cfg(not(feature = "stack-vm"))]
-        let completion = {
-            let mut step = self;
-            loop {
-                step = match step {
-                    Self::Complete(result) => break result,
-                    Self::Body { step, resume } => resume.resume(step.finish(runtime, realm)?)?,
-                    Self::Call {
-                        callable,
-                        value,
-                        resume,
-                    } => resume.resume(runtime.call_internal(
-                        realm,
-                        &callable,
-                        Value::Undefined,
-                        &[value],
-                    )?)?,
-                };
-            }
-        };
+
         match completion {
             Completion::Return(Value::Object(promise)) => Ok(promise),
             _ => Err(RuntimeError::Invariant(
@@ -483,7 +463,7 @@ impl EvaluationResume {
     fn finish_frame(
         runtime: &Runtime,
         dfs: &mut ModuleEvaluationDfs,
-        frames: &mut Vec<ModuleDfsFrame>,
+        frames: &mut [ModuleDfsFrame],
         frame: ModuleDfsFrame,
         completion: Completion,
     ) -> Result<(), RuntimeError> {

@@ -23,7 +23,7 @@ mod operation;
 #[cfg(test)]
 mod tests;
 mod waiter;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use operation::{AtomicsResume, AtomicsStep};
 
 fn with_atomics_seq_cst<R>(operation: impl FnOnce() -> R) -> R {
@@ -489,7 +489,7 @@ impl Runtime {
         bytes: [u8; 8],
     ) -> Result<Completion, RuntimeError> {
         let width = usize::from(access.snapshot.element.byte_length());
-        let offset = atomic_absolute_byte_offset(&access)?;
+        let offset = atomic_absolute_byte_offset(access)?;
         with_atomics_seq_cst(|| self.write_buffer_word(&access.buffer, offset, &bytes[..width]))?;
         Ok(Completion::Return(stored_value))
     }
@@ -511,7 +511,7 @@ impl Runtime {
         }
 
         let width = usize::from(access.snapshot.element.byte_length());
-        let byte_offset = atomic_absolute_byte_offset(&access)?;
+        let byte_offset = atomic_absolute_byte_offset(access)?;
         let backing_id = access
             .buffer
             .shared_backing_id()
@@ -547,7 +547,7 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant(
                 "shared Atomics.notify lost its backing identity",
             ))?;
-        let location = waiter::WaitLocation::new(backing_id, atomic_absolute_byte_offset(&access)?);
+        let location = waiter::WaitLocation::new(backing_id, atomic_absolute_byte_offset(access)?);
         let notified = waiter::notify(
             location,
             usize::try_from(count).expect("clamped Atomics.notify count fits usize"),

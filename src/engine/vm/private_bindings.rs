@@ -130,7 +130,6 @@ pub(in crate::engine::vm) fn initialize_callable(
     }
 }
 
-#[cfg(feature = "stack-vm")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Initialization {
     Name,
@@ -138,7 +137,6 @@ pub(super) enum Initialization {
     Accessor,
 }
 
-#[cfg(feature = "stack-vm")]
 #[inline(never)]
 pub(super) fn step(
     runtime: &Runtime,

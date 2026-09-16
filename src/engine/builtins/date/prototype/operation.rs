@@ -272,7 +272,9 @@ impl DatePrototypeResume {
                 self.0.phase = Phase::JsonMethod;
                 Ok(DatePrototypeStep::Read {
                     object: self.0.object.clone(),
-                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToISOString)?,
+                    key: runtime.pinned_property_key(
+                        crate::engine::atom::pinned::PinnedAtom::ToISOString,
+                    )?,
                     resume: self,
                 })
             }

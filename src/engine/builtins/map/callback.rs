@@ -79,7 +79,7 @@ impl CallbackStep {
             } else {
                 None
             };
-            if let Some((_, value)) = runtime.find_map_record(&map, &key)? {
+            if let Some((_, value)) = runtime.find_map_record(map, &key)? {
                 return Ok(Self::Complete(Completion::Return(
                     runtime.root_raw_value(&value)?,
                 )));
@@ -96,7 +96,7 @@ impl CallbackStep {
                     })),
                 ));
             }
-            runtime.set_map_record(&map, key, second.clone())?;
+            runtime.set_map_record(map, key, second.clone())?;
             return Ok(Self::Complete(Completion::Return(second)));
         }
         let value = arguments.readable.first().ok_or(RuntimeError::Invariant(

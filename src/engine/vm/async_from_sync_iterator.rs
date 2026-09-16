@@ -12,7 +12,9 @@ use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::builtins::native::{GeneratorResumeKind, NativeFunctionId};
 use crate::engine::heap::{ContextId, InternalCallableData, ObjectData};
-use crate::engine::object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol};
+use crate::engine::object::{CallableRef, ObjectRef};
+#[cfg(test)]
+use crate::engine::object::{PropertyKey, WellKnownSymbol};
 use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
@@ -23,6 +25,7 @@ mod operation;
 pub(crate) use operation::{FromSyncResume, FromSyncStep};
 
 impl Runtime {
+    #[cfg(test)]
     pub(crate) fn get_async_iterator_record(
         &self,
         realm: ContextId,
@@ -58,7 +61,8 @@ impl Runtime {
                 }
                 Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
             };
-            let next_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
+            let next_key =
+                self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
             let next = match self.get_property_in_realm(realm, &sync_iterator, &next_key)? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),

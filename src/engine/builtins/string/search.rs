@@ -1,5 +1,5 @@
 //! String search and subrange coercions preserve their distinct position rules.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -19,7 +19,6 @@ pub(crate) enum StringSearchKind {
     Subrange(StringSubrangeKind),
 }
 impl StringSearchKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::StringPrototypeIndexOf(kind) => Self::Index(kind),

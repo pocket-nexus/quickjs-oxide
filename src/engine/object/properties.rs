@@ -959,7 +959,6 @@ impl Runtime {
     /// The caller has selected an absent consecutive dense element and walked
     /// its ordinary prototypes without callbacks. Reuse that descriptor fact;
     /// permission failures retain Set's existing precise rejection path.
-    #[cfg(feature = "stack-vm")]
     pub(super) fn define_selected_dense_array_append(
         &self,
         object: &ObjectRef,
@@ -1131,7 +1130,6 @@ impl Runtime {
         Ok(PropertyDefineOutcome::Defined(true))
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn prepare_typed_array_definition(
         &self,
         object: &ObjectRef,
@@ -1160,7 +1158,6 @@ impl Runtime {
 
     /// Prepare the only Array DefineOwnProperty branch that can invoke JS.
     /// Arrays cannot take the ordinary-value fast path or another exotic branch.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn prepare_array_length_definition(
         &self,
         realm: Option<ContextId>,

@@ -132,7 +132,7 @@ impl ForInStep {
                 }
                 step => return Ok(step),
             };
-            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("for_in_local_step");
         }
     }
@@ -297,7 +297,7 @@ fn advance(
 }
 
 fn record_local_step() {
-    #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+    #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("for_in_local_step");
 }
 
@@ -576,43 +576,6 @@ fn enter_prototypes(
         })
     }
 }
-pub(in crate::engine::vm) fn finish(
-    runtime: &Runtime,
-    realm: ContextId,
-    mut step: ForInStep,
-) -> Result<(Value, Option<bool>), RuntimeError> {
-    loop {
-        step = match step {
-            ForInStep::Complete { value, done } => return Ok((value, done)),
-            ForInStep::Throw(value) => {
-                runtime.set_pending_exception(value)?;
-                return Err(RuntimeError::Exception);
-            }
-            ForInStep::Keys { object, resume } => {
-                resume.keys(runtime, runtime.internal_own_property_keys(realm, &object)?)?
-            }
-            ForInStep::Enumerable {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_snapshot_own_property_is_enumerable(realm, &object, &key)?,
-            )?,
-            ForInStep::Own {
-                object,
-                key,
-                resume,
-            } => resume.boolean(
-                runtime,
-                runtime.internal_has_own_property(realm, &object, &key)?,
-            )?,
-            ForInStep::Prototype { object, resume } => {
-                resume.prototype(runtime, runtime.internal_get_prototype_of(realm, &object)?)?
-            }
-        };
-    }
-}
 
 #[cfg(test)]
 mod resident_tests {
@@ -663,7 +626,7 @@ mod resident_tests {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+#[cfg(all(test, feature = "profiling"))]
 mod tests {
     use crate::engine::{
         api::{profiling::CostProfile, runtime::Runtime},

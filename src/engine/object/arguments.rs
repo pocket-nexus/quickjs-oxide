@@ -167,7 +167,8 @@ impl Runtime {
             )
         };
 
-        let length_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+        let length_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         layout.push(
             length_key,
             PropertyFlags::data(true, false, true),

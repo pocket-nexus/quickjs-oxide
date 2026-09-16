@@ -107,12 +107,7 @@ pub(super) enum RunExit {
         source: u8,
         excluded: Option<u8>,
     },
-    ReplaceBinding {
-        source: BindingSource,
-        index: u16,
-        keep: bool,
-        uninitialized: bool,
-    },
+    #[cfg(test)]
     ReleaseOperand {
         keep_top: bool,
     },
@@ -177,7 +172,7 @@ impl RunExit {
             Self::Numeric(..) => "run_exit.Numeric",
             Self::ForIn(..) => "run_exit.ForIn",
             Self::CopyData { .. } => "run_exit.CopyData",
-            Self::ReplaceBinding { .. } => "run_exit.ReplaceBinding",
+            #[cfg(test)]
             Self::ReleaseOperand { .. } => "run_exit.ReleaseOperand",
             Self::Complete => "run_exit.Complete",
             Self::Suspend(..) => "run_exit.Suspend",
@@ -189,8 +184,8 @@ impl RunExit {
 mod cold;
 mod fusion;
 mod numeric;
-mod property;
 mod program_counter;
+mod property;
 use program_counter::ProgramCounter;
 
 #[cfg(test)]
@@ -253,6 +248,8 @@ fn release_displaced(
     Ok(())
 }
 
+// Explicit drops end the NoJs slot borrow before publication or owner release.
+#[allow(clippy::drop_non_drop)]
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
     let body = &mut *frame.cold;
@@ -283,11 +280,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     }
     macro_rules! resident_property {
         ($operation:expr) => {{
-            if !frame.active_frame.is_materialized() { return Ok(RunExit::Materialize); }
+            if !frame.active_frame.is_materialized() {
+                return Ok(RunExit::Materialize);
+            }
             drop(slots);
             pc.publish_fault();
-            runtime.update_active_bytecode_pc(frame.active_frame, super::BytecodePc::new(pc.fault)).map_err(runtime_error_to_vm_error)?;
-            let handled = property::complete(runtime, executable, pc.fault, &mut transaction, $operation)?;
+            runtime
+                .update_active_bytecode_pc(frame.active_frame, super::BytecodePc::new(pc.fault))
+                .map_err(runtime_error_to_vm_error)?;
+            let handled =
+                property::complete(runtime, executable, pc.fault, &mut transaction, $operation)?;
             slots = transaction.slots();
             handled
         }};
@@ -362,7 +364,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 };
-                if !slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)? && !resident_property!(property::Operation::Write(*index)) {
+                if !slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)?
+                    && !resident_property!(property::Operation::Write(*index))
+                {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 }
                 frame.property_generation = identity;
@@ -372,7 +376,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(None));
                 };
-                if !slots.typed_array_number_write(runtime)? && !resident_property!(property::Operation::ElementWrite) {
+                if !slots.typed_array_number_write(runtime)?
+                    && !resident_property!(property::Operation::ElementWrite)
+                {
                     return Ok(RunExit::SetProperty(None));
                 }
                 frame.property_generation = identity;
@@ -387,7 +393,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     *index,
                     false,
                     &mut native,
-                )? && !slots.ordinary_field_immediate_read(runtime, &executable, *index)?
+                )? && !slots.ordinary_field_immediate_read(runtime, executable, *index)?
                 {
                     return Ok(RunExit::GetField {
                         index: *index,
@@ -454,8 +460,17 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::GetArrayEl2 | Instruction::GetArrayEl3 => {
-                if !slots.array_kept_immediate_read(runtime, matches!(instruction, Instruction::GetArrayEl3))? && !resident_property!(property::Operation::ElementRead(matches!(instruction, Instruction::GetArrayEl3))) {
-                    return Ok(RunExit::GetElement { keep_receiver: true, keep_key: matches!(instruction, Instruction::GetArrayEl3) });
+                if !slots.array_kept_immediate_read(
+                    runtime,
+                    matches!(instruction, Instruction::GetArrayEl3),
+                )? && !resident_property!(property::Operation::ElementRead(matches!(
+                    instruction,
+                    Instruction::GetArrayEl3
+                ))) {
+                    return Ok(RunExit::GetElement {
+                        keep_receiver: true,
+                        keep_key: matches!(instruction, Instruction::GetArrayEl3),
+                    });
                 }
                 true
             }
@@ -611,7 +626,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     true
                 } else if let Some(value) = super::environment_driver::try_global_own_read(
                     runtime,
-                    &executable,
+                    executable,
                     &cold.closure_slots,
                     *index,
                 )? {
@@ -849,7 +864,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::DefineField(key) => {
                 if !resident_property!(property::Operation::Define(*key)) {
-                    return Ok(RunExit::DefineProperty { key: Some(*key), method: None });
+                    return Ok(RunExit::DefineProperty {
+                        key: Some(*key),
+                        method: None,
+                    });
                 }
                 frame.property_generation = frame.property_generation.saturating_add(1);
                 true
@@ -1182,15 +1200,22 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
                 if executable.fusion.local_add_span(pc.fault).is_some() {
                     let supported = match executable.code.get(pc.fault + 1) {
-                        Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) =>
-                            slots.local_add_supported(runtime, *index, *right)?,
+                        Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) => {
+                            slots.local_add_supported(runtime, *index, *right)?
+                        }
                         Some(Instruction::PushConst(constant))
-                            if matches!(executable.constant(*constant), Some(BytecodeConstant::Value(RawValue::String(_)))) =>
-                            slots.local_add_constant_supported(runtime, *index)?,
+                            if matches!(
+                                executable.constant(*constant),
+                                Some(BytecodeConstant::Value(RawValue::String(_)))
+                            ) =>
+                        {
+                            slots.local_add_constant_supported(runtime, *index)?
+                        }
                         _ => false,
                     };
-                    if supported { return Ok(RunExit::AddLocal); }
-
+                    if supported {
+                        return Ok(RunExit::AddLocal);
+                    }
                 }
                 if let Some(update) = executable.fusion.update(pc.fault) {
                     if fusion::update_local(&mut slots, *index, update)? {
@@ -1543,7 +1568,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::StrictNeq
                 if executable.fusion.compare_branch(pc.fault)
                     && (!matches!(instruction, Instruction::StrictEq | Instruction::StrictNeq)
-                        || (number(slots.peek(0)?).is_some() && number(slots.peek(1)?).is_some())) =>
+                        || (number(slots.peek(0)?).is_some()
+                            && number(slots.peek(1)?).is_some())) =>
             {
                 let branch_pc = pc.fault + 1;
                 let Some(target) =
@@ -1586,7 +1612,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         return Ok(RunExit::StrictEquality(negate));
                     }
                     let equal = slots.peek(1)?.strict_equal(slots.peek(0)?) != negate;
-                    let observable = (0..2).any(|offset| matches!(slots.peek(offset), Ok(Value::Object(_) | Value::Symbol(_))));
+                    let observable = (0..2).any(|offset| {
+                        matches!(slots.peek(offset), Ok(Value::Object(_) | Value::Symbol(_)))
+                    });
                     if observable {
                         release_outside_slots!({
                             let right = slots.pop()?;
@@ -1609,7 +1637,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::Neq => binary(&mut slots, |a, b| Value::Bool(a.float() != b.float()))?,
             Instruction::Not => {
                 // Includes Annex B HTMLDDA objects; metadata lookup cannot run JS.
-                let result = !runtime.value_to_boolean(slots.peek(0)?)
+                let result = !runtime
+                    .value_to_boolean(slots.peek(0)?)
                     .map_err(runtime_error_to_vm_error)?;
                 if matches!(slots.peek(0)?, Value::Object(_) | Value::Symbol(_)) {
                     release_outside_slots!({
@@ -1882,7 +1911,8 @@ mod tests {
                     .unwrap_or(0)
                 >= 8
         );
-        for event in ["property_write_ic.hit"] {
+        {
+            let event = "property_write_ic.hit";
             assert!(
                 costs
                     .owned_execution_events
@@ -2166,7 +2196,14 @@ mod tests {
         assert_eq!(fault_writes, 1);
         assert_eq!(costs.owned_execution_events["run_frame_resume_pc_write"], 1);
         // Completion did not change an observable PC after the last publication.
-        assert_eq!(costs.owned_execution_events.get("runtime_pc_publication").copied().unwrap_or(0), 0);
+        assert_eq!(
+            costs
+                .owned_execution_events
+                .get("runtime_pc_publication")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
         assert!(
             costs.owned_execution_events["slot_authentication"] < 20,
             "{costs:?}"
@@ -2403,7 +2440,10 @@ mod resident_semantics {
     fn resident_add_keeps_default_hint_order_and_errors() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        assert_eq!(context.eval(r#"
+        assert_eq!(
+            context
+                .eval(
+                    r#"
           let order=[];
           let a={ [Symbol.toPrimitive](hint){order.push('a:'+hint);return 'x'} };
           let b={ [Symbol.toPrimitive](hint){order.push('b:'+hint);return 2} };
@@ -2411,14 +2451,21 @@ mod resident_semantics {
           let threw=false;try { 1n + 2; } catch(e){threw=e instanceof TypeError}
           result==='x2' && order.join(',')==='a:default,b:default' && threw &&
             ('x'+3==='x3') && (2n+3n===5n)
-        "#).unwrap(), Value::Bool(true));
+        "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
     }
 
     #[test]
     fn resident_equality_and_not_preserve_values_without_coercion() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        assert_eq!(context.eval(r#"
+        assert_eq!(
+            context
+                .eval(
+                    r#"
           let o={valueOf(){throw 1},toString(){throw 2}};
           let s=Symbol('a');let rope='x';for(let i=0;i<12;i++)rope+=rope;
           let values=[undefined,null,false,true,0,-0,NaN,1,'','x',1n,s,o,rope];
@@ -2430,6 +2477,10 @@ mod resident_semantics {
           }
           ok && !undefined && !null && !false && !0 && !NaN && !'' && !0n &&
             !!o && !!s && !!rope && (rope===rope.slice(0)) && (s!==Symbol('a'))
-        "#).unwrap(), Value::Bool(true));
+        "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
     }
 }

@@ -117,7 +117,7 @@ pub struct FunctionBytecodeData {
     /// clears any incoming cache before sealing the authenticated node.
     pub(crate) executable:
         std::cell::OnceCell<Rc<crate::engine::code::runtime::PublishedFunctionData>>,
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
     pub code: Rc<[Instruction]>,
     pub constants: Rc<[BytecodeConstant]>,

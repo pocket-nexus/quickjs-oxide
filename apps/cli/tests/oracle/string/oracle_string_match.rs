@@ -687,9 +687,7 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
             // The legacy engine uses the original physical native-frame ceiling.
             // Owned callbacks retain the unchanged logical-frame budget instead:
             // a long finite chain completes, while -1 never reaches the base case.
-            #[cfg(not(feature = "stack-vm"))]
-            let (safe_depth, overflow_depth) = (3, 4);
-            #[cfg(feature = "stack-vm")]
+
             let (safe_depth, overflow_depth) = (256, -1);
 
             for (entry, kind) in [("String.prototype.match", 0), ("RegExp @@match", 1)] {

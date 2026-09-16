@@ -1,6 +1,6 @@
 use super::*;
 
-#[cfg(all(feature = "stack-vm", feature = "profiling"))]
+#[cfg(feature = "profiling")]
 #[test]
 fn trusted_construct_prototype_getter_resumes_once_in_owned_driver() {
     let runtime = Runtime::new();

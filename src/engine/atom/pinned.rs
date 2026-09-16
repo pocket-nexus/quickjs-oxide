@@ -3,86 +3,86 @@ use super::{Atom, AtomError, AtomTable};
 #[derive(Clone, Copy)]
 #[allow(dead_code)] // Some spellings belong to optional execution features.
 pub(crate) enum PinnedAtom {
-    Literal0,         //
-    Literal1,         // 0
-    Literal2,         // 1
-    Literal3,         // 2
-    Literal4,         // 2047
-    Literal5,         // 5
-    This,             // <this>
-    Atomics,          // Atomics
-    JSON,             // JSON
-    Math,             // Math
-    Object,           // Object
-    Reflect,          // Reflect
-    UnsupportedType,  // [unsupported type]
-    Json5Value,       // __json5Value
-    Proto,            // __proto__
-    Answer,           // answer
-    Apply,            // apply
-    Assign,           // assign
-    BatchFirst,       // batch_first
-    BatchRealm,       // batch_realm
-    Buffer,           // buffer
-    Callee,           // callee
-    Cause,            // cause
-    Construct,        // construct
-    Constructor,      // constructor
-    Count,            // count
-    Create,           // create
-    DeleteProperty,   // deleteProperty
-    Done,             // done
-    Entries,          // entries
-    Exec,             // exec
-    Flags,            // flags
-    FromEntries,      // fromEntries
-    Get,              // get
-    GetPrototypeOf,   // getPrototypeOf
-    Global,           // global
-    GlobalThis,       // globalThis
-    Groups,           // groups
-    Has,              // has
-    HasOwn,           // hasOwn
-    Index,            // index
-    Input,            // input
-    Is,               // is
-    Key,              // key
-    Keys,             // keys
-    LastIndex,        // lastIndex
-    Length,           // length
-    Load,             // load
-    MaxByteLength,    // maxByteLength
-    Message,          // message
-    Name,             // name
-    Next,             // next
-    Prototype,        // prototype
-    QueuedAtTeardown, // queued_at_teardown
-    Raw,              // raw
-    RawJSON,          // rawJSON
-    Resolve,          // resolve
-    Return,           // return
-    Set,              // set
-    Source,           // source
-    Stack,            // stack
-    Then,             // then
-    Throw,            // throw
-    ToISOString,      // toISOString
-    ToJSON,           // toJSON
-    ToLocaleString,   // toLocaleString
-    ToString,         // toString
-    ToUTCString,      // toUTCString
-    Unicode,          // unicode
-    Value,            // value
-    ValueOf,          // valueOf
-    Values,           // values
-    With,             // with
-    X,                // x
-    OwnKeys, // ownKeys
+    Literal0,                 //
+    Literal1,                 // 0
+    Literal2,                 // 1
+    Literal3,                 // 2
+    Literal4,                 // 2047
+    Literal5,                 // 5
+    This,                     // <this>
+    Atomics,                  // Atomics
+    Json,                     // JSON
+    Math,                     // Math
+    Object,                   // Object
+    Reflect,                  // Reflect
+    UnsupportedType,          // [unsupported type]
+    Json5Value,               // __json5Value
+    Proto,                    // __proto__
+    Answer,                   // answer
+    Apply,                    // apply
+    Assign,                   // assign
+    BatchFirst,               // batch_first
+    BatchRealm,               // batch_realm
+    Buffer,                   // buffer
+    Callee,                   // callee
+    Cause,                    // cause
+    Construct,                // construct
+    Constructor,              // constructor
+    Count,                    // count
+    Create,                   // create
+    DeleteProperty,           // deleteProperty
+    Done,                     // done
+    Entries,                  // entries
+    Exec,                     // exec
+    Flags,                    // flags
+    FromEntries,              // fromEntries
+    Get,                      // get
+    GetPrototypeOf,           // getPrototypeOf
+    Global,                   // global
+    GlobalThis,               // globalThis
+    Groups,                   // groups
+    Has,                      // has
+    HasOwn,                   // hasOwn
+    Index,                    // index
+    Input,                    // input
+    Is,                       // is
+    Key,                      // key
+    Keys,                     // keys
+    LastIndex,                // lastIndex
+    Length,                   // length
+    Load,                     // load
+    MaxByteLength,            // maxByteLength
+    Message,                  // message
+    Name,                     // name
+    Next,                     // next
+    Prototype,                // prototype
+    QueuedAtTeardown,         // queued_at_teardown
+    Raw,                      // raw
+    RawJSON,                  // rawJSON
+    Resolve,                  // resolve
+    Return,                   // return
+    Set,                      // set
+    Source,                   // source
+    Stack,                    // stack
+    Then,                     // then
+    Throw,                    // throw
+    ToISOString,              // toISOString
+    ToJSON,                   // toJSON
+    ToLocaleString,           // toLocaleString
+    ToString,                 // toString
+    ToUTCString,              // toUTCString
+    Unicode,                  // unicode
+    Value,                    // value
+    ValueOf,                  // valueOf
+    Values,                   // values
+    With,                     // with
+    X,                        // x
+    OwnKeys,                  // ownKeys
     GetOwnPropertyDescriptor, // getOwnPropertyDescriptor
-    DefineProperty, // defineProperty
-    SetPrototypeOf, // setPrototypeOf
-    IsExtensible, // isExtensible
-    PreventExtensions, // preventExtensions
+    DefineProperty,           // defineProperty
+    SetPrototypeOf,           // setPrototypeOf
+    IsExtensible,             // isExtensible
+    PreventExtensions,        // preventExtensions
 }
 pub(crate) struct PinnedAtoms([Atom; 80]);
 impl PinnedAtoms {
@@ -178,11 +178,20 @@ impl PinnedAtoms {
 impl PinnedAtom {
     pub(crate) fn proxy_method(name: &str) -> Self {
         match name {
-            "get"=>Self::Get,"set"=>Self::Set,"has"=>Self::Has,"apply"=>Self::Apply,"construct"=>Self::Construct,
-            "deleteProperty"=>Self::DeleteProperty,"getPrototypeOf"=>Self::GetPrototypeOf,"setPrototypeOf"=>Self::SetPrototypeOf,
-            "getOwnPropertyDescriptor"=>Self::GetOwnPropertyDescriptor,"defineProperty"=>Self::DefineProperty,"ownKeys"=>Self::OwnKeys,
-            "isExtensible"=>Self::IsExtensible,"preventExtensions"=>Self::PreventExtensions,
-            _=>unreachable!("proxy method name is a closed internal selector"),
+            "get" => Self::Get,
+            "set" => Self::Set,
+            "has" => Self::Has,
+            "apply" => Self::Apply,
+            "construct" => Self::Construct,
+            "deleteProperty" => Self::DeleteProperty,
+            "getPrototypeOf" => Self::GetPrototypeOf,
+            "setPrototypeOf" => Self::SetPrototypeOf,
+            "getOwnPropertyDescriptor" => Self::GetOwnPropertyDescriptor,
+            "defineProperty" => Self::DefineProperty,
+            "ownKeys" => Self::OwnKeys,
+            "isExtensible" => Self::IsExtensible,
+            "preventExtensions" => Self::PreventExtensions,
+            _ => unreachable!("proxy method name is a closed internal selector"),
         }
     }
 }

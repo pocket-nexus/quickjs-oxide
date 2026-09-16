@@ -8,35 +8,20 @@
 use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+#[cfg(test)]
+use crate::engine::object::PropertyKey;
 
 use crate::engine::code::function::metadata::{ClassInitializerKind, ConstructorKind};
 use crate::engine::heap::{ContextId, ObjectPayload};
 use crate::engine::object::operations::{InternalDefineResult, PropertyDefineOutcome};
 use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey,
+    OrdinaryPropertyDescriptor,
 };
 use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::vm::Completion;
 
 impl Runtime {
-    pub(crate) fn define_public_class_field(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: Value,
-    ) -> Result<PropertyDefineOutcome, RuntimeError> {
-        let outcome = self.internal_define_own_property(
-            realm,
-            object,
-            key,
-            &Self::public_class_field_descriptor(value),
-        )?;
-        Self::finish_public_class_field_definition(outcome)
-    }
-
     pub(crate) fn public_class_field_descriptor(value: Value) -> OrdinaryPropertyDescriptor {
         OrdinaryPropertyDescriptor {
             value: DescriptorField::Present(value),
@@ -131,7 +116,8 @@ impl Runtime {
         &self,
         constructor: &ObjectRef,
     ) -> Result<ObjectRef, RuntimeError> {
-        let prototype_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
+        let prototype_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
         let Some(CompleteOrdinaryPropertyDescriptor::Data {
             value: Value::Object(prototype),
             writable: false,
@@ -160,7 +146,8 @@ impl Runtime {
                 "class initializer prototype disagrees with its constructor",
             ));
         }
-        let constructor_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
+        let constructor_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
         if !matches!(
             self.get_own_property(prototype, &constructor_key)?,
             Some(CompleteOrdinaryPropertyDescriptor::Data {
@@ -218,20 +205,6 @@ impl Runtime {
         Ok(())
     }
 
-    pub(crate) fn call_class_instance_initializer(
-        &self,
-        caller_realm: ContextId,
-        constructor: Value,
-        receiver: Value,
-    ) -> Result<Completion, RuntimeError> {
-        let Some(initializer) =
-            self.begin_class_instance_initializer(caller_realm, constructor, &receiver)?
-        else {
-            return Ok(Completion::Return(Value::Undefined));
-        };
-        self.call_internal(caller_realm, &initializer, receiver, &[])
-    }
-
     /// Authenticate and install the instance brand once, before the selected
     /// initializer is invoked. This preparation cannot call JavaScript.
     pub(crate) fn begin_class_instance_initializer(
@@ -285,17 +258,6 @@ impl Runtime {
         Ok(Some(initializer))
     }
 
-    pub(crate) fn run_class_static_initializer(
-        &self,
-        caller_realm: ContextId,
-        constructor: Value,
-        initializer: Value,
-    ) -> Result<Completion, RuntimeError> {
-        let (initializer, receiver) =
-            self.begin_class_static_initializer(caller_realm, constructor, initializer)?;
-        self.call_internal(caller_realm, &initializer, receiver, &[])
-    }
-
     /// Commit the one-shot static initialization state and HomeObject before
     /// scheduling its body. This preparation cannot invoke JavaScript.
     pub(crate) fn begin_class_static_initializer(
@@ -335,18 +297,6 @@ impl Runtime {
             self.add_private_method_brand(&constructor, &constructor)?;
         }
         Ok((initializer, Value::Object(constructor)))
-    }
-
-    pub(crate) fn call_class_static_block(
-        &self,
-        caller_realm: ContextId,
-        static_initializer: &ObjectRef,
-        this_value: Value,
-        block: Value,
-    ) -> Result<Completion, RuntimeError> {
-        let block =
-            self.begin_class_static_block(caller_realm, static_initializer, &this_value, block)?;
-        self.call_internal(caller_realm, &block, this_value, &[])
     }
 
     /// Authenticate a fresh block and attach the parent's HomeObject once.

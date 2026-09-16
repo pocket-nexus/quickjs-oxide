@@ -157,7 +157,8 @@ impl Runtime {
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("RegExp prototype"));
         }
-        let last_index = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let last_index =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let entries = [ShapeEntry {
             atom: last_index.atom(),
             flags: PropertyFlags::data(true, false, false),
@@ -357,7 +358,9 @@ impl RegExpConstructorResume {
                 };
                 return Ok(RegExpConstructorStep::Read {
                     object: object.clone(),
-                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
+                    key: runtime.pinned_property_key(
+                        crate::engine::atom::pinned::PinnedAtom::Constructor,
+                    )?,
                     resume: {
                         let updated_0 = RegExpConstructorPhase::Identity(active);
                         self.0.phase = updated_0;
@@ -386,7 +389,8 @@ impl RegExpConstructorResume {
             };
             Ok(RegExpConstructorStep::Read {
                 object: object.clone(),
-                key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Source)?,
+                key: runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Source)?,
                 resume: {
                     let updated_0 = RegExpConstructorPhase::Source;
                     self.0.phase = updated_0;
@@ -532,7 +536,8 @@ impl RegExpConstructorResume {
                     };
                     Ok(RegExpConstructorStep::Read {
                         object: object.clone(),
-                        key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
+                        key: runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                         resume: {
                             let updated_0 = RegExpConstructorPhase::SourceFlags(value);
                             self.0.phase = updated_0;
@@ -625,6 +630,9 @@ fn finish_constructor(
     }
 }
 
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<RegExpConstructorStep>() <= 64);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,6 +708,3 @@ mod tests {
         assert!(weak.upgrade().is_none());
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<RegExpConstructorStep>() <= 64);

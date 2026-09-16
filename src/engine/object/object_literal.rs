@@ -11,7 +11,9 @@ use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::atom::{AtomSpelling, PropertyKeyKind};
 use crate::engine::code::bytecode::DefineMethodKind;
+#[cfg(test)]
 use crate::engine::heap::ContextId;
+#[cfg(test)]
 use crate::engine::object::operations::PropertyDefineOutcome;
 
 use crate::engine::object::{
@@ -20,6 +22,7 @@ use crate::engine::object::{
 use crate::engine::value::{JsString, Value};
 
 impl Runtime {
+    #[cfg(test)]
     pub(crate) fn define_object_literal_method(
         &self,
         realm: ContextId,

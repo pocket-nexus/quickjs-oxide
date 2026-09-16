@@ -1618,6 +1618,8 @@ fn advance_inner(
     loop {
         // Keep domain dispatch frames bounded on the existing 256 KiB host stack.
         // Each helper returns before another request category is dispatched.
+        // A plain function pointer keeps the borrowed dispatch ABI explicit without a closure capture or heap transport.
+        #[allow(clippy::type_complexity)]
         let dispatch: fn(
             &Runtime,
             &mut RunningExecution,
@@ -1748,6 +1750,8 @@ fn advance_inner(
 }
 
 #[inline(never)]
+// Transfer the selected callable and its reply ownership directly; a bundled request would add a second transport.
+#[allow(clippy::too_many_arguments)]
 fn invoke(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -1980,10 +1984,54 @@ fn invoke(
         }
     }
     #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_sync_call_bridge();
-    let completion = runtime
-        .call_internal(realm, &callable, receiver, &arguments)
+    crate::engine::api::profiling::record_owned_execution_event("native_leaf_completion");
+    // Normalization has consumed Bound and Proxy targets; bytecode always
+    // installs an explicit child above. Only a classified native leaf can
+    // reach this synchronous ABI, never a generic JS-call dispatcher.
+    let CallableExecution::Native {
+        target,
+        realm: defining_realm,
+        min_readable_args,
+    } = classification
+    else {
+        return Err(Error::internal(
+            "native leaf continuation lost its classification",
+        ));
+    };
+    runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .context(realm)
+        .map_err(|error| Error::internal(error.to_string()))?;
+    runtime
+        .validate_value_domain(&receiver, "call this value")
         .map_err(runtime_error_to_vm_error)?;
+    for argument in &arguments {
+        runtime
+            .validate_value_domain(argument, "call argument")
+            .map_err(runtime_error_to_vm_error)?;
+    }
+    let completion = if runtime.native_call_would_overflow(target) {
+        overflow(runtime, realm)?
+    } else {
+        let execution_realm = if target.uses_calling_realm() {
+            realm
+        } else {
+            defining_realm
+        };
+        runtime
+            .call_native_function(
+                &callable,
+                execution_realm,
+                target,
+                min_readable_args,
+                receiver,
+                &arguments,
+            )
+            .map_err(runtime_error_to_vm_error)?
+    };
     step = resume
         .resume(runtime, completion)
         .map_err(runtime_error_to_vm_error)?;
@@ -2522,6 +2570,8 @@ pub(super) fn start_iterator_next(
 
 /// Complete a known Array-next before allocating a generic iterator operation.
 /// The original iterator record remains live until value/done is committed.
+// The no-wait iterator path uses the existing caller facts and operands without allocating a pending request.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn start_array_next_without_pending(
     runtime: &Runtime,
     execution: &mut RunningExecution,

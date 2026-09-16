@@ -326,9 +326,23 @@ pub(super) fn enter_call(
                     depth,
                 );
             }
-            _ => {
-                return super::call_bridge::prepare(
-                    runtime, execution, id, count, method, tail, None,
+            CallableExecution::Native { .. } => {
+                let depth = execution.slots.depth(window);
+                execution.slots.reserve_native_argument_depth(
+                    runtime.0.active_frame_depth.get().saturating_add(1),
+                )?;
+                let (arguments, receiver) = execution
+                    .slots
+                    .take_native_call_operands(window, count, method)?;
+                return super::proxy_get_driver::start_callback_call(
+                    runtime,
+                    execution,
+                    id,
+                    callable,
+                    bound_receiver.unwrap_or(receiver),
+                    bound_arguments.unwrap_or(arguments),
+                    tail,
+                    depth,
                 );
             }
         }
@@ -486,27 +500,17 @@ pub(super) fn execute_root_descriptor(
     realm: crate::engine::heap::ContextId,
     operation: RootOperation,
 ) -> Result<super::entry::DescriptorReply, Error> {
-    let mut exit = start_root(runtime.clone(), realm, operation)?;
-    loop {
-        match exit {
-            RunningExit::RootDescriptor(result) => return Ok(result),
-            RunningExit::Complete(Completion::Throw(value)) => {
-                return Ok(crate::engine::value::conversion::NativeConversion::Throw(
-                    value,
-                ));
-            }
-            RunningExit::Call(mut continuation) => {
-                let forwarded = continuation.invoke(&runtime)?;
-                exit = continuation.resume(&runtime, forwarded)?;
-            }
-            _ => {
-                return Err(Error::internal(
-                    "descriptor entry returned an untyped terminal result",
-                ));
-            }
-        }
+    match start_root(runtime, realm, operation)? {
+        RunningExit::RootDescriptor(result) => Ok(result),
+        RunningExit::Complete(Completion::Throw(value)) => Ok(
+            crate::engine::value::conversion::NativeConversion::Throw(value),
+        ),
+        _ => Err(Error::internal(
+            "descriptor entry returned an untyped terminal result",
+        )),
     }
 }
+
 fn start_root(
     runtime: Runtime,
     realm: crate::engine::heap::ContextId,
@@ -529,41 +533,7 @@ fn start_root(
 pub(super) enum RunningExit {
     RootDescriptor(super::entry::DescriptorReply),
     Complete(Completion),
-    RootHandoff(Box<super::frame_exit::RootHandoff>),
-    Call(Box<CallContinuation>),
     Suspend(Box<super::suspend::OwnedSuspension>),
-}
-
-pub(super) struct CallContinuation {
-    execution: RunningExecution,
-    conversion: Option<super::conversion_driver::ConversionTask>,
-    next_operation: u64,
-}
-
-impl CallContinuation {
-    #[inline(never)]
-    fn invoke(&mut self, runtime: &Runtime) -> Result<Option<Completion>, Error> {
-        let call = self
-            .execution
-            .pending_call
-            .take()
-            .ok_or_else(|| Error::internal("call continuation has no request"))?;
-        call.invoke(runtime, &mut self.execution)
-    }
-
-    #[inline(never)]
-    fn resume(
-        self: Box<Self>,
-        runtime: &Runtime,
-        forwarded: Option<Completion>,
-    ) -> Result<RunningExit, Error> {
-        let Self {
-            execution,
-            conversion,
-            next_operation,
-        } = *self;
-        run_frames_with_state(runtime, execution, forwarded, conversion, next_operation)
-    }
 }
 
 impl RunningExit {
@@ -571,44 +541,23 @@ impl RunningExit {
         self,
         runtime: Runtime,
     ) -> Result<super::suspend::VmRunOutcome, Error> {
-        let mut exit = self;
-        loop {
-            match exit {
-                Self::RootDescriptor(_) => {
-                    return Err(Error::internal("bytecode entry returned a root descriptor"));
-                }
-                Self::Complete(completion) => {
-                    return Ok(super::suspend::VmRunOutcome::Complete(completion));
-                }
-                Self::Suspend(suspension) => {
-                    return suspension
-                        .freeze(runtime)
-                        .map_err(runtime_error_to_vm_error);
-                }
-                Self::RootHandoff(handoff) => return handoff.execute_suspending(runtime),
-                Self::Call(mut continuation) => {
-                    let forwarded = continuation.invoke(&runtime)?;
-                    exit = continuation.resume(&runtime, forwarded)?;
-                }
+        match self {
+            Self::RootDescriptor(_) => {
+                Err(Error::internal("bytecode entry returned a root descriptor"))
             }
+            Self::Complete(completion) => Ok(super::suspend::VmRunOutcome::Complete(completion)),
+            Self::Suspend(suspension) => suspension
+                .freeze(runtime)
+                .map_err(runtime_error_to_vm_error),
         }
     }
-
-    pub(super) fn finish(self, runtime: Runtime) -> Result<Completion, Error> {
-        let mut exit = self;
-        loop {
-            match exit {
-                Self::RootDescriptor(_) => {
-                    return Err(Error::internal("bytecode entry returned a root descriptor"));
-                }
-                Self::Suspend(_) => return Err(Error::internal("ordinary entry suspended")),
-                Self::Complete(completion) => return Ok(completion),
-                Self::RootHandoff(handoff) => return handoff.execute(runtime),
-                Self::Call(mut continuation) => {
-                    let forwarded = continuation.invoke(&runtime)?;
-                    exit = continuation.resume(&runtime, forwarded)?;
-                }
+    pub(super) fn finish(self, _runtime: Runtime) -> Result<Completion, Error> {
+        match self {
+            Self::RootDescriptor(_) => {
+                Err(Error::internal("bytecode entry returned a root descriptor"))
             }
+            Self::Suspend(_) => Err(Error::internal("ordinary entry suspended")),
+            Self::Complete(completion) => Ok(completion),
         }
     }
 }
@@ -641,7 +590,6 @@ fn run_frames_with_state(
         if let Some(result) = execution.root_descriptor.take() {
             if execution.frames.current_id().is_some()
                 || execution.root_query.is_some()
-                || execution.pending_call.is_some()
                 || forwarded.is_some()
                 || conversion.is_some()
             {
@@ -652,16 +600,6 @@ fn run_frames_with_state(
             return Ok(RunningExit::RootDescriptor(result));
         }
 
-        if execution.pending_call.is_some() {
-            if forwarded.is_some() {
-                return Err(Error::internal("pending call conflicts with a completion"));
-            }
-            return Ok(RunningExit::Call(Box::new(CallContinuation {
-                execution,
-                conversion,
-                next_operation,
-            })));
-        }
         let mut id = execution
             .frames
             .current_id()
@@ -856,42 +794,10 @@ fn run_frames_with_state(
             drop(execution);
             return Ok(RunningExit::Suspend(Box::new(suspension)));
         }
-        let (completion, return_to) =
-            match super::frame_exit::finish(runtime, &mut execution, id, exit, forwarded.take())? {
-                super::frame_exit::FrameExit::Complete {
-                    completion,
-                    return_to,
-                } => (completion, return_to),
-                super::frame_exit::FrameExit::Suspended { outcome, target } => {
-                    match super::proxy_get_driver::reply_suspended(
-                        runtime,
-                        &mut execution,
-                        target,
-                        outcome,
-                    )? {
-                        super::proxy_get_driver::Progress::Conversion(task) => {
-                            conversion = Some(task)
-                        }
-                        super::proxy_get_driver::Progress::Call(CallStep::Entered) => {}
-                        super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
-                            if matches!(target.owner, super::frame::ReturnOwner::Root) {
-                                return Ok(RunningExit::Complete(completion));
-                            }
-                            forwarded = Some(completion);
-                        }
-                        super::proxy_get_driver::Progress::Call(CallStep::Bridge) => {
-                            return Err(Error::internal(
-                                "handoff suspension reply attempted replay",
-                            ));
-                        }
-                    }
-                    continue;
-                }
-                super::frame_exit::FrameExit::RootHandoff(handoff) => {
-                    drop(execution);
-                    return Ok(RunningExit::RootHandoff(handoff));
-                }
-            };
+        let super::frame_exit::FrameExit {
+            completion,
+            return_to,
+        } = super::frame_exit::finish(runtime, &mut execution, id, exit, forwarded.take())?;
         let Some(target) = return_to else {
             return Ok(RunningExit::Complete(completion));
         };
@@ -1080,15 +986,27 @@ mod tests {
     fn resident_primitive_add_does_not_consume_conversion_identity() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let entry = entry(&runtime, &mut context,
-            "(function(){return 'a'+'b'})", Vec::new());
+        let entry = entry(
+            &runtime,
+            &mut context,
+            "(function(){return 'a'+'b'})",
+            Vec::new(),
+        );
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         let id = push_frame(&mut execution, entry).unwrap();
         let mut identity = u64::MAX;
         let result = super::ready::run(&runtime, &mut execution, id, &mut identity).unwrap();
-        assert!(matches!(result, super::ready::Boundary::Exit(RunExit::Complete)));
+        assert!(matches!(
+            result,
+            super::ready::Boundary::Exit(RunExit::Complete)
+        ));
         assert_eq!(identity, u64::MAX);
-        assert_eq!(execution.pending, Some(Value::String(crate::engine::value::JsString::from_static("ab"))));
+        assert_eq!(
+            execution.pending,
+            Some(Value::String(crate::engine::value::JsString::from_static(
+                "ab"
+            )))
+        );
         drop(execution);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -1424,7 +1342,12 @@ mod tests {
             drop(profile);
             assert_eq!(
                 context
-                    .get_property(&object, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length).unwrap())
+                    .get_property(
+                        &object,
+                        &runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)
+                            .unwrap()
+                    )
                     .unwrap(),
                 Value::Int(expected.len() as i32)
             );
@@ -1490,7 +1413,12 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(
                         "ReferenceError"
@@ -1679,7 +1607,12 @@ mod tests {
         drop(profile);
         assert_eq!(
             context
-                .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                .get_property(
+                    &error,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+                        .unwrap()
+                )
                 .unwrap(),
             Value::String(crate::engine::value::JsString::from_static("TypeError"))
         );
@@ -1749,7 +1682,12 @@ mod tests {
             drop(profile);
             assert_eq!(
                 context
-                    .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                    .get_property(
+                        &error,
+                        &runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+                            .unwrap()
+                    )
                     .unwrap(),
                 Value::String(crate::engine::value::JsString::from_static("TypeError"))
             );
@@ -1884,7 +1822,12 @@ mod tests {
                 assert!(source.contains("extends 1"), "{source}");
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static("TypeError"))
                 );
@@ -1961,10 +1904,20 @@ mod tests {
             let Value::Object(pair) = context.eval("(function(){var n=0;return {key:{toString:function(){n=n+1;return 'x'},valueOf:function(){throw 99}},count:function(){return n}}})()").unwrap()
             else {panic!("expected key setup")};
             let key = context
-                .get_property(&pair, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Key).unwrap())
+                .get_property(
+                    &pair,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Key)
+                        .unwrap(),
+                )
                 .unwrap();
             let count = context
-                .get_property(&pair, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Count).unwrap())
+                .get_property(
+                    &pair,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Count)
+                        .unwrap(),
+                )
                 .unwrap();
             let entry = entry(&runtime, &mut context, source, vec![key, count]);
             let profile = CostProfile::start();
@@ -2064,7 +2017,12 @@ mod tests {
             };
             assert_eq!(
                 context
-                    .get_property(&function, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                    .get_property(
+                        &function,
+                        &runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+                            .unwrap()
+                    )
                     .unwrap(),
                 Value::String(crate::engine::value::JsString::from_static(expected))
             );
@@ -2105,7 +2063,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(
                         "cannot convert to object"
@@ -2271,10 +2236,20 @@ mod tests {
                 panic!("expected setup pair")
             };
             let object = context
-                .get_property(&pair, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap())
+                .get_property(
+                    &pair,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+                        .unwrap(),
+                )
                 .unwrap();
             let count = context
-                .get_property(&pair, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2).unwrap())
+                .get_property(
+                    &pair,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)
+                        .unwrap(),
+                )
                 .unwrap();
             let entry = entry(&runtime, &mut context, source, vec![object, count]);
             let profile = CostProfile::start();
@@ -2453,7 +2428,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::try_from_utf8(message).unwrap())
                 );
@@ -2698,7 +2680,12 @@ mod tests {
             assert_ne!(execution.frames.current_id(), Some(id));
             assert!(
                 runtime
-                    .delete_property(&carrier, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap())
+                    .delete_property(
+                        &carrier,
+                        &runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+                            .unwrap()
+                    )
                     .unwrap()
             );
             assert!(
@@ -2809,7 +2796,12 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(
                         crate::engine::value::JsString::try_from_utf8(error_name).unwrap()
@@ -2818,7 +2810,14 @@ mod tests {
                 if let Some(message) = message {
                     assert_eq!(
                         context
-                            .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                            .get_property(
+                                &error,
+                                &runtime
+                                    .pinned_property_key(
+                                        crate::engine::atom::pinned::PinnedAtom::Message
+                                    )
+                                    .unwrap()
+                            )
                             .unwrap(),
                         Value::String(
                             crate::engine::value::JsString::try_from_utf8(message).unwrap()
@@ -3039,7 +3038,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::try_from_utf8(message).unwrap())
                 );
@@ -3251,7 +3257,12 @@ mod tests {
         assert_eq!(runtime.array_length_state(&array).unwrap().0, 2048);
         assert_eq!(
             context
-                .get_property(&array, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal4).unwrap())
+                .get_property(
+                    &array,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal4)
+                        .unwrap()
+                )
                 .unwrap(),
             Value::Int(2048)
         );
@@ -3315,7 +3326,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(
                         "property is not configurable"
@@ -3417,19 +3435,34 @@ mod tests {
         let costs = profile.snapshot();
         assert_eq!(
             context
-                .get_property(&array, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length).unwrap())
+                .get_property(
+                    &array,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)
+                        .unwrap()
+                )
                 .unwrap(),
             Value::Int(2)
         );
         assert!(
             runtime
-                .get_own_property(&array, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap())
+                .get_own_property(
+                    &array,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+                        .unwrap()
+                )
                 .unwrap()
                 .is_none()
         );
         assert!(matches!(
             runtime
-                .get_own_property(&array, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2).unwrap())
+                .get_own_property(
+                    &array,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)
+                        .unwrap()
+                )
                 .unwrap(),
             Some(
                 crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data {
@@ -3534,7 +3567,12 @@ mod tests {
                     unreachable!()
                 };
                 let Value::Object(extra) = context
-                    .get_property(carrier, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2).unwrap())
+                    .get_property(
+                        carrier,
+                        &runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)
+                            .unwrap(),
+                    )
                     .unwrap()
                 else {
                     panic!("expected extra argument")
@@ -3569,7 +3607,14 @@ mod tests {
                 };
                 assert!(
                     runtime
-                        .delete_property(carrier, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2).unwrap())
+                        .delete_property(
+                            carrier,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Literal2
+                                )
+                                .unwrap()
+                        )
                         .unwrap()
                 );
                 assert!(
@@ -3696,7 +3741,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -3776,7 +3828,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -3788,7 +3847,9 @@ mod tests {
                     context
                         .get_property(
                             &runtime.global_object_for_realm(context.realm).unwrap(),
-                            &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap()
+                            &runtime
+                                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+                                .unwrap()
                         )
                         .unwrap(),
                     Value::Int(stored)
@@ -3897,14 +3958,23 @@ mod tests {
                 panic!("expected global reference result")
             };
             let costs = profile.snapshot();
-            let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+            let key = runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+                .unwrap();
             if let Some(message) = expected_error {
                 let Value::Object(error) = value else {
                     panic!("RHS ran before lexical validation")
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -3943,7 +4013,9 @@ mod tests {
                 .create_global_lexical_for_test("x", false, initial)
                 .unwrap();
             let object = context.global_var_object().unwrap();
-            let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+            let key = runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+                .unwrap();
             let root = runtime.own_var_ref_root(&object, &key).unwrap().unwrap();
             let entry = entry(
                 &runtime,
@@ -3993,7 +4065,14 @@ mod tests {
                 drop(execution);
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -4039,7 +4118,9 @@ mod tests {
                 .create_global_lexical_for_test("x", is_const, initial.clone())
                 .unwrap();
             let object = context.global_var_object().unwrap();
-            let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+            let key = runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+                .unwrap();
             let root = runtime.own_var_ref_root(&object, &key).unwrap().unwrap();
             let entry = entry(
                 &runtime,
@@ -4102,7 +4183,14 @@ mod tests {
                 drop(execution);
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -4197,7 +4285,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -4331,7 +4426,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(JsString::from_static(message))
                 );
@@ -4380,7 +4482,9 @@ mod tests {
             };
             assert_eq!(value, Value::Bool(expected), "{setup}");
             let costs = profile.snapshot();
-            let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+            let key = runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+                .unwrap();
             assert_eq!(
                 runtime.get_own_property(&object, &key).unwrap().is_some(),
                 own_after,
@@ -4406,10 +4510,20 @@ mod tests {
                 panic!("expected parent pair")
             };
             let parent = context
-                .get_property(&pair, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap())
+                .get_property(
+                    &pair,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+                        .unwrap(),
+                )
                 .unwrap();
             let counter = context
-                .get_property(&pair, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2).unwrap())
+                .get_property(
+                    &pair,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal2)
+                        .unwrap(),
+                )
                 .unwrap();
             let entry = entry(
                 &runtime,
@@ -4430,7 +4544,12 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static("TypeError"))
                 );
@@ -4632,7 +4751,12 @@ mod tests {
         assert!(runtime.0.state.borrow().active_frames.is_empty());
         assert_eq!(
             context
-                .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                .get_property(
+                    &error,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
+                        .unwrap()
+                )
                 .unwrap(),
             Value::String(crate::engine::value::JsString::from_static(
                 "stack overflow"
@@ -4763,7 +4887,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -4865,7 +4996,14 @@ mod tests {
                 };
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(
                         "property is not configurable"
@@ -5512,7 +5650,14 @@ mod tests {
                     );
                     assert_eq!(
                         context
-                            .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                            .get_property(
+                                &error,
+                                &runtime
+                                    .pinned_property_key(
+                                        crate::engine::atom::pinned::PinnedAtom::Message
+                                    )
+                                    .unwrap()
+                            )
                             .unwrap(),
                         Value::String(crate::engine::value::JsString::from_static(
                             "proxy: inconsistent get"
@@ -5635,7 +5780,14 @@ mod tests {
                 );
                 assert_eq!(
                     context
-                        .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                        .get_property(
+                            &error,
+                            &runtime
+                                .pinned_property_key(
+                                    crate::engine::atom::pinned::PinnedAtom::Message
+                                )
+                                .unwrap()
+                        )
                         .unwrap(),
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
@@ -5790,7 +5942,12 @@ mod tests {
         assert_eq!(runtime.get_prototype_of(&error).unwrap(), Some(expected));
         assert_eq!(
             caller
-                .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                .get_property(
+                    &error,
+                    &runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
+                        .unwrap()
+                )
                 .unwrap(),
             Value::String(crate::engine::value::JsString::from_static("toPrimitive"))
         );
@@ -6543,7 +6700,12 @@ mod tests {
             Some(prototype)
         );
         let stack = caller
-            .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Stack).unwrap())
+            .get_property(
+                &error,
+                &runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Stack)
+                    .unwrap(),
+            )
             .unwrap();
         assert!(
             matches!(stack, Value::String(ref text) if text.to_string().contains("getPrototypeOf (native)")),
@@ -6864,7 +7026,9 @@ mod tests {
                 &mut execution,
                 id,
                 base,
-                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap(),
+                runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+                    .unwrap(),
                 Value::Object(receiver),
                 0
             )
@@ -6975,7 +7139,15 @@ mod tests {
             let cost = profile.snapshot();
             assert_eq!(cost.legacy_dispatches, 0, "{setup}");
             assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, native_calls, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            assert_eq!(
+                cost.owned_execution_events
+                    .get("native_leaf_completion")
+                    .copied()
+                    .unwrap_or(0),
+                native_calls,
+                "{setup}"
+            );
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
@@ -7025,15 +7197,14 @@ mod tests {
                 execution.slots.depth(&frame.window),
                 1 + usize::from(keep_top)
             );
-            assert!(matches!(
+            assert!(
                 super::super::frame_operations::complete_owned_slot(
                     &mut execution,
                     id,
                     RunExit::ReleaseOperand { keep_top }
                 )
-                .unwrap(),
-                true
-            ));
+                .unwrap()
+            );
             let frame = execution.frames.current_mut(id).unwrap();
             assert_eq!(frame.resume_pc, frame.fault_pc + 1);
             assert_eq!(execution.slots.depth(&frame.window), usize::from(keep_top));
@@ -7163,7 +7334,15 @@ mod tests {
             let cost = profile.snapshot();
             assert_eq!(cost.legacy_dispatches, 0, "{setup}");
             assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, native_calls, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            assert_eq!(
+                cost.owned_execution_events
+                    .get("native_leaf_completion")
+                    .copied()
+                    .unwrap_or(0),
+                native_calls,
+                "{setup}"
+            );
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(hits), "{setup}");
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
@@ -7253,7 +7432,15 @@ mod tests {
             let cost = profile.snapshot();
             assert_eq!(cost.legacy_dispatches, 0, "{setup}");
             assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, native_calls, "{setup}");
+            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            assert_eq!(
+                cost.owned_execution_events
+                    .get("native_leaf_completion")
+                    .copied()
+                    .unwrap_or(0),
+                native_calls,
+                "{setup}"
+            );
             drop(profile);
             assert_eq!(
                 context.eval("trace").unwrap(),
@@ -7788,7 +7975,14 @@ mod tests {
                 (Completion::Throw(Value::Object(error)), Some(name)) => {
                     assert_eq!(
                         context
-                            .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap())
+                            .get_property(
+                                &error,
+                                &runtime
+                                    .pinned_property_key(
+                                        crate::engine::atom::pinned::PinnedAtom::Name
+                                    )
+                                    .unwrap()
+                            )
                             .unwrap(),
                         Value::String(crate::engine::value::JsString::from_static(name))
                     );
@@ -7833,7 +8027,14 @@ mod tests {
                 (Completion::Throw(Value::Object(error)), true) => {
                     assert_eq!(
                         context
-                            .get_property(&error, &runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap())
+                            .get_property(
+                                &error,
+                                &runtime
+                                    .pinned_property_key(
+                                        crate::engine::atom::pinned::PinnedAtom::Message
+                                    )
+                                    .unwrap()
+                            )
                             .unwrap(),
                         Value::String(crate::engine::value::JsString::from_static(
                             "'this' can be initialized only once"
@@ -8007,7 +8208,7 @@ mod tests {
             .heap
             .replace_native_realm_for_test(object_id, old_realm)
             .unwrap();
-        let error = result.err().expect("call rejection");
+        let error = result.expect_err("call rejection");
         let expected = if missing_receiver {
             "owned operand stack underflow"
         } else if foreign_argument {

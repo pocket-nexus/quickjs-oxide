@@ -1012,15 +1012,15 @@ fn construct_only_proxy_and_new_target_do_not_require_call_capability() {
     assert!(runtime.is_constructor(&proxy).unwrap());
     assert!(runtime.as_callable(&proxy).unwrap().is_none());
 
-    let mut host = RuntimeVmHost::empty_for_test(runtime.clone(), context.realm);
     assert!(matches!(
-        VmHost::construct(
-            &mut host,
-            Value::Object(proxy.clone()),
-            Value::Int(17),
-            vec![Value::Int(42)],
-        )
-        .unwrap(),
+        runtime
+            .construct_value_with_raw_new_target_internal(
+                context.realm,
+                Value::Object(proxy.clone()),
+                Value::Int(17),
+                &[Value::Int(42)],
+            )
+            .unwrap(),
         Completion::Return(Value::Object(_))
     ));
     assert_eq!(

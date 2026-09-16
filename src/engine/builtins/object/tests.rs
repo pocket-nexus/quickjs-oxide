@@ -70,37 +70,13 @@ fn reduced_group_by_element_limit_checks_before_next_and_preserves_throw() {
 }
 
 #[test]
-#[cfg(not(feature = "stack-vm"))]
-fn recursive_group_by_callback_ceiling_is_catchable() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let value = context
-        .eval(
-            r#"(function(){
-                function recurse(depth){
-                    return Object.groupBy([depth],function(){
-                        if(depth!==0)recurse(depth-1);
-                        return "group";
-                    });
-                }
-                recurse(7);
-                try{recurse(8);return "missing"}
-                catch(error){return "ok|"+error.name+":"+error.message}
-            })()"#,
-        )
-        .unwrap();
-    assert_eq!(
-        value,
-        Value::String(JsString::from_static("ok|InternalError:stack overflow",)),
-    );
-}
-
-#[test]
 fn object_keys_family_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -138,7 +114,9 @@ fn object_extensibility_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -229,7 +207,9 @@ fn object_descriptor_statics_autoinit_preserve_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -280,13 +260,17 @@ fn object_is_autoinit_and_same_value_semantics_match_pinned_quickjs() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Is).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Is)
+        .unwrap();
     {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(object_constructor.object_id()).unwrap();
@@ -339,13 +323,17 @@ fn object_assign_autoinit_and_ordinary_snapshot_semantics_match_pinned_quickjs()
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Assign).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Assign)
+        .unwrap();
     {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(object_constructor.object_id()).unwrap();
@@ -475,13 +463,17 @@ fn object_from_entries_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::FromEntries).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::FromEntries)
+        .unwrap();
     let state = runtime.0.state.borrow();
     let object = state.heap.object(object_constructor.object_id()).unwrap();
     let shape = state.heap.shape(object.shape).unwrap();
@@ -507,13 +499,17 @@ fn object_has_own_autoinit_preserves_pinned_metadata_and_presence_is_non_materia
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
     };
 
-    let has_own_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::HasOwn).unwrap();
+    let has_own_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::HasOwn)
+        .unwrap();
     {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(object_constructor.object_id()).unwrap();
@@ -539,7 +535,9 @@ fn object_has_own_autoinit_preserves_pinned_metadata_and_presence_is_non_materia
         context.eval("Object.hasOwn(Object,'keys')").unwrap(),
         Value::Bool(true),
     );
-    let keys_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Keys).unwrap();
+    let keys_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Keys)
+        .unwrap();
     let state = runtime.0.state.borrow();
     let object = state.heap.object(object_constructor.object_id()).unwrap();
     let shape = state.heap.shape(object.shape).unwrap();
@@ -590,11 +588,7 @@ fn recursive_object_has_own_key_conversion_is_guarded_and_runtime_recovers() {
                     .unwrap();
                 assert_eq!(
                     value,
-                    if cfg!(feature = "stack-vm") {
-                        Value::Bool(true)
-                    } else {
-                        Value::String(JsString::from_static("InternalError:stack overflow"))
-                    },
+                    { Value::Bool(true) },
                     "Object.hasOwn recursion depth {depth}",
                 );
             }
@@ -676,70 +670,13 @@ fn object_from_entries_orders_entry_reads_and_closes_preserving_the_original_thr
 }
 
 #[test]
-#[cfg(not(feature = "stack-vm"))]
-fn recursive_object_from_entries_ceiling_is_catchable_and_runtime_recovers() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"var objectFromEntriesCloseCount=0;
-                function objectFromEntriesRecurse(depth){
-                    var key=Object();
-                    key[Symbol.toPrimitive]=function(){
-                        if(depth!==0)objectFromEntriesRecurse(depth-1);
-                        return "x";
-                    };
-                    var done=false,pair=[key,depth],iterator=Object(),iterable=Object();
-                    iterator.next=function(){
-                        var record=Object();
-                        record.done=done;
-                        if(!done){done=true;record.value=pair}
-                        return record;
-                    };
-                    iterator.return=function(){
-                        objectFromEntriesCloseCount++;
-                        return Object();
-                    };
-                    iterable[Symbol.iterator]=function(){return iterator};
-                    return Object.fromEntries(iterable).x;
-                }"#,
-        )
-        .unwrap();
-
-    assert_eq!(
-        context
-            .eval("objectFromEntriesCloseCount=0;objectFromEntriesRecurse(3)")
-            .unwrap(),
-        Value::Int(3),
-    );
-    assert_eq!(eval_int(&mut context, "objectFromEntriesCloseCount"), 0);
-    for depth in [4, 5, 6] {
-        let value = context
-            .eval(&format!(
-                r#"(function(){{
-                    objectFromEntriesCloseCount=0;
-                    try{{objectFromEntriesRecurse({depth});return "missing"}}
-                    catch(error){{
-                        return error.name+":"+error.message+"|"+objectFromEntriesCloseCount;
-                    }}
-                }})()"#,
-            ))
-            .unwrap();
-        assert_eq!(
-            value,
-            Value::String(JsString::from_static("InternalError:stack overflow|4")),
-            "Object.fromEntries recursion depth {depth}",
-        );
-    }
-    assert_eq!(context.eval("1+1").unwrap(), Value::Int(2));
-}
-
-#[test]
 fn object_integrity_autoinit_materializes_and_tightens_in_pinned_order() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -829,8 +766,12 @@ fn object_is_sealed_scans_descriptors_before_extensibility_and_short_circuits_au
     let object_constructor = eval_object(&mut context, "Object");
     let is_sealed = eval_object(&mut context, "Object.isSealed");
     let is_sealed = runtime.as_callable(&is_sealed).unwrap().unwrap();
-    let create = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Create).unwrap();
-    let get_prototype_of = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::GetPrototypeOf).unwrap();
+    let create = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Create)
+        .unwrap();
+    let get_prototype_of = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::GetPrototypeOf)
+        .unwrap();
 
     for key in [&create, &get_prototype_of] {
         let state = runtime.0.state.borrow();
@@ -1013,14 +954,7 @@ fn recursive_object_assign_callbacks_are_catchable_before_host_stack_exhaustion(
                     }})()"#,
                 ))
                 .unwrap();
-            assert_eq!(
-                value,
-                if cfg!(feature = "stack-vm") {
-                    Value::Int(1)
-                } else {
-                    Value::String(JsString::from_static("InternalError:stack overflow"))
-                },
-            );
+            assert_eq!(value, { Value::Int(1) },);
         }
     }
     assert_eq!(
@@ -1036,14 +970,7 @@ fn recursive_object_assign_callbacks_are_catchable_before_host_stack_exhaustion(
                 }})()"#,
             ))
             .unwrap();
-        assert_eq!(
-            value,
-            if cfg!(feature = "stack-vm") {
-                Value::Int(1)
-            } else {
-                Value::String(JsString::from_static("InternalError:stack overflow"))
-            },
-        );
+        assert_eq!(value, { Value::Int(1) },);
     }
     assert_eq!(context.eval("1+1").unwrap(), Value::Int(2));
 }
@@ -1163,14 +1090,7 @@ fn recursive_object_descriptor_key_coercion_is_catchable_before_host_stack_exhau
                 }})()"#,
             ))
             .unwrap();
-        assert_eq!(
-            value,
-            if cfg!(feature = "stack-vm") {
-                Value::Int(1)
-            } else {
-                Value::String(JsString::from_static("InternalError:stack overflow"))
-            },
-        );
+        assert_eq!(value, { Value::Int(1) },);
     }
     for name in [
         "objectDescriptorMixedRecurse",
@@ -1189,11 +1109,7 @@ fn recursive_object_descriptor_key_coercion_is_catchable_before_host_stack_exhau
                 .unwrap();
             assert_eq!(
                 value,
-                if cfg!(feature = "stack-vm") {
-                    Value::Int(1)
-                } else {
-                    Value::String(JsString::from_static("InternalError:stack overflow"))
-                },
+                { Value::Int(1) },
                 "mixed native recursion path {name} at depth {depth}",
             );
         }
@@ -1206,7 +1122,9 @@ fn object_keys_descriptor_recheck_materializes_non_enumerable_autoinits() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let global = context.global_object().unwrap();
-    let object_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object).unwrap();
+    let object_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
+        .unwrap();
     let Value::Object(object_constructor) = context.get_property(&global, &object_key).unwrap()
     else {
         panic!("global Object was not an object");
@@ -1373,7 +1291,9 @@ fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
         runtime.get_prototype_of(&result).unwrap(),
         Some(defining_array_prototype.clone()),
     );
-    let zero = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1).unwrap();
+    let zero = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
+        .unwrap();
     let Value::Object(entry) = caller_context.get_property(&result, &zero).unwrap() else {
         panic!("borrowed Object.entries result did not contain an entry pair");
     };
@@ -1450,14 +1370,7 @@ fn recursive_object_keys_family_ceiling_protects_the_heaviest_measured_path() {
                 }})()"#,
             ))
             .unwrap();
-        assert_eq!(
-            value,
-            if cfg!(feature = "stack-vm") {
-                Value::Int(0)
-            } else {
-                Value::String(JsString::from_static("InternalError:stack overflow"))
-            },
-        );
+        assert_eq!(value, { Value::Int(0) },);
     }
 
     let value = context
@@ -1468,14 +1381,7 @@ fn recursive_object_keys_family_ceiling_protects_the_heaviest_measured_path() {
             })()"#,
         )
         .unwrap();
-    assert_eq!(
-        value,
-        if cfg!(feature = "stack-vm") {
-            Value::Int(0)
-        } else {
-            Value::String(JsString::from_static("InternalError:stack overflow"))
-        },
-    );
+    assert_eq!(value, { Value::Int(0) },);
 }
 
 fn eval_object(context: &mut Context, source: &str) -> ObjectRef {
@@ -1508,7 +1414,7 @@ fn string_property(
 }
 
 #[test]
-#[cfg(feature = "stack-vm")]
+
 fn recursive_group_by_uses_default_logical_budget_and_recovers() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
@@ -1539,7 +1445,7 @@ fn recursive_group_by_uses_default_logical_budget_and_recovers() {
 }
 
 #[test]
-#[cfg(feature = "stack-vm")]
+
 fn recursive_from_entries_uses_default_logical_budget_closes_and_recovers() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();

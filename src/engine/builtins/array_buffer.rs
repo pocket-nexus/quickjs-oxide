@@ -29,18 +29,18 @@ use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
 pub(in crate::engine::builtins) mod constructor;
 mod data_view;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use constructor::BufferConstructorResume;
 pub(crate) use constructor::BufferConstructorStep;
 pub(in crate::engine::builtins) mod slice;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use slice::{BufferSliceKind, BufferSliceResume, BufferSliceStep};
 pub(in crate::engine::builtins) mod mutation;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use data_view::{
     DataViewAccessResume, DataViewAccessStep, DataViewConstructorResume, DataViewConstructorStep,
 };
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use mutation::BufferMutationResume;
 pub(crate) use mutation::BufferMutationStep;
 #[cfg(test)]
@@ -357,7 +357,7 @@ impl Runtime {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
-        let snapshot = self.array_buffer_snapshot(&object)?;
+        let snapshot = self.array_buffer_snapshot(object)?;
         let value = match kind {
             ArrayBufferNativeKind::ByteLength => Value::Int(
                 i32::try_from(snapshot.byte_length)
@@ -676,7 +676,13 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_array_buffer_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        self.require_array_buffer_borrowed(realm, &value)
+            .map(|result| match result {
+                NativeConversion::Value(object) => NativeConversion::Value(object.clone()),
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
+            })
+    }
     fn require_array_buffer_borrowed<'a>(
         &self,
         realm: ContextId,
@@ -692,7 +698,7 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("ArrayBuffer"));
         }
-        if self.array_buffer_snapshot_if_branded(&object)?.is_none() {
+        if self.array_buffer_snapshot_if_branded(object)?.is_none() {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,

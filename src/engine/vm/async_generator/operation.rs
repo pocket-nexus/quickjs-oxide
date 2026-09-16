@@ -252,7 +252,6 @@ impl AsyncGeneratorStep {
         }
     }
     pub(crate) fn finish(self, runtime: &Runtime) -> Result<Completion, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         {
             let realm = match &self {
                 Self::Complete(_) => {
@@ -272,38 +271,6 @@ impl AsyncGeneratorStep {
                 super::super::driver::RootOperation::AsyncGenerator(self),
             )
             .map_err(RuntimeError::Engine)
-        }
-        #[cfg(not(feature = "stack-vm"))]
-        {
-            let mut step = self;
-            loop {
-                step = match step {
-                    Self::Complete(completion) => return Ok(completion),
-                    Self::Run { mut resume } => {
-                        let activation = resume.take_run_activation();
-                        let input = resume.take_run_input();
-                        resume.body(activation.run(runtime, input)?)?
-                    }
-                    Self::Resolve { mut resume } => {
-                        let value = resume.take_resolve_value();
-                        let realm = resume.take_resolve_realm();
-                        resume.resume(runtime.promise_resolve_intrinsic(realm, value)?)?
-                    }
-                    Self::Call { mut resume } => {
-                        let callable = resume.take_call_callable();
-                        let value = resume.take_call_value();
-                        {
-                            let realm = resume.realm;
-                            resume.resume(runtime.call_internal(
-                                realm,
-                                &callable,
-                                Value::Undefined,
-                                &[value],
-                            )?)?
-                        }
-                    }
-                };
-            }
         }
     }
 }

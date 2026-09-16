@@ -1417,6 +1417,16 @@ fn build_unlinked_debug(
     })
 }
 
+pub(in crate::engine::compiler) fn unlinked_primitive(
+    value: Value,
+) -> Result<UnlinkedConstant, Error> {
+    UnlinkedConstant::primitive(value).map_err(|error| {
+        Error::internal(format!(
+            "compiler emitted a runtime-bound constant into an unlinked function: {error}"
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1566,14 +1576,4 @@ mod tests {
                 .contains("strict function retained a local with object")
         );
     }
-}
-
-pub(in crate::engine::compiler) fn unlinked_primitive(
-    value: Value,
-) -> Result<UnlinkedConstant, Error> {
-    UnlinkedConstant::primitive(value).map_err(|error| {
-        Error::internal(format!(
-            "compiler emitted a runtime-bound constant into an unlinked function: {error}"
-        ))
-    })
 }

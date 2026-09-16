@@ -344,7 +344,7 @@ impl From<crate::engine::builtins::ObjectCopyStep> for Step {
         use crate::engine::builtins::ObjectCopyStep as T;
         match step {
             T::Complete(result) => Self::Complete(Some(result)),
-            #[cfg(feature = "stack-vm")]
+
             T::PreparedRead(prepared) => Self::PreparedRead {
                 read: Some(prepared.read),
                 key: Some(prepared.key),

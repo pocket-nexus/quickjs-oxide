@@ -93,7 +93,8 @@ impl BindResume {
             NativeConversion::Throw(value) => Ok(BindStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(true) => Ok(BindStep::Read {
                 object: self.0.target.clone(),
-                key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+                key: runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 resume: self,
             }),
             NativeConversion::Value(false) => self.length(runtime, Value::Int(0)),

@@ -23,16 +23,6 @@ impl From<crate::engine::builtins::StringReplaceStep> for Step {
                     resume: Some(Resume::StringReplace(resume)),
                 }
             }
-            T::Read { mut resume } => {
-                let object = resume.take_read_object();
-                let key = resume.take_read_key();
-                Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::StringReplace(resume)),
-                }
-            }
             T::Call { mut resume } => {
                 let target = resume.take_call_target();
                 let receiver = resume.take_call_receiver();
@@ -131,16 +121,6 @@ impl From<crate::engine::builtins::RegExpReplaceStep> for Step {
                     resume: Some(Resume::RegExpReplace(resume)),
                 }
             }
-            T::Read { mut resume } => {
-                let object = resume.take_read_object();
-                let key = resume.take_read_key();
-                Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::RegExpReplace(resume)),
-                }
-            }
             T::Primitive { mut resume } => {
                 let value = resume.take_primitive_value();
                 let hint = resume.take_primitive_hint();
@@ -167,18 +147,6 @@ impl From<crate::engine::builtins::RegExpReplaceStep> for Step {
                 Self::RegExpExec {
                     regexp: Some(regexp),
                     input: Some(input),
-                    resume: Some(Resume::RegExpReplace(resume)),
-                }
-            }
-            T::Set { mut resume } => {
-                let object = resume.take_set_object();
-                let key = resume.take_set_key();
-                let value = resume.take_set_value();
-                Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
-                    object: Some(object),
-                    key: Some(key),
-                    value: Some(value),
                     resume: Some(Resume::RegExpReplace(resume)),
                 }
             }

@@ -1,5 +1,5 @@
 //! Slice and splice keep copied result and completed receiver mutations across replies.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -22,7 +22,6 @@ pub(crate) enum SliceKind {
     ToSpliced,
 }
 impl SliceKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::ArrayPrototypeSlice(ArraySliceKind::Slice) => Some(Self::Slice),
@@ -39,7 +38,6 @@ pub(crate) enum SliceStep {
     PreparedHas { resume: SliceResume },
     Read { resume: SliceResume },
     Number { resume: SliceResume },
-    Has { resume: SliceResume },
     Species { resume: SliceResume },
     Define { resume: SliceResume },
     Set { resume: SliceResume },
@@ -423,9 +421,7 @@ impl SliceResume {
             }
             self.0.phase = Phase::Has;
             let key = runtime.property_key_for_index(self.source_index())?;
-            #[cfg(not(feature = "stack-vm"))]
-            return Ok(SliceStep::make_has(self.0.object.clone(), key, self));
-            #[cfg(feature = "stack-vm")]
+
             {
                 use crate::engine::object::{OrdinaryRead, PreparedHas};
                 match runtime.prepare_has_property(&self.0.object, &key)? {
@@ -676,13 +672,6 @@ pub(crate) fn finish(
                 let (value,) = resume.take_number();
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
-            SliceStep::Has { mut resume } => {
-                let (object, key) = resume.take_has();
-                resume.boolean(
-                    runtime,
-                    runtime.internal_has_property(realm, &object, &key)?,
-                )?
-            }
             SliceStep::Species { mut resume } => {
                 let (source, length) = resume.take_species();
                 resume.resume(
@@ -912,12 +901,6 @@ impl SliceResume {
             .take()
             .expect("slice Number lost value"),)
     }
-    pub(crate) fn take_has(&mut self) -> (ObjectRef, PropertyKey) {
-        (
-            self.0.pending.object.take().expect("slice Has lost object"),
-            self.0.pending.key.take().expect("slice Has lost key"),
-        )
-    }
     pub(crate) fn take_species(&mut self) -> (ObjectRef, u64) {
         (
             self.0
@@ -1043,6 +1026,8 @@ impl Runtime {
             state.release_atoms(atoms)?;
             return Err(error.into());
         }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("array_slice_dense_batch");
         Ok(true)
     }
 }

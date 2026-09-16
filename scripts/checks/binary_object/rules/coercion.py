@@ -319,46 +319,21 @@ def check(ctx):
             "raw112 must use the existing ordinary 1-to-1 stack/CFG verifier and must not acquire raw8 exact-one/index-zero/no-target narrowing or synthetic-constant accounting",
         )
 
-    stage3j_host_to_propkey = ctx.stage3b_function(
-        "src/engine/vm/host_bridge.rs",
-        "convert_property_key",
-        "stage3j-to-propkey-host-semantics",
-    )
-
-    stage3j_host_to_propkey_source = ctx.stage3j_source_function(
-        "src/engine/vm/host_bridge.rs",
-        "convert_property_key",
-        "stage3j-to-propkey-host-semantics",
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3j-to-propkey-host-semantics",
-        "RuntimeVmHost::convert_property_key must retain its exact primitive and Symbol identity fast paths, string-hint Object conversion, thrown-value propagation, and canonical String fallback",
-        stage3j_host_to_propkey,
-        "b3f51a60bdc4fb1816ecc18a05cdb58679616bb3ebeee787d8767bc0156f3d39",
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3j-to-propkey-host-semantics",
-        "the bounded raw RuntimeVmHost::convert_property_key source, including semantic literals, must remain exact",
-        stage3j_host_to_propkey_source,
-        "8a2c3c601d0a2243e99a8116603133c3f355527c0010b0023e4addff17f0618d",
-    )
-
-    normalized_stage3j_host_to_propkey = " ".join(
-        stage3j_host_to_propkey_source.split()
-    )
-
-    stage3j_host_to_propkey_fragments = deepcopy(evidence.STAGE3J_HOST_TO_PROPKEY_FRAGMENTS)
-
-    if any(
-        normalized_stage3j_host_to_propkey.count(fragment) != expected_count
-        for fragment, expected_count in stage3j_host_to_propkey_fragments
-    ):
-        ctx.fail(
+    # S13 retired RuntimeVmHost. These three reviewed owned-core functions
+    # authenticate primitive identity/domain, String-hint entry in defining
+    # realm, and one-use completion preserving arbitrary Throw values.
+    for relative, name, digest in (('src/engine/vm/conversion_driver.rs', 'property_key_primitive', '789f82f0f9e4288794365b53621a8ce769f661f5a656445112fccd0ab1cec480'), ('src/engine/vm/conversion_driver.rs', 'start', '62ea44cfed0f5000f114beb6fef9f3514e92e04a33725d7e5d9ce9d56f3ddc8e'), ('src/engine/vm/conversion_driver.rs', 'advance', '18ac7c8d4e309e1df5f4d8beddf02dccdf4b75c93e9e901ae7a76391586548c7')):
+        ctx.require_normalized_code_sha256(
             "stage3j-to-propkey-host-semantics",
-            "ToPropKey host conversion must preserve Int/String and Symbol identity, runtime ownership, the defining-realm string hint, arbitrary Throw identity, and canonical primitive-to-String fallback",
+            f"{relative}::{name} must preserve the owned property-key contract",
+            ctx.stage3j_source_function(relative, name, "stage3j-to-propkey-host-semantics"),
+            digest,
         )
+    run = " ".join(ctx.stage3b_code("src/engine/vm/run.rs").split())
+    ctx.require_ordered_fragments(
+        "stage3j-to-propkey-host-semantics", "ToPropKey must retain the primitive resident path and owned conversion exit",
+        run, ("Instruction::ToPropKey => match slots.peek(0)? {", "_ => return Ok(RunExit::ConvertPropertyKey),"),
+    )
 
     # S11: requests retain the same owned domain allocation across Get/Call.
     # The reviewed source keeps one-use replies, drop order and literal hints.
@@ -382,7 +357,7 @@ def check(ctx):
             diagnostic,
             "owned ToPrimitive phases must preserve one-use replies, hint ordering, receiver and Throw identity, realm errors and the ordinary entry route",
             primitive_state_source,
-            "1c3d0ff8a94307fe9c7995c41ce4066f345bbe98192068c6ed587631d222fcad",
+            "7c6423422f996f593c99de66cc008362937b324de89ed1593dc9ecc80e177913",
         )
 
     stage3g_test_contracts = deepcopy(evidence.STAGE3G_TEST_CONTRACTS)

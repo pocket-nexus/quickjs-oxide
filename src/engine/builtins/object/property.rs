@@ -1,6 +1,6 @@
 //! Shared Object/Reflect property algorithms. Requests retain their evaluated inputs.
 use crate::engine::atom::PropertyKeyKind;
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::{NativeFunctionId, ObjectExtensibilityKind, ReflectKind};
 use crate::engine::builtins::native::{
     ObjectIntegrityKind, ObjectKeysKind, ObjectOwnPropertyKeysKind,
@@ -38,7 +38,6 @@ pub(crate) enum PropertyKind {
     ObjectPrevent,
 }
 impl PropertyKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::Reflect(kind) => match kind {

@@ -375,7 +375,6 @@ pub struct SymbolRef(AtomOwner);
 
 impl SymbolRef {
     /// Fallible retain for an owning VM slot, without deferred work or GC.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_clone(&self) -> Result<Self, AtomError> {
         self.0.try_clone().map(Self)
     }
@@ -757,9 +756,9 @@ pub(crate) use storage::SelectedMissingAppend;
 pub(crate) mod operations;
 
 mod ordinary_storage;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) mod property_ic;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use ordinary_storage::LinkedNativeSelection;
 
 mod ordinary;
@@ -768,39 +767,31 @@ pub(crate) use ordinary::OrdinaryRead;
 #[cfg(test)]
 mod ordinary_tests;
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{OwnedProxyGetStep as ProxyGetStep, ProxyGetResume};
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use internal_methods::{ProxyCallResume, ProxyCallStep};
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{ProxyOwnResume, ProxyOwnStep};
 
 pub(crate) use internal_methods::PreparedHas;
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{ProxyBooleanKind, ProxyBooleanResume, ProxyBooleanStep};
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{
     ProxyDefineResume, ProxyDefineStep, ProxySetResume, ProxySetStep,
 };
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use ordinary::{SetResume, SetStep, set_completion};
 
 mod array_length;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use array_length::ArrayLengthResume;
 pub(crate) use array_length::ArrayLengthStep;
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{ProxyPrototypeKind, ProxyPrototypeResume, ProxyPrototypeStep};
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{KeysResume, KeysStep};
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use internal_methods::{ProxyConstructResume, ProxyConstructStep};
 
-#[cfg(feature = "stack-vm")]
 mod dense_mutation;

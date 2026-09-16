@@ -6,7 +6,7 @@ use crate::engine::builtins::native::{DynamicFunctionKind, FunctionDebugPosition
 use crate::engine::code::function::metadata::FunctionKind;
 
 use crate::engine::heap::{ContextId, ObjectPayload};
-use crate::engine::object::{CallableRef, ObjectRef};
+use crate::engine::object::CallableRef;
 use crate::engine::value::Value;
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
@@ -242,21 +242,6 @@ impl Runtime {
         Ok(Completion::Return(Value::Int(selected)))
     }
 
-    /// QuickJS `JS_IsInstanceOf`: observe `@@hasInstance` before the legacy
-    /// callable fallback, call a custom method with the RHS as receiver, and
-    /// preserve arbitrary thrown values as completions.
-    pub(crate) fn is_instance_of(
-        &self,
-        realm: ContextId,
-        candidate: Value,
-        target: ObjectRef,
-    ) -> Result<Completion, RuntimeError> {
-        instance::finish(
-            self,
-            realm,
-            instance::InstanceStep::start(self, realm, candidate, target)?,
-        )
-    }
     pub(crate) fn call_function_prototype_has_instance(
         &self,
         realm: ContextId,

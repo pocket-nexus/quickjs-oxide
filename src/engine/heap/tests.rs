@@ -162,7 +162,7 @@ fn bytecode(
 ) -> FunctionBytecodeData {
     FunctionBytecodeData {
         executable: Default::default(),
-        #[cfg(feature = "stack-vm")]
+
         fusion: Default::default(),
         code: code.clone(),
         constants: constants.into(),

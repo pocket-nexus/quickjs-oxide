@@ -62,7 +62,7 @@ fn dynamic_import_load_samples_replacement_installed_by_normalize() {
 
 #[test]
 fn dynamic_import_resolution_failure_retries_the_acyclic_source_graph() {
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     let profile = crate::engine::api::profiling::CostProfile::start();
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
@@ -83,7 +83,7 @@ fn dynamic_import_resolution_failure_retries_the_acyclic_source_graph() {
         loads.borrow().as_slice(),
         &["pkg/a.js", "pkg/missing.js", "pkg/a.js", "pkg/missing.js"]
     );
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     {
         let snapshot = profile.snapshot();
         assert_eq!(snapshot.legacy_dispatches, 0);
@@ -195,7 +195,7 @@ fn dynamic_import_reuses_cycle_root_rejection_promise_and_tracker_history() {
 
 #[test]
 fn dynamic_import_successful_cycle_reuses_one_evaluation_promise() {
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     let profile = crate::engine::api::profiling::CostProfile::start();
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
@@ -257,7 +257,7 @@ fn dynamic_import_successful_cycle_reuses_one_evaluation_promise() {
             .evaluation_promise
             .is_none()
     );
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     {
         let snapshot = profile.snapshot();
         assert_eq!(snapshot.legacy_dispatches, 0);

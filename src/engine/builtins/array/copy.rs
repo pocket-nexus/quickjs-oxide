@@ -91,7 +91,7 @@ impl CopyResume {
             )?)?,
         )
     }
-    fn from_key(&self, runtime: &Runtime) -> Result<PropertyKey, RuntimeError> {
+    fn source_key(&self, runtime: &Runtime) -> Result<PropertyKey, RuntimeError> {
         Ok(
             runtime.property_key_for_index(self.0.from.checked_add(self.relative()).ok_or(
                 RuntimeError::Invariant("Array copy source index overflowed"),
@@ -105,7 +105,7 @@ impl CopyResume {
         self.0.phase = Phase::Has;
         Ok(CopyStep::request_has(
             self.0.object.clone(),
-            self.from_key(runtime)?,
+            self.source_key(runtime)?,
             self,
         ))
     }
@@ -125,7 +125,7 @@ impl CopyResume {
                 self.0.phase = Phase::Read;
                 Ok(CopyStep::request_read(
                     self.0.object.clone(),
-                    self.from_key(runtime)?,
+                    self.source_key(runtime)?,
                     self,
                 ))
             }

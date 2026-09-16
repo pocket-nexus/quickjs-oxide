@@ -144,7 +144,8 @@ impl Runtime {
             "",
             0,
         )?;
-        let constructor_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
+        let constructor_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
         if !self.define_own_property(
             iterator_prototype,
             &constructor_key,

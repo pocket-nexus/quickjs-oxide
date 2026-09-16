@@ -97,7 +97,8 @@ impl Runtime {
         }
 
         // QuickJS's alias table preserves the exact entries-function identity.
-        let entries_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Entries)?;
+        let entries_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Entries)?;
         let entries = match self.get_property_in_realm(realm, &map_prototype, &entries_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) => {
@@ -332,7 +333,7 @@ impl Runtime {
                 self,
                 realm,
                 super::iterator::collection::CollectionKind::Map,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -485,7 +486,7 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant(
                 "Map.prototype.set value argv was not padded",
             ))?;
-        self.set_map_record(&map, key, value)?;
+        self.set_map_record(map, key, value)?;
         Ok(Completion::Return(Value::Object(map.clone())))
     }
 
@@ -502,7 +503,7 @@ impl Runtime {
         let key = Self::normalized_map_key(arguments.readable.first().cloned().ok_or(
             RuntimeError::Invariant("Map.prototype.get key argv was not padded"),
         )?);
-        let value = match self.find_map_record(&map, &key)? {
+        let value = match self.find_map_record(map, &key)? {
             Some((_, value)) => self.root_raw_value(&value)?,
             None => Value::Undefined,
         };
@@ -523,7 +524,7 @@ impl Runtime {
             RuntimeError::Invariant("Map.prototype.has key argv was not padded"),
         )?);
         Ok(Completion::Return(Value::Bool(
-            self.find_map_record(&map, &key)?.is_some(),
+            self.find_map_record(map, &key)?.is_some(),
         )))
     }
 
@@ -545,7 +546,7 @@ impl Runtime {
                 "Map.prototype.delete key argv was not padded",
             ))?;
         Ok(Completion::Return(Value::Bool(
-            self.delete_map_record(&map, &key)?,
+            self.delete_map_record(map, &key)?,
         )))
     }
 
@@ -591,7 +592,7 @@ impl Runtime {
                 self,
                 realm,
                 callback::CallbackKind::Insert { computed },
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -610,7 +611,7 @@ impl Runtime {
                 self,
                 realm,
                 callback::CallbackKind::Each,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -656,7 +657,7 @@ impl Runtime {
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
         Ok(Completion::Return(Value::Object(
-            self.new_map_iterator(realm, &map, kind)?,
+            self.new_map_iterator(realm, map, kind)?,
         )))
     }
 
@@ -771,7 +772,7 @@ impl Runtime {
                 self,
                 realm,
                 super::object::iteration::IterationKind::MapGroup,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )

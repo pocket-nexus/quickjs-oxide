@@ -67,12 +67,8 @@ OWNER_GROUPS = {'src/engine/code/bytecode.rs': ['src/engine/code/instruction.rs'
  'src/engine/vm/mod.rs': ['src/engine/vm/protocol.rs',
                           'src/engine/vm/completion.rs',
                           'src/engine/vm/numeric.rs',
-                          'src/engine/vm/detached.rs',
                           'src/engine/vm/activation.rs',
-                          'src/engine/vm/dispatch.rs',
-                          'src/engine/vm/numeric_execution.rs',
-                          'src/engine/vm/unwind.rs',
-                          'src/engine/vm/frame_execution.rs']}
+                          'src/engine/vm/root_call.rs']}
 
 def validate_link(ctx, relative):
     if ctx.self_test_marker_authorized or not relative.startswith("src/"):

@@ -138,19 +138,21 @@ expect_full_rewrite_rejected published-executable-mutable-layout published-execu
     "    data: $publication_data_type," \
     "    pub(crate) data: $publication_data_type,"
 
-expect_full_rewrite_rejected published-frame-code-substitution published-frame-owner \
-    src/engine/vm/host_bridge.rs \
-    '        Ok((self.executable.code.clone(), activation))' \
-    '        Ok((Rc::from([]), activation))'
-
-expect_full_rewrite_rejected published-branch-general-check published-static-target \
-    src/engine/vm/protocol.rs \
-    '        super::activation::checked_target(target, code_len)' \
-    '        Ok(target as usize)'
-expect_full_rewrite_rejected published-branch-fixture-check published-static-target \
-    src/engine/vm/host_bridge.rs \
-    '            return super::activation::checked_target(target, _code_len);' \
-    '            return Ok(target as usize);'
+# S13 has one published execution core. Reject executable substitution at its
+# root constructor and reject stale certificates before any static target can
+# be trusted; the retired synthetic host branch adapter no longer exists.
+expect_full_rewrite_rejected published-frame-code-substitution s13-owned-route \
+    src/engine/vm/root_call.rs \
+    '        executable: prepared.executable,' \
+    '        executable: arbitrary_executable,'
+expect_full_rewrite_rejected published-branch-generation-check published-executable-owner \
+    src/engine/vm/call/ordinary.rs \
+    'facts.publish_generation == bytecode.publish_generation()' \
+    'true'
+expect_full_rewrite_rejected published-branch-closure-check published-executable-owner \
+    src/engine/vm/call/ordinary.rs \
+    'if closure_slots.len() != facts.closure_count {' \
+    'if false {'
 
 expect_rewrite_rejected ordinary-verifier-role-call-bypass ordinary-leaf-verifier-dispatch \
     src/engine/code/verify/mod.rs \

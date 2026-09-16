@@ -43,14 +43,13 @@ impl ComputedStep {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let map = match runtime.weak_collection_receiver(
-            realm,
-            invocation,
-            WeakCollectionKind::Map,
-        )? {
-            NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-        };
+        let map =
+            match runtime.weak_collection_receiver(realm, invocation, WeakCollectionKind::Map)? {
+                NativeConversion::Value(map) => map,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(value)));
+                }
+            };
         let key_value = arguments
             .readable
             .first()
@@ -77,7 +76,7 @@ impl ComputedStep {
                 runtime.invalid_weak_key(realm, WeakCollectionKind::Map)?,
             ));
         };
-        if let Some(value) = runtime.find_weak_map_record(&map, key)? {
+        if let Some(value) = runtime.find_weak_map_record(map, key)? {
             return Ok(Self::Complete(Completion::Return(
                 runtime.root_raw_value(&value)?,
             )));

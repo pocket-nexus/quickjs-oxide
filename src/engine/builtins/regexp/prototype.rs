@@ -307,26 +307,6 @@ fn escape_regexp_source(pattern: &JsString) -> Result<JsString, JsStringError> {
     output.finish()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn source_escaping_tracks_classes_and_escaped_brackets() {
-        let pattern = JsString::try_from_utf8("a/b[/]\\[/\n\r").unwrap();
-        assert_eq!(
-            escape_regexp_source(&pattern).unwrap().to_utf8_lossy(),
-            "a\\/b[/]\\[\\/\\n\\r"
-        );
-        assert_eq!(
-            escape_regexp_source(&JsString::try_from_utf8("[]/]").unwrap())
-                .unwrap()
-                .to_utf8_lossy(),
-            "[]/]"
-        );
-    }
-}
-
 const FLAG_PROPERTIES: [(&str, char); 8] = [
     ("hasIndices", 'd'),
     ("global", 'g'),
@@ -555,3 +535,23 @@ fn finish_presentation(
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<RegExpPresentationStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_escaping_tracks_classes_and_escaped_brackets() {
+        let pattern = JsString::try_from_utf8("a/b[/]\\[/\n\r").unwrap();
+        assert_eq!(
+            escape_regexp_source(&pattern).unwrap().to_utf8_lossy(),
+            "a\\/b[/]\\[\\/\\n\\r"
+        );
+        assert_eq!(
+            escape_regexp_source(&JsString::try_from_utf8("[]/]").unwrap())
+                .unwrap()
+                .to_utf8_lossy(),
+            "[]/]"
+        );
+    }
+}

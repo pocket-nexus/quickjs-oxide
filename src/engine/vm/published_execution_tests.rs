@@ -148,29 +148,6 @@ fn published_eval_reuses_topology_but_observes_live_scope_and_super() {
 }
 
 #[test]
-fn instruction_fetch_rejects_invalid_pc_before_advancing_it() {
-    use super::{DetachedHost, VmActivation};
-    use crate::engine::code::bytecode::{DetachedBytecode, Instruction};
-    let function = DetachedBytecode::<Value> {
-        code: vec![Instruction::Nop],
-        constants: vec![],
-        local_count: 0,
-        max_stack: 0,
-    };
-    for pc in [0, 1, usize::MAX] {
-        let mut host = DetachedHost::new(&function);
-        let mut activation = VmActivation::new(0);
-        activation.pc = pc;
-        let error = activation
-            .execute_inner(&function.code, &mut host)
-            .err()
-            .expect("invalid PC must fail at instruction fetch");
-        assert_eq!(error.message(), "bytecode ended without return");
-        assert_eq!(activation.pc, if pc == 0 { 1 } else { pc });
-    }
-}
-
-#[test]
 fn repeated_closure_creation_reuses_cells_without_erasing_their_metadata() {
     for source in [
         "(function(){let x=1; let a=()=>x; let b=()=>++x; return b()===2&&a()===2;})()",
@@ -183,78 +160,6 @@ fn repeated_closure_creation_reuses_cells_without_erasing_their_metadata() {
         assert!(
             matches!(context.eval(source).unwrap(), Value::Bool(true)),
             "{source}"
-        );
-    }
-}
-
-#[test]
-fn static_branch_targets_remain_checked_at_untrusted_boundaries() {
-    use super::{DetachedHost, VmActivation};
-    use crate::engine::code::bytecode::{DetachedBytecode, Instruction};
-    use crate::engine::code::function::UnlinkedFunction;
-    use crate::engine::code::function::metadata::FunctionMetadata;
-
-    // Even an unreachable malformed operand is rejected by publication.
-    let runtime = Runtime::new();
-    let context = runtime.new_context();
-    let draft = UnlinkedFunction::fixture(
-        vec![
-            Instruction::Undefined,
-            Instruction::Return,
-            Instruction::Goto(u32::MAX),
-        ],
-        vec![],
-        FunctionMetadata {
-            max_stack: 1,
-            ..FunctionMetadata::default()
-        },
-    );
-    let error = runtime
-        .publish_unlinked_function(context.realm, draft)
-        .unwrap_err();
-    assert!(
-        error.to_string().contains("jump target is out of bounds"),
-        "{error}"
-    );
-
-    for branch in [
-        Instruction::Goto(2),
-        Instruction::IfTrue(2),
-        Instruction::IfFalse(2),
-    ] {
-        let function = DetachedBytecode::<Value> {
-            code: vec![branch.clone()],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        let mut host = DetachedHost::new(&function);
-        let mut activation = VmActivation::new(1);
-        activation
-            .stack
-            .push(Value::Bool(!matches!(branch, Instruction::IfFalse(_))));
-        let error = activation
-            .execute_inner(&function.code, &mut host)
-            .err()
-            .unwrap();
-        assert_eq!(error.message(), "jump target is out of bounds");
-    }
-}
-
-#[test]
-fn synthetic_runtime_host_checks_static_targets() {
-    use super::VmHost;
-    use super::host_bridge::RuntimeVmHost;
-    let runtime = Runtime::new();
-    let context = runtime.new_context();
-    let host = RuntimeVmHost::empty_for_test(runtime.clone(), context.realm);
-    assert_eq!(host.static_branch_target(0, 1).unwrap(), 0);
-    for (target, length) in [(0, 0), (1, 1), (u32::MAX, 1)] {
-        assert_eq!(
-            host.static_branch_target(target, length)
-                .unwrap_err()
-                .message(),
-            "jump target is out of bounds"
         );
     }
 }
@@ -276,91 +181,91 @@ fn published_static_branches_preserve_resume_finally_and_loop_targets() {
 }
 
 #[test]
-fn paired_stack_reads_preserve_order_and_root_cleanup_on_every_length() {
-    use super::VmActivation;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let mut activation = VmActivation::new(3);
-    assert_eq!(
-        activation.pop_pair().unwrap_err().message(),
-        "bytecode stack underflow"
-    );
-    let single = context.new_object().unwrap();
-    let single_id = single.object_id();
-    activation.stack.push(Value::Object(single));
-    assert_eq!(
-        activation.pop_pair().unwrap_err().message(),
-        "bytecode stack underflow"
-    );
-    assert!(activation.stack.is_empty());
-    assert!(runtime.0.state.borrow().heap.object(single_id).is_err());
-
-    let left = context.new_object().unwrap();
-    let right = context.new_object().unwrap();
-    let left_id = left.object_id();
-    let right_id = right.object_id();
-    activation
-        .stack
-        .extend([Value::Int(7), Value::Object(left), Value::Object(right)]);
-    let (left, right) = activation.pop_pair().unwrap();
-    assert_eq!(activation.stack, [Value::Int(7)]);
-    assert!(matches!(&left, Value::Object(root) if root.object_id() == left_id));
-    assert!(matches!(&right, Value::Object(root) if root.object_id() == right_id));
-    assert!(runtime.0.state.borrow().heap.object(left_id).is_ok());
-    assert!(runtime.0.state.borrow().heap.object(right_id).is_ok());
-    drop((left, right));
-    assert!(runtime.0.state.borrow().heap.object(left_id).is_err());
-    assert!(runtime.0.state.borrow().heap.object(right_id).is_err());
+fn invalid_fetch_and_branch_programs_are_rejected_before_execution() {
+    use crate::engine::code::{
+        bytecode::Instruction,
+        function::{UnlinkedFunction, metadata::FunctionMetadata},
+    };
+    for code in [
+        vec![Instruction::Nop],
+        vec![Instruction::Goto(u32::MAX)],
+        vec![Instruction::IfTrue(99)],
+        vec![Instruction::Ret],
+    ] {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let draft = UnlinkedFunction::fixture(
+            code,
+            vec![],
+            FunctionMetadata {
+                max_stack: 1,
+                ..FunctionMetadata::default()
+            },
+        );
+        assert!(
+            runtime
+                .publish_unlinked_function(context.realm, draft)
+                .is_err()
+        );
+    }
 }
 
 #[test]
-fn depth_stack_reads_select_from_the_tail_and_retain_roots() {
-    use super::VmActivation;
+fn stack_reads_cover_full_depth_range_and_preserve_root_ownership() {
+    use super::stack::{FrameStorage, SlotStore};
+    use crate::engine::code::runtime::PublishedFunctionSnapshot;
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
+    for length in [0usize, 1, 255, 256, 257] {
+        let mut code = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        code.metadata.max_stack = length as u16;
+        let mut slots = SlotStore::new(length + 1);
+        let mut window = slots
+            .push_frame(
+                &code.frame_layout(),
+                FrameStorage {
+                    original_arguments: vec![],
+                    parameters: vec![],
+                    locals: vec![],
+                    operands: vec![],
+                },
+            )
+            .unwrap();
+        for index in 0..length {
+            slots.push(&mut window, Value::Int(index as i32)).unwrap();
+        }
+        for depth in 0..=255 {
+            let value = slots.peek(&window, depth);
+            if depth < length {
+                assert_eq!(value.unwrap(), &Value::Int((length - depth - 1) as i32));
+            } else {
+                assert!(value.is_err());
+            }
+        }
+        slots.clear_frame(window).unwrap();
+    }
     let object = context.new_object().unwrap();
     let id = object.object_id();
-    let mut activation = VmActivation::new(2);
-    activation
-        .stack
-        .extend([Value::Object(object), Value::Int(9)]);
-    assert_eq!(activation.clone_at_depth(0).unwrap(), Value::Int(9));
-    let saved = activation.clone_at_depth(1).unwrap();
-    for depth in [2, u8::MAX] {
-        assert_eq!(
-            activation.clone_at_depth(depth).unwrap_err().message(),
-            "bytecode stack depth operand is out of bounds"
-        );
-        assert_eq!(activation.stack.len(), 2);
-    }
-    drop(activation);
+    let mut code = PublishedFunctionSnapshot::empty_for_test(context.realm);
+    code.metadata.max_stack = 2;
+    let mut slots = SlotStore::new(2);
+    let mut window = slots
+        .push_frame(
+            &code.frame_layout(),
+            FrameStorage {
+                original_arguments: vec![],
+                parameters: vec![],
+                locals: vec![],
+                operands: vec![],
+            },
+        )
+        .unwrap();
+    slots.push(&mut window, Value::Object(object)).unwrap();
+    slots.push(&mut window, Value::Int(9)).unwrap();
+    let saved = slots.peek(&window, 1).unwrap().clone();
+    assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(9));
+    slots.clear_frame(window).unwrap();
     assert!(runtime.0.state.borrow().heap.object(id).is_ok());
     drop(saved);
     assert!(runtime.0.state.borrow().heap.object(id).is_err());
-}
-
-#[test]
-fn depth_stack_reads_cover_the_entire_bytecode_operand_range() {
-    use super::VmActivation;
-    for length in [0, 1, 255, 256, 257] {
-        let mut activation = VmActivation::new(length);
-        activation
-            .stack
-            .extend((0..length).map(|index| Value::Int(index as i32)));
-        for depth in 0..=u8::MAX {
-            let result = activation.clone_at_depth(depth);
-            if usize::from(depth) < length {
-                assert_eq!(
-                    result.unwrap(),
-                    Value::Int((length - usize::from(depth) - 1) as i32)
-                );
-            } else {
-                assert_eq!(
-                    result.unwrap_err().message(),
-                    "bytecode stack depth operand is out of bounds"
-                );
-            }
-            assert_eq!(activation.stack.len(), length);
-        }
-    }
 }

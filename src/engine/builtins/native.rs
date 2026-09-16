@@ -1969,7 +1969,7 @@ pub struct NativeFunctionData {
     /// `None` exists only during `%Function.prototype%` realm bootstrap.
     pub realm: Option<ContextId>,
     pub min_readable_args: u8,
-    #[cfg(feature = "stack-vm")]
+
     operation: Option<super::continuation::NativeOperation>,
 }
 impl NativeFunctionData {
@@ -1982,13 +1982,12 @@ impl NativeFunctionData {
             target,
             realm,
             min_readable_args,
-            #[cfg(feature = "stack-vm")]
+
             operation: super::continuation::NativeOperation::for_target(target),
         }
     }
     /// Immutable dispatch fact established with the native payload, never a
     /// cache of a runtime property lookup or mutable function length.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn operation(&self) -> Option<super::continuation::NativeOperation> {
         self.operation
     }

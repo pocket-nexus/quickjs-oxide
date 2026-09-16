@@ -270,7 +270,8 @@ impl StringifyResumeState {
             )
             .into());
         }
-        self.to_json_key = Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToJSON)?);
+        self.to_json_key =
+            Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToJSON)?);
         self.output = JsStringBuilder::new(256);
         let value = std::mem::replace(&mut self.root, Value::Undefined);
         self.check(

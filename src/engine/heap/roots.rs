@@ -134,7 +134,6 @@ impl Runtime {
     /// Root a fresh non-immediate cell value without entering an operation or
     /// draining either release queue. A run-window caller must use its normal
     /// boundary when this guarded read declines.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_read_owned_var_ref(
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -177,7 +176,6 @@ impl Runtime {
     /// No lookup fact escapes this borrow, and autoinit/accessor/prototype
     /// cases retain the normal environment driver. As with owned cell reads,
     /// pending cleanup declines before any retain or public owner is created.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_read_unresolved_global(
         &self,
         root: &impl VarRefHandle,
@@ -212,9 +210,13 @@ impl Runtime {
         }
         let shape = state.heap.shape(object.shape)?;
         let revision = shape.layout_revision();
-        let cached = cell.global_location.get().filter(|entry|
-            entry.realm == realm && entry.atom == atom && entry.shape == object.shape
-                && entry.revision == revision && revision != u64::MAX);
+        let cached = cell.global_location.get().filter(|entry| {
+            entry.realm == realm
+                && entry.atom == atom
+                && entry.shape == object.shape
+                && entry.revision == revision
+                && revision != u64::MAX
+        });
         let index = if let Some(entry) = cached {
             entry.index
         } else {
@@ -222,9 +224,14 @@ impl Runtime {
                 cell.global_location.set(None);
                 return Ok(None);
             };
-            cell.global_location.set(Some(super::binding_records::GlobalLocation {
-                realm, atom, shape: object.shape, revision, index,
-            }));
+            cell.global_location
+                .set(Some(super::binding_records::GlobalLocation {
+                    realm,
+                    atom,
+                    shape: object.shape,
+                    revision,
+                    index,
+                }));
             index
         };
         let index = index as usize;
@@ -432,7 +439,7 @@ impl Drop for VarRefRoot {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod owned_cell_tests {
     use super::*;
     use crate::engine::heap::RawId;

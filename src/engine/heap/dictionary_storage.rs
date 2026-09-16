@@ -6,7 +6,7 @@ use super::*;
 impl Heap {
     pub(crate) fn enable_object_dictionary(&mut self, id: ObjectId) -> Result<(), HeapError> {
         let shape = self.exclusive_dictionary_shape(id)?;
-        #[cfg(feature = "stack-vm")]
+
         self.invalidate_property_layout(id);
         self.shape_mut(shape)?.enable_dictionary();
         Ok(())
@@ -45,7 +45,7 @@ impl Heap {
                 "dictionary deletion requires configurable dictionary storage",
             ));
         }
-        #[cfg(feature = "stack-vm")]
+
         self.invalidate_property_layout(id);
         self.shape_mut(shape_id)?
             .remove_dictionary_property(atom)
@@ -88,7 +88,7 @@ impl Heap {
             ));
         }
         self.retain_edges_transactionally(&property_slot_edges(&replacement))?;
-        #[cfg(feature = "stack-vm")]
+
         self.invalidate_property_layout(id);
         self.shape_mut(shape_id)?
             .replace_dictionary_flags(index, flags);

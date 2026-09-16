@@ -155,7 +155,14 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn primitive_this_value(&self, realm: ContextId, kind: PrimitiveKind, this_value: Value) -> Result<NativeConversion<Value>, RuntimeError> { self.primitive_this_value_borrowed(realm,kind,&this_value) }
+    pub(crate) fn primitive_this_value(
+        &self,
+        realm: ContextId,
+        kind: PrimitiveKind,
+        this_value: Value,
+    ) -> Result<NativeConversion<Value>, RuntimeError> {
+        self.primitive_this_value_borrowed(realm, kind, &this_value)
+    }
     pub(crate) fn primitive_this_value_borrowed(
         &self,
         realm: ContextId,
@@ -691,15 +698,16 @@ impl Runtime {
                 "Symbol.prototype.description received the wrong native invocation",
             ));
         };
-        let value = match self.primitive_this_value_borrowed(realm, PrimitiveKind::Symbol, this_value)? {
-            NativeConversion::Value(Value::Symbol(value)) => value,
-            NativeConversion::Value(_) => {
-                return Err(RuntimeError::Invariant(
-                    "Symbol brand extraction did not return a Symbol",
-                ));
-            }
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
+        let value =
+            match self.primitive_this_value_borrowed(realm, PrimitiveKind::Symbol, this_value)? {
+                NativeConversion::Value(Value::Symbol(value)) => value,
+                NativeConversion::Value(_) => {
+                    return Err(RuntimeError::Invariant(
+                        "Symbol brand extraction did not return a Symbol",
+                    ));
+                }
+                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            };
         Ok(Completion::Return(
             self.symbol_description(&value)?
                 .map_or(Value::Undefined, Value::String),

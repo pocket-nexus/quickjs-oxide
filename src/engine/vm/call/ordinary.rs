@@ -9,7 +9,7 @@ use crate::engine::{
     heap::{FunctionBytecodeId, ObjectPayload, VarRefId},
     object::ObjectRef,
     value::Value,
-    vm::{closure::ClosureSlots, frames::ActiveFrameGuard},
+    vm::closure::ClosureSlots,
 };
 
 // Only this module can authenticate or construct this witness.
@@ -185,17 +185,8 @@ impl OrdinaryCall {
             _ => Ok(None),
         }
     }
-    pub(in crate::engine::vm) fn function(&self) -> &ObjectRef {
-        &self.function
-    }
     pub(in crate::engine::vm) fn executable(&self) -> &PublishedFunctionSnapshot {
         &self.executable
-    }
-    pub(in crate::engine::vm) fn register(
-        &self,
-        runtime: &Runtime,
-    ) -> Result<ActiveFrameGuard, RuntimeError> {
-        runtime.push_ordinary_active_frame(self)
     }
     /// Property callbacks use the same authenticated lazy activation as Call.
     /// Arguments already belong to the callback protocol; zero-argument getters
@@ -238,7 +229,9 @@ impl OrdinaryCall {
         );
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_call_storage(
-            frame_bytes, flag_bytes, arguments.capacity() * size_of::<Value>(),
+            frame_bytes,
+            flag_bytes,
+            arguments.capacity() * size_of::<Value>(),
         );
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);

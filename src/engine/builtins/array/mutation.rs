@@ -1,5 +1,5 @@
 //! Array endpoint mutations retain their copy cursor across observable property operations.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -18,7 +18,6 @@ pub(crate) enum MutationKind {
     Pop(ArrayPopKind),
 }
 impl MutationKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         match target {
             NativeFunctionId::ArrayPrototypePush(kind) => Some(Self::Push(kind)),
@@ -29,29 +28,15 @@ impl MutationKind {
 }
 pub(crate) enum MutationStep {
     Complete(Completion),
-    #[cfg(feature = "stack-vm")]
-    PreparedRead {
-        resume: MutationResume,
-    },
-    #[cfg(feature = "stack-vm")]
-    PreparedSet {
-        resume: MutationResume,
-    },
-    Read {
-        resume: MutationResume,
-    },
-    Number {
-        resume: MutationResume,
-    },
-    Copy {
-        resume: MutationResume,
-    },
-    Set {
-        resume: MutationResume,
-    },
-    Delete {
-        resume: MutationResume,
-    },
+
+    PreparedRead { resume: MutationResume },
+
+    PreparedSet { resume: MutationResume },
+    Read { resume: MutationResume },
+    Number { resume: MutationResume },
+    Copy { resume: MutationResume },
+    Set { resume: MutationResume },
+    Delete { resume: MutationResume },
 }
 enum Phase {
     Length,
@@ -138,7 +123,7 @@ impl MutationStep {
             _ => None,
         };
         let values = if inline.is_some() {
-            #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+            #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "array_mutation_inline_argument",
             );
@@ -169,7 +154,7 @@ impl MutationStep {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
         };
-        #[cfg(feature = "stack-vm")]
+
         {
             let completed = match kind {
                 MutationKind::Push(ArrayPushKind::Push) => {
@@ -188,7 +173,9 @@ impl MutationStep {
                 return Ok(Self::Complete(Completion::Return(value)));
             }
         }
-        let action = MutationAction::Read(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?);
+        let action = MutationAction::Read(
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+        );
         MutationResume(Box::new(MutationResumeState {
             pending_effect: MutationStepPending::default(),
             scheduler_set_key: None,
@@ -452,7 +439,6 @@ impl MutationResume {
         mut action: MutationAction,
     ) -> Result<MutationStep, RuntimeError> {
         loop {
-            #[cfg(feature = "stack-vm")]
             {
                 use crate::engine::object::{OrdinaryRead, SetStep};
                 use crate::engine::value::conversion::number::NumberStep;
@@ -531,8 +517,6 @@ impl MutationResume {
                     "array_mutation_local_stage",
                 );
             }
-            #[cfg(not(feature = "stack-vm"))]
-            return Ok(self.wait(action));
         }
     }
     fn wait(self, action: MutationAction) -> MutationStep {
@@ -560,7 +544,6 @@ impl MutationResume {
     }
 }
 
-#[cfg(feature = "stack-vm")]
 fn local_set_result(
     action: crate::engine::object::operations::PropertySetAction,
 ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
@@ -589,7 +572,7 @@ pub(crate) fn finish(
     loop {
         step = match step {
             MutationStep::Complete(result) => return Ok(result),
-            #[cfg(feature = "stack-vm")]
+
             MutationStep::PreparedRead { mut resume } => {
                 let read = resume.take_prepared_read_read();
                 let key = resume.take_prepared_read_key();
@@ -603,7 +586,7 @@ pub(crate) fn finish(
                     resume.resume(runtime, reply)?
                 }
             }
-            #[cfg(feature = "stack-vm")]
+
             MutationStep::PreparedSet { mut resume } => {
                 let step = resume.take_prepared_set_step();
                 let key = resume.take_prepared_set_key();
@@ -738,7 +721,7 @@ mod tests {
     fn push_inline_argument_uses_actual_count_and_retains_immediate_payload() {
         let runtime = Runtime::new();
         let context = runtime.new_context();
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         for value in [
             Value::Undefined,
@@ -794,7 +777,7 @@ mod tests {
             finish(&runtime, context.realm, step).unwrap(),
             Completion::Return(Value::Int(0))
         ));
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         assert_eq!(
             profile
                 .snapshot()

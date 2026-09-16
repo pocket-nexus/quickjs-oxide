@@ -127,7 +127,8 @@ impl BufferSliceResume {
             .map_err(|_| RuntimeError::Invariant("validated Buffer slice length overflowed u32"))?;
         Ok(BufferSliceStep::Read {
             object: self.0.source.clone(),
-            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
+            key: runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
             resume: {
                 let updated_0 = Phase::Constructor { start, count };
                 self.0.phase = updated_0;

@@ -888,156 +888,6 @@ fn decode_hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn base64_kernel_preserves_quickjs_capacity_and_partial_rules() {
-        let mut zero = [];
-        assert_eq!(
-            decode_base64(
-                b"###",
-                &mut zero,
-                Base64Alphabet::Base64,
-                LastChunkHandling::Strict,
-            ),
-            DecodeProgress {
-                read: 0,
-                written: 0,
-                invalid: false,
-            }
-        );
-
-        let mut one = [0xff];
-        assert_eq!(
-            decode_base64(
-                b"YWI=",
-                &mut one,
-                Base64Alphabet::Base64,
-                LastChunkHandling::Loose,
-            ),
-            DecodeProgress {
-                read: 0,
-                written: 0,
-                invalid: false,
-            }
-        );
-        assert_eq!(one, [0xff]);
-
-        let mut prefix = [0xff; 6];
-        let progress = decode_base64(
-            b"AAAA.AAA",
-            &mut prefix,
-            Base64Alphabet::Base64,
-            LastChunkHandling::Loose,
-        );
-        assert!(progress.invalid);
-        assert_eq!(&prefix[..3], &[0, 0, 0]);
-        assert_eq!(&prefix[3..], &[0xff; 3]);
-    }
-
-    #[test]
-    fn base64_kernel_distinguishes_last_chunk_modes_and_alphabets() {
-        let mut output = [0; 3];
-        assert_eq!(
-            decode_base64(
-                b"YQ",
-                &mut output,
-                Base64Alphabet::Base64,
-                LastChunkHandling::Loose,
-            ),
-            DecodeProgress {
-                read: 2,
-                written: 1,
-                invalid: false,
-            }
-        );
-        assert_eq!(output[0], b'a');
-
-        assert!(
-            decode_base64(
-                b"YQ",
-                &mut output,
-                Base64Alphabet::Base64,
-                LastChunkHandling::Strict,
-            )
-            .invalid
-        );
-        assert_eq!(
-            decode_base64(
-                b"YQ",
-                &mut output,
-                Base64Alphabet::Base64,
-                LastChunkHandling::StopBeforePartial,
-            ),
-            DecodeProgress {
-                read: 0,
-                written: 0,
-                invalid: false,
-            }
-        );
-
-        let mut url = [0; 3];
-        assert!(
-            !decode_base64(
-                b"-_8=",
-                &mut url,
-                Base64Alphabet::Base64Url,
-                LastChunkHandling::Loose,
-            )
-            .invalid
-        );
-        assert_eq!(&url[..2], &[0xfb, 0xff]);
-        assert!(
-            decode_base64(
-                b"-_8=",
-                &mut url,
-                Base64Alphabet::Base64,
-                LastChunkHandling::Loose,
-            )
-            .invalid
-        );
-    }
-
-    #[test]
-    fn hex_kernel_checks_odd_length_before_capacity_and_keeps_prefix() {
-        let mut zero = [];
-        assert!(decode_hex(b"1", &mut zero).invalid);
-        assert_eq!(
-            decode_hex(b"gg", &mut zero),
-            DecodeProgress {
-                read: 0,
-                written: 0,
-                invalid: false,
-            }
-        );
-
-        let mut output = [0xff; 3];
-        let progress = decode_hex(b"aaag", &mut output);
-        assert!(progress.invalid);
-        assert_eq!(output, [0xaa, 0xff, 0xff]);
-    }
-
-    #[test]
-    fn encoders_emit_pinned_lowercase_hex_and_padding() {
-        let mut base64 = [0; 8];
-        assert_eq!(
-            encode_base64(
-                &[0xfb, 0xff, 0x00, 0x61],
-                &mut base64,
-                Base64Alphabet::Base64Url,
-            ),
-            8
-        );
-        assert_eq!(&base64, b"-_8AYQ==");
-
-        let mut hex = [0; 6];
-        encode_hex(&[0x00, 0xaf, 0xff], &mut hex);
-        assert_eq!(&hex, b"00afff");
-    }
-}
-
 pub(crate) enum Uint8CodecStep {
     Complete(Completion),
     Read {
@@ -1259,3 +1109,153 @@ fn codec_finish(
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<Uint8CodecStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_kernel_preserves_quickjs_capacity_and_partial_rules() {
+        let mut zero = [];
+        assert_eq!(
+            decode_base64(
+                b"###",
+                &mut zero,
+                Base64Alphabet::Base64,
+                LastChunkHandling::Strict,
+            ),
+            DecodeProgress {
+                read: 0,
+                written: 0,
+                invalid: false,
+            }
+        );
+
+        let mut one = [0xff];
+        assert_eq!(
+            decode_base64(
+                b"YWI=",
+                &mut one,
+                Base64Alphabet::Base64,
+                LastChunkHandling::Loose,
+            ),
+            DecodeProgress {
+                read: 0,
+                written: 0,
+                invalid: false,
+            }
+        );
+        assert_eq!(one, [0xff]);
+
+        let mut prefix = [0xff; 6];
+        let progress = decode_base64(
+            b"AAAA.AAA",
+            &mut prefix,
+            Base64Alphabet::Base64,
+            LastChunkHandling::Loose,
+        );
+        assert!(progress.invalid);
+        assert_eq!(&prefix[..3], &[0, 0, 0]);
+        assert_eq!(&prefix[3..], &[0xff; 3]);
+    }
+
+    #[test]
+    fn base64_kernel_distinguishes_last_chunk_modes_and_alphabets() {
+        let mut output = [0; 3];
+        assert_eq!(
+            decode_base64(
+                b"YQ",
+                &mut output,
+                Base64Alphabet::Base64,
+                LastChunkHandling::Loose,
+            ),
+            DecodeProgress {
+                read: 2,
+                written: 1,
+                invalid: false,
+            }
+        );
+        assert_eq!(output[0], b'a');
+
+        assert!(
+            decode_base64(
+                b"YQ",
+                &mut output,
+                Base64Alphabet::Base64,
+                LastChunkHandling::Strict,
+            )
+            .invalid
+        );
+        assert_eq!(
+            decode_base64(
+                b"YQ",
+                &mut output,
+                Base64Alphabet::Base64,
+                LastChunkHandling::StopBeforePartial,
+            ),
+            DecodeProgress {
+                read: 0,
+                written: 0,
+                invalid: false,
+            }
+        );
+
+        let mut url = [0; 3];
+        assert!(
+            !decode_base64(
+                b"-_8=",
+                &mut url,
+                Base64Alphabet::Base64Url,
+                LastChunkHandling::Loose,
+            )
+            .invalid
+        );
+        assert_eq!(&url[..2], &[0xfb, 0xff]);
+        assert!(
+            decode_base64(
+                b"-_8=",
+                &mut url,
+                Base64Alphabet::Base64,
+                LastChunkHandling::Loose,
+            )
+            .invalid
+        );
+    }
+
+    #[test]
+    fn hex_kernel_checks_odd_length_before_capacity_and_keeps_prefix() {
+        let mut zero = [];
+        assert!(decode_hex(b"1", &mut zero).invalid);
+        assert_eq!(
+            decode_hex(b"gg", &mut zero),
+            DecodeProgress {
+                read: 0,
+                written: 0,
+                invalid: false,
+            }
+        );
+
+        let mut output = [0xff; 3];
+        let progress = decode_hex(b"aaag", &mut output);
+        assert!(progress.invalid);
+        assert_eq!(output, [0xaa, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn encoders_emit_pinned_lowercase_hex_and_padding() {
+        let mut base64 = [0; 8];
+        assert_eq!(
+            encode_base64(
+                &[0xfb, 0xff, 0x00, 0x61],
+                &mut base64,
+                Base64Alphabet::Base64Url,
+            ),
+            8
+        );
+        assert_eq!(&base64, b"-_8AYQ==");
+
+        let mut hex = [0; 6];
+        encode_hex(&[0x00, 0xaf, 0xff], &mut hex);
+        assert_eq!(&hex, b"00afff");
+    }
+}

@@ -37,7 +37,6 @@ impl Context {
         this_value: Value,
         arguments: &[Value],
     ) -> Result<Value, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         let completion = crate::engine::vm::entry::call(
             &self.runtime,
             self.realm,
@@ -45,10 +44,7 @@ impl Context {
             this_value,
             arguments,
         )?;
-        #[cfg(not(feature = "stack-vm"))]
-        let completion = self
-            .runtime
-            .call_internal(self.realm, callable, this_value, arguments)?;
+
         self.finish_completion(completion)
     }
 
@@ -70,7 +66,6 @@ impl Context {
         new_target: &CallableRef,
         arguments: &[Value],
     ) -> Result<Value, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         let result = crate::engine::vm::entry::construct(
             &self.runtime,
             self.realm,
@@ -78,10 +73,7 @@ impl Context {
             new_target,
             arguments,
         );
-        #[cfg(not(feature = "stack-vm"))]
-        let result =
-            self.runtime
-                .construct_internal(self.realm, constructor, new_target, arguments);
+
         match result {
             Ok(completion) => self.finish_completion(completion),
             Err(RuntimeError::Engine(error))

@@ -279,7 +279,7 @@ impl Runtime {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
-        let snapshot = self.shared_array_buffer_snapshot(&object)?;
+        let snapshot = self.shared_array_buffer_snapshot(object)?;
         let value = match kind {
             SharedArrayBufferNativeKind::ByteLength => Value::Int(
                 i32::try_from(snapshot.byte_length)
@@ -502,7 +502,13 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_shared_array_buffer_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        self.require_shared_array_buffer_borrowed(realm, &value)
+            .map(|result| match result {
+                NativeConversion::Value(object) => NativeConversion::Value(object.clone()),
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
+            })
+    }
     pub(in crate::engine::builtins) fn require_shared_array_buffer_borrowed<'a>(
         &self,
         realm: ContextId,
@@ -519,7 +525,7 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("SharedArrayBuffer"));
         }
         if self
-            .shared_array_buffer_snapshot_if_branded(&object)?
+            .shared_array_buffer_snapshot_if_branded(object)?
             .is_none()
         {
             return Ok(NativeConversion::Throw(self.new_native_error(

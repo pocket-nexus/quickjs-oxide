@@ -72,7 +72,8 @@ impl Runtime {
         // QuickJS explicitly materializes aliases instead of putting an
         // AutoInit alias in the shape. Preserve both identity and the aliased
         // function's original `name`.
-        let utc_string_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToUTCString)?;
+        let utc_string_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToUTCString)?;
         let utc_string = match self.get_property_in_realm(realm, date_prototype, &utc_string_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) => {
@@ -239,6 +240,10 @@ impl Runtime {
     }
 }
 
+pub(crate) use constructor::operation::{DateConstructorResume, DateConstructorStep};
+
+pub(crate) use prototype::operation::{DatePrototypeResume, DatePrototypeStep};
+
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
@@ -320,8 +325,3 @@ mod tests {
         assert_ne!(first_random, different_random);
     }
 }
-
-#[cfg(feature = "stack-vm")]
-pub(crate) use constructor::operation::{DateConstructorResume, DateConstructorStep};
-#[cfg(feature = "stack-vm")]
-pub(crate) use prototype::operation::{DatePrototypeResume, DatePrototypeStep};

@@ -15,7 +15,9 @@ fn ordinary_property_context_free_set_rejects_proxy_prototype() {
     let Value::Object(object) = context.eval("Object.create(new Proxy({}, {}))").unwrap() else {
         panic!("expected object")
     };
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+        .unwrap();
     assert!(matches!(
         runtime.prepare_set_property(&object, &key, Value::Int(1)),
         Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
@@ -190,7 +192,9 @@ fn ordinary_property_replacing_last_heap_edge_reclaims_old_object() {
     let object = runtime.new_object(None).unwrap();
     let old = runtime.new_object(None).unwrap();
     let old_id = old.object_id();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+        .unwrap();
     runtime
         .define_own_property(
             &object,
@@ -264,7 +268,9 @@ fn prepared_read_owns_selected_getter_without_repeating_lookup() {
         panic!("expected object")
     };
     let receiver = context.eval("({marker:42})").unwrap();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
+        .unwrap();
     let read = runtime
         .prepare_ordinary_read(&object, &key, receiver)
         .unwrap();

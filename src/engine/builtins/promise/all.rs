@@ -96,7 +96,7 @@ impl Runtime {
                 )?;
                 if let Some(value) = self.define_array_data_property_without_throw(
                     realm,
-                    &values,
+                    values,
                     index,
                     Value::Undefined,
                 )? {

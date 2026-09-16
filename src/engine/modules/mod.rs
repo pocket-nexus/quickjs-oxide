@@ -833,11 +833,11 @@ impl Runtime {
                 "stack overflow",
             )?));
         };
-        #[cfg(feature = "stack-vm")]
+
         let boundary =
             crate::engine::vm::HostBoundaryGuard::enter(self).map_err(RuntimeError::Engine)?;
         let result = callback(context);
-        #[cfg(feature = "stack-vm")]
+
         boundary.finish(self).map_err(RuntimeError::Engine)?;
         Ok(ModuleHostCallbackOutcome::Completed(result))
     }
@@ -3148,7 +3148,7 @@ impl Runtime {
         initiating_realm: ContextId,
     ) -> Result<(), RuntimeError> {
         let step = link::LinkStep::start(self, module, initiating_realm)?;
-        #[cfg(feature = "stack-vm")]
+
         {
             let completion = crate::engine::vm::execute_root(
                 self.clone(),
@@ -3167,8 +3167,6 @@ impl Runtime {
                 )),
             }
         }
-        #[cfg(not(feature = "stack-vm"))]
-        link::finish(self, step)
     }
 
     fn enter_module_evaluation_dfs(
@@ -3367,11 +3365,10 @@ impl Runtime {
         value: Value,
     ) -> Result<Completion, RuntimeError> {
         let target = self.dynamic_import_settler(target)?;
-        #[cfg(feature = "stack-vm")]
+
         let completion =
             crate::engine::vm::entry::call(self, realm, &target, Value::Undefined, &[value])?;
-        #[cfg(not(feature = "stack-vm"))]
-        let completion = self.call_internal(realm, &target, Value::Undefined, &[value])?;
+
         match completion {
             Completion::Return(_) => Ok(Completion::Return(Value::Undefined)),
             Completion::Throw(_) => Err(RuntimeError::Invariant(

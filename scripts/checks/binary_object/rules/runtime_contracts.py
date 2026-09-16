@@ -77,10 +77,9 @@ def check(ctx):
     ):
         ctx.fail("stage3b-raw-construction", "native, derived, and base paths must preserve one raw newTarget flow")
 
-    apply_host = ctx.stage3b_function("src/engine/vm/host_bridge.rs", "apply", "stage3b-apply-order")
-
-    if " ".join(apply_host.split()).count("build_argument_list(") != 1:
-        ctx.fail("stage3b-apply-order", "Apply must build a nonnull argument list exactly once")
+    apply_entry = owned_function("src/engine/builtins/function/invoke.rs", "InvokeStep::start_spread", "stage3b-apply-order")
+    if " ".join(apply_entry.split()).count("Self::request_arguments(") != 1:
+        ctx.fail("stage3b-apply-order", "Apply must request a nonnull argument list exactly once")
 
     realm_object_impl = ctx.stage3b_function(
         "src/engine/object/internal_methods.rs", "function_realm_object_impl", "stage3b-function-realm"
@@ -125,12 +124,12 @@ def check(ctx):
         ctx.item = ctx.stage3b_function(ctx.relative, ctx.function_name, "stage3b-species-constructor")
         ctx.normalized_item = " ".join(ctx.item.split())
         if (
-            "ConstructorRef" not in ctx.normalized_item
+            "constructor: Option<ConstructorRef>" not in " ".join(ctx.stage3b_function("src/engine/builtins/promise/operation/capability.rs", "capability", "stage3b-species-constructor").split())
             or ctx.normalized_item.count("constructor_from_value(") != 1
             or (
                 wraps_option
                 and ctx.normalized_item.count(
-                    "NativeConversion::Value(constructor) => NativeConversion::Value(Some(constructor))"
+                    "NativeConversion::Value(constructor) => Some(constructor)"
                 ) != 1
             )
             or re.search(r"\b(?:CallableRef|callable_from_value|as_callable)\b", ctx.item)

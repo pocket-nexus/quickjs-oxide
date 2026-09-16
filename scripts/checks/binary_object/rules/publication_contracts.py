@@ -103,16 +103,19 @@ def check_executable(ctx):
         # Authenticate BOTH the sealed projection and its sole witness producer:
         # from_authentication is sound only with select's domain/generation/
         # closure checks. No mutable IC/value exception is inferred by matching
-        # field names; the S12 position-table constructor is part of this hash.
+        # field names. S13 removes feature gates; S17 adds immutable local/argument
+        # observations; S18 authenticates callbacks through the same certificate
+        # before constructing an unmaterialized frame. The complete producer and
+        # projection hashes below include those reviewed changes.
         production = source.split("#[cfg(test)]\nmod tests", 1)[0]
         ctx.require_normalized_code_sha256(
             rule, "lazy publication must retain sealed fields, checked root construction, immutable data and fixture-only mutation",
-            ctx.rust_code_only(production), "d6ba64b8a8cec7d1c766334ac9b59c8bd6dd2375b3b8e9c2466f0ff246846c47",
+            ctx.rust_code_only(production), "34ebb4463bbd7e47ed46faf03fbb2af90930e88a4819d33b8aded8a0556cd2f2",
         )
         witness = ctx.read_source("src/engine/vm/call/ordinary.rs").split("#[cfg(test)]\nmod tests", 1)[0]
         ctx.require_normalized_code_sha256(
             rule, "rootless certificate construction requires same-runtime, exact publication and closure checks before witness installation",
-            ctx.rust_code_only(witness), "8aae056f3d2572ad39525e430e53cdabbcdd16a1e4ec36db807fa0cf3050ed18",
+            ctx.rust_code_only(witness), "2c9ecc1fa41198e834c1f90f1ea5e745368c0f2f1f78649cd49037234daea4c4",
         )
         return
     # Item checks exclude the standalone tests module, but explicitly include
@@ -202,7 +205,6 @@ SNAPSHOT_FUNCTION = """    pub(crate) fn snapshot_function_bytecode(
         state.heap.context(bytecode.realm)?;
         let data = bytecode.executable.get_or_init(|| {
             let data = Rc::new(PublishedFunctionData {
-                #[cfg(feature = "stack-vm")]
                 fusion: bytecode.fusion.clone(),
                 code: bytecode.code.clone(),
                 constants: bytecode.constants.clone(),
@@ -243,7 +245,6 @@ SNAPSHOT_FUNCTION = """    pub(crate) fn snapshot_function_bytecode(
 
 # Immutable cache fields; no runtime root is retained by the bytecode-owned cache.
 PUBLISHED_DATA = """pub(crate) struct PublishedFunctionData {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
     pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
     pub(crate) constants: Rc<[BytecodeConstant]>,
@@ -277,7 +278,6 @@ DIRECT_SNAPSHOT_FUNCTION = """    pub(crate) fn snapshot_function_bytecode(
         Ok(PublishedFunctionSnapshot {
             root: Some(root),
             data: PublishedFunctionData {
-                #[cfg(feature = "stack-vm")]
                 fusion: bytecode.fusion.clone(),
                 code: bytecode.code.clone(),
                 constants: bytecode.constants.clone(),
@@ -330,7 +330,6 @@ OWNED_SNAPSHOT_FUNCTION = """    pub(crate) fn snapshot_function_bytecode_owned(
                             | crate::engine::code::bytecode::Instruction::ApplyEval { .. }
                     )
                 }),
-                #[cfg(feature = "stack-vm")]
                 fusion: bytecode.fusion.clone(),
                 code: bytecode.code.clone(),
                 constants: bytecode.constants.clone(),

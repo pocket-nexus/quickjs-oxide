@@ -41,6 +41,8 @@ pub(crate) struct GeneratorResume {
 }
 
 impl GeneratorResume {
+    // The waiting continuation already owns this guard in a Box; retain that ownership until resume finishes.
+    #[allow(clippy::boxed_local)]
     pub(crate) fn resume(
         mut self: Box<Self>,
         outcome: VmRunOutcome,
@@ -63,7 +65,7 @@ impl Drop for GeneratorResume {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+#[cfg(all(test, feature = "profiling"))]
 mod tests {
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::{api::runtime::Runtime, value::Value};

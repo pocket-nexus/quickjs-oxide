@@ -54,22 +54,12 @@ fn named_function_self_capture_cycle_is_collected() {
 fn exceptional_vm_exit_releases_local_frame_roots_immediately() {
     let runtime = Runtime::new();
     let object = runtime.new_object(None).unwrap();
-    let function = DetachedBytecode::<Value> {
-        code: vec![
-            Instruction::PushConst(0),
-            Instruction::PushConst(1),
-            Instruction::PushI32(1),
-            Instruction::Add,
-            Instruction::Drop,
-            Instruction::Return,
-        ],
-        constants: vec![
-            Value::Object(object.clone()),
-            Value::BigInt(JsBigInt::one()),
-        ],
-        local_count: 0,
-        max_stack: 3,
-    };
+    let mut context = runtime.new_context();
+    let function = eval_callable(
+        &runtime,
+        &mut context,
+        "(function(root){ let local=root; return 1n + 1; })",
+    );
     let before = runtime
         .0
         .state
@@ -77,7 +67,16 @@ fn exceptional_vm_exit_releases_local_frame_roots_immediately() {
         .heap
         .object_strong_count(object.object_id())
         .unwrap();
-    assert!(Vm::new().execute(&function).is_err());
+    assert!(
+        context
+            .call(
+                &function,
+                Value::Undefined,
+                &[Value::Object(object.clone())]
+            )
+            .is_err()
+    );
+    drop(context.take_exception().unwrap());
     let after = runtime
         .0
         .state

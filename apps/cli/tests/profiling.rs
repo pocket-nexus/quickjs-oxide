@@ -103,7 +103,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     assert!(costs.contains("\"exclusive_ns\":"));
     assert!(costs.contains("\"verify\":{\"attempts\":1,"));
     assert!(costs.contains("\"publish\":{\"attempts\":1,"));
-    if cfg!(feature = "stack-vm") {
+    {
         assert!(costs.contains("\"execution_path\":\"owned-stack-with-legacy-bridge\""));
         assert!(!costs.contains("\"owned_instructions\":0"));
         assert!(costs.contains("\"owned_bridge_exits\":0"));
@@ -114,14 +114,6 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         assert!(costs.contains("\"Next\":{\"size_bytes\":"));
         assert!(costs.contains("\"query_completed_without_callback\":"));
         assert!(costs.contains("\"runtime_pc_publication\":"));
-    } else {
-        assert!(costs.contains("\"execution_path\":\"legacy\""));
-        assert!(costs.contains("\"owned_instructions\":0"));
-        assert!(costs.contains("\"owned_bridge_exits\":0"));
-        assert!(!costs.contains("\"legacy_dispatches\":0"));
-        assert!(costs.contains("\"owned_sync_call_bridges\":0,"));
-        assert!(costs.contains("\"frames_pushed\":0"));
-        assert!(costs.contains("\"slot_capacity_growths\":0"));
     }
     assert!(costs.contains("\"owned_storage\":{\"coverage\":\"partial\""));
     assert!(costs.contains("\"maximum_live_slots\":"));
@@ -130,12 +122,10 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         "\"call_preparation\":{\"coverage\":\"bytecode-preparation-and-owned-frame-storage\""
     ));
     assert!(!costs.contains("\"frames_prepared\":0"));
-    if cfg!(feature = "stack-vm") {
+    {
         assert!(costs.contains("\"parameter_value_copies\":0"));
         assert!(costs.contains("\"ordinary_scalar_argv_elided\":1"));
         assert!(costs.contains("\"ordinary_return_direct\":1"));
-    } else {
-        assert!(!costs.contains("\"parameter_value_copies\":0"));
     }
     assert!(costs.contains("\"lowered_functions\":2"));
     assert!(costs.contains("\"phase_totals_additive\":false"));

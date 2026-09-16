@@ -87,7 +87,8 @@ pub(in crate::engine::vm) use window::{FrameTransaction, LinkedReadCompletion, R
 impl SlotStore {
     /// Commit a retained IC result only after output capacity and the receiver
     /// release proof have succeeded. Failure leaves the canonical operands.
-    #[cfg(feature = "stack-vm")]
+    // The slot window, immutable site facts and selected native output are disjoint borrowed inputs to one transaction.
+    #[allow(clippy::too_many_arguments)]
     fn property_ic_read_current(
         &mut self,
         window: &mut FrameWindow,
@@ -623,8 +624,8 @@ impl SlotStore {
         count: usize,
         method: bool,
     ) -> Result<bool, Error> {
-        if method
-            && runtime
+        if method {
+            runtime
                 .validate_value_domain(
                     self.peek_current(
                         window,
@@ -634,17 +635,12 @@ impl SlotStore {
                     )?,
                     "call this value",
                 )
-                .is_err()
-        {
-            return Ok(false);
+                .map_err(runtime_error_to_vm_error)?;
         }
         for offset in (0..count).rev() {
-            if runtime
+            runtime
                 .validate_value_domain(self.peek_current(window, offset)?, "call argument")
-                .is_err()
-            {
-                return Ok(false);
-            }
+                .map_err(runtime_error_to_vm_error)?;
         }
         Ok(true)
     }
@@ -702,7 +698,6 @@ impl SlotStore {
         Ok(true)
     }
 
-    #[cfg(feature = "stack-vm")]
     fn typed_array_number_write_current(
         &mut self,
         window: &mut FrameWindow,
@@ -728,11 +723,19 @@ impl SlotStore {
             return Ok(false);
         }
         let typed = match value {
-            Value::Int(value) => runtime.try_typed_array_number_write(base,*key as u32,f64::from(*value)),
-            Value::Float(value) => runtime.try_typed_array_number_write(base,*key as u32,*value),
+            Value::Int(value) => {
+                runtime.try_typed_array_number_write(base, *key as u32, f64::from(*value))
+            }
+            Value::Float(value) => runtime.try_typed_array_number_write(base, *key as u32, *value),
             _ => false,
         };
-        if !typed && !runtime.try_dense_array_write_scalar(base,*key as u32,value).map_err(super::exception::runtime_error_to_vm_error)? {return Ok(false);}
+        if !typed
+            && !runtime
+                .try_dense_array_write_scalar(base, *key as u32, value)
+                .map_err(super::exception::runtime_error_to_vm_error)?
+        {
+            return Ok(false);
+        }
         // The successful leaf proved base's sole release cannot drain. Only
         // numeric input moves occur before its Drop; no proof can change.
         let value = self.slots[index + 2].take();
@@ -746,14 +749,15 @@ impl SlotStore {
         {
             self.live_slots -= 3;
             record_owned_storage(Cost::Move(3));
-            crate::engine::api::profiling::record_owned_execution_event(
-                if typed { "typed_array_number_write_in_run" } else { "dense_array_scalar_write_in_run" },
-            );
+            crate::engine::api::profiling::record_owned_execution_event(if typed {
+                "typed_array_number_write_in_run"
+            } else {
+                "dense_array_scalar_write_in_run"
+            });
         }
         Ok(true)
     }
 
-    #[cfg(feature = "stack-vm")]
     fn array_immediate_read_current(
         &mut self,
         window: &mut FrameWindow,
@@ -802,7 +806,6 @@ impl SlotStore {
         Ok(true)
     }
 
-    #[cfg(feature = "stack-vm")]
     fn ordinary_field_immediate_read_current(
         &mut self,
         window: &mut FrameWindow,
@@ -830,20 +833,41 @@ impl SlotStore {
         Ok(true)
     }
 
-
-
-    #[cfg(feature = "stack-vm")]
-    fn property_ic_write_scalar_current(&mut self, window: &mut FrameWindow, runtime: &Runtime, executable: &crate::engine::code::runtime::PublishedFunctionSnapshot, pc: usize, key: u32) -> Result<bool, Error> {
-        let offset=window.depth.checked_sub(2).ok_or_else(||Error::internal("owned operand stack underflow"))?;
-        let index=window.operands().start+offset;
-        let [Some(FrameBinding::Direct(base)),Some(FrameBinding::Direct(value))]=&self.slots[index..index+2] else {return Err(Error::internal("owned operand slot is not a value"))};
-        if !runtime.try_property_ic_write_scalar(base,executable,pc,key,value).map_err(super::exception::runtime_error_to_vm_error)? {return Ok(false);}
-        let base=self.slots[index].take();
-        let value=self.slots[index+1].take();
-        window.depth=offset;
-        drop((base,value));
-        #[cfg(feature="profiling")]
-        {self.live_slots-=2;record_owned_storage(Cost::Move(2));}
+    fn property_ic_write_scalar_current(
+        &mut self,
+        window: &mut FrameWindow,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        pc: usize,
+        key: u32,
+    ) -> Result<bool, Error> {
+        let offset = window
+            .depth
+            .checked_sub(2)
+            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+        let index = window.operands().start + offset;
+        let [
+            Some(FrameBinding::Direct(base)),
+            Some(FrameBinding::Direct(value)),
+        ] = &self.slots[index..index + 2]
+        else {
+            return Err(Error::internal("owned operand slot is not a value"));
+        };
+        if !runtime
+            .try_property_ic_write_scalar(base, executable, pc, key, value)
+            .map_err(super::exception::runtime_error_to_vm_error)?
+        {
+            return Ok(false);
+        }
+        let base = self.slots[index].take();
+        let value = self.slots[index + 1].take();
+        window.depth = offset;
+        drop((base, value));
+        #[cfg(feature = "profiling")]
+        {
+            self.live_slots -= 2;
+            record_owned_storage(Cost::Move(2));
+        }
         Ok(true)
     }
 
@@ -1235,6 +1259,7 @@ impl SlotStore {
             .ok_or_else(|| Error::internal("owned parameter is vacant"))
     }
 
+    #[cfg(test)]
     pub(in crate::engine::vm) fn replace_parameter(
         &mut self,
         window: &FrameWindow,
@@ -1418,7 +1443,7 @@ impl Drop for SlotStore {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "stack-vm")]
+
     #[test]
     fn owned_property_ic_capacity_preflight_and_receiver_forms_preserve_owners() {
         use crate::engine::code::bytecode::Instruction;
@@ -1563,7 +1588,6 @@ mod tests {
         slots.clear_frame(window).unwrap();
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn ordinary_field_leaf_declines_without_consuming_stack_inputs() {
         use crate::engine::code::bytecode::Instruction;
@@ -1586,7 +1610,11 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        let write_pc = code.code.iter().position(|op| matches!(op, Instruction::PutField(_))).unwrap();
+        let pc = code
+            .code
+            .iter()
+            .position(|op| matches!(op, Instruction::PutField(_)))
+            .unwrap();
         for source in [
             "({get x(){throw 42}})",
             "({x:'reference'})",
@@ -1622,7 +1650,7 @@ mod tests {
                 !slots
                     .run_window(&mut window)
                     .unwrap()
-                    .property_ic_write_scalar(&runtime, &code, write_pc, key)
+                    .property_ic_write_scalar(&runtime, &code, pc, key)
                     .unwrap()
             );
             assert_eq!(window.depth, 3);
@@ -1674,7 +1702,7 @@ mod tests {
             let removed = slots.slots[removed_index].take();
             let result = slots.validate_call_value_domains(&window, &runtime, 2, true);
             if foreign_receiver || foreign_first {
-                assert_eq!(result.unwrap(), false);
+                assert!(result.is_err());
             } else {
                 assert!(
                     result
@@ -1714,9 +1742,9 @@ mod tests {
                     .unwrap()
             );
             assert!(
-                !slots
+                slots
                     .validate_call_value_domains(&window, &foreign, 2, false)
-                    .unwrap()
+                    .is_err()
             );
             assert!(state.heap.object(id).is_ok());
         }
@@ -1767,7 +1795,6 @@ mod tests {
         slots.clear_frame(parent).unwrap();
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn typed_number_leaf_declines_without_consuming_or_writing_inputs() {
         for (source, key, object_value, single_root, detached) in [
@@ -1850,7 +1877,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn typed_number_leaf_preserves_deferred_and_borrowed_inputs_until_fallback() {
         let runtime = Runtime::new();
@@ -1915,7 +1941,6 @@ mod tests {
         slots.clear_frame(window).unwrap();
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn recovery_string_index_leaf_preserves_spelling_and_final_key_owner() {
         for (text, retained, expected) in [
@@ -1962,7 +1987,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn dense_read_leaf_preserves_declined_inputs_and_neighboring_operands() {
         for (source, key, single_root) in [
@@ -2063,7 +2087,6 @@ mod tests {
         slots.clear_frame(window).unwrap();
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn typed_read_leaf_preserves_declined_inputs_and_release_guards() {
         for (source, single_root) in [

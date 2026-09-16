@@ -286,7 +286,7 @@ impl Runtime {
                     self,
                     realm,
                     WeakIntrinsicKind::WeakRef,
-                    &invocation,
+                    invocation,
                     arguments,
                 )?,
             ),
@@ -395,13 +395,13 @@ impl Runtime {
                     self,
                     realm,
                     WeakIntrinsicKind::FinalizationRegistry,
-                    &invocation,
+                    invocation,
                     arguments,
                 )?,
             );
         }
 
-        let registry = match self.finalization_registry_receiver(realm, &invocation)? {
+        let registry = match self.finalization_registry_receiver(realm, invocation)? {
             NativeConversion::Value(registry) => registry,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };

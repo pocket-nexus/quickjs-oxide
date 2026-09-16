@@ -367,7 +367,7 @@ mod enabled {
         for (name, value) in [
             (
                 "slot_capacity_growths",
-                costs.owned_storage.slot_capacity_growths as u64,
+                costs.owned_storage.slot_capacity_growths,
             ),
             (
                 "maximum_slot_capacity",
@@ -375,21 +375,18 @@ mod enabled {
             ),
             (
                 "frame_capacity_growths",
-                costs.owned_storage.frame_capacity_growths as u64,
+                costs.owned_storage.frame_capacity_growths,
             ),
             (
                 "maximum_frame_capacity",
                 costs.owned_storage.maximum_frame_capacity as u64,
             ),
-            ("frames_pushed", costs.owned_storage.frames_pushed as u64),
+            ("frames_pushed", costs.owned_storage.frames_pushed),
             (
                 "maximum_frame_depth",
                 costs.owned_storage.maximum_frame_depth as u64,
             ),
-            (
-                "slots_initialized",
-                costs.owned_storage.slots_initialized as u64,
-            ),
+            ("slots_initialized", costs.owned_storage.slots_initialized),
             (
                 "physical_none_initializations",
                 costs.owned_storage.physical_none_initializations,
@@ -406,23 +403,17 @@ mod enabled {
                 "maximum_live_slots",
                 costs.owned_storage.maximum_live_slots as u64,
             ),
-            ("slot_moves", costs.owned_storage.slot_moves as u64),
-            ("slot_clears", costs.owned_storage.slot_clears as u64),
-            ("value_copies", costs.owned_storage.value_copies as u64),
-            (
-                "copied_heap_roots",
-                costs.owned_storage.copied_heap_roots as u64,
-            ),
-            (
-                "hot_value_releases",
-                costs.owned_storage.hot_value_releases as u64,
-            ),
+            ("slot_moves", costs.owned_storage.slot_moves),
+            ("slot_clears", costs.owned_storage.slot_clears),
+            ("value_copies", costs.owned_storage.value_copies),
+            ("copied_heap_roots", costs.owned_storage.copied_heap_roots),
+            ("hot_value_releases", costs.owned_storage.hot_value_releases),
             (
                 "hot_heap_root_releases",
-                costs.owned_storage.hot_heap_root_releases as u64,
+                costs.owned_storage.hot_heap_root_releases,
             ),
         ] {
-            write!(out, ",\"{}\":{}", name, value)?;
+            write!(out, ",\"{name}\":{value}")?;
         }
         write!(out, "}}")?;
         write!(out, ",\"owned_execution_layouts\":{{")?;
@@ -556,7 +547,7 @@ mod enabled {
                 costs.call_preparation.owned_argument_capacity_bytes,
             ),
         ] {
-            write!(out, ",\"{}\":{}", name, value)?;
+            write!(out, ",\"{name}\":{value}")?;
         }
         write!(out, "}}")?;
 

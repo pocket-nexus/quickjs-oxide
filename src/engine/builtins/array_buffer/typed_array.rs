@@ -39,44 +39,44 @@ use crate::engine::{
 };
 
 mod collect;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use collect::{
     TypedCollectResume, TypedCollectStep, TypedIteratorMethodResume, TypedIteratorMethodStep,
 };
 
 mod create;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use create::{TypedCreateResume, TypedCreateStep};
 mod copying;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use copying::{TypedWithResume, TypedWithStep};
 pub(crate) mod element;
 mod find;
 mod iteration;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use iteration::{TypedIterationResume, TypedIterationStep};
 mod mutation;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use mutation::{TypedMutationKind, TypedMutationResume, TypedMutationStep};
 mod reduce;
 mod traversal;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use traversal::{TypedTraversalKind, TypedTraversalResume, TypedTraversalStep};
 mod search;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use search::{TypedSearchKind, TypedSearchResume, TypedSearchStep};
 mod set;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use set::{TypedSetResume, TypedSetStep};
 mod slice;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use slice::{TypedSliceKind, TypedSliceResume, TypedSliceStep};
 mod sort;
 mod species;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use species::{TypedSpeciesResume, TypedSpeciesStep};
 mod stringification;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use stringification::{TypedStringResume, TypedStringStep};
 #[cfg(test)]
 mod tests;
@@ -429,7 +429,8 @@ impl Runtime {
             let id = self.0.state.borrow().heap.context(realm)?.array_prototype;
             ObjectRef::from_borrowed_handle(self.clone(), id)?
         };
-        let to_string_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?;
+        let to_string_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?;
         let to_string = match self.get_property_in_realm(realm, &array_prototype, &to_string_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) | Completion::Throw(_) => {
@@ -454,7 +455,8 @@ impl Runtime {
             ));
         }
 
-        let values_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
+        let values_key =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, &base_prototype, &values_key)? {
             Completion::Return(value @ Value::Object(_)) => value,
             Completion::Return(_) | Completion::Throw(_) => {
@@ -729,7 +731,7 @@ impl Runtime {
             let Value::Object(object) = this_value else {
                 return Ok(Completion::Return(Value::Undefined));
             };
-            let Some(snapshot) = self.typed_array_snapshot_if_branded(&object)? else {
+            let Some(snapshot) = self.typed_array_snapshot_if_branded(object)? else {
                 return Ok(Completion::Return(Value::Undefined));
             };
             return Ok(Completion::Return(Value::String(JsString::from_static(
@@ -740,7 +742,7 @@ impl Runtime {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
-        let state = self.typed_array_state(&object)?;
+        let state = self.typed_array_state(object)?;
         let result = match kind {
             TypedArrayNativeKind::Buffer => Value::Object(ObjectRef::from_borrowed_handle(
                 self.clone(),
@@ -777,11 +779,13 @@ impl Runtime {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
-        match self.typed_array_validated_length(realm, &object)? {
+        match self.typed_array_validated_length(realm, object)? {
             NativeConversion::Value(_) => {}
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         }
-        Ok(Completion::Return(Value::Object(self.new_array_iterator(realm,object,kind)?)))
+        Ok(Completion::Return(Value::Object(
+            self.new_array_iterator(realm, object, kind)?,
+        )))
     }
 
     fn call_typed_array_from(
@@ -893,7 +897,13 @@ impl Runtime {
         &self,
         realm: ContextId,
         value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> { self.require_typed_array_borrowed(realm,&value).map(|result| match result { NativeConversion::Value(object)=>NativeConversion::Value(object.clone()),NativeConversion::Throw(value)=>NativeConversion::Throw(value) }) }
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        self.require_typed_array_borrowed(realm, &value)
+            .map(|result| match result {
+                NativeConversion::Value(object) => NativeConversion::Value(object.clone()),
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
+            })
+    }
     fn require_typed_array_borrowed<'a>(
         &self,
         realm: ContextId,
@@ -909,7 +919,7 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("TypedArray"));
         }
-        if self.typed_array_snapshot_if_branded(&object)?.is_none() {
+        if self.typed_array_snapshot_if_branded(object)?.is_none() {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,
@@ -1273,7 +1283,7 @@ impl Runtime {
         index: u64,
     ) -> Result<Option<Value>, RuntimeError> {
         let snapshot = self.typed_array_snapshot(object)?;
-        #[cfg(feature = "stack-vm")]
+
         match self.ordinary_typed_array_word(snapshot, index, None)? {
             OrdinaryTypedWord::Missing => return Ok(None),
             OrdinaryTypedWord::Word(bytes) => {
@@ -1378,7 +1388,7 @@ impl Runtime {
         bytes: &[u8; 8],
     ) -> Result<bool, RuntimeError> {
         let snapshot = self.typed_array_snapshot(object)?;
-        #[cfg(feature = "stack-vm")]
+
         match self.ordinary_typed_array_word(snapshot, index, Some(bytes))? {
             OrdinaryTypedWord::Missing => return Ok(false),
             OrdinaryTypedWord::Word(_) => return Ok(true),
@@ -1397,7 +1407,6 @@ impl Runtime {
     /// the same state borrow. Conversion has already completed; this helper
     /// never calls user code, allocates a JS value, or releases an owner.
     /// Shared backing must leave the borrow before obtaining its access token.
-    #[cfg(feature = "stack-vm")]
     fn ordinary_typed_array_word(
         &self,
         snapshot: TypedArraySnapshot,
@@ -1415,7 +1424,6 @@ impl Runtime {
     /// Scoped numeric read shared by the resident indexed-read selector. The
     /// caller proves no-drain input release before taking this heap borrow.
     /// Decode allocates no owner because BigInt kinds are declined first.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn typed_array_number_read_in_heap(
         heap: &mut crate::engine::heap::Heap,
         object: ObjectId,
@@ -1436,7 +1444,6 @@ impl Runtime {
 
     /// Resident VM leaf: every decline precedes the only byte write. The
     /// owning input may be dropped after success without running heap cleanup.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn try_typed_array_number_write(
         &self,
         base: &Value,
@@ -1526,7 +1533,6 @@ fn typed_array_snapshot_from_payload(payload: &ObjectPayload) -> Option<TypedArr
     })
 }
 
-#[cfg(feature = "stack-vm")]
 fn ordinary_typed_array_word_in_heap(
     heap: &mut crate::engine::heap::Heap,
     snapshot: TypedArraySnapshot,
@@ -1557,7 +1563,6 @@ fn ordinary_typed_array_word_in_heap(
     Ok(OrdinaryTypedWord::Word(bytes))
 }
 
-#[cfg(feature = "stack-vm")]
 enum OrdinaryTypedWord {
     Shared,
     Missing,
@@ -1708,8 +1713,6 @@ fn typed_array_to_uint8_clamp(number: f64) -> u8 {
     }
 }
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use sort::{TypedSortResume, TypedSortStep};
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use uint8_codec::{Uint8CodecResume, Uint8CodecStep};

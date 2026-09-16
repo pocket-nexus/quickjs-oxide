@@ -107,7 +107,8 @@ impl ConstructorStep {
                 runtime.new_native_error(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
+        let key =
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
         let descriptor = OrdinaryPropertyDescriptor {
             value: DescriptorField::Present(Value::Object(value.clone())),
             writable: DescriptorField::Present(true),

@@ -16,8 +16,7 @@ use crate::engine::heap::{
     ContextId, GeneratorRealmData, GeneratorState, ObjectData, ObjectPayload,
 };
 use crate::engine::object::{
-    CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
+    DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::{JsString, Value};
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
@@ -143,26 +142,6 @@ impl Runtime {
             ));
         }
         Ok(())
-    }
-
-    /// Finish QuickJS's generator-function call sequence after the bytecode
-    /// frame has reached `OP_initial_yield` and its active-frame record has
-    /// been popped. The public `.prototype` lookup intentionally happens now:
-    /// pinned QuickJS initializes parameters first, then performs
-    /// `js_create_from_ctor`, whose getter may throw or re-enter JavaScript.
-    pub(crate) fn finish_generator_function_call(
-        &self,
-        caller_realm: ContextId,
-        callable: &CallableRef,
-        activation: EncodedVmActivation,
-    ) -> Result<Completion, RuntimeError> {
-        suspend::creation::GeneratorCreation {
-            realm: caller_realm,
-            callable: callable.clone(),
-            asynchronous: false,
-        }
-        .frozen(self, Box::new(activation))?
-        .finish(self, caller_realm)
     }
 
     pub(super) fn allocate_generator_object(

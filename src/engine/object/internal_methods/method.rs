@@ -30,6 +30,8 @@ impl std::ops::DerefMut for MethodResume {
     }
 }
 thread_local! {
+    // Preserve and reuse the continuation Box allocation across callbacks.
+    #[allow(clippy::vec_box)]
     static EMPTY_CONTINUATIONS: std::cell::RefCell<Vec<Box<Option<MethodResumeState>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 impl super::reuse::Reusable for MethodResumeState {
@@ -66,7 +68,8 @@ impl MethodStep {
             return overflow(runtime, realm);
         }
         let guard = ProxyMethodStackGuard::enter(runtime);
-        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::proxy_method(name))?;
+        let key = runtime
+            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::proxy_method(name))?;
         Search {
             realm,
             key,
@@ -226,6 +229,9 @@ impl MethodResume {
 }
 const _: () = assert!(std::mem::size_of::<MethodStep>() <= 64);
 
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<MethodStep>() <= 64);
+
 #[cfg(test)]
 mod resident_tests {
     use super::*;
@@ -256,6 +262,3 @@ mod resident_tests {
         assert!(resume.take_completed_target().is_none());
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<MethodStep>() <= 64);

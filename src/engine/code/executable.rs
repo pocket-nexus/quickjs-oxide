@@ -161,9 +161,9 @@ impl PublishedFunctionSnapshot {
             data: Rc::new(PublishedFunctionData {
                 has_captured_locals: true,
                 observes_arguments: true,
-                #[cfg(feature = "stack-vm")]
+
                 fusion: Default::default(),
-                #[cfg(feature = "stack-vm")]
+
                 property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
                     &[],
                 ),
@@ -199,9 +199,9 @@ impl std::ops::DerefMut for PublishedFunctionSnapshot {
 pub(crate) struct PublishedFunctionData {
     pub(crate) has_captured_locals: bool,
     pub(crate) observes_arguments: bool,
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
-    #[cfg(feature = "stack-vm")]
+
     pub(crate) property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable,
     pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
     pub(crate) constants: Rc<[BytecodeConstant]>,
@@ -261,9 +261,9 @@ impl Runtime {
                             | crate::engine::code::bytecode::Instruction::ApplyEval { .. }
                     )
                 }),
-                #[cfg(feature = "stack-vm")]
+
                 fusion: bytecode.fusion.clone(),
-                #[cfg(feature = "stack-vm")]
+
                 property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
                     &bytecode.code,
                 ),

@@ -842,7 +842,9 @@ fn take_error_message(runtime: &Runtime, context: &mut Context) -> JsString {
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("module failure did not produce an Error object");
     };
-    let message_key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
+    let message_key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
+        .unwrap();
     runtime
         .raw_string_property_for_diagnostics(&error, &message_key)
         .unwrap()

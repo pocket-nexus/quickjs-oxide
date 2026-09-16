@@ -20,76 +20,13 @@ use crate::engine::value::Value;
 use crate::engine::vm::bindings::{FrameBinding, is_private_callable_kind};
 use crate::engine::vm::call::CallableExecution;
 use crate::engine::vm::frames::ActiveFrameToken;
-use crate::engine::vm::host_bridge::RuntimeVmHost;
-use crate::engine::vm::{
-    BytecodePc, Completion, VmActivationParts, VmResume, VmSuspendKind, VmSuspension,
-};
-
-#[cfg(not(feature = "stack-vm"))]
-use super::{Vm, VmExit};
+use crate::engine::vm::{BytecodePc, Completion, VmResume, VmSuspendKind};
 
 pub(super) mod creation;
 
-#[cfg(feature = "stack-vm")]
 mod owned;
-#[cfg(feature = "stack-vm")]
+
 pub(super) use owned::{OwnedSuspension, PreparedResume};
-
-/// Start every language suspension family through the configured executor.
-pub(super) fn start(
-    host: RuntimeVmHost,
-    input: super::CallInput,
-    original_arguments: &[Value],
-) -> Result<VmRunOutcome, RuntimeError> {
-    #[cfg(feature = "stack-vm")]
-    {
-        let runtime = host.runtime.clone();
-        super::host_bridge::owned::execute(host, input, original_arguments)
-            .and_then(|exit| exit.finish_suspending(runtime))
-            .map_err(RuntimeError::Engine)
-    }
-    #[cfg(not(feature = "stack-vm"))]
-    {
-        let mut host = host;
-        let result = Vm::new()
-            .start_published(input, &mut host)
-            .map_err(RuntimeError::Engine)?;
-        match result {
-            VmExit::Complete(completion) => Ok(VmRunOutcome::Complete(completion)),
-            VmExit::Suspend(suspension) => {
-                let mut originals = Vec::new();
-                originals
-                    .try_reserve_exact(original_arguments.len())
-                    .map_err(|_| {
-                        RuntimeError::Invariant("original argument snapshot allocation failed")
-                    })?;
-                for value in original_arguments {
-                    originals.push(match value {
-                        Value::Object(value) => Value::Object(value.try_clone()?),
-                        value => value.clone(),
-                    });
-                }
-                finish_suspension(host, suspension, originals)
-            }
-        }
-    }
-}
-
-pub(in crate::engine::vm) fn finish_suspension(
-    host: RuntimeVmHost,
-    mut suspension: VmSuspension,
-    originals: Vec<Value>,
-) -> Result<VmRunOutcome, RuntimeError> {
-    let value = match suspension.kind() {
-        VmSuspendKind::Initial => Value::Undefined,
-        VmSuspendKind::Await => suspension.take_awaited().map_err(RuntimeError::Engine)?,
-        _ => suspension.take_yielded().map_err(RuntimeError::Engine)?,
-    };
-    Ok(VmRunOutcome::Suspend {
-        value,
-        activation: Box::new(freeze(host, suspension, originals)?),
-    })
-}
 
 fn encode_generator_frame_binding(
     runtime: &Runtime,
@@ -222,9 +159,7 @@ fn decode_generator_frame_binding(
 pub(crate) struct EncodedVmActivation {
     pub(crate) kind: VmSuspendKind,
     pub(crate) data: GeneratorActivationData,
-    _host: RuntimeVmHost,
-    _parts: VmActivationParts,
-    _original_arguments: Vec<Value>,
+    _entry: super::frame::FrameEntry,
 }
 
 impl EncodedVmActivation {
@@ -274,10 +209,9 @@ fn generator_raw_value_atom(value: &RawValue) -> Option<Atom> {
 /// are detached. `host.active_frame_token` remains a sentinel until the
 /// short-lived bytecode active frame is pushed for the actual resume.
 pub(crate) struct RootedVmActivation {
-    suspension: VmSuspension,
-    host: RuntimeVmHost,
+    entry: super::frame::FrameEntry,
+    kind: VmSuspendKind,
     saved_pc: usize,
-    original_arguments: Vec<Value>,
 }
 
 pub(crate) enum VmActivationResume {
@@ -304,7 +238,7 @@ impl RootedVmActivation {
         // Authenticate the resume input before installing any active frame or
         // invoking an unwinder. The dormant owner remains with the language
         // state machine until thaw has produced this single-use rooted value.
-        if self.host.runtime.domain_id() != runtime.domain_id() {
+        if self.entry.cold.function.runtime().domain_id() != runtime.domain_id() {
             return Err(RuntimeError::WrongRuntime("suspended execution"));
         }
         match resume {
@@ -325,239 +259,117 @@ impl RootedVmActivation {
         runtime: &Runtime,
         resume: VmActivationResume,
     ) -> Result<VmRunOutcome, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
-        {
-            let prepared = self.prepare_owned(runtime, resume)?;
-            super::driver::resume(runtime.clone(), prepared.entry, prepared.pc)
-                .and_then(|exit| exit.finish_suspending(runtime.clone()))
-                .map_err(RuntimeError::Engine)
-        }
-        #[cfg(not(feature = "stack-vm"))]
-        {
-            self.run_legacy(runtime, resume)
-        }
+        let prepared = self.prepare_owned(runtime, resume)?;
+        super::driver::resume(runtime.clone(), prepared.entry, prepared.pc)
+            .and_then(|exit| exit.finish_suspending(runtime.clone()))
+            .map_err(RuntimeError::Engine)
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(super) fn prepare_owned(
         self,
         runtime: &Runtime,
         resume: VmActivationResume,
     ) -> Result<PreparedResume, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        let _profile_phase =
-            crate::engine::api::profiling::PhaseTimer::start_vm("thaw.prepare_owned");
         self.validate_resume(runtime, &resume)?;
         let Self {
-            mut host,
-            suspension,
-            original_arguments,
+            mut entry,
+            kind,
             saved_pc,
-            ..
         } = self;
-        let root = host
+        let root = entry
             .executable
             .root()
             .ok_or(RuntimeError::Invariant(
-                "resumable host has no published executable root",
-            ))?
-            .clone();
-        let function = host
-            .current_function
-            .as_ref()
-            .ok_or(RuntimeError::Invariant(
-                "resumable host has no current function root",
+                "resumable frame has no published root",
             ))?
             .clone();
         let guard = runtime.push_bytecode_active_frame(
-            function,
+            (*entry.cold.function).clone(),
             root,
-            host.current_realm,
-            host.executable.frame_layout().is_strict(),
+            entry.executable.realm,
+            entry.executable.frame_layout().is_strict(),
         )?;
-        host.active_frame_token = guard.token();
+        entry.active_frame = guard.token();
         runtime.update_active_bytecode_pc(
             guard.token(),
             BytecodePc::new(saved_pc.saturating_sub(1)),
         )?;
-        let mut prepared = owned::prepare(host, suspension, original_arguments, resume)?;
-        prepared.entry.cold.entry_guard = Some(guard);
-        Ok(prepared)
-    }
-
-    #[cfg(not(feature = "stack-vm"))]
-    fn run_legacy(
-        self,
-        runtime: &Runtime,
-        resume: VmActivationResume,
-    ) -> Result<VmRunOutcome, RuntimeError> {
-        self.validate_resume(runtime, &resume)?;
-        let Self {
-            suspension,
-            mut host,
-            saved_pc,
-            original_arguments,
-        } = self;
-        let bytecode = host
-            .executable
-            .root()
-            .ok_or(RuntimeError::Invariant(
-                "resumable host has no published executable root",
-            ))?
-            .clone();
-        let code = host.executable.code.clone();
-        let strict = host.executable.frame_layout().is_strict();
-        let function = host
-            .current_function
-            .as_ref()
-            .ok_or(RuntimeError::Invariant(
-                "resumable host has no current function root",
-            ))?
-            .clone();
-        let active_frame =
-            runtime.push_bytecode_active_frame(function, bytecode, host.current_realm, strict)?;
-        host.active_frame_token = active_frame.token();
-        runtime.update_active_bytecode_pc(
-            active_frame.token(),
-            BytecodePc::new(saved_pc.saturating_sub(1)),
-        )?;
-        let result = match (suspension.kind(), resume) {
-            (VmSuspendKind::Initial, VmActivationResume::Initial) => {
-                Vm::new().resume_published_initial(suspension, &code, &mut host)
-            }
-            (
-                VmSuspendKind::Yield | VmSuspendKind::YieldStar | VmSuspendKind::AsyncYieldStar,
-                VmActivationResume::Generator(resume),
-            ) => Vm::new().resume_published(suspension, &code, &mut host, resume),
-            (VmSuspendKind::Await, VmActivationResume::AwaitFulfill(value)) => {
-                suspension.resume_await_fulfill(&code, &mut host, value)
-            }
-            (VmSuspendKind::Await, VmActivationResume::AwaitReject(reason)) => {
-                suspension.resume_await_reject(&code, &mut host, reason)
-            }
-            _ => {
-                return Err(RuntimeError::Invariant(
-                    "resume operation disagrees with the suspended VM state",
-                ));
-            }
-        };
-        active_frame.finish()?;
-        {
-            match result.map_err(RuntimeError::Engine)? {
-                VmExit::Complete(completion) => Ok(VmRunOutcome::Complete(completion)),
-                VmExit::Suspend(mut suspension) => {
-                    let value = match suspension.kind() {
-                        VmSuspendKind::Initial => {
-                            return Err(RuntimeError::Invariant(
-                                "resumed activation reached an initial suspension",
-                            ));
-                        }
-                        VmSuspendKind::Yield
-                        | VmSuspendKind::YieldStar
-                        | VmSuspendKind::AsyncYieldStar => {
-                            suspension.take_yielded().map_err(RuntimeError::Engine)?
-                        }
-                        VmSuspendKind::Await => {
-                            suspension.take_awaited().map_err(RuntimeError::Engine)?
-                        }
-                    };
-                    let activation = freeze(host, suspension, original_arguments)?;
-                    Ok(VmRunOutcome::Suspend {
-                        value,
-                        activation: Box::new(activation),
-                    })
-                }
-            }
-        }
+        entry.cold.entry_guard = Some(guard);
+        owned::prepare(entry, kind, saved_pc, resume)
     }
 }
 
-pub(crate) fn freeze(
-    host: RuntimeVmHost,
-    suspension: VmSuspension,
-    original_arguments: Vec<Value>,
+pub(super) fn freeze_entry(
+    runtime: &Runtime,
+    mut entry: super::frame::FrameEntry,
+    kind: VmSuspendKind,
+    pc: usize,
 ) -> Result<EncodedVmActivation, RuntimeError> {
     #[cfg(feature = "profiling")]
     let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.encode");
-    let (kind, parts) = suspension.into_parts().map_err(RuntimeError::Engine)?;
-    let bytecode = host.executable.root().ok_or(RuntimeError::Invariant(
-        "resumable host has no current bytecode root",
+    entry
+        .cold
+        .input
+        .callee_global(runtime, entry.executable.realm)?;
+    entry
+        .cold
+        .reusable_captured_locals
+        .resize(entry.storage.locals.len(), false);
+    let bytecode = entry.executable.root().ok_or(RuntimeError::Invariant(
+        "resumable frame has no published root",
     ))?;
-    let caller_realm = parts.caller_realm.ok_or(RuntimeError::Invariant(
-        "resumable VM activation has no caller realm",
+    let input = &*entry.cold.input;
+    let global = input.callee_global.as_ref().ok_or(RuntimeError::Invariant(
+        "resumable frame has no callee global",
     ))?;
-    let callee_realm = parts.callee_realm.ok_or(RuntimeError::Invariant(
-        "resumable VM activation has no callee realm",
-    ))?;
-    let current_function = parts
-        .current_function
-        .as_ref()
-        .ok_or(RuntimeError::Invariant(
-            "resumable VM activation has no current function",
-        ))?;
-    let callee_global = parts.callee_global.as_ref().ok_or(RuntimeError::Invariant(
-        "resumable VM activation has no callee global",
-    ))?;
-    if caller_realm != host.caller_realm
-        || callee_realm != host.current_realm
-        || host.current_function.as_ref() != Some(current_function)
-        || host.arguments.len() < host.executable.argument_definitions.len()
-        || host.locals.len() != host.executable.local_definitions.len()
-        || host.reusable_captured_locals.len() != host.locals.len()
-        || host.actual_argument_count > host.arguments.len()
-        || host.actual_argument_count != original_arguments.len()
-    {
-        return Err(RuntimeError::Invariant(
-            "resumable VM activation disagrees with its runtime host",
-        ));
-    }
-    let arguments = host
-        .arguments
+    let storage = &entry.storage;
+    let arguments = storage
+        .parameters
         .iter()
-        .map(|binding| encode_generator_frame_binding(&host.runtime, binding))
+        .map(|binding| encode_generator_frame_binding(runtime, binding))
         .collect::<Result<Vec<_>, _>>()?;
-    let locals = host
+    let locals = storage
         .locals
         .iter()
-        .map(|binding| encode_generator_frame_binding(&host.runtime, binding))
+        .map(|binding| encode_generator_frame_binding(runtime, binding))
         .collect::<Result<Vec<_>, _>>()?;
     let vm = GeneratorVmActivation {
-        stack: parts
-            .stack
+        stack: storage
+            .operands
             .iter()
-            .map(|value| host.runtime.raw_property_value(value))
+            .map(|value| runtime.raw_property_value(value))
             .collect::<Result<Vec<_>, _>>()?,
-        regions: parts.regions.clone(),
-        pc: parts.pc,
-        callee_realm,
-        current_function: current_function.object_id(),
-        this_value: host.runtime.raw_property_value(&parts.this_value)?,
-        normalized_this: parts
+        regions: entry.cold.regions.clone(),
+        pc,
+        callee_realm: entry.executable.realm,
+        current_function: entry.cold.function.object_id(),
+        this_value: runtime.raw_property_value(&input.this_value)?,
+        normalized_this: entry
+            .cold
             .normalized_this
             .as_ref()
-            .map(|value| host.runtime.raw_property_value(value))
+            .map(|value| runtime.raw_property_value(value))
             .transpose()?,
-        new_target: host.runtime.raw_property_value(&parts.new_target)?,
-        strict: parts.strict,
-        callee_global: callee_global.object_id(),
+        new_target: runtime.raw_property_value(&input.new_target)?,
+        strict: entry.executable.frame_layout().is_strict(),
+        callee_global: global.object_id(),
     };
     Ok(EncodedVmActivation {
         kind,
         data: GeneratorActivationData {
             bytecode: bytecode.bytecode_id(),
             vm,
-            actual_argument_count: host.actual_argument_count,
-            original_arguments: original_arguments
+            actual_argument_count: storage.original_arguments.len(),
+            original_arguments: storage
+                .original_arguments
                 .iter()
-                .map(|value| host.runtime.raw_property_value(value))
+                .map(|value| runtime.raw_property_value(value))
                 .collect::<Result<Vec<_>, _>>()?,
             arguments,
             locals,
-            reusable_captured_locals: host.reusable_captured_locals.clone(),
+            reusable_captured_locals: entry.cold.reusable_captured_locals.clone(),
         },
-        _original_arguments: original_arguments,
-        _host: host,
-        _parts: parts,
+        _entry: entry,
     })
 }
 
@@ -644,48 +456,56 @@ pub(crate) fn thaw(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let callee_global = ObjectRef::from_borrowed_handle(runtime.clone(), data.vm.callee_global)?;
-    let parts = VmActivationParts {
-        stack: data
-            .vm
-            .stack
-            .iter()
-            .map(|value| runtime.root_raw_value(value))
-            .collect::<Result<Vec<_>, _>>()?,
-        regions: data.vm.regions.clone(),
-        pc: data.vm.pc,
-        caller_realm: Some(resume_caller_realm),
-        callee_realm: Some(data.vm.callee_realm),
-        current_function: Some(current_function.clone()),
+    let operands = data
+        .vm
+        .stack
+        .iter()
+        .map(|value| runtime.root_raw_value(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    if kind != VmSuspendKind::Initial && !matches!(operands.last(), Some(Value::Undefined)) {
+        return Err(RuntimeError::Invariant(
+            "dormant suspension output was not cleared",
+        ));
+    }
+    let input = super::CallInput {
         this_value: runtime.root_raw_value(&data.vm.this_value)?,
-        normalized_this: data
-            .vm
-            .normalized_this
-            .as_ref()
-            .map(|value| runtime.root_raw_value(value))
-            .transpose()?,
         new_target: runtime.root_raw_value(&data.vm.new_target)?,
-        strict: data.vm.strict,
         callee_global: Some(callee_global),
     };
-    let suspension = VmSuspension::from_parts(kind, parts).map_err(RuntimeError::Engine)?;
-    let host = RuntimeVmHost {
-        runtime,
-        active_frame_token: ActiveFrameToken(0),
-        current_realm: data.vm.callee_realm,
+    let mut entry = super::frame::FrameEntry {
+        initialize_bindings: false,
+        property_generation: 0,
+        iterator_generation: 0,
         caller_realm: resume_caller_realm,
+        active_frame: ActiveFrameToken(0),
         executable,
-        current_function: Some(current_function),
-        actual_argument_count: data.actual_argument_count,
-        closure_slots,
-        arguments,
-        locals,
-        reusable_captured_locals: data.reusable_captured_locals.clone(),
+        cold: super::frame::ColdFrame::new(super::frame::FrameCold {
+            rare: std::cell::OnceCell::new(),
+            return_to: None,
+            entry_guard: None,
+            function: current_function.into(),
+            closure_slots,
+            reusable_captured_locals: data.reusable_captured_locals.clone(),
+            input: input.into(),
+        }),
+        storage: super::stack::FrameStorage {
+            original_arguments,
+            parameters: arguments,
+            locals,
+            operands,
+        },
     };
+    entry.cold.regions = data.vm.regions.clone();
+    entry.cold.normalized_this = data
+        .vm
+        .normalized_this
+        .as_ref()
+        .map(|value| runtime.root_raw_value(value))
+        .transpose()?;
     Ok(RootedVmActivation {
-        suspension,
-        host,
+        entry,
+        kind,
         saved_pc: data.vm.pc,
-        original_arguments,
     })
 }
 
@@ -820,5 +640,5 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm", feature = "profiling"))]
+#[cfg(all(test, feature = "profiling"))]
 mod tests_owned;

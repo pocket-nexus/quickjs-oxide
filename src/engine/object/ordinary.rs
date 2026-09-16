@@ -16,7 +16,7 @@ use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
 
 mod set;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use set::SetResume;
 pub(crate) use set::SetStep;
 

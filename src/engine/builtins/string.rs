@@ -1,6 +1,6 @@
 //! String prototype intrinsics beyond the shared primitive-wrapper substrate.
 mod factory;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use factory::{StringFactoryKind, StringFactoryResume, StringFactoryStep};
 
 use crate::engine::api::error::NativeErrorKind;
@@ -23,20 +23,19 @@ use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
 mod regexp;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use regexp::{StringProtocolKind, StringProtocolResume, StringProtocolStep};
 mod split;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use split::{StringSplitResume, StringSplitStep};
 mod search;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use search::{StringSearchKind, StringSearchResume, StringSearchStep};
 mod text;
-#[cfg(feature = "stack-vm")]
+
 pub(crate) use text::{StringTextKind, StringTextResume, StringTextStep};
 mod replace;
 
-#[cfg(feature = "stack-vm")]
 pub(crate) use replace::{StringReplaceResume, StringReplaceStep};
 
 #[cfg(test)]

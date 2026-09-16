@@ -485,7 +485,7 @@ impl RuntimeState {
             entries[index].flags = flags;
             slots[index] = replacement;
         } else {
-            entries.push(ShapeEntry { atom: atom, flags });
+            entries.push(ShapeEntry { atom, flags });
             slots.push(replacement);
         }
         state.replace_layout(object_id, prototype, &entries, slots)

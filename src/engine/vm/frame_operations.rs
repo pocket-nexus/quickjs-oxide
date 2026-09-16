@@ -1,8 +1,10 @@
 //! Outlined frame and binding operations. Keeping their temporary values out
 //! of the resident driver frame leaves native stack room for callback reentry.
 
+#[cfg(test)]
 mod direct;
 mod numeric;
+#[cfg(test)]
 pub(super) use direct::complete as complete_owned_slot;
 pub(super) use numeric::{
     NumericProgress, commit_output as commit_numeric_output, complete as complete_numeric,
@@ -27,7 +29,7 @@ pub(super) fn pure(
     id: FrameId,
     operation: super::pure_operations::PureOperation,
 ) -> Result<CallStep, Error> {
-    return super::pure_operations::step(runtime, execution, id, operation);
+    super::pure_operations::step(runtime, execution, id, operation)
 }
 
 #[inline(never)]
@@ -39,9 +41,7 @@ pub(super) fn copy_data(
     source: usize,
     excluded: Option<usize>,
 ) -> Result<CallStep, Error> {
-    return super::proxy_get_driver::start_object_copy(
-        runtime, execution, id, target, source, excluded,
-    );
+    super::proxy_get_driver::start_object_copy(runtime, execution, id, target, source, excluded)
 }
 
 #[inline(never)]
@@ -66,7 +66,7 @@ pub(super) fn home_object(
         .ok_or_else(|| Error::internal("HomeObject resume PC overflow"))?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
-    return Ok(CallStep::Entered);
+    Ok(CallStep::Entered)
 }
 
 #[inline(never)]
@@ -96,7 +96,7 @@ pub(super) fn get_super(
             return Ok(CallStep::Entered);
         }
     }
-    return Ok(CallStep::Bridge);
+    Ok(CallStep::Bridge)
 }
 
 #[cold]
@@ -108,13 +108,13 @@ pub(super) fn binding_error(
     index: u32,
     redeclaration: bool,
 ) -> Result<CallStep, Error> {
-    return Ok(CallStep::Complete(super::exception::binding_error(
+    Ok(CallStep::Complete(super::exception::binding_error(
         runtime,
         execution,
         id,
         index,
         redeclaration,
-    )?));
+    )?))
 }
 
 #[inline(never)]
@@ -126,10 +126,8 @@ pub(super) fn private_initialize(
     kind: super::private_bindings::Initialization,
 ) -> Result<CallStep, Error> {
     match super::private_bindings::step(runtime, execution, id, index, kind)? {
-        None => return Ok(CallStep::Entered),
-        Some(completion) => {
-            return Ok(CallStep::Complete(completion));
-        }
+        None => Ok(CallStep::Entered),
+        Some(completion) => Ok(CallStep::Complete(completion)),
     }
 }
 
@@ -143,10 +141,10 @@ pub(super) fn private_access(
 ) -> Result<CallStep, Error> {
     match super::private_access::step(runtime, execution, id, source, access)? {
         super::private_access::Outcome::Done | super::private_access::Outcome::Entered => {
-            return Ok(CallStep::Entered);
+            Ok(CallStep::Entered)
         }
         super::private_access::Outcome::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(value)));
+            Ok(CallStep::Complete(Completion::Throw(value)))
         }
     }
 }
@@ -172,14 +170,14 @@ pub(super) fn for_in(
         let value = execution.slots.pop(&mut frame.window)?;
         super::for_in::operation::ForInStep::start(runtime, realm, value)
     };
-    return match step {
+    match step {
         Ok(step) => {
             super::proxy_get_driver::start_for_in_query(runtime, execution, id, step, depth)
         }
         Err(error) => {
             super::property_driver::throw_error(runtime, realm, runtime_error_to_vm_error(error))
         }
-    };
+    }
 }
 
 #[inline(never)]
@@ -189,7 +187,7 @@ pub(super) fn numeric(
     id: FrameId,
     kind: super::numeric::operation::NumericKind,
 ) -> Result<CallStep, Error> {
-    return complete_numeric(runtime, execution, id, kind).map(NumericProgress::into_call_step);
+    complete_numeric(runtime, execution, id, kind).map(NumericProgress::into_call_step)
 }
 
 #[inline(never)]
@@ -200,7 +198,7 @@ pub(super) fn strict_equality(
     negate: bool,
 ) -> Result<CallStep, Error> {
     super::run::strict_comparison(execution, id, negate)?;
-    return Ok(CallStep::Entered);
+    Ok(CallStep::Entered)
 }
 
 #[inline(never)]
@@ -211,10 +209,8 @@ pub(super) fn arguments(
     exit: RunExit,
 ) -> Result<CallStep, Error> {
     match super::arguments_driver::step(runtime, execution, id, exit)? {
-        None => return Ok(CallStep::Entered),
-        Some(completion) => {
-            return Ok(CallStep::Complete(completion));
-        }
+        None => Ok(CallStep::Entered),
+        Some(completion) => Ok(CallStep::Complete(completion)),
     }
 }
 
@@ -226,10 +222,8 @@ pub(super) fn set_name(
     index: Option<u32>,
 ) -> Result<CallStep, Error> {
     match super::property_keys::set_name(runtime, execution, id, index)? {
-        None => return Ok(CallStep::Entered),
-        Some(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(value)));
-        }
+        None => Ok(CallStep::Entered),
+        Some(value) => Ok(CallStep::Complete(Completion::Throw(value))),
     }
 }
 
@@ -241,7 +235,7 @@ pub(super) fn instantiate_closure(
     index: u32,
 ) -> Result<CallStep, Error> {
     super::closure_driver::instantiate(runtime, execution, id, index)?;
-    return Ok(CallStep::Entered);
+    Ok(CallStep::Entered)
 }
 
 #[inline(never)]
@@ -265,7 +259,7 @@ pub(super) fn reset_captured(
         .ok_or_else(|| Error::internal("reset resume PC overflow"))?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(execution.slots.depth(&frame.window));
-    return Ok(CallStep::Entered);
+    Ok(CallStep::Entered)
 }
 
 #[inline(never)]
@@ -294,7 +288,7 @@ pub(super) fn close_captured(
         .ok_or_else(|| Error::internal("close resume PC overflow"))?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(execution.slots.depth(&frame.window));
-    return Ok(CallStep::Entered);
+    Ok(CallStep::Entered)
 }
 
 #[inline(never)]
@@ -363,7 +357,7 @@ pub(super) fn catch(
         .ok_or_else(|| Error::internal("catch resume PC overflow"))?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
-    return Ok(CallStep::Entered);
+    Ok(CallStep::Entered)
 }
 
 #[inline(never)]
@@ -382,6 +376,8 @@ pub(super) fn throw(
 }
 
 #[inline(never)]
+// Binding opcode flags travel with the existing execution borrow instead of creating a second operation representation.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn binding(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -482,7 +478,7 @@ pub(super) fn binding(
                 .ok_or_else(|| Error::internal("closure access resume PC overflow"))?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
-            return Ok(CallStep::Entered);
+            Ok(CallStep::Entered)
         }
         Err(error) => {
             let Some(kind) =
@@ -493,7 +489,7 @@ pub(super) fn binding(
             let value = runtime
                 .new_native_error_from_error(realm, kind, &error)
                 .map_err(runtime_error_to_vm_error)?;
-            return Ok(CallStep::Complete(Completion::Throw(value)));
+            Ok(CallStep::Complete(Completion::Throw(value)))
         }
     }
 }
@@ -520,7 +516,7 @@ pub(super) fn lexical_uninitialized(
             &error,
         )
         .map_err(runtime_error_to_vm_error)?;
-    return Ok(CallStep::Complete(Completion::Throw(value)));
+    Ok(CallStep::Complete(Completion::Throw(value)))
 }
 
 #[inline(never)]
@@ -564,7 +560,7 @@ pub(super) fn initialize_derived(
                 .ok_or_else(|| Error::internal("initialization resume PC overflow"))?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
-            return Ok(CallStep::Entered);
+            Ok(CallStep::Entered)
         }
         Err(error) => {
             let Some(kind) =
@@ -575,7 +571,7 @@ pub(super) fn initialize_derived(
             let value = runtime
                 .new_native_error_from_error(frame.executable.realm, kind, &error)
                 .map_err(runtime_error_to_vm_error)?;
-            return Ok(CallStep::Complete(Completion::Throw(value)));
+            Ok(CallStep::Complete(Completion::Throw(value)))
         }
     }
 }
@@ -609,7 +605,7 @@ pub(super) fn return_derived(
             execution.slots.depth(&frame.window) + 1,
         );
     }
-    return Ok(CallStep::Complete(completion));
+    Ok(CallStep::Complete(completion))
 }
 
 #[inline(never)]
@@ -628,5 +624,5 @@ pub(super) fn normalize_this(
         return Err(Error::internal("non-null primitive this boxing threw"));
     };
     frame.cold.normalized_this = Some(Value::Object(object));
-    return Ok(CallStep::Entered);
+    Ok(CallStep::Entered)
 }

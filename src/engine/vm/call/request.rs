@@ -68,8 +68,8 @@ impl BytecodeCallRequest {
         let entry = FrameEntry {
             property_generation: 0,
             iterator_generation: 0,
-            caller_realm: caller_realm,
-            active_frame: active_frame,
+            caller_realm,
+            active_frame,
 
             initialize_bindings: true,
             executable: prepared.executable,

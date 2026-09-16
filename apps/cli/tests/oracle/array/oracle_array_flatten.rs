@@ -332,7 +332,7 @@ fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
     // Owned callbacks consume logical frames, so the old native-stack ceiling
     // must not reject this finite chain. Keep the legacy ceiling probe below
     // for the default VM and exercise a true infinite chain for stack-vm.
-    #[cfg(feature = "stack-vm")]
+
     assert_eq!(
         primitive_value_text(
             context
@@ -348,7 +348,7 @@ fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
         ),
         "1",
     );
-    let count = if cfg!(feature = "stack-vm") { -1 } else { 40 };
+    let count = { -1 };
     let value = context
         .eval(&format!(
             r#"(function(){{

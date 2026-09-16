@@ -54,7 +54,6 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-manifest", type=Path,
                         help="complete frozen export identity; mandatory when --repo is not an exact Git checkout root")
-    parser.add_argument("--stack-vm", action="store_true")
     parser.add_argument("--profiling", action="store_true")
     args = parser.parse_args()
     repo, output = args.repo.resolve(), args.output.resolve()
@@ -74,7 +73,7 @@ def main():
     source = Path(__file__).resolve().parents[2] / "apps/cli/examples/compile_probe.rs"
     (output / "src/main.rs").write_bytes(source.read_bytes())
     probe_source_sha256 = digest(output / "src/main.rs")
-    features = [name for enabled, name in [(args.stack_vm, "stack-vm"), (args.profiling, "profiling")] if enabled]
+    features = [name for enabled, name in [(args.profiling, "profiling")] if enabled]
     manifest = '\n'.join([
         '[package]', 'name="oxide-compile-probe"', 'version="0.0.0"', 'edition="2024"',
         '[workspace]', '[features]', 'profiling=[]', '[dependencies]',

@@ -5,7 +5,7 @@ use super::{
     exception::runtime_error_to_vm_error,
 };
 use crate::engine::api::{error::Error, runtime::Runtime};
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::code::bytecode::DynamicEnvironmentSource;
 use crate::engine::code::bytecode::{EvalVariableSource, WithObjectSource};
 use crate::engine::code::function::metadata::{
@@ -202,7 +202,6 @@ pub(super) fn with_object<'a>(
     Ok(object)
 }
 
-#[cfg(feature = "stack-vm")]
 pub(super) fn dynamic_object<'a>(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,

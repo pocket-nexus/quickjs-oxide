@@ -59,7 +59,8 @@ impl Runtime {
         &self,
         regexp: &ObjectRef,
     ) -> Result<Option<StandardRegExpReplace>, RuntimeError> {
-        let last_index = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let last_index =
+            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let exec = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Exec)?;
         let flags = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?;
         let global = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Global)?;
@@ -364,28 +365,12 @@ fn raw_native_function_matches(
 
 pub(crate) enum RegExpReplaceStep {
     Complete(Completion),
-    #[cfg(feature = "stack-vm")]
-    PreparedSet {
-        resume: RegExpReplaceResume,
-    },
-    PreparedRead {
-        resume: RegExpReplaceResume,
-    },
-    Read {
-        resume: RegExpReplaceResume,
-    },
-    Primitive {
-        resume: RegExpReplaceResume,
-    },
-    Call {
-        resume: RegExpReplaceResume,
-    },
-    Exec {
-        resume: RegExpReplaceResume,
-    },
-    Set {
-        resume: RegExpReplaceResume,
-    },
+
+    PreparedSet { resume: RegExpReplaceResume },
+    PreparedRead { resume: RegExpReplaceResume },
+    Primitive { resume: RegExpReplaceResume },
+    Call { resume: RegExpReplaceResume },
+    Exec { resume: RegExpReplaceResume },
 }
 pub(crate) struct RegExpReplaceResume(Box<RegExpReplaceResumeState>);
 impl std::ops::Deref for RegExpReplaceResume {
@@ -557,7 +542,7 @@ impl RegExpReplaceStep {
                 realm, regexp, source, text, standard,
             )?));
         }
-        #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "regexpreplace_resident_allocated",
         );
@@ -672,7 +657,7 @@ impl RegExpReplaceResume {
             action = match action {
                 ReplaceAction::Complete(result) => return Ok(RegExpReplaceStep::Complete(result)),
                 ReplaceAction::Primitive { value, .. } if !matches!(value, Value::Object(_)) => {
-                    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+                    #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "regexpreplace_primitive_local",
                     );
@@ -683,7 +668,7 @@ impl RegExpReplaceResume {
                     let receiver = Value::Object(object.clone());
                     match runtime.prepare_ordinary_read_borrowed(object, &key, &receiver)? {
                         crate::engine::object::OrdinaryRead::Complete(value) => {
-                            #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+                            #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_execution_event(
                                 "regexpreplace_read_local",
                             );
@@ -697,7 +682,7 @@ impl RegExpReplaceResume {
                         }
                     }
                 }
-                #[cfg(feature = "stack-vm")]
+
                 ReplaceAction::Set { key, value } => {
                     use crate::engine::object::{SetStep, operations::PropertySetAction};
                     let mut pending = None;
@@ -748,15 +733,6 @@ impl RegExpReplaceResume {
                         self,
                     ));
                 }
-                #[cfg(not(feature = "stack-vm"))]
-                ReplaceAction::Set { key, value } => {
-                    return Ok(RegExpReplaceStep::make_set(
-                        self.0.state.regexp.clone(),
-                        key,
-                        value,
-                        self,
-                    ));
-                }
             };
         }
     }
@@ -766,7 +742,8 @@ impl RegExpReplaceResume {
         value: Value,
         initial: bool,
     ) -> Result<ReplaceAction, RuntimeError> {
-        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let key =
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.0.phase = if initial {
             ReplacePhase::InitialSet
         } else {
@@ -801,7 +778,9 @@ impl RegExpReplaceResume {
     }
     fn execute(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
         if self.0.state.zero.is_none() {
-            self.0.state.zero = Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?);
+            self.0.state.zero = Some(
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?,
+            );
         }
         self.0.phase = ReplacePhase::Exec;
         Ok(ReplaceAction::Exec)
@@ -810,9 +789,12 @@ impl RegExpReplaceResume {
         let results = std::mem::take(&mut self.0.state.results).into_iter();
         self.0.result = Some(ResultCursor {
             results,
-            length_key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            index_key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Index)?,
-            groups_key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Groups)?,
+            length_key: runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+            index_key: runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Index)?,
+            groups_key: runtime
+                .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Groups)?,
             next_source: 0,
         });
         self.next_result(runtime)
@@ -997,7 +979,8 @@ impl RegExpReplaceResume {
         runtime: &Runtime,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ReplaceAction, RuntimeError> {
-        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        let key =
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
             return Ok(ReplaceAction::Complete(Completion::Throw(value)));
         }
@@ -1130,7 +1113,9 @@ impl RegExpReplaceResume {
                 if matched.is_empty() {
                     Ok(self.read(
                         ReadTarget::RegExp,
-                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
+                        runtime.pinned_property_key(
+                            crate::engine::atom::pinned::PinnedAtom::LastIndex,
+                        )?,
                         ReplacePhase::LastIndex,
                     ))
                 } else {
@@ -1373,7 +1358,7 @@ impl RegExpReplaceResume {
         }
     }
 }
-#[cfg(feature = "stack-vm")]
+
 fn local_set_result(
     action: crate::engine::object::operations::PropertySetAction,
 ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
@@ -1402,7 +1387,7 @@ fn finish_replace(
     loop {
         step = match step {
             RegExpReplaceStep::Complete(result) => return Ok(result),
-            #[cfg(feature = "stack-vm")]
+
             RegExpReplaceStep::PreparedSet { mut resume } => {
                 let step = resume.take_preparedset_step();
                 {
@@ -1449,14 +1434,6 @@ fn finish_replace(
                     resume.resume(runtime, result)?
                 }
             }
-            RegExpReplaceStep::Read { mut resume } => {
-                let object = resume.take_read_object();
-                let key = resume.take_read_key();
-                resume.resume(
-                    runtime,
-                    runtime.get_property_in_realm(realm, &object, &key)?,
-                )?
-            }
             RegExpReplaceStep::Primitive { mut resume } => {
                 let value = resume.take_primitive_value();
                 let hint = resume.take_primitive_hint();
@@ -1490,21 +1467,6 @@ fn finish_replace(
                 let input = resume.take_exec_input();
                 resume.resume(runtime, runtime.regexp_exec_abstract(realm, regexp, input)?)?
             }
-            RegExpReplaceStep::Set { mut resume } => {
-                let object = resume.take_set_object();
-                let key = resume.take_set_key();
-                let value = resume.take_set_value();
-                resume.set(
-                    runtime,
-                    runtime.internal_set(
-                        realm,
-                        &object,
-                        &key,
-                        value,
-                        Value::Object(object.clone()),
-                    )?,
-                )?
-            }
         };
     }
 }
@@ -1512,7 +1474,7 @@ fn finish_replace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     #[test]
     fn standard_string_replace_completes_before_resident_allocation() {
         let runtime = Runtime::new();
@@ -1655,7 +1617,6 @@ pub(crate) struct RegExpReplaceStepPending {
     step: Option<Box<crate::engine::object::SetStep>>,
     read: Option<crate::engine::object::OrdinaryRead>,
     key: Option<PropertyKey>,
-    object: Option<ObjectRef>,
     value: Option<Value>,
     hint: Option<ToPrimitiveHint>,
     target: Option<DirectCallTarget>,
@@ -1665,7 +1626,6 @@ pub(crate) struct RegExpReplaceStepPending {
     input: Option<Value>,
 }
 impl RegExpReplaceStep {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn make_preparedset(
         step: Box<crate::engine::object::SetStep>,
         mut resume: RegExpReplaceResume,
@@ -1681,15 +1641,6 @@ impl RegExpReplaceStep {
         resume.0.step_pending.read = Some(read);
         resume.0.step_pending.key = Some(key);
         Self::PreparedRead { resume }
-    }
-    pub(crate) fn make_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        mut resume: RegExpReplaceResume,
-    ) -> Self {
-        resume.0.step_pending.object = Some(object);
-        resume.0.step_pending.key = Some(key);
-        Self::Read { resume }
     }
     pub(crate) fn make_primitive(
         value: Value,
@@ -1716,21 +1667,8 @@ impl RegExpReplaceStep {
         resume.0.step_pending.input = Some(input);
         Self::Exec { resume }
     }
-    pub(crate) fn make_set(
-        object: ObjectRef,
-        key: PropertyKey,
-        value: Value,
-        mut resume: RegExpReplaceResume,
-    ) -> Self {
-        resume.0.step_pending.object = Some(object);
-        resume.0.step_pending.key = Some(key);
-        resume.0.step_pending.value = Some(value);
-        Self::Set { resume }
-    }
 }
 impl RegExpReplaceResume {
-    #[cfg(feature = "stack-vm")]
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn take_preparedset_step(&mut self) -> Box<crate::engine::object::SetStep> {
         self.0
             .step_pending
@@ -1752,21 +1690,6 @@ impl RegExpReplaceResume {
             .key
             .take()
             .expect("RegExpReplaceStep::PreparedRead lost key")
-    }
-
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .step_pending
-            .object
-            .take()
-            .expect("RegExpReplaceStep::Read lost object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .step_pending
-            .key
-            .take()
-            .expect("RegExpReplaceStep::Read lost key")
     }
 
     pub(crate) fn take_primitive_value(&mut self) -> Value {
@@ -1819,28 +1742,6 @@ impl RegExpReplaceResume {
             .input
             .take()
             .expect("RegExpReplaceStep::Exec lost input")
-    }
-
-    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
-        self.0
-            .step_pending
-            .object
-            .take()
-            .expect("RegExpReplaceStep::Set lost object")
-    }
-    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
-        self.0
-            .step_pending
-            .key
-            .take()
-            .expect("RegExpReplaceStep::Set lost key")
-    }
-    pub(crate) fn take_set_value(&mut self) -> Value {
-        self.0
-            .step_pending
-            .value
-            .take()
-            .expect("RegExpReplaceStep::Set lost value")
     }
 }
 

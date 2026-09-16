@@ -6,7 +6,7 @@
 //! growing the runtime facade or the shared constructor/indexed-property owner.
 
 use super::typed_array_absolute_byte_offset;
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::{NativeFunctionId, TypedArrayNativeKind};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
@@ -151,7 +151,7 @@ impl Runtime {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
-        let current = self.typed_array_state(&target)?;
+        let current = self.typed_array_state(target)?;
         if current.out_of_bounds {
             return Ok(Completion::Throw(self.new_native_error(
                 realm,
@@ -187,7 +187,6 @@ pub(crate) enum TypedMutationKind {
     Fill,
 }
 impl TypedMutationKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::TypedArray(TypedArrayNativeKind::CopyWithin) => Self::CopyWithin,

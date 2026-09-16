@@ -28,7 +28,7 @@ pub(in crate::engine::vm) struct NativeActivation {
 
 enum NativeCallableInput<'a> {
     Borrowed(&'a CallableRef),
-    #[cfg(feature = "stack-vm")]
+
     Owned(CallableRef),
 }
 
@@ -36,7 +36,7 @@ impl NativeCallableInput<'_> {
     fn as_ref(&self) -> &CallableRef {
         match self {
             Self::Borrowed(callable) => callable,
-            #[cfg(feature = "stack-vm")]
+
             Self::Owned(callable) => callable,
         }
     }
@@ -44,7 +44,7 @@ impl NativeCallableInput<'_> {
     fn into_owned(self) -> CallableRef {
         match self {
             Self::Borrowed(callable) => callable.clone(),
-            #[cfg(feature = "stack-vm")]
+
             Self::Owned(callable) => callable,
         }
     }
@@ -52,7 +52,7 @@ impl NativeCallableInput<'_> {
 
 enum NativeArgumentInput<'a> {
     Borrowed(&'a [Value]),
-    #[cfg(feature = "stack-vm")]
+
     Owned(Vec<Value>),
 }
 
@@ -77,12 +77,10 @@ impl Runtime {
             NativeArgumentInput::Borrowed(arguments),
             mode,
             false,
-            #[cfg(feature = "stack-vm")]
             None,
         )
     }
 
-    #[cfg(feature = "stack-vm")]
     #[allow(clippy::too_many_arguments)]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::engine::vm) fn prepare_native_invocation_owned(
@@ -104,12 +102,10 @@ impl Runtime {
             NativeArgumentInput::Owned(arguments),
             mode,
             false,
-            #[cfg(feature = "stack-vm")]
             None,
         )
     }
 
-    #[cfg(feature = "stack-vm")]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn prepare_native_continuation_owned(
         &self,
@@ -136,7 +132,6 @@ impl Runtime {
 
     /// Array iterator-next has no JavaScript arguments. Keep the same owning
     /// activation/publication ABI without entering general argv construction.
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn prepare_array_next_owned(
         &self,
         callable: CallableRef,
@@ -182,7 +177,6 @@ impl Runtime {
         })
     }
 
-    #[cfg(feature = "stack-vm")]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn prepare_native_continuation_selected(
         &self,
@@ -219,12 +213,12 @@ impl Runtime {
         arguments: NativeArgumentInput<'_>,
         mode: NativeInvokeMode,
         continuation: bool,
-        #[cfg(feature = "stack-vm")] selected: Option<super::super::frames::NativeClassification>,
+        selected: Option<super::super::frames::NativeClassification>,
     ) -> Result<PreparedNativeCall, RuntimeError> {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("native.prepare");
         let callable = callable_input.as_ref();
-        #[cfg(feature = "stack-vm")]
+
         let publication = match selected.as_ref() {
             Some(selected) => super::super::frames::NativePublicationWitness::from_classification(
                 self,
@@ -244,34 +238,23 @@ impl Runtime {
                 mode,
             )?,
         };
-        #[cfg(not(feature = "stack-vm"))]
-        let publication = super::super::frames::NativePublicationWitness::validate(
-            self,
-            callable,
-            realm,
-            target,
-            min_readable_args,
-            mode,
-        )?;
 
         let actual_arg_count = match &arguments {
             NativeArgumentInput::Borrowed(values) => values.len(),
-            #[cfg(feature = "stack-vm")]
+
             NativeArgumentInput::Owned(values) => values.len(),
         };
         let available_arg_count = actual_arg_count.max(usize::from(min_readable_args));
         let (mut readable, _copied, _before) = match arguments {
             NativeArgumentInput::Borrowed(values) => {
                 let mut readable = Vec::new();
-                readable
-                    .try_reserve(available_arg_count)
-                    .map_err(|_| {
-                        RuntimeError::Invariant("native readable arguments allocation failed")
-                    })?;
+                readable.try_reserve(available_arg_count).map_err(|_| {
+                    RuntimeError::Invariant("native readable arguments allocation failed")
+                })?;
                 readable.extend_from_slice(values);
                 (readable, true, 0)
             }
-            #[cfg(feature = "stack-vm")]
+
             NativeArgumentInput::Owned(mut values) => {
                 let before = values.capacity();
                 // All padding allocation precedes publication. Actual arity
@@ -304,7 +287,11 @@ impl Runtime {
             } else {
                 record_call_buffer_observed("native.incoming_argv", _before, size_of::<Value>());
                 // Moving Vec ownership into NativeArguments does not move elements.
-                record_call_buffer_observed("native.readable", readable.capacity(), size_of::<Value>());
+                record_call_buffer_observed(
+                    "native.readable",
+                    readable.capacity(),
+                    size_of::<Value>(),
+                );
             }
             record_call_buffer_initialized(
                 "native.readable",
@@ -318,7 +305,7 @@ impl Runtime {
         let active_frame =
             publication.publish(actual_arg_count, available_arg_count, continuation)?;
 
-        #[cfg(all(feature = "profiling", feature = "stack-vm"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
         Ok(PreparedNativeCall {
             activation: NativeActivation {
@@ -335,7 +322,6 @@ impl Runtime {
 }
 
 impl NativeActivation {
-    #[cfg(feature = "stack-vm")]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
         self.active_frame.mark_native_continuation()
@@ -361,7 +347,6 @@ impl NativeActivation {
         })
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn finish_completion_reusing(
         self,
         result: Result<Completion, RuntimeError>,
@@ -435,7 +420,6 @@ mod tests {
             .unwrap()
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn borrowed_native_adaptation_shares_validation_and_preserves_input_owners() {
         use super::super::NativeInvocationAdaptation;
@@ -575,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     fn native_argument_pool_reuses_nested_capacity_and_releases_all_owners() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
@@ -649,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+    #[cfg(feature = "profiling")]
     fn owned_readable_arguments_keep_buffer_identity_arity_and_padding() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -716,6 +700,7 @@ mod tests {
             assert_eq!(buffer.capacity_growths, 0);
             assert_eq!(buffer.values_copied, 0);
             assert_eq!(buffer.heap_root_copies, 0);
+            // Moving the Vec header does not move its Value elements.
             assert_eq!(buffer.values_moved, 0);
             assert_eq!(buffer.slots_initialized, (expected.len() - count) as u64);
             let result = prepared
@@ -733,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "stack-vm")]
+
     fn owning_preparation_keeps_rejection_order_and_argument_domain_errors() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -1014,7 +999,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod continuation_publication_tests {
     use super::*;
     use crate::engine::vm::call::CallableExecution;
@@ -1320,7 +1305,7 @@ mod publication_witness_tests {
     }
 }
 
-#[cfg(all(test, feature = "stack-vm"))]
+#[cfg(test)]
 mod classified_preparation_tests {
     use super::*;
     use crate::engine::vm::{call::CallableExecution, frames::NativeClassification};

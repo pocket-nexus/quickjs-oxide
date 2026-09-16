@@ -63,7 +63,7 @@ impl Runtime {
     #[cfg(feature = "test262-host")]
     pub(crate) fn call_test262_gc(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
             return Err(RuntimeError::Invariant(

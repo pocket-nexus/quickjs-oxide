@@ -132,7 +132,9 @@ fn runtime_teardown_applies_queued_bytecode_context_and_atom_releases() {
     let weak = std::rc::Rc::downgrade(&runtime.0);
     let mut context = runtime.new_context();
     let bytecode = context.compile("({ value: 42 })").unwrap();
-    let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::QueuedAtTeardown).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::QueuedAtTeardown)
+        .unwrap();
     let state = runtime.0.state.borrow_mut();
     drop(bytecode);
     drop(context);

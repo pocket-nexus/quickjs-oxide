@@ -83,10 +83,10 @@ impl Runtime {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
         };
-        let state = self.typed_array_state(&source)?;
+        let state = self.typed_array_state(source)?;
         let target = match self.typed_array_copy_to_default(
             realm,
-            &source,
+            source,
             state.snapshot.element,
             u64::from(state.length),
         )? {

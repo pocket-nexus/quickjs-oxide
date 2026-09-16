@@ -718,7 +718,7 @@ fn trusted_quickjs_ordinary_fused_predicates_distinguish_htmldda() {
     );
 }
 
-#[cfg(all(feature = "stack-vm", feature = "profiling"))]
+#[cfg(feature = "profiling")]
 #[test]
 fn trusted_binary_callable_runs_on_the_owned_context_entry_after_gc() {
     let runtime = Runtime::new();

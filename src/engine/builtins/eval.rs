@@ -82,45 +82,19 @@ impl Runtime {
         self.execute_indirect_string_eval(realm, &source)
     }
 
-    /// Execute the original-eval branch selected by QuickJS `OP_eval` after
-    /// realm-local identity matching. This deliberately bypasses the native
-    /// `%eval%` call frame so String execution sees the bytecode caller's
-    /// linked lexical environment.
-    pub(crate) fn call_direct_eval_original<F>(
-        &self,
-        realm: ContextId,
-        invocation: DirectEvalInvocation,
-        environment: Option<crate::engine::vm::host_bridge::PreparedEvalEnvironment>,
-        materialize: F,
-    ) -> Result<Completion, RuntimeError>
-    where
-        F: FnOnce(
-            crate::engine::vm::host_bridge::PreparedEvalEnvironment,
-        )
-            -> Result<crate::engine::vm::host_bridge::MaterializedEvalEnvironment, Error>,
-    {
-        match self.prepare_direct_eval_original(realm, invocation, environment, materialize)? {
-            DirectEvalPreparation::Complete(completion) => Ok(completion),
-            DirectEvalPreparation::Ready {
-                callable,
-                this_value,
-            } => self.call_internal(realm, &callable, this_value, &[]),
-        }
-    }
-
     /// This phase may compile and capture, but never enters the eval body.
     pub(crate) fn prepare_direct_eval_original<F>(
         &self,
         realm: ContextId,
         invocation: DirectEvalInvocation,
-        environment: Option<crate::engine::vm::host_bridge::PreparedEvalEnvironment>,
+        environment: Option<crate::engine::vm::eval_bindings::PreparedEvalEnvironment>,
         materialize: F,
     ) -> Result<DirectEvalPreparation, RuntimeError>
     where
         F: FnOnce(
-            crate::engine::vm::host_bridge::PreparedEvalEnvironment,
+            crate::engine::vm::eval_bindings::PreparedEvalEnvironment,
         )
-            -> Result<crate::engine::vm::host_bridge::MaterializedEvalEnvironment, Error>,
+            -> Result<crate::engine::vm::eval_bindings::MaterializedEvalEnvironment, Error>,
     {
         let DirectEvalInvocation {
             input,
@@ -246,7 +220,7 @@ impl Runtime {
     fn direct_eval_root_bindings(
         &self,
         realm: ContextId,
-        environment: &crate::engine::vm::host_bridge::PreparedEvalEnvironment,
+        environment: &crate::engine::vm::eval_bindings::PreparedEvalEnvironment,
     ) -> Result<(Vec<EvalRootBinding<JsString>>, EvalCallerProfile), RuntimeError> {
         if !environment.descriptor.owner().belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("direct eval caller bytecode"));

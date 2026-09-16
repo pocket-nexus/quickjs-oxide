@@ -457,26 +457,6 @@ impl Runtime {
         Ok(promise)
     }
 
-    fn new_promise_capability(
-        &self,
-        realm: ContextId,
-        constructor: Option<&ConstructorRef>,
-    ) -> Result<NativeConversion<RootedPromiseCapability>, RuntimeError> {
-        let Some(constructor) = constructor else {
-            return Ok(NativeConversion::Value(
-                self.new_default_promise_capability(realm)?,
-            ));
-        };
-        let executor = self.prepare_promise_capability_executor(realm)?;
-        let completion = self.construct_constructor_internal(
-            realm,
-            constructor,
-            constructor,
-            &[Value::Object(executor.as_object().clone())],
-        )?;
-        self.finish_promise_capability(realm, &executor, completion)
-    }
-
     fn prepare_promise_capability_executor(
         &self,
         realm: ContextId,
@@ -798,41 +778,6 @@ impl Runtime {
         operation::PromiseStep::reaction_job(self, realm, reaction, argument)?.finish(self, realm)
     }
 
-    fn promise_species_constructor(
-        &self,
-        realm: ContextId,
-        promise: &ObjectRef,
-    ) -> Result<NativeConversion<Option<ConstructorRef>>, RuntimeError> {
-        let constructor_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
-        let constructor = match self.get_property_in_realm(realm, promise, &constructor_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if matches!(constructor, Value::Undefined) {
-            return Ok(NativeConversion::Value(None));
-        }
-        let Value::Object(constructor) = constructor else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not an object",
-            )?));
-        };
-        let species_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
-        let species = match self.get_property_in_realm(realm, &constructor, &species_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        if matches!(species, Value::Undefined | Value::Null) {
-            return Ok(NativeConversion::Value(None));
-        }
-        self.constructor_from_value(realm, species)
-            .map(|result| match result {
-                NativeConversion::Value(constructor) => NativeConversion::Value(Some(constructor)),
-                NativeConversion::Throw(value) => NativeConversion::Throw(value),
-            })
-    }
-
     fn call_promise_then(
         &self,
         realm: ContextId,
@@ -957,19 +902,6 @@ impl Runtime {
             .finish(self, realm)
     }
 
-    /// QuickJS's `js_promise_resolve(ctx, ctx->promise_ctor, ...)` boundary
-    /// used by `await`. The cached realm constructor is selected directly:
-    /// replacing global `Promise` or its public `resolve` property cannot
-    /// intercept async-function suspension.
-    pub(crate) fn promise_resolve_intrinsic(
-        &self,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<Completion, RuntimeError> {
-        self.prepare_intrinsic_promise_resolve(realm, value)?
-            .finish(self, realm)
-    }
-
     pub(crate) fn prepare_intrinsic_promise_resolve(
         &self,
         realm: ContextId,
@@ -1013,31 +945,6 @@ impl Runtime {
         capability: &RootedPromiseCapability,
     ) -> Result<(), RuntimeError> {
         self.perform_promise_then_internal(realm, promise, fulfill, reject, Some(capability.raw()))
-    }
-
-    /// QuickJS's module evaluator calls its private `js_promise_then`, so the
-    /// otherwise discarded result Promise still observes constructor and
-    /// `@@species`. This helper performs that full front half before using the
-    /// authenticated internal module callbacks as the reactions.
-    pub(crate) fn attach_module_evaluation_handlers(
-        &self,
-        realm: ContextId,
-        promise: &ObjectRef,
-        fulfill: &CallableRef,
-        reject: &CallableRef,
-    ) -> Result<NativeConversion<()>, RuntimeError> {
-        match operation::PromiseStep::module_then(
-            self,
-            realm,
-            promise.clone(),
-            fulfill.clone(),
-            reject.clone(),
-        )?
-        .finish(self, realm)?
-        {
-            Completion::Return(_) => Ok(NativeConversion::Value(())),
-            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
-        }
     }
 
     /// Attach QuickJS's private dynamic-import continuation to the cached

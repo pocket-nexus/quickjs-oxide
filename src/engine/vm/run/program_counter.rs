@@ -42,12 +42,12 @@ mod tests {
     fn local_pc_preserves_both_values_on_result_error_and_unwind() {
         let mut fault = 3;
         let mut resume = 4;
-        let result: Result<(), ()> = (|| {
+        let result: Result<(), ()> = {
             let mut pc = ProgramCounter::new(&mut fault, &mut resume);
             pc.fault = 11;
             pc.resume = 12;
             Err(())
-        })();
+        };
         assert!(result.is_err());
         assert_eq!((fault, resume), (11, 12));
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

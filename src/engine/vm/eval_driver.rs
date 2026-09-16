@@ -344,3 +344,267 @@ pub(super) fn apply(
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
 }
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+    use crate::engine::code::bytecode::Instruction;
+    use crate::engine::code::function::metadata::*;
+    use crate::engine::code::function::{
+        UnlinkedConstant, UnlinkedFunction, UnlinkedVariableDefinition,
+    };
+    use crate::engine::value::JsString;
+    use crate::engine::vm::{
+        bindings::FrameBinding,
+        execution::ExecutionLimits,
+        frame::{ColdFrame, FrameCold, FrameEntry},
+        stack::FrameStorage,
+    };
+    #[test]
+    fn direct_eval_preparation_captures_exact_cells_only_after_successful_string_compile() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let environment = EvalEnvironment {
+            scopes: vec![
+                EvalScope {
+                    kind: EvalScopeKind::Block,
+                    bindings: vec![EvalBinding {
+                        name: JsString::from_static("localBinding"),
+                        source: EvalBindingSource::Local(0),
+                        is_lexical: true,
+                        is_const: false,
+                        kind: ClosureVariableKind::Normal,
+                        is_catch_parameter: false,
+                    }]
+                    .into_boxed_slice(),
+                },
+                EvalScope {
+                    kind: EvalScopeKind::FunctionBody,
+                    bindings: Box::new([]),
+                },
+                EvalScope {
+                    kind: EvalScopeKind::FunctionRoot,
+                    bindings: vec![
+                        EvalBinding {
+                            name: JsString::from_static("argumentBinding"),
+                            source: EvalBindingSource::Argument(0),
+                            is_lexical: false,
+                            is_const: false,
+                            kind: ClosureVariableKind::Normal,
+                            is_catch_parameter: false,
+                        },
+                        EvalBinding {
+                            name: JsString::from_static("<var>"),
+                            source: EvalBindingSource::Local(1),
+                            is_lexical: false,
+                            is_const: false,
+                            kind: ClosureVariableKind::EvalVariableObject,
+                            is_catch_parameter: false,
+                        },
+                    ]
+                    .into_boxed_slice(),
+                },
+                EvalScope {
+                    kind: EvalScopeKind::ProgramBody,
+                    bindings: vec![EvalBinding {
+                        name: JsString::from_static("outerBinding"),
+                        source: EvalBindingSource::Closure(0),
+                        is_lexical: false,
+                        is_const: false,
+                        kind: ClosureVariableKind::Normal,
+                        is_catch_parameter: false,
+                    }]
+                    .into_boxed_slice(),
+                },
+                EvalScope {
+                    kind: EvalScopeKind::FunctionRoot,
+                    bindings: Box::new([]),
+                },
+            ]
+            .into_boxed_slice(),
+            variable_environment: EvalVariableEnvironment::VariableObject {
+                scope: 2,
+                source: EvalBindingSource::Local(1),
+            },
+            caller_strict: false,
+            super_call_allowed: false,
+            super_allowed: false,
+        };
+        let child = UnlinkedFunction::fixture_with_closure_variables(
+            vec![
+                Instruction::VariableEnvironment,
+                Instruction::PutLocal(1),
+                Instruction::Undefined,
+                Instruction::Eval {
+                    argument_count: 0,
+                    environment: 0,
+                },
+                Instruction::Return,
+            ],
+            vec![
+                UnlinkedConstant::primitive(Value::String(JsString::from_static("outerBinding")))
+                    .unwrap(),
+            ],
+            FunctionMetadata {
+                argument_count: 1,
+                defined_argument_count: 1,
+                local_count: 2,
+                eval_variable_object_local: Some(1),
+                closure_count: 1,
+                max_stack: 1,
+                ..FunctionMetadata::default()
+            },
+            vec![ClosureVariable {
+                source: ClosureSource::ParentLocal(0),
+                name: ClosureVariableName::Constant(0),
+                is_lexical: false,
+                is_const: false,
+                kind: ClosureVariableKind::Normal,
+            }],
+        )
+        .with_fixture_definitions(
+            vec![UnlinkedVariableDefinition::ordinary(Some(
+                JsString::from_static("argumentBinding"),
+            ))],
+            vec![
+                UnlinkedVariableDefinition::lexical(
+                    Some(JsString::from_static("localBinding")),
+                    false,
+                ),
+                UnlinkedVariableDefinition::ordinary(Some(JsString::from_static("<var>"))),
+            ],
+        )
+        .with_eval_environments(vec![environment]);
+        let parent = UnlinkedFunction::fixture(
+            vec![Instruction::Undefined, Instruction::Return],
+            vec![UnlinkedConstant::child(child)],
+            FunctionMetadata {
+                local_count: 1,
+                max_stack: 1,
+                ..FunctionMetadata::default()
+            },
+        )
+        .with_fixture_definitions(
+            Vec::new(),
+            vec![UnlinkedVariableDefinition::ordinary(Some(
+                JsString::from_static("outerBinding"),
+            ))],
+        );
+        let parent = runtime
+            .publish_unlinked_function(context.realm, parent)
+            .unwrap();
+        let child = runtime.test_child_function_bytecode(&parent, 0).unwrap();
+        let closure = runtime
+            .new_var_ref(Value::Int(30), false, false, ClosureVariableKind::Normal)
+            .unwrap();
+        let eval_variable_object = runtime.new_object(None).unwrap();
+
+        let callable = runtime
+            .new_bytecode_closure_with_slots(context.realm, &child, std::slice::from_ref(&closure))
+            .unwrap();
+        for (input, environment, captured, throws) in [
+            (Value::Int(42), u16::MAX, false, false),
+            (Value::String(JsString::from_static(")")), 0, false, true),
+            (
+                Value::String(JsString::from_static("var evalVar = 1")),
+                0,
+                true,
+                false,
+            ),
+            (
+                Value::String(JsString::from_static("40 + 2")),
+                0,
+                true,
+                false,
+            ),
+        ] {
+            let prepared = runtime
+                .prepare_bytecode_frame(
+                    &callable,
+                    Value::Int(1),
+                    Value::Int(2),
+                    &[Value::Int(10)],
+                    child.clone(),
+                )
+                .unwrap();
+            let entry = FrameEntry {
+                property_generation: 0,
+                iterator_generation: 0,
+                caller_realm: context.realm,
+                active_frame: prepared.active_frame.token(),
+                initialize_bindings: false,
+                executable: prepared.executable,
+                cold: ColdFrame::new(FrameCold {
+                    rare: std::cell::OnceCell::new(),
+                    return_to: None,
+                    entry_guard: Some(prepared.active_frame),
+                    function: callable.as_object().clone().into(),
+                    closure_slots: vec![closure.clone()].into(),
+                    reusable_captured_locals: vec![false; 2],
+                    input: prepared.input.into(),
+                }),
+                storage: FrameStorage {
+                    original_arguments: vec![Value::Int(10)],
+                    parameters: prepared.arguments,
+                    locals: vec![
+                        FrameBinding::Direct(Value::Int(20)),
+                        FrameBinding::Direct(Value::Object(eval_variable_object.clone())),
+                    ],
+                    operands: vec![Value::Undefined],
+                },
+            };
+            let mut execution =
+                RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+            let id = push_frame(&mut execution, entry).unwrap();
+            execution
+                .frames
+                .current_mut(id)
+                .unwrap()
+                .cold
+                .eval_arguments = Some(vec![input]);
+            let outcome = prepare_and_enter(&runtime, &mut execution, id, 0, environment).unwrap();
+            assert_eq!(
+                matches!(outcome, CallStep::Complete(Completion::Throw(_))),
+                throws
+            );
+            if captured {
+                // Preparation entered the compiled child. Retire it without running
+                // it so the caller's cell representation can be inspected in place.
+                let child_id = execution.frames.current_id().unwrap();
+                assert_ne!(child_id, id);
+                super::super::frame_exit::finish(
+                    &runtime,
+                    &mut execution,
+                    child_id,
+                    super::super::run::RunExit::Complete,
+                    Some(Completion::Return(Value::Undefined)),
+                )
+                .unwrap();
+            }
+            let frame = execution.frames.current_mut(id).unwrap();
+            for index in 0..2 {
+                assert_eq!(
+                    matches!(
+                        execution.slots.local(&frame.window, index).unwrap(),
+                        FrameBinding::Captured(_)
+                    ),
+                    captured
+                );
+            }
+            assert_eq!(
+                matches!(
+                    execution.slots.parameter(&frame.window, 0).unwrap(),
+                    FrameBinding::Captured(_)
+                ),
+                captured
+            );
+            assert_eq!(runtime.read_var_ref(&closure).unwrap(), Value::Int(30));
+            if !captured && !throws {
+                assert_eq!(
+                    execution.slots.peek(&frame.window, 0).unwrap(),
+                    &Value::Int(42)
+                );
+            }
+        }
+    }
+}

@@ -39,7 +39,6 @@ use crate::engine::object::{
 };
 use crate::engine::value::JsString;
 use crate::engine::value::bigint::JsBigInt;
-use crate::engine::vm::Vm;
 use crate::source::text::SourceText;
 
 use super::{
@@ -56,8 +55,7 @@ use super::{
 };
 
 fn evaluate(source: &str) -> Value {
-    let bytecode = compile_script(source).unwrap();
-    Vm::new().execute(&bytecode).unwrap()
+    Runtime::new().new_context().eval(source).unwrap()
 }
 
 fn evaluate_in_context(source: &str) -> Value {
@@ -73,8 +71,12 @@ fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (Js
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("source did not throw an Error object: {source}");
     };
-    let name = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap();
-    let message = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message).unwrap();
+    let name = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+        .unwrap();
+    let message = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
+        .unwrap();
     let Value::String(name) = context.get_property(&error, &name).unwrap() else {
         panic!("Error.name was not a string: {source}");
     };
@@ -90,7 +92,9 @@ fn evaluate_function_name(source: &str) -> (JsString, bool, bool, bool) {
     let Value::Object(function) = context.eval(source).unwrap() else {
         panic!("source did not evaluate to a function object");
     };
-    let name = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name).unwrap();
+    let name = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
+        .unwrap();
     let CompleteOrdinaryPropertyDescriptor::Data {
         value: Value::String(value),
         writable,

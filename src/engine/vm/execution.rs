@@ -219,13 +219,11 @@ pub(super) struct RunningExecution {
     /// A typed root terminal result; never represented by a manufactured JS Value.
     pub root_descriptor: Option<super::entry::DescriptorReply>,
     pub root_query: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
-    pub pending_call: Option<Box<super::call_bridge::PendingCall>>,
     _guard: ExecutionGuard,
 }
 
 impl Drop for RunningExecution {
     fn drop(&mut self) {
-        drop(self.pending_call.take());
         drop(self.pending.take());
         while let Some(mut frame) = self.frames.pop_current() {
             // Clear this child's captures and operands while its activation
@@ -252,7 +250,6 @@ impl RunningExecution {
             call_storage: super::frame::CallStorage::default(),
             pending: None,
             selected_native: None,
-            pending_call: None,
             root_query: None,
             root_descriptor: None,
             _guard: guard,

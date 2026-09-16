@@ -41,7 +41,10 @@ impl Runtime {
                 let indexed = index.is_some_and(|index| {
                     usize::try_from(index).is_ok_and(|index| index < string.len())
                 });
-                !indexed && key != &self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?
+                !indexed
+                    && key
+                        != &self
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?
             }
             _ => true,
         })
@@ -68,17 +71,6 @@ impl Runtime {
         key: &PropertyKey,
     ) -> Result<Completion, RuntimeError> {
         self.internal_get(realm, object, key, Value::Object(object.clone()))
-    }
-
-    pub(crate) fn get_string_property_with_receiver(
-        &self,
-        realm: ContextId,
-        string: &JsString,
-        key: &PropertyKey,
-        receiver: Value,
-    ) -> Result<Completion, RuntimeError> {
-        let read = self.prepare_string_property_read(realm, string, key, &receiver, None)?;
-        self.finish_value_property_read(realm, key, read)
     }
 
     fn prepare_string_property_read(
@@ -219,19 +211,7 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn get_property_or_missing_in_realm(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<Option<Completion>, RuntimeError> {
-        match self.internal_get_or_missing(realm, object, key, Value::Object(object.clone()))? {
-            NativeConversion::Value(Some(value)) => Ok(Some(Completion::Return(value))),
-            NativeConversion::Value(None) => Ok(None),
-            NativeConversion::Throw(value) => Ok(Some(Completion::Throw(value))),
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) fn has_property(
         &self,
         object: &ObjectRef,
@@ -245,21 +225,6 @@ impl Runtime {
             cursor = self.get_prototype_of(&current)?;
         }
         Ok(false)
-    }
-
-    /// Completion-aware `[[HasProperty]]` boundary used by source `in`.
-    /// Proxy trap throws cross this boundary without changing the VM opcode
-    /// contract.
-    pub(crate) fn has_property_in_realm(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<Completion, RuntimeError> {
-        Ok(match self.internal_has_property(realm, object, key)? {
-            NativeConversion::Value(present) => Completion::Return(Value::Bool(present)),
-            NativeConversion::Throw(value) => Completion::Throw(value),
-        })
     }
 }
 

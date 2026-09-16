@@ -474,7 +474,8 @@ impl SetResume {
                     self.0.phase = Phase::CloseMethod;
                     return Ok(SetStep::request_read(
                         self.0.iterator.clone(),
-                        runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?,
+                        runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?,
                         self,
                     ));
                 }

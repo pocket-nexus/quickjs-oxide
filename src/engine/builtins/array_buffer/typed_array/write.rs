@@ -54,7 +54,6 @@ impl TypedWriteStep {
     }
     /// Primitive Set performs the same conversion before reacquiring buffer
     /// access, but never constructs a waiting resume or clones the view root.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn set_primitive(
         runtime: &Runtime,
         realm: ContextId,
@@ -66,7 +65,6 @@ impl TypedWriteStep {
     }
 
     /// Small transport for the same primitive conversion and final write.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn set_primitive_result(
         runtime: &Runtime,
         realm: ContextId,
@@ -116,7 +114,6 @@ impl TypedWriteStep {
     }
     /// Advance only a primitive input through the shared conversion and write
     /// kernels. Object inputs retain the original request for the owned driver.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn complete_primitive(
         self,
         runtime: &Runtime,
@@ -200,10 +197,13 @@ fn finish_element(
     Ok(result)
 }
 
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<TypedWriteStep>() <= 64);
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "stack-vm")]
+
     #[test]
     fn primitive_set_keeps_invalid_index_conversion_and_receiver_rules() {
         let runtime = Runtime::new();
@@ -230,7 +230,7 @@ mod tests {
             Value::Bool(true)
         );
     }
-    #[cfg(feature = "stack-vm")]
+
     #[test]
     fn small_primitive_selection_matches_owned_wrapper_for_receiver_and_key_rules() {
         for wrapper in [false, true] {
@@ -291,7 +291,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stack-vm")]
     #[test]
     fn small_primitive_result_keeps_detached_conversion_and_rejects_object_inputs() {
         let runtime = Runtime::new();
@@ -409,6 +408,3 @@ mod tests {
         }
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<TypedWriteStep>() <= 64);

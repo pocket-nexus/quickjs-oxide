@@ -57,7 +57,6 @@ impl NextStep {
     }
 
     /// The owned iterator record already holds a checked callable capability.
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn start_callable(
         runtime: &Runtime,
         realm: ContextId,
@@ -101,7 +100,6 @@ impl NextStep {
     }
 }
 impl NextResume {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_raw(realm: ContextId) -> Self {
         Self(Box::new(NextResumeState {
             realm,
@@ -167,7 +165,8 @@ impl NextResume {
                 };
                 Ok(NextStep::Read {
                     object: object.clone(),
-                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?,
+                    key: runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?,
                     resume: Self(Box::new(NextResumeState {
                         realm,
                         phase: NextPhase::Done(object),
@@ -180,7 +179,8 @@ impl NextResume {
                 }
                 Ok(NextStep::Read {
                     object,
-                    key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?,
+                    key: runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?,
                     resume: Self(Box::new(NextResumeState {
                         realm,
                         phase: NextPhase::Value,
@@ -366,6 +366,12 @@ pub(crate) fn finish_close(
     }
 }
 
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<CloseStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<NextStep>() <= 64);
+
 #[cfg(test)]
 mod raw_completion_tests {
     use super::*;
@@ -504,9 +510,3 @@ mod raw_completion_tests {
         }
     }
 }
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<CloseStep>() <= 64);
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<NextStep>() <= 64);

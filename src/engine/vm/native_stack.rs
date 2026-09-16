@@ -348,7 +348,7 @@ pub(super) fn native_stack_family(target: NativeFunctionId) -> Option<(usize, us
 #[cfg(test)]
 mod tests {
     use crate::engine::value::JsString;
-    use crate::engine::vm::Value;
+    use crate::engine::value::Value;
 
     use super::*;
 

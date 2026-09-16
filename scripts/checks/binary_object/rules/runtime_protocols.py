@@ -14,7 +14,7 @@ def check(ctx):
 
     stage3b_sources = {
         "src/engine/heap/runtime/mod.rs": ctx.runtime_code,
-        "src/engine/vm/mod.rs": ctx.vm_code,
+        "src/engine/vm/mod.rs": ctx.rust_code_only(ctx.read_source("src/engine/vm/mod.rs")),
         "src/engine/code/bytecode.rs": ctx.bytecode_code,
         "src/engine/api/context/bytecode.rs": ctx.context_code,
     }
@@ -39,16 +39,6 @@ def check(ctx):
         return stage3b_items[key]
     ctx.stage3b_function = stage3b_function
 
-    for relative, expected in (
-        ("src/engine/vm/protocol.rs", "0a19ef66059453bfa14d9d92a9b617f5d94e8dc1f40044a582dcbfc4db8a8026"),
-        ("src/engine/vm/host_bridge.rs", "1552130a60bd6192571af5b09a7b9a4b1387acc1dffd2bb9e946546205e11c28"),
-    ):
-        ctx.require_normalized_code_sha256(
-            "published-static-target",
-            "Static target reuse must retain the general and synthetic host checks",
-            ctx.stage3b_function(relative, "static_branch_target", "published-static-target"),
-            expected,
-        )
 
     def stage3j_source_function(relative: str, name: str, diagnostic: str) -> str:
         source = ctx.read_source(relative)
@@ -110,27 +100,6 @@ def check(ctx):
             "constructor conversion must validate only [[Construct]], without CallableRef narrowing",
         )
 
-    vm_apply_arm = ctx.unique_braced_item(
-        ctx.vm_code,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*Apply[ \t\n]*\([ \t\n]*kind"
-            r"[ \t\n]*\)[ \t\n]*=>[ \t\n]*\{"
-        ),
-        "stage3b-apply-stack",
-        "VM Apply dispatch arm",
-    )[0]
-
-    ctx.require_ordered_fragments(
-        "stage3b-apply-stack",
-        "Apply must pop list, receiver-or-newTarget, and function before one typed host call",
-        vm_apply_arm,
-        (
-            "let argument_array = self.pop()?;",
-            "let this_or_new_target = self.pop()?;",
-            "let function = self.pop()?;",
-            "host.apply(function, this_or_new_target, argument_array, *kind)?",
-        ),
-    )
 
     if ctx.bytecode_code.count("Self::Apply(_) | Self::ApplySuper => (3, 1),") != 1:
         ctx.fail("stage3b-apply-stack", "Apply must retain its exact three-pop/one-push verifier effect")
@@ -199,181 +168,6 @@ def check(ctx):
             "both tail invocation instructions must be terminal verifier nodes and must not enqueue fallthrough",
         )
 
-    take_call_arguments_item = ctx.stage3b_function(
-        "src/engine/vm/mod.rs", "take_call_arguments", "stage3c-tail-vm"
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3c-tail-vm",
-        "take_call_arguments must retain the exact checked suffix split without argument or fixed-value shadowing",
-        take_call_arguments_item,
-        "e8f523f68ef01df927a8761c6dc92ddafb0471fadee17ab9ead81f71d50287f4",
-    )
-
-    ordinary_call_dispatch_item = ctx.stage3b_function(
-        "src/engine/vm/mod.rs", "execute_call_instruction", "stage3c-tail-vm"
-    )
-    ctx.require_normalized_code_sha256(
-        "stage3c-tail-vm",
-        "ordinary call dispatch must retain checked suffix calls and route every other family to the extended dispatcher",
-        ordinary_call_dispatch_item,
-        "5c4b5d4634aacd818cf1df217c955e19e0cf9362d669a9ac773add938f2ed523",
-    )
-    call_dispatch_item = ctx.stage3b_function(
-        "src/engine/vm/mod.rs", "execute_extended_call_instruction", "stage3c-tail-vm"
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3c-tail-vm",
-        "execute_extended_call_instruction must retain its alias-free extended call-family dispatch",
-        call_dispatch_item,
-        "1f6f6a2d8e8af24fbacb170f81c43f6b83b6309375d7b129cdf25c728d60bab7",
-    )
-
-    # Ordinary calls now borrow the activation suffix. Tail/eval/construct
-    # retain their owned-vector path. Authenticate cleanup on every host exit,
-    # checked operand counts, and exact callee/receiver positions separately.
-    ctx.require_normalized_code_sha256(
-        "stage3c-tail-vm",
-        "call_from_stack must keep its checked, nonescaping suffix and unconditional operand cleanup",
-        ctx.stage3b_function("src/engine/vm/mod.rs", "call_from_stack", "stage3c-tail-vm"),
-        "f53a3bca472b7aed011405d2e7e3da46e53b34e5a2163d260b688edf600f89f9",
-    )
-
-    tail_call_arm = ctx.unique_braced_item(
-        call_dispatch_item,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*TailCall[ \t\n]*\("
-            r"[ \t\n]*argument_count[ \t\n]*\)[ \t\n]*=>[ \t\n]*\{"
-        ),
-        "stage3c-tail-vm",
-        "TailCall VM arm",
-    )[0]
-
-    tail_method_arm = ctx.unique_braced_item(
-        call_dispatch_item,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*TailCallMethod[ \t\n]*\("
-            r"[ \t\n]*argument_count[ \t\n]*\)[ \t\n]*=>[ \t\n]*\{"
-        ),
-        "stage3c-tail-vm",
-        "TailCallMethod VM arm",
-    )[0]
-
-    expected_tail_call_arm = deepcopy(evidence.EXPECTED_TAIL_CALL_ARM)
-
-    expected_tail_method_arm = deepcopy(evidence.EXPECTED_TAIL_METHOD_ARM)
-
-    if (
-        " ".join(tail_call_arm.split()) != expected_tail_call_arm
-        or " ".join(tail_method_arm.split()) != expected_tail_method_arm
-    ):
-        ctx.fail(
-            "stage3c-tail-vm",
-            "tail VM dispatch must preserve undefined/plain and receiver/function/method argument order, then return the host completion directly",
-        )
-
-    activation_execute_item = ctx.unique_braced_item(
-        ctx.vm_code,
-        re.compile(
-            r"\bfn[ \t\n]+execute[ \t\n]*\([^{};]*\)[ \t\n]*->[ \t\n]*"
-            r"Result[ \t\n]*<[ \t\n]*Completion[ \t\n]*,[ \t\n]*Error"
-            r"[ \t\n]*>[ \t\n]*\{"
-        ),
-        "stage3c-tail-completion",
-        "execute-to-completion activation driver",
-    )[0]
-
-    ctx.require_normalized_code_sha256(
-        "stage3c-tail-completion",
-        "the execute-to-completion driver must retain its unique Return terminal and Throw raise flow",
-        activation_execute_item,
-        "65d316cc1950e983ffc111de71f62e9f9cabb1833acddf93a0980b554df62368",
-    )
-
-    ctx.require_ordered_fragments(
-        "stage3c-tail-completion",
-        "tail Return must finish the current frame while Throw still enters the current activation raise path",
-        activation_execute_item,
-        (
-            "Ok(InterpreterExit::Complete(Completion::Return(value))) => { return Ok(Completion::Return(value)); }",
-            "Ok(InterpreterExit::Complete(Completion::Throw(value))) => value,",
-            "Err(error) if NativeErrorKind::from_javascript_error(error.kind()).is_some() => { host.materialize_error(error)? }",
-            "if let Some(completion) = self.raise(raised, host, code.len())? { return Ok(completion); }",
-        ),
-    )
-
-    activation_run_item = ctx.unique_braced_item(
-        ctx.vm_code,
-        re.compile(
-            r"\bfn[ \t\n]+run[ \t\n]*\([^{};]*\)[ \t\n]*->[ \t\n]*"
-            r"Result[ \t\n]*<[ \t\n]*VmExit[ \t\n]*,[ \t\n]*Error"
-            r"[ \t\n]*>[ \t\n]*\{"
-        ),
-        "stage3c-tail-completion",
-        "suspendable activation driver",
-    )[0]
-
-    ctx.require_normalized_code_sha256(
-        "stage3c-tail-completion",
-        "the suspendable driver must retain its unique Return terminal and Throw raise flow",
-        activation_run_item,
-        "d31f35156ced4fa99836ce08152eafd6e535d2eb40e3f0406362550a82269ed2",
-    )
-
-    raise_item = ctx.stage3b_function("src/engine/vm/mod.rs", "raise", "stage3c-tail-completion")
-
-    ctx.require_normalized_code_sha256(
-        "stage3c-tail-completion",
-        "raise must retain one backtrace-first catch/iterator unwind loop without guarded bypasses",
-        raise_item,
-        "52a25a382122f09433bd29178885bc10c38222aee15f0d5482def7b15b45caab",
-    )
-
-    ctx.require_ordered_fragments(
-        "stage3c-tail-completion",
-        "tail Throw must retain backtrace attachment, catch transfer, and iterator unwind on the same activation",
-        raise_item,
-        (
-            "host.ensure_backtrace(&value)?;",
-            "let Some(region) = self.regions.pop() else { return Ok(Some(Completion::Throw(value))); };",
-            "VmUnwindRegion::Catch { target, stack_depth, } => {",
-            "host.prepare_captured_local_reuse()?;",
-            "self.stack.truncate(stack_depth);",
-            "self.stack.push(value);",
-            "self.pc = checked_target(",
-            "return Ok(None);",
-            "VmUnwindRegion::Iterator { record_base, enabled, .. } => {",
-            "match host.iterator_close(iterator, true)? {",
-        ),
-    )
-
-    execute_inner_item = ctx.stage3b_function(
-        "src/engine/vm/mod.rs", "execute_inner", "stage3c-tail-vm"
-    )
-
-    # Includes the two profiling-only counters around PC publication. The
-    # reviewed call/throw routing remains unchanged; the whole corridor is
-    # authenticated, including the feature guards (not stripped from the hash).
-    normalized_execute_inner = " ".join(execute_inner_item.split())
-
-    call_route = deepcopy(evidence.CALL_ROUTE)
-
-    call_route_offset = normalized_execute_inner.find(call_route)
-
-    if call_route_offset < 0 or normalized_execute_inner.count(call_route) != 1:
-        ctx.fail(
-            "stage3c-tail-vm",
-            "execute_inner must route the complete call family, including both tail variants, exactly once",
-        )
-    else:
-        call_route_end = call_route_offset + len(call_route)
-        ctx.require_normalized_code_sha256(
-            "stage3c-tail-vm",
-            "the execute_inner prefix through call-family routing must not intercept, alias, or remove tail completion",
-            normalized_execute_inner[:call_route_end],
-            "399b6021647d5ce770d3b6b3c501673a4d4dc58f07787807ebfbef91bcbc1ede",
-        )
 
     capability_relative = "src/engine/code/binary_object/function_translate/capability.rs"
 
@@ -649,310 +443,6 @@ def check(ctx):
             "Instruction::ToObject must remain an existing one-pop, one-push node that reaches the verifier's unique ordinary fallthrough path",
         )
 
-    execute_hot_item = ctx.stage3b_function(
-        "src/engine/vm/mod.rs", "execute_hot_instruction", "stage3d-throw-completion"
-    )
-
-    throw_vm_arm = ctx.unique_braced_item(
-        execute_hot_item,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*Throw[ \t\n]*=>[ \t\n]*\{"
-        ),
-        "stage3d-throw-completion",
-        "VM Throw dispatch arm",
-    )[0]
-
-    if " ".join(throw_vm_arm.split()) != (
-        "Instruction::Throw => { return self.pop().map(|value| "
-        "Some(Completion::Throw(value))); }"
-    ):
-        ctx.fail(
-            "stage3d-throw-completion",
-            "VM Throw must pop the original value directly into Completion::Throw",
-        )
-
-    throw_read_only_vm_arm = ctx.unique_braced_item(
-        execute_hot_item,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*ThrowReadOnly[ \t\n]*\("
-            r"[ \t\n]*index[ \t\n]*\)[ \t\n]*=>[ \t\n]*\{"
-        ),
-        "stage3e-read-only-completion",
-        "VM ThrowReadOnly dispatch arm",
-    )[0]
-
-    if " ".join(throw_read_only_vm_arm.split()) != (
-        "Instruction::ThrowReadOnly(index) => { "
-        "return Err(host.read_only_error(*index)?); }"
-    ):
-        ctx.fail(
-            "stage3e-read-only-completion",
-            "VM ThrowReadOnly must call the read-only error hook directly without popping or returning",
-        )
-
-    nop_vm_arm = ctx.unique_braced_item(
-        execute_hot_item,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*Nop[ \t\n]*=>[ \t\n]*\{"
-        ),
-        "stage3f-nop-vm",
-        "VM Nop dispatch arm",
-    )[0]
-
-    if " ".join(nop_vm_arm.split()) != "Instruction::Nop => {}":
-        ctx.fail(
-            "stage3f-nop-vm",
-            "VM Nop must remain the existing empty no-effect dispatch arm",
-        )
-
-    object_vm_cold_item = ctx.stage3b_function(
-        "src/engine/vm/mod.rs", "execute_cold_instruction", "stage3g-object-vm"
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3h-to-object-vm",
-        "execute_cold_instruction must retain its complete reviewed dispatch so ToObject cannot be diverted by a direct, aliased, or helper-mediated pre-match path",
-        object_vm_cold_item,
-        "1d8fd1a51a5c2e349b2a1055c408a5c877c76661d60373bf22239dae60716cdb",
-    )
-
-    object_vm_arm = ctx.unique_braced_item(
-        object_vm_cold_item,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*Object[ \t\n]*=>[ \t\n]*"
-            r"match[ \t\n]+host[ \t\n]*\.[ \t\n]*object[ \t\n]*\("
-            r"[ \t\n]*\)[ \t\n]*\?[ \t\n]*\{"
-        ),
-        "stage3g-object-vm",
-        "VM Object dispatch arm",
-    )[0]
-
-    if " ".join(object_vm_arm.split()) != (
-        "Instruction::Object => match host.object()? { "
-        "Completion::Return(object) => self.stack.push(object), "
-        "Completion::Throw(value) => return Ok(Some(Completion::Throw(value))), }"
-    ):
-        ctx.fail(
-            "stage3g-object-vm",
-            "VM Object must delegate once to the host, push only its returned fresh Object, and propagate a host throw",
-        )
-
-    ctx.require_normalized_code_sha256(
-        "stage3g-object-realm",
-        "the runtime VM host must allocate Object through the executing bytecode's current defining realm",
-        ctx.stage3b_function(
-            "src/engine/vm/host_bridge.rs", "object", "stage3g-object-realm"
-        ),
-        "90cbeb40094a4266ebba996ce790be75ce46b2ab8959a4996265ddcc656924ce",
-    )
-
-    to_object_vm_arm = ctx.unique_braced_item(
-        object_vm_cold_item,
-        re.compile(
-            r"\bInstruction[ \t\n]*::[ \t\n]*ToObject[ \t\n]*=>[ \t\n]*\{"
-        ),
-        "stage3h-to-object-vm",
-        "VM ToObject dispatch arm",
-    )[0]
-
-    ctx.require_normalized_code_sha256(
-        "stage3h-to-object-vm",
-        "VM ToObject must preserve Object identity, reject nullish values with TypeError, and box only primitives without a coercion hook",
-        to_object_vm_arm,
-        "7ea7f87dd0d4c20abc0d4148c7e7b2b2b4c4cdbe06be6ac396130138b4123122",
-    )
-
-    if re.search(
-        r"\b(?:to_primitive|to_property_key|value_of|to_string)[ \t\n]*\(",
-        to_object_vm_arm,
-    ):
-        ctx.fail(
-            "stage3h-to-object-vm",
-            "VM ToObject must not invoke user coercion while preserving Objects or boxing primitives",
-        )
-
-    ctx.require_normalized_code_sha256(
-        "stage3h-to-object-realm",
-        "the runtime VM host must allocate every primitive wrapper through the executing bytecode's current defining realm",
-        ctx.stage3b_function(
-            "src/engine/vm/host_bridge.rs", "box_primitive", "stage3h-to-object-realm"
-        ),
-        "47f1cf4db70f24b86c09ea669b93a0f0a9780ae35a119c5b2f7698f959984ffa",
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3d-throw-critical-route",
-        "execute_inner must carry raw48 from fetch through the hot dispatcher without a guarded completion alias",
-        execute_inner_item,
-        "7f8a719df96ad6a1e35d766de3b6021172bcab83a8e77419a7822d21f3b62314",
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3d-throw-critical-route",
-        "execute_hot_instruction must enter its unique match before handling Throw and retain the exact dispatch body",
-        execute_hot_item,
-        "7944d4d1f0e754651978060a9e62562dcac239abb6d5ecc9142c10235015ecb7",
-    )
-
-    execute_published_item = ctx.stage3b_function(
-        "src/engine/vm/mod.rs", "execute_published", "stage3d-throw-critical-route"
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3d-throw-critical-route",
-        "execute_published must return the activation's Completion directly without post-processing Throw",
-        execute_published_item,
-        "6704a2e5ab9c5cdd3086ab43544dd900ffa22497bc2d5da9ab2c7842eee6bb01",
-    )
-
-    runtime_vm_host_relative = "src/engine/vm/host_bridge.rs"
-    ctx.require_normalized_code_sha256(
-        "published-frame-owner",
-        "Activation code and metadata must come from the same sealed host snapshot",
-        ctx.stage3b_function(runtime_vm_host_relative, "new_activation", "published-frame-owner"),
-        "6737f56d405850e99423107a5bd8098ddd2b08f9a7f183a21af6c930b64d42f1",
-    )
-
-
-    execute_bytecode_callable_item = ctx.stage3b_function(
-        runtime_vm_host_relative,
-        "execute_bytecode_callable",
-        "stage3d-throw-critical-route",
-    )
-
-    ctx.require_normalized_corridor_sha256(
-        "stage3d-throw-critical-route",
-        "the module-link bytecode bridge must finish its frame and return execute_published without completion remapping",
-        execute_bytecode_callable_item,
-        "if is_module_link_entry {",
-        "return result.map_err(RuntimeError::Engine);",
-        "cc840e26ee0461e8d8951e15459568f47c87e2c5f21e32bc878f38a314c0b57a",
-    )
-
-    ctx.require_normalized_corridor_sha256(
-        "stage3d-throw-critical-route",
-        "both configured ordinary bytecode routes must finish the active frame and preserve their completion",
-        execute_bytecode_callable_item,
-        "FunctionKind::Normal => {}",
-        "result.map_err(RuntimeError::Engine) }",
-        "1be1adb37dc3ce628b900f090c52c36ba846aad00629402e9821f95fca75b6f6",
-    )
-
-    call_internal_item = ctx.stage3b_function(
-        "src/engine/builtins/dispatch.rs",
-        "call_internal",
-        "stage3d-throw-critical-route",
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3d-throw-critical-route",
-        "call_internal must preserve the callable completion before, during, and after forwarded-frame cleanup",
-        call_internal_item,
-        "a94d89cf8db9fb9658f867c9d6af1115c979e571165ff953909d0dbb86e74714",
-    )
-
-    ctx.require_normalized_corridor_sha256(
-        "stage3d-throw-critical-route",
-        "call_internal must preserve the callable completion across forwarded-frame cleanup",
-        call_internal_item,
-        "let result = (|| loop {",
-        "frame_error.map_or(result, Err)",
-        "3177d4ccf8210565de65aa1534e23c483ae98e25c5b527055b70386d44307735",
-    )
-
-    for ctx.relative, ctx.name, ctx.description, ctx.expected_hash in (
-        (
-            runtime_vm_host_relative,
-            "call",
-            "RuntimeVmHost::call must forward nested callable completions without remapping Throw before caller catch",
-            "ecdfa0d7291697c269e3bdfaefedd491bec7415540122677e3bae5bfe3235f49",
-        ),
-        (
-            runtime_vm_host_relative,
-            "call_with_borrowed_arguments",
-            "borrowed call entry must forward the unchanged completion and argument slice into the runtime",
-            "ed0307d5eb9f2f7dcc84c5bfe650bbcb3aa673840f57517a329597c6830b935d",
-        ),
-        (
-            "src/engine/object/internal_methods.rs",
-            "call_value_internal",
-            "call_value_internal must preserve callable and Proxy completions for the current activation",
-            "d7564209dc646e4a18641690161eefba207110f7a244377489a96510bb9d66b5",
-        ),
-        (
-            "src/engine/api/context/calls.rs",
-            "call",
-            "Context::call must pass either configured driver's completion directly to finish_completion",
-            "d65c5b20b15e11be485c32b23d69a18598ab06848374b4a5b00582372195e54f",
-        ),
-        (
-            runtime_vm_host_relative,
-            "ensure_backtrace",
-            "RuntimeVmHost::ensure_backtrace must delegate explicit Throw values to the runtime backtrace hook",
-            "532bdb791b4b0a3e0d4bc1b8bd9658a5c58e321bf864c3786684bbb22006b0d2",
-        ),
-        (
-            runtime_vm_host_relative,
-            "iterator_close",
-            "RuntimeVmHost::iterator_close must retain getter, call, pending-exception, and result precedence",
-            "242106effd28c2885dd94c0cdbb4f85312b650291dc97d7593ff028e83c02aae",
-        ),
-        (
-            runtime_vm_host_relative,
-            "read_only_error",
-            "RuntimeVmHost::read_only_error must resolve the verified String constant and build the native TypeError in the bytecode realm",
-            "b6f792f0992f3b857dc97f0521470557b22593cf86c61f1c079152245ad39f7e",
-        ),
-        (
-            runtime_vm_host_relative,
-            "materialize_error",
-            "RuntimeVmHost::materialize_error must allocate the native TypeError in the current defining realm before the existing raise path",
-            "46fe1d5c192e13c6d1e2f4ae69b6ab04c0b56b0187387c09d2e25a0dab7a0a1f",
-        ),
-    ):
-        ctx.require_normalized_code_sha256(
-            "stage3d-throw-critical-route",
-            ctx.description,
-            ctx.stage3b_function(ctx.relative, ctx.name, "stage3d-throw-critical-route"),
-            ctx.expected_hash,
-        )
-
-    ctx.require_normalized_code_sha256(
-        "stage3d-throw-completion",
-        "execute must route every Throw completion through the current activation's raise path",
-        activation_execute_item,
-        "65d316cc1950e983ffc111de71f62e9f9cabb1833acddf93a0980b554df62368",
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3d-throw-completion",
-        "the suspendable activation driver must share the same Throw raise path",
-        activation_run_item,
-        "d31f35156ced4fa99836ce08152eafd6e535d2eb40e3f0406362550a82269ed2",
-    )
-
-    ctx.require_normalized_code_sha256(
-        "stage3d-throw-completion",
-        "raise must attach backtraces before ordered catch and iterator unwinding",
-        raise_item,
-        "52a25a382122f09433bd29178885bc10c38222aee15f0d5482def7b15b45caab",
-    )
-
-    ctx.require_ordered_fragments(
-        "stage3d-throw-completion",
-        "explicit Throw must attach a backtrace, prefer the innermost catch/iterator region order, and preserve the original value across iterator close",
-        raise_item,
-        (
-            "host.ensure_backtrace(&value)?;",
-            "let Some(region) = self.regions.pop() else { return Ok(Some(Completion::Throw(value))); };",
-            "match region {",
-            "VmUnwindRegion::Catch { target, stack_depth, } => {",
-            "self.stack.push(value);",
-            "VmUnwindRegion::Iterator { record_base, enabled, .. } => {",
-            "match host.iterator_close(iterator, true)? {",
-            "IteratorCloseOutcome::Closed | IteratorCloseOutcome::Throw(_) => {}",
-        ),
-    )
 
     for ctx.name, ctx.description, ctx.expected_hash in (
         (
@@ -1019,3 +509,45 @@ def check(ctx):
             "Err(RuntimeError::Exception)",
         ),
     )
+
+    # S13: the sole explicit-stack core replaces retired VmHost corridors.
+    for relative, name, description, expected in (
+        ('src/engine/vm/proxy_get_driver/native.rs', 'start_selected_into', 'native leaf ABI and yielding operations remain separate', '1b4532cb7848223fbc0d6b06ad1ae17744f500776cbfab761c32d0931521ca4d'),
+        ('src/engine/vm/proxy_get_driver.rs', 'invoke', 'JS callbacks install explicit frames; synchronous ABI admits only Native classification', '31b856e6988e117b02c4c08508e0aaaa92c69a0424bbaf660d6fb56727f66b6c'),
+        ('src/engine/vm/conversion_driver.rs', 'invoke', 'conversion invokes typed callbacks without generic synchronous replay', 'fdacadbe15d94508c91e4e5f44308b89452e88a3a0616fc15a0d37583fe965fe'),
+        ('src/engine/vm/run.rs', 'run', 'resident dispatch retains throw, object, boxing and control-flow semantics', 'aaf5a38314cb6b124b9157cdc7235756106c6867feda256761a886a21c3f6d0d'),
+        ('src/engine/vm/root_call.rs', 'execute_bytecode_callable', 'root call preserves async/generator/ordinary completion', 'ca69140819476e38342b78796e68141606b6cbe9f5386589ffb6439668df1a4d'),
+        ('src/engine/vm/root_call.rs', 'prepare_call', 'published root call validates closure owners and arguments', 'cf9998bd8aceca9a102047a98d9407f5b918f2025f34db260458e22ade702b77'),
+        ('src/engine/vm/driver.rs', 'enter_call', 'Call and TailCall share checked window ownership and receiver selection', 'bbad8d2818a371b4e47bc9c24fe3b867859d8f87daca5e9cccc321acd9263a6d'),
+        ('src/engine/vm/driver.rs', 'run_frames_with_state', 'driver dispatch preserves typed replies and throw/unwind routing', '8cafa48d5344df3b207d23449e9f6bf10f67387cf4e11bd0b83c4573294e0fce'),
+        ('src/engine/vm/frame_exit.rs', 'finish', 'frame retirement preserves completion and constructor results', 'ba3789348e9a0225fc21d0d1a103c28fe0496a62b15b546694ad656211011d2e'),
+        ('src/engine/vm/iterator_driver/regions.rs', 'unwind', 'throw routing preserves catch/iterator order and pending value', '63b5e624bb72b0415c35da04e0433b6a25cfba71514aa0ec62a037378c553ea1'),
+        ('src/engine/vm/suspend.rs', 'freeze_entry', 'suspension encodes direct frame owners and bytecode identity', '4cae4be79a290ff77d5252747801081564b09b74b3e6d75dcedaee570e45a126'),
+        ('src/engine/vm/suspend.rs', 'thaw', 'resume authenticates published owner and frame shape', '14a1028a01f836adaef2ac8bb67597532c958971f9f7d6a898b9c96d68dd2ba8'),
+        ('src/engine/vm/proxy_get_driver.rs', 'start_apply', 'Apply preserves its typed call/construct continuation', '8882314d591cc98bf40370aec7d471d20211327227b2d9d7a4010cffaebfeecf'),
+    ):
+        ctx.require_normalized_code_sha256(
+            "s13-owned-route", description,
+            ctx.stage3b_function(relative, name, "s13-owned-route"), expected,
+        )
+
+    # Real-realm migration probes include semantic JS literals in their receipt.
+    for name, expected in (
+        ('tail_invocation_throws_use_the_activation_backtrace_and_catch_path', '7ca5bc9d7afee263e81c050dc0264e644a55899624c7db7518e7c71a9984e840'),
+        ('tail_invocations_complete_the_frame_with_exact_call_operands', '9f4af243207a0cfaaf44bd506faab066561adbcda238206670abe93869c76ba1'),
+        ('to_object_boxes_primitives_and_rejects_nullish_values', '98cae47df9508e3ff90235936c954d7bd5d3668322137c4c0b3b9e17911b9cb6'),
+        ('captured_local_reuse_hook_is_limited_to_abrupt_resume_boundaries', 'c13a432a6612e19b55eec89ca13db3ae293304d61c9d176ffe7714e3d8606656'),
+        ('append_uses_iterator_protocol_and_preserves_pending_throw_on_close', '5290c823809695a65035fdd8298d6378a5a81ffc8d0457e03c1f1002d0c557bf'),
+    ):
+        ctx.require_normalized_code_sha256(
+            "s13-runtime-evidence", "real realm semantics, including JS literals, must remain checked",
+            ctx.stage3j_source_function("src/engine/vm/tests.rs", name, "s13-runtime-evidence"), expected,
+        )
+
+    # Retired generic-call escape hatches cannot silently return behind a renamed leaf.
+    for relative, name in (
+        ("src/engine/vm/conversion_driver.rs", "invoke"),
+        ("src/engine/vm/proxy_get_driver.rs", "invoke"),
+    ):
+        if re.search(r"\.\s*call_internal\s*\(", ctx.stage3b_function(relative, name, "s13-owned-route")):
+            ctx.fail("s13-owned-route", "callback continuation must not re-enter generic synchronous JS dispatch")

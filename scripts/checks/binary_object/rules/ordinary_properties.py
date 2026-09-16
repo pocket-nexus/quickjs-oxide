@@ -94,7 +94,8 @@ def check(ctx):
     requirements.append((compact(read_wrapper).endswith("{self.prepare_ordinary_read_borrowed(object,key,&receiver)}"), "owning read must delegate its exact receiver to the borrowed kernel"))
     read, _, _ = ctx.unique_braced_item(ordinary, re.compile(r"fn\s+prepare_ordinary_read_borrowed\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", "prepared property read")
     requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|typed_array_convert_element|native_to_bigint|internal_delete_property|internal_prevent_extensions|internal_get_prototype_of|internal_set_prototype_of)\s*\(", read), "prepared property reads must return callbacks without invoking JavaScript"))
-    requirements.append(("self.validate_object_and_key(object,key)?" in compact(read) and "self.validate_value_domain(receiver," in compact(read), "prepared property reads must validate object, key and receiver domains"))
+    selected, _, _ = ctx.unique_braced_item(ordinary, re.compile(r"fn\s+prepare_ordinary_read_selected\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", "selected property read")
+    requirements.append(("self.prepare_ordinary_read_selected(object,key,receiver,None)" in compact(read) and "self.validate_object_and_key(object,key)?" in compact(selected) and "self.validate_value_domain(receiver," in compact(selected), "prepared property reads must validate object, key and receiver domains"))
     for name in ("prepare_value_property_read", "prepare_value_property_read_borrowed", "prepare_string_property_read"):
         prepared, _, _ = ctx.unique_braced_item(access, re.compile(r"fn\s+" + name + r"\s*\([^{}]*\)\s*->[^{}]*\{"), "ordinary-property-read", name)
         requirements.append((not re.search(r"\.(?:call_internal|call_value_internal|internal_get|get_property_in_realm|get_value_property_in_realm|get_string_property_with_receiver)\s*\(", prepared), "primitive property preparation must return callbacks without invoking JavaScript"))
@@ -123,7 +124,7 @@ def check(ctx):
         (dispatch, ("prepare_has_property", "prepare_typed_array_set", "prepare_typed_array_set_in_realm", "try_typed_array_set_primitive", "select_typed_array_set")),
         (proxy_call, ("start", "read", "resume")),
         (ordinary_set, ("initial_set", "start", "start_into", "start_receiver_into", "start_waiting")),
-        (set_state, ("walk", "select_walk", "select_walk_probe", "special_own", "select_special_own", "select_receiver", "select_descriptor", "descriptor", "defined_action", "finish_selected", "publish_selected")),
+        (set_state, ("select_walk", "select_walk_probe", "select_special_own", "select_receiver", "select_descriptor", "descriptor", "defined_action", "publish_selected")),
         (set_resume, ("advance", "forward", "special", "descriptor", "defined", "array_length")),
         (proxy_set, ("start", "method", "resume", "set", "descriptor")),
         (proxy_define, ("start", "method", "resume", "defined", "descriptor")),
@@ -176,9 +177,8 @@ S05_PROTOCOLS = {
 }
 S05_ROUTES = {
     "src/engine/builtins/array.rs": ("callback::finish(", "callback::CallbackStep::start(", "sort::finish(", "sort::SortStep::start("),
-    "src/engine/vm/host_bridge/dynamic_environment.rs": ("operation::finish(", "EnvironmentStep::has_binding(", "EnvironmentStep::get(", "EnvironmentStep::put("),
-    "src/engine/vm/numeric_execution.rs": ("NumericStep::start(", "NumericStep::Primitive", "resume.resume(host.to_primitive(value,hint)?)?", "NumericStep::HtmlDda"),
-    "src/engine/vm/for_in.rs": ("operation::ForInStep::start(", "operation::ForInStep::next(", "operation::finish("),
+    "src/engine/vm/frame_operations/numeric.rs": ("NumericStep::start(", "proxy_get_driver::start_numeric("),
+    "src/engine/vm/frame_operations.rs": ("operation::ForInStep::start(", "operation::ForInStep::next(", "proxy_get_driver::start_for_in("),
     "src/engine/vm/with_driver.rs": ("EnvironmentStep::has_binding(", "proxy_get_driver::start_environment("),
     "src/engine/vm/environment_driver.rs": ("EnvironmentStep::get(", "EnvironmentStep::put(", "proxy_get_driver::start_environment(", "proxy_get_driver::start_vm_call("),
     "src/engine/vm/private_access.rs": ("private_bindings::branded_receiver(", "proxy_get_driver::start_vm_call("),
@@ -193,7 +193,7 @@ S05_ROUTES = {
     "src/engine/vm/proxy_get_driver/request/array.rs": ("From<crate::engine::builtins::ArrayCallbackStep>", "From<crate::engine::builtins::ArraySortStep>", "Self::ArrayCopy", "Self::Call"),
     "src/engine/vm/proxy_get_driver/request/scalar.rs": ("From<crate::engine::builtins::MathStep>", "From<crate::engine::builtins::PrimitiveConstructorStep>", "From<crate::engine::builtins::DatePrototypeStep>"),
     "src/engine/vm/proxy_get_driver/request/object.rs": ("LiteralDefinitionStep>forStep", "Self::DefineOrdinary{", "Resume::LiteralDefinition(resume)"),
-    "src/engine/vm/proxy_get_driver/request/vm.rs": ("EnvironmentStep>forStep", "NumericStep>forStep", "ForInStep>forStep", "Self::NumericComplete{value:Some(value),previous:Some(previous)}", "Self::ForInComplete{value:Some(value),done:Some(done)}"),
+    "src/engine/vm/proxy_get_driver/request/vm.rs": ("EnvironmentStep>forStep", "NumericStep>forStep", "T::Primitive{", "T::HtmlDda{value,resume}", "ForInStep>forStep", "Self::NumericComplete{value:Some(value),previous:Some(previous)}", "Self::ForInComplete{value:Some(value),done:Some(done)}"),
 }
 S05_FILES = tuple(dict.fromkeys((*S05_PROTOCOLS, *S05_ROUTES, *DEPENDENCY_FILES)))
 SYNC_CALLBACK = re.compile(

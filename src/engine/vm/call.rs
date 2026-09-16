@@ -1,21 +1,19 @@
-#[cfg(feature = "stack-vm")]
 pub(super) mod ordinary;
-#[cfg(feature = "stack-vm")]
+
 mod protocol;
-#[cfg(feature = "stack-vm")]
+
 mod request;
-#[cfg(feature = "stack-vm")]
+
 pub(in crate::engine::vm) use request::{
     BytecodeCallRequest, NormalizedCallback, normalize_callback,
 };
 
 mod native;
-#[cfg(feature = "stack-vm")]
+
 pub(in crate::engine::vm) use native::PreparedNativeCall;
 
 pub(in crate::engine::vm) mod prepare;
 pub(crate) mod prototype;
-pub(in crate::engine::vm) use prepare::PreparedBytecodeFrame;
 
 use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::api::runtime::Runtime;
@@ -296,6 +294,7 @@ impl Runtime {
 
     /// QuickJS `JS_CallConstructor2` entry for VM operands whose `newTarget`
     /// has not passed through the public Reflect/Context constructor check.
+    #[cfg(test)]
     pub(crate) fn construct_value_with_raw_new_target_internal(
         &self,
         caller_realm: ContextId,
@@ -315,29 +314,7 @@ impl Runtime {
         )
     }
 
-    /// Raw-newTarget counterpart used after `OP_apply` has already performed
-    /// its earlier callability check and materialized the argument list.
-    pub(crate) fn construct_callable_with_raw_new_target_internal(
-        &self,
-        caller_realm: ContextId,
-        constructor: &CallableRef,
-        new_target: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        let constructor = match self
-            .constructor_from_value(caller_realm, Value::Object(constructor.as_object().clone()))?
-        {
-            NativeConversion::Value(constructor) => constructor,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-        };
-        self.construct_constructor_with_raw_new_target_internal(
-            caller_realm,
-            &constructor,
-            new_target,
-            arguments,
-        )
-    }
-
+    #[cfg(test)]
     pub(crate) fn construct_constructor_with_raw_new_target_internal(
         &self,
         caller_realm: ContextId,
@@ -383,6 +360,7 @@ impl Runtime {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn construct_internal(
         &self,
         caller_realm: ContextId,
@@ -552,14 +530,14 @@ impl Runtime {
                 } else {
                     realm
                 };
-                return self.construct_native_function(
+                self.construct_native_function(
                     &callable,
                     execution_realm,
                     target,
                     min_readable_args,
                     new_target.value(),
                     &arguments,
-                );
+                )
             }
             CallableExecution::Bytecode {
                 bytecode,
@@ -616,11 +594,11 @@ impl Runtime {
                     bytecode,
                     closure_slots,
                 )?;
-                return Ok(match completion {
+                Ok(match completion {
                     Completion::Return(value @ Value::Object(_)) => Completion::Return(value),
                     Completion::Throw(value) => Completion::Throw(value),
                     Completion::Return(_) => Completion::Return(this_value),
-                });
+                })
             }
             CallableExecution::Proxy | CallableExecution::Bound { .. } => Err(
                 RuntimeError::Invariant("constructor dispatch was not normalized"),
@@ -648,7 +626,8 @@ impl Runtime {
         let reply = if matches!(new_target, Value::Undefined) {
             Completion::Return(Value::Undefined)
         } else {
-            let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
+            let key =
+                self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
             self.get_value_property_in_realm(caller_realm, new_target.clone(), &key)?
         };
         self.create_from_constructor_prototype_reply(caller_realm, new_target, reply)

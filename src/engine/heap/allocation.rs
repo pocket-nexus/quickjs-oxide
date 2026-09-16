@@ -16,7 +16,6 @@ impl Heap {
             return Err(error);
         }
 
-        #[cfg(feature = "stack-vm")]
         if let Some(prototype) = shape.prototype() {
             // The bit is monotonic for this generational object identity.
             // It creates no GC edge and ignores mutations of ordinary newborns.
@@ -1299,7 +1298,7 @@ impl Heap {
         // reuse its projection: only this authenticated immutable payload may
         // initialize the cache after publication.
         bytecode.executable = Default::default();
-        #[cfg(feature = "stack-vm")]
+
         {
             // Fusion is another derived projection. Authorize spans only from
             // the exact code and local definitions verified above, never from

@@ -121,7 +121,6 @@ pub(super) fn primitive(
                         resume
                             .number(runtime, result)
                             .map_err(runtime_error_to_vm_error)?
-                            .into()
                     }
                     next => {
                         query.parents.try_reserve(1).map_err(|_| {
@@ -143,8 +142,7 @@ pub(super) fn primitive(
                 };
                 *step = resume
                     .number(runtime, result)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
             Step::LengthComplete(result) => {
@@ -176,8 +174,7 @@ pub(super) fn primitive(
                 *step = match next {
                     crate::engine::builtins::ElementStep::Complete(result) => resume
                         .element(runtime, result)
-                        .map_err(runtime_error_to_vm_error)?
-                        .into(),
+                        .map_err(runtime_error_to_vm_error)?,
                     next => {
                         query.parents.try_reserve(1).map_err(|_| {
                             Error::internal("property continuation allocation failed")
@@ -198,8 +195,7 @@ pub(super) fn primitive(
                 };
                 *step = resume
                     .element(runtime, result)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
             Step::TypedComplete(result) => {

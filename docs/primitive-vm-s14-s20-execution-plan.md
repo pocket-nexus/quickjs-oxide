@@ -12,12 +12,12 @@
 2. **实现**：只做本阶段清单内的改动；实现期间**不做任何 benchmark/Profile**。
 3. **语义门禁**（全部通过才算完成实现）：
    ```sh
-   cargo test --locked --workspace --all-targets --features stack-vm
-   cargo test --locked -p quickjs-oxide-cli --features stack-vm,profiling --test profiling --bin qjs
-   cargo test --locked -p quickjs-oxide --features stack-vm,profiling --lib profiling_
-   cargo test --locked --workspace --doc --features stack-vm
-   cargo test --locked --workspace --features stack-vm,test262-host --lib --bins
-   cargo clippy --locked --workspace --all-targets --features stack-vm -- -D warnings
+   cargo test --locked --workspace --all-targets
+   cargo test --locked -p quickjs-oxide-cli --features profiling --test profiling --bin qjs
+   cargo test --locked -p quickjs-oxide --features profiling --lib profiling_
+   cargo test --locked --workspace --doc
+   cargo test --locked --workspace --features test262-host --lib --bins
+   cargo clippy --locked --workspace --all-targets -- -D warnings
    ```
    加 Test262 结果向量逐位对齐与边界矩阵（沿用 S10–S12 验收轮的既有流程与脚本，见 [profiling.md](profiling.md) 与 `scripts/checks/`）。
 4. **覆盖 review**：全部阶段代码完成后，对照各工序逐项核对实现与测试，发现遗漏补齐。
@@ -50,9 +50,9 @@ if self.is_empty() && self.is_flat() {
 
 **14.3 flat 串 in-place 追加**（`primitive.rs:137-141`、新增 API、接线 `vm/numeric/operation.rs`）
 
-1. 表示变更：`StringRepr::Latin1(Box<[u8]>) → Latin1(Vec<u8>)`、`Utf16(Box<[u16]>) → Utf16(Vec<u16>)`（尺寸同为 3 usize；容量槽即 QuickJS refcount==1 原地 realloc 的等价物）。`grep -n 'StringRepr::Latin1\|StringRepr::Utf16' src/` 逐点修模式匹配（构造点 `into_boxed_slice()` 删除即可）。
-2. 新增 `JsString::concat_owned(self, other: &JsString) -> Result<JsString, JsStringError>`：当 `Rc::strong_count(&self.0) == 1 && Rc::weak_count == 0` 且 self/other 均 flat 且宽窄兼容时，`Rc::get_mut` 取可变引用，`try_reserve`（**摊还增长，不用 `try_reserve_exact`**）+ `extend_from_slice`，长度守 `MAX_LEN`；否则回落 `try_concat`。窄 self + 宽 other 不做原地（需加宽重分配，走既有路径）。
-3. 接线：`vm/numeric/operation.rs` 的 `add_primitives`（`:123-125` 引用处）字符串结果分支——左操作数以 `Value::String` **所有权**进入 `primitive_output`，满足 strong_count==1 判定的即走 `concat_owned`。`r += "x"` 循环由 O(n²) 变摊还 O(n)。
+1. 表示变更：`StringRepr::Latin1(Box<[u8]>) → Latin1(Vec<u8>)`、`Utf16(Box<[u16]>) → Utf16(Vec<u16>)`（Box slice 为 2 usize，Vec 为 3 usize；容量槽支持已准入 flat 路径的摊还扩容）。`grep -n 'StringRepr::Latin1\|StringRepr::Utf16' src/` 逐点修模式匹配（构造点 `into_boxed_slice()` 删除即可）。
+2. 新增 `JsString::concat_owned(self, other: &JsString) -> Result<JsString, JsStringError>`：当 `Rc::strong_count(&self.0) == 1 && Rc::weak_count == 0` 且 self/other 均 flat、宽窄兼容，并满足 QuickJS flat-concat 门槛（左长度 ≤8192、右长度 ≤512）时，`Rc::get_mut` 取可变引用，`try_reserve`（**摊还增长，不用 `try_reserve_exact`**）+ `extend_from_slice`，长度守 `MAX_LEN`；否则回落 `try_concat`。窄 self + 宽 other 不做原地（需加宽重分配，走既有路径）。
+3. 接线：`vm/numeric/operation.rs` 的 `add_primitives`（`:123-125` 引用处）字符串结果分支——左操作数以 `Value::String` **所有权**进入 `primitive_output`，满足 strong_count==1 判定的即走 `concat_owned`。`r += "x"` 在上述 flat 准入范围内复用容量并摊还追加；超过范围保留既有 rope 构造/尾叶合并，不宣称任意长度 flat 原地增长。
 4. 语义红线：rope 阈值行为（`ROPE_SHORT_LEN/ROPE_SHORT2_LEN`）与 `linearize` 的 `Linearized` 状态迁移不变；`JsString` 相等/哈希不受容量槽影响（不比较 capacity）。
 
 **14.4 `complete_primitives`/`complete_local_add` 冗余折叠**（`src/engine/vm/conversion_driver.rs:125-299`、`conversion_driver/local_add.rs`）
@@ -64,6 +64,24 @@ if self.is_empty() && self.is_flat() {
 **14.5 `MathStep::start` 的 Box 延迟**（`src/engine/builtins/math/operation.rs:89`）
 
 全原语实参路径（`math_completed_without_argument_storage` 事件对应形态）不分配 `Box`；仅当确需跨回调挂起（有 Object 实参要 ToNumber 回调）才 `Box::new`。`MathResume ≤ 8B` 的尺寸断言保留。
+
+### 当前实现记录（代码已接线，联合验收待执行）
+
+- 14.1–14.5 均已接线：ASCII 数字出口保留长度检查；左右空串短路；flat Vec 独占追加；转换单次输入访问；Math 原语入口延迟分配 continuation Box。
+- 14.3 额外落实了可达性：原 `add_primitives` 仅借用操作数，普通局部读取也会保留第二个 owner。现在 LocalAdd 同时覆盖两个局部与 `r += "x"` 的常量 RHS，通过互不重叠的 Direct 局部访问，在成功 reserve 后直接追加，错误前不修改原局部。共享、自引用、捕获、TDZ、Object 和非兼容宽度回到原语义路径。
+- 最终 CLI golden 暴露并修复了独占追加的表示准入遗漏：`600*a + 600*b` 必须仍为 rope，否则 Error/Function 的 raw special-field 打印可观察到差异。`try_concat_in_place` 现在共用左≤8192、右≤512的 QuickJS 条件，LocalAdd 同受此约束；大串维持原 rope 行为，性能收益只按最终测量报告。
+- 设计修正：Box slice payload 是两个 usize，Vec 是三个；不能以原文“同为三个”证明尺寸不变。空左串优化对应 `"" + x`，`x + ""` 已有右空串短路。
+- 语义测试包含 String/ASCII/Math、字面量 LocalAdd 路由及错误恢复；最终工作树的联合门禁及性能判定由收尾验收统一记录，本覆盖复核不宣称门禁或性能目标已通过。
+
+### 最终代码覆盖复核（不代替门禁或性能验收）
+
+| 工序 | 生产接线与复核结论 |
+| --- | --- |
+| 14.1 | `Value::to_js_string` 与 Number/BigInt 格式化出口采用 checked ASCII→owned Latin1；已接线。 |
+| 14.2 | `JsString::try_concat` 对 flat 空左串复用右侧；右空串既有短路保留。 |
+| 14.3 | flat Vec + `try_concat_in_place/concat_owned`；`numeric::add_primitives` 消费 owner，LocalAdd 的 local/constant RHS 经可变 Direct local 路径使追加实际可达；仅左≤8192、右≤512的 flat 域内追加，reserve 成功前不改变左值。 |
+| 14.4 | `conversion_driver::complete_primitives` 合并分类/认证输入读取，`complete_local_add` 使用单次局部输入访问；共享回落复用已转换 suffix。 |
+| 14.5 | `MathStep::start` 在未装箱状态完成全原语输入，只有 Object 回调 suffix 构造 Box；窄 resume 断言保留。 |
 
 ### 测试与验收
 
@@ -118,6 +136,17 @@ own data 可配置属性的 delete 驻留。与 14.4 同理存在 R4 依赖（�
 1. `RunExit` 上新增 `fn observes_activation(&self) -> bool`（默认 true），`ready.rs:36` 的 materialize 条件改为 `exit.observes_activation()`；首批豁免 = 现状 Call/Complete（**语义不变的重构**，为后续豁免名单提供单点）。
 2. 已物化帧跳过重复发布：`FrameStore::materialize` 对 `is_materialized()` 帧比较"上次发布的 PC"（Frame 新增 `published_pc: Option<u32>` 或复用现有水位字段），`fault_pc` 未变则跳过 `publish_materialized_pc`。这是 depth 探针族每迭代 4-12 次 `runtime_pc_publication` 的直接削减项，**S18 依赖此步**。
 3. 观察协议"拉"式改造只做设计评估（写入 S16 前置修订），本单元不实施。
+
+### 最终代码覆盖复核（不代替门禁或性能验收）
+
+| 工序 | 生产接线与复核结论 |
+| --- | --- |
+| 15.1 | run 的 Add 失败分支进入通用 resident numeric 内核；Object 仍交冷 ToPrimitive 状态机，融合专用 ConvertAdd 保留。 |
+| 15.2 | StrictEq/StrictNeq 在 run 处理非 rope 值域；Object/Symbol 在短槽借用外释放，rope String 对保留冷分支。 |
+| 15.3 | Not 使用包含 HTMLDDA 的 `value_to_boolean`，引用释放在槽借用外；LogicalNot exit/冷路由已删除。 |
+| 15.4 | 顺延项已回补：DefineField→`run/property::complete`→`try_define_field_owned`→选择后属性存储，标量及引用值均接线，返回保留 base。 |
+| 15.5 | 顺延项已回补：Delete→resident property→`try_delete_own_data`，接普通 configurable data/缺失 own 属性；拒绝后恢复原操作数走规范路径。 |
+| 15.6 | ready 使用 `RunExit::observes_activation`；两处已物化 PC 写入口跳过相同 PC；拉式观察评估记录于 resident-property-writes 架构文档，未另建观察协议。 |
 
 ### 测试与验收
 
@@ -225,7 +254,7 @@ RuntimeState 建 `PinnedAtoms` 表：`length/next/return/done/value/index/input/
 
 **18c native 调用外围**
 
-1. publish 延迟：`call/native.rs:315-316` 的 `publish_validated_active_frame` 挂惰性 token（复用 S10 机制），确有观察者（backtrace/异常/宿主回调/挂起）才发布；`driver/ordinary.rs:113` 的强制物化改按 `observes_activation` 判定。
+1. publish 延迟（实际实现选择）：native 使用 `ActiveFrames::pending_native` 保存 inline logical-frame descriptor，普通同步尾帧不进入 `records` Vec；`get/last/iter` 等观察入口仍能立即看到完整逻辑帧，嵌套进入时再移入 Vec。`driver/ordinary.rs` 按认证目标、参数及 receiver brand 决定祖先物化，NoJS 常见路径跳过，其余及错误保守物化。仍签发 checked token 并维护预算：native 的同步 Rust 调用及观察 API 需要这份即时身份，因此不再另建第二套“缺席 token→重建记录”协议。此选择消除常见 Vec push 和无条件祖先物化，不声称零注册；收益待最终测量。
 2. witness 缓存：`NativePublicationWitness::validate`（`vm/frames.rs:147-205`）的重验证结果随 `NativeClassification` 缓存，classification 复用时跳过（失效键 = 函数对象身份 + realm）。
 3. argv 单搬运：`call.native_argv → native.readable` 双缓冲合并（`vm/stack.rs:204-240` 的 take 直接产出 readable 视图）；`reserve_native_argument_depth` 每调用 2 次 → 1 次；`try_reserve_exact` → `try_reserve`；`resize(available, Undefined)` padding 只在 `actual < min_readable` 时执行。
 4. retain 削减：`promote_selected/linked` 双 retain（`frames.rs:34-35,56-57`）、publish 的第 3 次 function root（`frames.rs:259`）、Pure 族 `invocation.clone()` 的 receiver retain（`builtins/continuation.rs:39`）改借用证明——调用期间 slot/argv owner 已钉住被调者。
@@ -235,6 +264,34 @@ RuntimeState 建 `PinnedAtoms` 表：`length/next/return/done/value/index/input/
 
 1. 通用读路径补 `LinkedNativeSelection` 产出（`object/access.rs:122-127`）；exotic 方法读 IC 命中（S16.1）后直达 selection，消 `DirectSelection::select` 现场重分类。
 2. `set_map_record` 收敛（与 17.3 协同，此处只接线）。
+
+### 当前实现记录（代码已接线，联合验收待执行）
+
+- 18a/18b：普通 getter 与 get trap 使用 `OrdinaryCall` 的认证事实与惰性 callback FrameEntry；getter 的空 argv 无分配。正常 PropertyRead reply 校验父帧和 operation identity 后直接退子帧并进入原 invariant 阶段。通用转换/生成器/异常继续采用原协议。
+- 18b 的 Method/Get resume 使用有界、只含空 Option Box 的线程局部容量池；PendingProxyGet 使用 execution-local QueryStorage 池。池中不保留 Runtime、属性值或 depth guard；这是空存储复用，不是 lookup 缓存。三个 trap 实参取 SlotStore 已有 outgoing Vec，安装帧后归还容量。
+- 18a.3/18d：静态 key 在活跃帧内缓存并借用，仅 Proxy 等实际等待协议取得独立 owner；普通/原型/primitive 读沿现有 probe 同时产出 native selection，后续调用复用分类。
+- 18c：native entry 按已认证目标、实际参数和 receiver brand 判断是否观察；数值 Math 与证明无需回调的基本集合路径跳过祖先物化，其余保守物化。native 注册表 inline tail 与真正缺席的 bytecode token 是不同机制：tail 仍由观察 API 枚举，不能声称 native 完全没有注册记录。
+- 18c.5：空容器有足够容量时直接复用，等待身份仍以 checked increment 签发，不能为了减少簿记而允许旧 reply 命中新操作。
+- [惰性回调观察协议](architecture/lazy-callback-frames.md) 已记录边界；新增栈序、不变量、重入、释放和机械事件断言，待联合语义门禁。尚未进行 benchmark/Profile，也尚未宣称计数/耗时目标达标。
+
+### 最终代码覆盖复核（不代替门禁或性能验收）
+
+| 工序 | 生产接线与复核结论 |
+| --- | --- |
+| 18a.1 | getter 通过 `select_callback`→`prepare_callback`→初始化子帧，unmaterialized bytecode token、空 argv。 |
+| 18a.2 | getter/get trap 提前保存一次认证的 OrdinaryCall；特殊 callable 保留 normalize 协议。 |
+| 18a.3 | 活跃帧 PropertyKey 缓存被借用，真正等待才取独立 owner；`CallStorage::recycle` 清理键缓存，禁止跨 executable 复用旧索引事实。 |
+| 18b.1 | MethodStep 查询 trap 名使用 S17 pinned atom 表。 |
+| 18b.2 | Method/Get resume 使用有界空 Box 池，PendingProxyGet 使用 QueryStorage 空盒池，trap 三参数复用 outgoing Vec；池中不留 live roots。 |
+| 18b.3 | `ordinary_return` 接 PropertyGet；immediate parent/identity 校验后 `ordinary::finish` 直接调用原 reply/invariant 阶段。 |
+| 18b.4 | get trap 调用与 getter 共享 lazy callback 安装路径。 |
+| 18c.1 | 采用本节已修订的 inline native descriptor：NoJS 不物化祖先、不 push Vec，观察仍见 logical frame；token/预算仍维护。 |
+| 18c.2 | NativeClassification 保存函数身份/domain/realm/target，`from_classification` 复用认证事实。 |
+| 18c.3 | owned argv 直接成为 NativeArguments readable；公共借用入口才复制，padding 仅补缺少参数；同步普通入口取消重复 reserve。 |
+| 18c.4 | classification 保留非 owning 身份，borrowed native publication 不新增 function root；Pure dispatcher 及全部接收函数使用 borrowed invocation，需跨等待时才持有 owner。 |
+| 18c.5 | Query 的 natives/spare_parents 容量足够即返回；等待 identity 保留 checked generation，防止旧 reply 命中新等待。 |
+| 18d.1 | ordinary/primitive/prototype 通用读同时产出 LinkedNativeSelection，IC native fact 传入 `enter_selected` 避免重新分类。 |
+| 18d.2 | `set_map_record` 接 S17 单次选定记录更新路径；借用 Map receiver 的调用链已贯通。 |
 
 ### 测试与验收
 

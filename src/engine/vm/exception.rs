@@ -42,7 +42,6 @@ pub(in crate::engine::vm) fn runtime_error_to_vm_error(error: RuntimeError) -> E
 }
 
 /// Materialize published binding diagnostics outside the resident driver frame.
-#[cfg(feature = "stack-vm")]
 #[inline(never)]
 pub(super) fn binding_error(
     runtime: &Runtime,

@@ -1,5 +1,5 @@
 //! Own-property predicates retain their distinct receiver/key conversion order.
-#[cfg(feature = "stack-vm")]
+
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::builtins::native::ObjectAccessorKind;
 use crate::engine::object::{
@@ -25,7 +25,6 @@ pub(crate) enum PredicateKind {
     Enumerable,
 }
 impl PredicateKind {
-    #[cfg(feature = "stack-vm")]
     pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
         Some(match target {
             NativeFunctionId::ObjectPrototypeDefineAccessor(kind) => Self::Define(kind),

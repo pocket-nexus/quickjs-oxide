@@ -14,9 +14,9 @@ use crate::engine::object::ObjectRef;
 use crate::engine::value::JsString;
 use crate::engine::vm::BytecodePc;
 
-/// Owning result of direct native classification. Fixed payload and defining
-/// realm cannot change while this root is held. General callers cannot forge it.
-#[cfg(feature = "stack-vm")]
+/// Validated facts from direct native classification. The selected callable
+/// owner keeps the fixed payload and defining realm live; this record adds no root.
+/// Reuse checks the callable identity and runtime domain.
 pub(in crate::engine::vm) struct NativeClassification {
     function: ObjectId,
     domain: u64,
@@ -25,7 +25,7 @@ pub(in crate::engine::vm) struct NativeClassification {
     min_readable_args: u8,
     operation: Option<crate::engine::builtins::continuation::NativeOperation>,
 }
-#[cfg(feature = "stack-vm")]
+
 impl NativeClassification {
     pub(in crate::engine::vm) fn promote_selected(
         selection: super::call::ordinary::NativeSelection<'_>,
@@ -120,7 +120,6 @@ impl NativeClassification {
 
 /// Read the sealed dispatch fact for a previously normalized callable. Native
 /// publication owns the derivation; callers do not classify its target again.
-#[cfg(feature = "stack-vm")]
 pub(in crate::engine::vm) fn native_operation(
     runtime: &Runtime,
     callable: &crate::engine::object::CallableRef,
@@ -158,7 +157,7 @@ impl<'a> NativePublicationWitness<'a> {
         min_readable_args: u8,
         mode: super::call::NativeInvokeMode,
     ) -> Result<Self, RuntimeError> {
-        #[cfg(all(feature = "stack-vm", feature = "profiling"))]
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_publication_checked");
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("native callable"));
@@ -210,7 +209,6 @@ impl<'a> NativePublicationWitness<'a> {
         })
     }
 
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn from_classification(
         runtime: &'a Runtime,
         callable: &'a crate::engine::object::CallableRef,
@@ -289,19 +287,39 @@ impl<'a> NativePublicationWitness<'a> {
 
 impl Runtime {
     fn publish_borrowed_native_frame(
-        &self, function: ObjectId, realm: ContextId, flags: ActiveFrameFlags,
-        kind: ActiveFrameKind, native_continuation: bool,
+        &self,
+        function: ObjectId,
+        realm: ContextId,
+        flags: ActiveFrameFlags,
+        kind: ActiveFrameKind,
+        native_continuation: bool,
     ) -> Result<ActiveFrameGuard, RuntimeError> {
         let mut state = self.0.state.borrow_mut();
         let token = ActiveFrameToken(state.next_active_frame_token);
-        state.next_active_frame_token = state.next_active_frame_token.checked_add(1)
-            .ok_or(RuntimeError::Invariant("active-frame token space was exhausted"))?;
+        state.next_active_frame_token =
+            state
+                .next_active_frame_token
+                .checked_add(1)
+                .ok_or(RuntimeError::Invariant(
+                    "active-frame token space was exhausted",
+                ))?;
         let depth = state.active_frames.len();
         state.active_frames.push_lazy_native(ActiveFrameRecord {
-            token, native_continuation, function, realm, flags, kind,
+            token,
+            native_continuation,
+            function,
+            realm,
+            flags,
+            kind,
         });
-        Ok(ActiveFrameGuard { runtime: self.clone(), token, depth, active: true,
-            _function_root: None, _bytecode_root: None })
+        Ok(ActiveFrameGuard {
+            runtime: self.clone(),
+            token,
+            depth,
+            active: true,
+            _function_root: None,
+            _bytecode_root: None,
+        })
     }
 
     pub(crate) fn push_active_collection_record(
@@ -508,62 +526,6 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn push_native_iterator_next_active_frame(
-        &self,
-        function_root: ObjectRef,
-        realm: ContextId,
-        target: NativeFunctionId,
-        actual_arg_count: usize,
-        readable_arg_count: usize,
-    ) -> Result<ActiveFrameGuard, RuntimeError> {
-        self.push_active_frame(
-            function_root,
-            None,
-            realm,
-            ActiveFrameFlags {
-                backtrace_hidden: true,
-                ..ActiveFrameFlags::default()
-            },
-            ActiveFrameKind::Native {
-                target,
-                actual_arg_count,
-                readable_arg_count,
-            },
-            true,
-        )
-    }
-
-    /// Publish a validated native frame with its final continuation ownership.
-    /// There is no intervening handler between frame creation and this flag.
-    #[cfg(feature = "stack-vm")]
-    pub(in crate::engine::vm) fn push_native_continuation_active_frame(
-        &self,
-        function_root: ObjectRef,
-        realm: ContextId,
-        target: NativeFunctionId,
-        actual_arg_count: usize,
-        readable_arg_count: usize,
-        iterator_next_raw: bool,
-    ) -> Result<ActiveFrameGuard, RuntimeError> {
-        self.push_active_frame_with_continuation(
-            function_root,
-            None,
-            realm,
-            ActiveFrameFlags {
-                backtrace_hidden: iterator_next_raw,
-                ..ActiveFrameFlags::default()
-            },
-            ActiveFrameKind::Native {
-                target,
-                actual_arg_count,
-                readable_arg_count,
-            },
-            iterator_next_raw,
-            true,
-        )
-    }
-
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn publish_materialized_pc(
         &self,
         token: ActiveFrameToken,
@@ -809,11 +771,10 @@ pub(crate) struct ActiveFrameRecord {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveFrameToken(pub(in crate::engine::vm) u64);
 impl ActiveFrameToken {
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) const fn unmaterialized() -> Self {
         Self(0)
     }
-    #[cfg(feature = "stack-vm")]
+
     pub(in crate::engine::vm) fn is_materialized(self) -> bool {
         self.0 != 0
     }
@@ -885,12 +846,10 @@ pub(crate) struct BacktraceBarrierGuard {
 }
 
 impl ActiveFrameGuard {
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn registry_depth(&self) -> usize {
         self.depth
     }
 
-    #[cfg(feature = "stack-vm")]
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
         let mut state = self.runtime.0.state.borrow_mut();
@@ -984,7 +943,6 @@ impl Drop for BacktraceBarrierGuard {
 impl Runtime {
     /// Called only by FrameStore's observation protocol. Frame owners retain
     /// the function and immutable executable until this guard is retired.
-    #[cfg(feature = "stack-vm")]
     pub(in crate::engine::vm) fn materialize_owned_frame(
         &self,
         frame: &super::frame::Frame,
@@ -1027,49 +985,4 @@ impl Runtime {
     }
 }
 
-impl Runtime {
-    /// The sealed witness authenticated these identities together. Its owners
-    /// move into the frame before execution; registration owns only a token.
-    #[cfg(feature = "stack-vm")]
-    pub(in crate::engine::vm) fn push_ordinary_active_frame(
-        &self,
-        call: &super::call::ordinary::OrdinaryCall,
-    ) -> Result<ActiveFrameGuard, RuntimeError> {
-        if !call.function().belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("active-frame function"));
-        }
-        let executable = call.executable();
-        let mut state = self.0.state.borrow_mut();
-        let token = ActiveFrameToken(state.next_active_frame_token);
-        state.next_active_frame_token =
-            state
-                .next_active_frame_token
-                .checked_add(1)
-                .ok_or(RuntimeError::Invariant(
-                    "active-frame token space was exhausted",
-                ))?;
-        let depth = state.active_frames.len();
-        state.active_frames.push(ActiveFrameRecord {
-            token,
-            native_continuation: false,
-            function: call.function().object_id(),
-            realm: executable.realm,
-            flags: ActiveFrameFlags {
-                strict: executable.metadata.strict,
-                ..Default::default()
-            },
-            kind: ActiveFrameKind::Bytecode {
-                bytecode: executable.bytecode_id().unwrap(),
-                pc: None,
-            },
-        });
-        Ok(ActiveFrameGuard {
-            runtime: self.clone(),
-            token,
-            depth,
-            active: true,
-            _function_root: None,
-            _bytecode_root: None,
-        })
-    }
-}
+impl Runtime {}

@@ -20,11 +20,9 @@ use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol};
 use crate::engine::value::Value;
 
+use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
-use crate::engine::vm::frames::ActiveFrameGuard;
-use crate::engine::vm::host_bridge::RuntimeVmHost;
-use crate::engine::vm::suspend::{self, EncodedVmActivation, VmRunOutcome};
-use crate::engine::vm::{CallInput, Completion, VmSuspendKind};
+use crate::engine::vm::suspend::EncodedVmActivation;
 
 mod operation;
 pub(crate) use operation::{AsyncGeneratorResume, AsyncGeneratorStep};
@@ -174,48 +172,6 @@ impl Runtime {
     /// barrier, then choose the public function `.prototype` and allocate the
     /// branded async-generator object.
     #[inline(never)]
-    pub(crate) fn start_async_generator_bytecode_callable(
-        &self,
-        caller_realm: ContextId,
-        callable: &CallableRef,
-        host: RuntimeVmHost,
-        input: CallInput,
-        active_frame: ActiveFrameGuard,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        let result = suspend::start(host, input, arguments);
-        active_frame.finish()?;
-        match result? {
-            VmRunOutcome::Suspend { activation, .. }
-                if activation.kind == VmSuspendKind::Initial =>
-            {
-                self.finish_async_generator_function_call(caller_realm, callable, *activation)
-            }
-            VmRunOutcome::Suspend { .. } => Err(RuntimeError::Invariant(
-                "async-generator call did not stop at its initial-yield barrier",
-            )),
-            VmRunOutcome::Complete(Completion::Throw(value)) => Ok(Completion::Throw(value)),
-            VmRunOutcome::Complete(Completion::Return(_)) => Err(RuntimeError::Invariant(
-                "async-generator call completed before its initial-yield barrier",
-            )),
-        }
-    }
-
-    fn finish_async_generator_function_call(
-        &self,
-        caller_realm: ContextId,
-        callable: &CallableRef,
-        activation: EncodedVmActivation,
-    ) -> Result<Completion, RuntimeError> {
-        suspend::creation::GeneratorCreation {
-            realm: caller_realm,
-            callable: callable.clone(),
-            asynchronous: true,
-        }
-        .frozen(self, Box::new(activation))?
-        .finish(self, caller_realm)
-    }
-
     pub(super) fn allocate_async_generator_object(
         &self,
         prototype: &ObjectRef,

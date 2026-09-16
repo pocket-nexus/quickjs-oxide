@@ -250,7 +250,6 @@ impl CallbackStep {
         runtime: &Runtime,
         realm: ContextId,
     ) -> Result<Completion, RuntimeError> {
-        #[cfg(feature = "stack-vm")]
         {
             crate::engine::vm::execute_root(
                 runtime.clone(),
@@ -258,37 +257,6 @@ impl CallbackStep {
                 crate::engine::vm::RootOperation::ModuleCallback(self),
             )
             .map_err(RuntimeError::Engine)
-        }
-        #[cfg(not(feature = "stack-vm"))]
-        {
-            let mut step = self;
-            let mut parents = Vec::new();
-            loop {
-                step = match step {
-                    Self::Complete(result) => match parents.pop() {
-                        Some(resume) => {
-                            let resume: Box<CallbackResume> = resume;
-                            resume.resume(result)?
-                        }
-                        None => return Ok(result),
-                    },
-                    Self::Call {
-                        callable,
-                        value,
-                        resume,
-                    } => resume.resume(runtime.call_internal(
-                        realm,
-                        &callable,
-                        Value::Undefined,
-                        &[value],
-                    )?)?,
-                    Self::Body { step, resume } => resume.resume(step.finish(runtime, realm)?)?,
-                    Self::Nested { step, resume } => {
-                        parents.push(resume);
-                        *step
-                    }
-                };
-            }
         }
     }
 }
