@@ -515,7 +515,7 @@ def check(ctx):
         ('src/engine/vm/proxy_get_driver/native.rs', 'start_selected_into', 'native leaf ABI and yielding operations remain separate', '1b4532cb7848223fbc0d6b06ad1ae17744f500776cbfab761c32d0931521ca4d'),
         ('src/engine/vm/proxy_get_driver.rs', 'invoke', 'JS callbacks install explicit frames; synchronous ABI admits only Native classification', '31b856e6988e117b02c4c08508e0aaaa92c69a0424bbaf660d6fb56727f66b6c'),
         ('src/engine/vm/conversion_driver.rs', 'invoke', 'conversion invokes typed callbacks without generic synchronous replay', 'fdacadbe15d94508c91e4e5f44308b89452e88a3a0616fc15a0d37583fe965fe'),
-        ('src/engine/vm/run.rs', 'run', 'resident dispatch retains throw, object, boxing and control-flow semantics', 'aaf5a38314cb6b124b9157cdc7235756106c6867feda256761a886a21c3f6d0d'),
+        ('src/engine/vm/run.rs', 'run', 'resident dispatch retains throw, object, boxing and control-flow semantics', '1190b9d8777cca2b0c99ee1bbdd434f02f25f32218a6660cbcdcea5f1e169a4c'),
         ('src/engine/vm/root_call.rs', 'execute_bytecode_callable', 'root call preserves async/generator/ordinary completion', 'ca69140819476e38342b78796e68141606b6cbe9f5386589ffb6439668df1a4d'),
         ('src/engine/vm/root_call.rs', 'prepare_call', 'published root call validates closure owners and arguments', 'cf9998bd8aceca9a102047a98d9407f5b918f2025f34db260458e22ade702b77'),
         ('src/engine/vm/driver.rs', 'enter_call', 'Call and TailCall share checked window ownership and receiver selection', 'bbad8d2818a371b4e47bc9c24fe3b867859d8f87daca5e9cccc321acd9263a6d'),

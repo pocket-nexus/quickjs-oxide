@@ -203,7 +203,8 @@ impl ProxyGetResume {
                         })),
                     ));
                 }
-                let descriptor = runtime.internal_get_own_property(realm, &rooted.target, &key)?;
+                let descriptor =
+                    NativeConversion::Value(runtime.get_own_property(&rooted.target, &key)?);
                 complete_get_invariant(runtime, realm, value, descriptor)
             }
             Phase::Invariant { .. } => Err(RuntimeError::Invariant(

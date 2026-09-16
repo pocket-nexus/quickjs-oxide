@@ -17,7 +17,7 @@ implemented: S22 removes the real prepend-string regression (string_build3
 +22.0% -> -21.8%, string_build_large2 +28.5% -> -15.5% vs S0), while S21 cuts the
 depth-proxy overhead roughly in half (+26.6% -> +11%). The single combined round
 leaves 4 cases above S0 +5% (depth-proxy-0/32, v8-earley-boyer, richards);
-details and the S21 residual are recorded in the plan §9 sections and the
+details and the S21 residual are recorded in the plan measurement sections and the
 [recovery plan](primitive-vm-s14-s20-recovery-plan.md).
 
 ## Current baseline

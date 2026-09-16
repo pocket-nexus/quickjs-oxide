@@ -326,7 +326,7 @@ mod trap_cache_tests {
         }
     }
 
-    fn start(runtime: &Runtime, realm: ContextId, proxy: &ObjectRef) -> MethodStep {
+    fn start_get(runtime: &Runtime, realm: ContextId, proxy: &ObjectRef) -> MethodStep {
         MethodStep::start(runtime, realm, proxy.clone(), "get").unwrap()
     }
 
@@ -344,10 +344,10 @@ mod trap_cache_tests {
         let realm = context.realm;
 
         assert!(
-            matches!(start(&runtime, realm, &proxy), MethodStep::Read { .. }),
+            matches!(start_get(&runtime, realm, &proxy), MethodStep::Read { .. }),
             "a cold cache still performs the canonical dynamic read"
         );
-        let MethodStep::Complete { mut resume } = start(&runtime, realm, &proxy) else {
+        let MethodStep::Complete { mut resume } = start_get(&runtime, realm, &proxy) else {
             panic!("the trained location must skip the dynamic read")
         };
         assert_eq!(
@@ -358,7 +358,7 @@ mod trap_cache_tests {
         // Overwriting a data property keeps the shape and revision; the cache
         // stores a location, so the next operation observes the new function.
         context.eval("trapHandler.get=second").unwrap();
-        let MethodStep::Complete { mut resume } = start(&runtime, realm, &proxy) else {
+        let MethodStep::Complete { mut resume } = start_get(&runtime, realm, &proxy) else {
             panic!("same-shape overwrite keeps the cache location")
         };
         assert_eq!(
@@ -382,7 +382,7 @@ mod trap_cache_tests {
         for _ in 0..3 {
             assert!(
                 matches!(
-                    start(&runtime, context.realm, &proxy),
+                    start_get(&runtime, context.realm, &proxy),
                     MethodStep::Read { .. }
                 ),
                 "an accessor trap may run observable code on every read"
@@ -404,7 +404,7 @@ mod trap_cache_tests {
         let proxy = object(context.eval("chainedProxy").unwrap());
         for _ in 0..3 {
             assert!(matches!(
-                start(&runtime, context.realm, &proxy),
+                start_get(&runtime, context.realm, &proxy),
                 MethodStep::Read { .. }
             ));
         }
@@ -421,17 +421,17 @@ mod trap_cache_tests {
             .unwrap();
         let proxy = object(context.eval("delProxy").unwrap());
         assert!(matches!(
-            start(&runtime, context.realm, &proxy),
+            start_get(&runtime, context.realm, &proxy),
             MethodStep::Read { .. }
         ));
         assert!(matches!(
-            start(&runtime, context.realm, &proxy),
+            start_get(&runtime, context.realm, &proxy),
             MethodStep::Complete { .. }
         ));
         context.eval("delete delHandler.get").unwrap();
         assert!(
             matches!(
-                start(&runtime, context.realm, &proxy),
+                start_get(&runtime, context.realm, &proxy),
                 MethodStep::Read { .. }
             ),
             "removing the layout revision invalidates the location"
@@ -447,12 +447,15 @@ mod trap_cache_tests {
             .unwrap();
         let proxy = object(context.eval("revoked").unwrap());
         assert!(matches!(
-            start(&runtime, context.realm, &proxy),
+            start_get(&runtime, context.realm, &proxy),
             MethodStep::Read { .. }
         ));
         context.eval("revocable.revoke()").unwrap();
         assert!(
-            matches!(start(&runtime, context.realm, &proxy), MethodStep::Throw(_)),
+            matches!(
+                start_get(&runtime, context.realm, &proxy),
+                MethodStep::Throw(_)
+            ),
             "revocation is checked before any cached hit"
         );
     }
