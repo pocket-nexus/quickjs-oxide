@@ -4,7 +4,7 @@
 
 **阶段指引的适用范围：**本文中的技术选型、覆盖顺序和实现策略描述对应阶段的实施方案与历史结果，不构成项目级优化禁令。后续可以采用运行期 shape/位置/属性值缓存、解析结果缓存、多态 IC、PGO 及其他优化；按语义、失效、所有权和性能证据评估方案。用户明确的执行约束继续有效。
 
-状态：S14–S20 的计划内实现已分别落地；S13 已删除旧 VmHost/activation/驱动及 stack-vm 配置开关，所有入口使用新核心。当前正在完成联合语义门禁与额外覆盖核对，尚未执行本轮最终 benchmark/Profile，不能据此宣称性能退出条件已通过。阶段覆盖记录见文末及[执行计划](primitive-vm-s14-s20-execution-plan.md)。
+状态（2026-09-16）：S14–S20 与 S13 已全部落地（S13=`d63c34b0`；旧 VmHost/activation/驱动及 stack-vm 配置开关已删除，唯一执行核心）。联合语义门禁 8 项作业全部通过，Test262 结果向量逐位对齐。最终唯一一轮 benchmark 已执行（ad-hoc 单轮管线，S0/QuickJS 复用留存三轮）：fixed 几何均值 0.697×S0、探针 0.752×S0、original Score 1.354×S0，但仍有 10 项 >+5% 残留——depth-proxy 三档为主（根因已闭环，立项 [S21](primitive-vm-s21-proxy-trap-plan.md)），string/转换族、v8-richards、v8-earley-boyer 待重新归因；编译复测（R10）与 RSS 验收（R9）未执行。**性能退出条件未全部通过。**结果与残留清单见[修复计划 §5–§6](primitive-vm-s14-s20-recovery-plan.md)，阶段覆盖记录见文末及[执行计划](primitive-vm-s14-s20-execution-plan.md)。
 
 **上一轮历史状态（S10–S12 被测版本，不代表当前代码）：**状态：S01–S07 验收通过，S08 已收口；S09.1–S09.3 与 N1–N3 保留。**新 S10–S12 的计划内实施及额外覆盖 review 已完成，发现的遗漏已补齐；最终新核心唯一一轮 benchmark/Profile 为 403/403 有效，S0 复用旧三轮。性能目标未全部达成，S09 仍未完成。**58 fixed 中仍有 25 项高于 S0（直接前版为 31 项），67 compile 中 51 项为正差值，可比探针 12/20 更慢，RSS 3/3 更高。普通调用已快于 S0，Map/WeakMap 等仍回退且本轮部分恶化。G 与 S13 未实施。最新完整结果见[新 S10–S12 联合报告](performance/README.md)，[N1–N3 报告](performance/README.md)保留为直接前版证据。全部残余差值（fixed/探针/Score/RSS/编译五类清单）的实现层根因（十类，含 Profile 计数、probe 事件计数与 file:line 证据；其中编译 5 项判定为单轮测量伪影、RSS 2 项判定为映像差归 S13）与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)，对应提交单元见文末[《S14–S20 修复阶段》](#s14s20-修复阶段2026-09-15-立项)。
 
@@ -811,8 +811,8 @@ S12 证据：[布局失效审计](performance/README.md)。SetProperty own-data 
 | S18 | `197bd2d2` | getter/Proxy/native 惰性观察及借用调用 |
 | S19 | `4e8171f8` | 正则借用输入、验证事实与结果布局复用 |
 | S20 | `429effc7` | Context 装箱、零引用回收、inline edges、稀疏 IC |
-| S13 | 本次后续提交 | 唯一执行核心、旧桥退役、语义测试/静态反例迁移 |
+| S13 | `d63c34b0` | 唯一执行核心、旧桥退役、语义测试/静态反例迁移 |
 
 覆盖表见[执行计划](primitive-vm-s14-s20-execution-plan.md)、[S16/S17/S20 复核](primitive-vm-s16-s17-s20-coverage.md)及[迁移账本](primitive-vm-migration.md#s13-单执行核心退役实现与测试迁移)。S18 内联 native 描述符与 S20 实际布局尺寸已如实修订方案说明；实现完成不等于原性能目标已通过。
 
-联合语义门禁进行中；测量只允许最终代码单轮，S0 与 QuickJS 读取本地留存数据。性能结果及原始证据仅写入本地忽略目录，索引见[本地产物说明](performance/README.md)。
+联合语义门禁已完成：final-gates 8 项作业（workspace 测试、oracle 压力、doc 测试、clippy、rust-only、source-layout、Test262、Web/Node）全部通过，Test262 结果向量与基线逐位相等；门禁运行于 `429effc7` + S13 工作树补丁（后原样提交为 `d63c34b0`）。最终唯一一轮测量已于 2026-09-16 执行（S0 与 QuickJS 读取本地留存数据），结果、10 项 >+5% 残留清单与后继归因见[修复计划 §5–§6](primitive-vm-s14-s20-recovery-plan.md)；depth-proxy 残留的根因闭环与修复方案见 [S21 计划](primitive-vm-s21-proxy-trap-plan.md)。性能结果及原始证据仅写入本地忽略目录，索引见[本地产物说明](performance/README.md)。

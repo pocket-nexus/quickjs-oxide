@@ -34,4 +34,7 @@ now an exhaustive ObjectKind match rather than an implicit wildcard.
 S15's deferred DefineField/delete work is production-wired through the resident
 property helper and the S17 layout transactions. It is covered by the same
 property semantics test and documented in `architecture/resident-property-writes.md`.
-Performance-counter targets remain targets, pending the single final run.
+The single final run was executed on 2026-09-16; timing outcomes and the
+remaining >+5% cases are recorded in the recovery plan §5–§6
+(`primitive-vm-s14-s20-recovery-plan.md`). The proxy-probe residual is
+root-caused and scheduled as S21 (`primitive-vm-s21-proxy-trap-plan.md`).

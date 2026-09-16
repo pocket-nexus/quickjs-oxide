@@ -342,3 +342,12 @@ RuntimeState 建 `PinnedAtoms` 表：`length/next/return/done/value/index/input/
 2. **全阶段完成后**：全量 403 项终测 + 与修复计划 §3 矩阵逐项对账（fixed 21、探针 12、Score 3 全部相对 S0 转负或 ≤+2%），更新 README/plan/commit-plan 状态行。
 3. **S13（本序列之后）**：退役旧 VM 路径，验收含 RSS 2 项相对 S0 ±5%（R9）。
 4. 落地时同步重写 `docs/architecture/owned-fusion.md` 驻留边界章节（S15）、IC 失效语义（S16）、转移表边界（S17）、惰性观察边界（S18）。
+
+## 状态（2026-09-16）
+
+全部工序代码已落地（S14–S20 + S13 提交清单见[逐 commit 计划](primitive-vm-commit-plan.md#s13s20-本次交付账本2026-09-16)），额外覆盖 review 的补漏记录见 [S16/S17/S20 复核](primitive-vm-s16-s17-s20-coverage.md)。收尾事项判定：
+
+1. 编译 67 项锁频复测：**未执行**，R10 保持开放。
+2. 全量终测：以 ad-hoc 单轮管线执行（正式管线受 boundary-checker 快照过期所阻）；按矩阵验收口径（相对 S0 转负或 ≤+2%）对账——fixed 21 项中 15 项达标（未达：string_build3/large2、int_to_string、bigint64_arith、v8-crypto +4.0%、v8-earley-boyer）；探针 12 项中 6 项达标（getter 全档、mixed-128、native-32/128；未达：proxy 全档 +21.5~28.7%、native-0 +7.3%、mixed-0/32 +2.5%/+2.9%）；Score 3 项中 splay/raytrace 反超、crypto 差 +4.2% 未达。残留 >+5% 共 10 项，清单与后继归因见[修复计划 §5–§6](primitive-vm-s14-s20-recovery-plan.md)；depth-proxy 残留立项 [S21](primitive-vm-s21-proxy-trap-plan.md)。
+3. S13 已交付（`d63c34b0`），RSS 2 项验收**未执行**，R9 保持开放。
+4. 架构文档同步已随各阶段提交。

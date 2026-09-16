@@ -1,6 +1,6 @@
 # 栈 VM：架构迁移与验收账本
 
-状态：2026-09-16。S14–S20 的计划内代码及 S13 旧执行路径退役已实现，额外覆盖 review 发现的遗漏已补齐。当前只有 SlotStore/FrameEntry/driver 执行核心，已移除 stack-vm feature 开关。最终联合语义门禁进行中，唯一一轮 benchmark/Profile 尚未执行；性能退出条件仍待最终数据判定。实施与验证记录见[逐 commit 计划](primitive-vm-commit-plan.md)、[工序覆盖核对](primitive-vm-s14-s20-execution-plan.md)和[迁移账本](primitive-vm-migration.md#s13-单执行核心退役实现与测试迁移)。
+状态：2026-09-16。S14–S20 的计划内代码及 S13 旧执行路径退役已实现（S13=`d63c34b0`），额外覆盖 review 发现的遗漏已补齐。当前只有 SlotStore/FrameEntry/driver 执行核心，已移除 stack-vm feature 开关。联合语义门禁 8 项作业全部通过，Test262 结果向量逐位对齐；唯一一轮 benchmark 已执行，仍有 10 项 >+5% 残留（depth-proxy 三档为主，根因已闭环并立项 [S21](primitive-vm-s21-proxy-trap-plan.md)），编译复测与 RSS 验收未执行，**性能退出条件未全部通过**。结果与残留清单见[修复计划 §5–§6](primitive-vm-s14-s20-recovery-plan.md)；实施与验证记录见[逐 commit 计划](primitive-vm-commit-plan.md)与[工序覆盖核对](primitive-vm-s14-s20-execution-plan.md)。
 
 历史 S10–S12 被测版本的最终单轮 403/403 有效，58 fixed 仍有 25 项高于 S0（见[联合报告](performance/README.md)）；残余差值的根因与修复阶段见 [S14–S20 修复计划](primitive-vm-s14-s20-recovery-plan.md)。以下能力与结构条目的验收口径不变；历史 S07 回退分析保留为证据（[回退分析](performance/README.md)）。
 

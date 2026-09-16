@@ -229,14 +229,32 @@
 - 语义门禁不变：全量工作区测试、Test262 结果向量逐位对齐、边界矩阵、oracle 压力。驻留化改动必须保留错误 PC/栈锚点与可重入观察点的既有断言。
 - 设计文档先行修订：S15 前更新 `docs/architecture/owned-fusion.md` 的 ConvertAdd 条款；S16 前补写 IC 与多态的失效语义章节；S17 前补 shape 转移表的字典化边界；S18 前补属性驱动被调帧的惰性观察协议边界（哪些 operation/property_wait 状态允许惰性、陷阱返回的快速回执语义）。
 
-## 5. 状态
+## 5. 状态（2026-09-16 更新）
 
-- [ ] S14 字符串/转换内核
-- [ ] S15 run 驻留谱系与退出税
-- [ ] S16 属性协议第三期
-- [ ] S17 shape/atom/哈希结构
-- [ ] S18 调用外围（native + getter/proxy 陷阱帧）
-- [ ] S19 regexp 外围
-- [ ] S20 heap/GC 结构
-- [ ] 编译 5 项伪影：S14 验收轮锁频三轮复测关闭（R10）
-- [ ] RSS 2 项：S13 退役旧路径后验收（R9）
+代码实施全部完成；性能退出条件未全部通过（见 §6）。
+
+- [x] S14 字符串/转换内核 — `51183152`；耗时目标**未达成**：string_build3/large2、int_to_string、bigint64_arith 仍 >+5%（§6）
+- [x] S15 run 驻留谱系与退出税 — `50e3a9dc`（延后的 DefineField/delete 随 `8198f0d7` 交付）
+- [x] S16 属性协议第三期 — `836818cc`（读/全局）+ `8198f0d7`（写 IC/元素）；map 族、crypto、splay/raytrace 全部转负
+- [x] S17 shape/atom/哈希结构 — `d949185e`；prop_delete/prop_clone/array_slice/local_destruct 全部转负
+- [x] S18 调用外围（native + getter/proxy 陷阱帧）— `197bd2d2`；getter/mixed 达标，depth-native-0 +7.3% 边缘残留，**depth-proxy 三档 +21.5~28.7% 残留 → [S21 立项](primitive-vm-s21-proxy-trap-plan.md)**
+- [x] S19 regexp 外围 — `4e8171f8`；regexp 族 fixed 与 original Score 全部转负
+- [x] S20 heap/GC 结构 — `429effc7`
+- [x] S13 退役旧路径 — `d63c34b0`；`legacy_dispatches`/桥接计数全零
+- [ ] 编译 5 项伪影：锁频三轮复测未执行（R10 保持开放）
+- [ ] RSS 2 项：S13 后验收未执行（R9 保持开放）
+- [ ] 残留收口：depth-proxy 3 项 → S21；string/转换族 4 项 + v8-richards/richards Score + v8-earley-boyer 待重新归因立项
+
+## 6. 最终测量结果（2026-09-16，唯一一轮）
+
+正式验收管线（final-gates.py 测量段）因 boundary-checker 快照过期未运行，改用等价口径的 ad-hoc 单轮管线 `target/latest-round/measure.py`：复用项目 run_sample/admit 与同一 67 工作负载回执，fixed 58×3、探针 33×3、original 9×3 取三轮中位，cost profile 58×1（profiling 二进制）；S0/QuickJS 读取 `target/performance-retained/` 留存三轮，未重跑。结果与对比保留在本地 `target/latest-round/`（不入 Git）。
+
+**总体**：fixed 几何均值 0.697×S0、探针 0.752×S0、original Score 几何均值 1.354×S0；QuickJS 差距维持既有量级。
+
+**残留 >+5%（10 项，三轮中位）**：depth-proxy-32 +28.7%、string_build_large2 +28.5%、depth-proxy-0 +26.6%、string_build3 +22.0%、depth-proxy-128 +21.5%、int_to_string +11.7%、v8-earley-boyer +11.3%、bigint64_arith +11.0%、depth-native-0 +7.3%、v8-richards +6.6%。original Score 仅 richards 低于 S0（48.0 vs 53.9，其余 8 项全部持平或反超）。注意 string_build_large2/build3 较立项数字（+14.2%/+11.5%）**恶化**，与 depth-proxy、richards 一并列入待归因清单——单轮口径纪律照旧，先归因再立项。
+
+**depth-proxy 根因已闭环**（2026-09-16 补测：depth-proxy-0/getter-0 cost profile 逐迭代计数 + release 二进制 perf 采样）：残留为 proxy get 陷阱主干专属——陷阱查找零缓存、invariant 检查绕完整分派轮、状态机相位搬运税；S18 外围项（惰性 install、池化、快速回执）全部确认生效。证据、定量与修复设计见 [S21 计划](primitive-vm-s21-proxy-trap-plan.md) §1。
+
+**语义门禁**：final-gates 8 项作业全部通过（workspace 测试、oracle 压力、doc 测试、clippy、rust-only、source-layout、Test262、Web/Node），Test262 结果向量与基线逐位相等（tsv/jsonl 均 equal）。门禁运行于 `429effc7` + S13 工作树补丁（后原样提交为 `d63c34b0`）；驱动进程收尾时收到 SIGTERM 使总状态字段记为 interrupted，但全部作业均已 passed，无一失败。
+
+**未测项**：编译 67 项与峰值 RSS 本轮未测量，R10/R9 的关闭判定保持开放。
