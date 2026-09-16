@@ -109,6 +109,10 @@ pub(crate) struct RuntimeState {
     pub(crate) shape_transitions: HashMap<ShapeId, HashMap<ShapeEntry, ShapeId>>,
     pub(crate) shape_transition_parents: HashMap<ShapeId, Vec<(ShapeId, ShapeEntry)>>,
     pub(crate) well_known_symbols: HashMap<WellKnownSymbol, Atom>,
+    /// One guarded handler-trap location cache per Proxy internal method.
+    /// Indexed by the closed trap selector in `PinnedAtom::proxy_method`.
+    pub(crate) proxy_trap_reads: [crate::engine::object::property_ic::PropertyReadCache;
+        crate::engine::atom::pinned::PROXY_METHOD_COUNT],
     /// Unified QuickJS-style execution-frame chain. Records contain only raw
     /// stable identities and diagnostic state; the corresponding stack-local
     /// [`ActiveFrameGuard`] or its authenticated running frame owns the object

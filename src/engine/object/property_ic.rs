@@ -2,10 +2,11 @@
 //! A hit reads today's parallel data slot, never a value retained by the cache.
 use std::cell::Cell;
 
+use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::atom::{Atom, AtomTable};
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::heap::{ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
-
+use crate::engine::value::Value;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Location {
     domain: u64,
@@ -160,6 +161,56 @@ impl PropertyReadCache {
         };
         self.state.set(next);
         event("property_ic.miss");
+    }
+}
+
+impl Runtime {
+    /// Resolve one Proxy trap method through the per-trap location cache.
+    ///
+    /// A hit reads today's data slot and returns an owned value retained under
+    /// the exclusive heap borrow. A miss records the location (data slots only)
+    /// and returns `None`, so the caller keeps its canonical dynamic read.
+    pub(crate) fn proxy_trap_read(
+        &self,
+        trap: usize,
+        realm: ContextId,
+        handler: ObjectId,
+        atom: Atom,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let raw = {
+            let state = self.0.state.borrow();
+            let cache = &state.proxy_trap_reads[trap];
+            match cache.read(&state.heap, self.domain_id(), realm, handler) {
+                Some(raw) => {
+                    if matches!(
+                        raw,
+                        RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception
+                    ) {
+                        return Ok(None);
+                    }
+                    raw.clone()
+                }
+                None => {
+                    cache.miss(
+                        &state.heap,
+                        &state.atoms,
+                        self.domain_id(),
+                        realm,
+                        Some(handler),
+                        atom,
+                    );
+                    return Ok(None);
+                }
+            }
+        };
+        // String/BigInt clone their backing owner; Object/Symbol retain their
+        // heap count. The handler slot owner keeps the source alive meanwhile.
+        let mut state = self.0.state.borrow_mut();
+        state.retain_raw_root(&raw)?;
+        drop(state);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("proxy_trap_read.hit");
+        Ok(Some(self.take_owned_raw_value(raw)?))
     }
 }
 

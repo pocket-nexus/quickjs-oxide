@@ -175,23 +175,62 @@ impl PinnedAtoms {
     }
 }
 
+/// Number of ECMAScript Proxy internal methods, one cache slot per trap.
+pub(crate) const PROXY_METHOD_COUNT: usize = 13;
+
 impl PinnedAtom {
-    pub(crate) fn proxy_method(name: &str) -> Self {
+    /// Return the pinned trap atom and its stable cache index. The two values
+    /// come from one match so the closed selector cannot diverge from the
+    /// `proxy_trap_reads` array layout.
+    pub(crate) fn proxy_method(name: &str) -> (Self, usize) {
         match name {
-            "get" => Self::Get,
-            "set" => Self::Set,
-            "has" => Self::Has,
-            "apply" => Self::Apply,
-            "construct" => Self::Construct,
-            "deleteProperty" => Self::DeleteProperty,
-            "getPrototypeOf" => Self::GetPrototypeOf,
-            "setPrototypeOf" => Self::SetPrototypeOf,
-            "getOwnPropertyDescriptor" => Self::GetOwnPropertyDescriptor,
-            "defineProperty" => Self::DefineProperty,
-            "ownKeys" => Self::OwnKeys,
-            "isExtensible" => Self::IsExtensible,
-            "preventExtensions" => Self::PreventExtensions,
+            "get" => (Self::Get, 0),
+            "set" => (Self::Set, 1),
+            "has" => (Self::Has, 2),
+            "apply" => (Self::Apply, 3),
+            "construct" => (Self::Construct, 4),
+            "deleteProperty" => (Self::DeleteProperty, 5),
+            "getPrototypeOf" => (Self::GetPrototypeOf, 6),
+            "setPrototypeOf" => (Self::SetPrototypeOf, 7),
+            "getOwnPropertyDescriptor" => (Self::GetOwnPropertyDescriptor, 8),
+            "defineProperty" => (Self::DefineProperty, 9),
+            "ownKeys" => (Self::OwnKeys, 10),
+            "isExtensible" => (Self::IsExtensible, 11),
+            "preventExtensions" => (Self::PreventExtensions, 12),
             _ => unreachable!("proxy method name is a closed internal selector"),
         }
+    }
+}
+
+#[cfg(test)]
+mod proxy_method_tests {
+    use super::*;
+
+    #[test]
+    fn trap_selector_covers_every_cache_slot_exactly_once() {
+        let names = [
+            "get",
+            "set",
+            "has",
+            "apply",
+            "construct",
+            "deleteProperty",
+            "getPrototypeOf",
+            "setPrototypeOf",
+            "getOwnPropertyDescriptor",
+            "defineProperty",
+            "ownKeys",
+            "isExtensible",
+            "preventExtensions",
+        ];
+        assert_eq!(names.len(), PROXY_METHOD_COUNT);
+        let mut seen = [false; PROXY_METHOD_COUNT];
+        for name in names {
+            let (_, index) = PinnedAtom::proxy_method(name);
+            assert!(index < PROXY_METHOD_COUNT);
+            assert!(!seen[index], "duplicate trap index for {name}");
+            seen[index] = true;
+        }
+        assert!(seen.into_iter().all(|slot| slot));
     }
 }

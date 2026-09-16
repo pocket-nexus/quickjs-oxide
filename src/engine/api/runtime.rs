@@ -76,6 +76,9 @@ impl Runtime {
                 shape_transitions: HashMap::new(),
                 shape_transition_parents: HashMap::new(),
                 well_known_symbols,
+                proxy_trap_reads: std::array::from_fn(|_| {
+                    crate::engine::object::property_ic::PropertyReadCache::default()
+                }),
                 active_frames: crate::engine::vm::frames::ActiveFrames::with_depth(
                     active_frame_depth.clone(),
                 ),

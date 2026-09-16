@@ -74,6 +74,105 @@ fn lazy_property_callbacks_preserve_observer_stacks_trap_invariants_and_reentry(
 }
 
 #[test]
+fn proxy_get_trap_selection_cache_reports_hits_and_preserves_invariants() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    context
+        .eval(
+            "var hitTrap=new Proxy({},{get(){return 7}});\
+             var accessorReads=0;var accessorTrap=new Proxy({},{get get(){accessorReads++;return function(){return 3}}});",
+        )
+        .unwrap();
+    let profile = CostProfile::start();
+    assert_eq!(
+        context
+            .eval("var hitTotal=0;for(var i=0;i<50;i++)hitTotal+=hitTrap.missing;hitTotal")
+            .unwrap(),
+        Value::Int(350)
+    );
+    let hits = profile
+        .snapshot()
+        .owned_execution_events
+        .get("proxy_trap_read.hit")
+        .copied()
+        .unwrap_or(0);
+    drop(profile);
+    assert!(hits >= 49, "cache trained after one miss: {hits}");
+    let profile = CostProfile::start();
+    assert_eq!(
+        context
+            .eval("var accessorTotal=0;for(var i=0;i<20;i++)accessorTotal+=accessorTrap.missing;accessorTotal")
+            .unwrap(),
+        Value::Int(60)
+    );
+    assert_eq!(
+        context.eval("accessorReads").unwrap(),
+        Value::Int(20),
+        "an accessor trap runs on every read"
+    );
+    let accessor_hits = profile
+        .snapshot()
+        .owned_execution_events
+        .get("proxy_trap_read.hit")
+        .copied()
+        .unwrap_or(0);
+    assert_eq!(accessor_hits, 0, "accessor traps never report a cache hit");
+    assert!(runtime.0.state.borrow().active_frames.is_empty());
+}
+
+#[test]
+fn proxy_trap_cache_keeps_semantics_across_revoke_gc_and_reentry() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    for source in [
+        // Chain descent: an empty outer handler forwards through a cached inner.
+        "(()=>{let calls=0;let inner=new Proxy({},{get(){calls++;return 5}});let outer=new Proxy(inner,{});let a=outer.x;let b=outer.y;return a===5&&b===5&&calls===2})()",
+        // Revoke between reads drops the cached location and throws.
+        "(()=>{let r=Proxy.revocable({},{get(){return 1}});let p=r.proxy;if(p.x!==1)return false;r.revoke();try{p.x}catch(e){return e instanceof TypeError}return false})()",
+        // A same-shape trap overwrite is observed on the next read.
+        "(()=>{let f=function(){return 1};let h={get:f};let p=new Proxy({},h);if(p.x!==1)return false;h.get=function(){return 2};return p.x===2})()",
+        // Invariant TypeError conditions and ordering are unchanged.
+        "(()=>{let t={};Object.defineProperty(t,'x',{value:1,writable:false,configurable:false});try{new Proxy(t,{get(){return 2}}).x}catch(e){return e instanceof TypeError}return false})()",
+        "(()=>{let t={};Object.defineProperty(t,'x',{get:undefined,configurable:false});try{new Proxy(t,{get(){return undefined}}).x;return true}catch(e){return false}})()",
+        // Reflect.get follows the same trap selection cache.
+        "(()=>{let p=new Proxy({x:4},{get(t,k,r){return Reflect.get(t,k,r)}});let total=0;for(let i=0;i<20;i++)total+=Reflect.get(p,'x');return total===80})()",
+    ] {
+        assert_eq!(context.eval(source).unwrap(), Value::Bool(true), "{source}");
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+    runtime.run_gc().unwrap();
+    assert_eq!(
+        context
+            .eval("(()=>{let h={get:function(){return 9}};let p=new Proxy({},h);return p.x===9&&p.y===9})()")
+            .unwrap(),
+        Value::Bool(true),
+        "cache entries survive collection without stale hits"
+    );
+}
+
+#[test]
+fn trap_cache_does_not_retain_the_runtime() {
+    let weak = {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval(
+                "var retainedHandler={get:function(){return 1}};\
+                 var retainedProxy=new Proxy({},retainedHandler);\
+                 for(var i=0;i<8;i++)retainedProxy.x;",
+            )
+            .unwrap();
+        runtime.run_gc().unwrap();
+        assert_eq!(context.eval("retainedProxy.x").unwrap(), Value::Int(1));
+        std::rc::Rc::downgrade(&runtime.0)
+    };
+    assert!(
+        weak.upgrade().is_none(),
+        "the trap location cache retained a Runtime"
+    );
+}
+
+#[test]
 fn native_leaf_proofs_skip_materialization_but_errors_and_objects_observe() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();

@@ -52,6 +52,8 @@ pub(super) struct MethodResumeState {
 struct Search {
     realm: ContextId,
     key: PropertyKey,
+    /// Closed trap selector indexing `RuntimeState.proxy_trap_reads`.
+    trap: usize,
     limit: Option<usize>,
     depth: usize,
     _guard: ProxyMethodStackGuard,
@@ -68,11 +70,12 @@ impl MethodStep {
             return overflow(runtime, realm);
         }
         let guard = ProxyMethodStackGuard::enter(runtime);
-        let key = runtime
-            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::proxy_method(name))?;
+        let (trap, trap_index) = crate::engine::atom::pinned::PinnedAtom::proxy_method(name);
+        let key = runtime.pinned_property_key(trap)?;
         Search {
             realm,
             key,
+            trap: trap_index,
             limit: runtime.proxy_method_chain_limit(name),
             depth: 0,
             _guard: guard,
@@ -106,6 +109,22 @@ impl Search {
             };
             return Ok(MethodStep::Throw(value));
         }
+        // A cached data-slot location skips the dynamic `handler[name]` read.
+        // The value is always read from today's slot, so a same-shape overwrite
+        // of the trap function is observed on the next operation. Accessors,
+        // dictionary layouts and Proxy handlers decline and keep the full read.
+        if let Some(value) =
+            runtime.proxy_trap_read(self.trap, self.realm, data.handler, self.key.atom())?
+        {
+            let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
+            let resume = MethodResume(super::reuse::PooledBox::new(MethodResumeState {
+                pending_effect: MethodStepPending::default(),
+                rooted: Some(rooted),
+                selected: None,
+                search: self,
+            }));
+            return resume.resume(runtime, Completion::Return(value));
+        }
         let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
         Ok(MethodStep::request_read(
             rooted.handler.clone(),
@@ -133,55 +152,87 @@ impl MethodResume {
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<MethodStep, RuntimeError> {
-        let value = match completion {
+        let mut value = match completion {
             Completion::Throw(value) => return Ok(MethodStep::Throw(value)),
             Completion::Return(value) => value,
         };
-        let state = &mut *self.0;
-        if matches!(value, Value::Undefined | Value::Null) {
-            let rooted = state.rooted.as_ref().expect("proxy owner");
-            if let Some(data) = runtime.proxy_snapshot_if_any(&rooted.target)? {
-                state.search.depth = state.search.depth.saturating_add(1);
-                if state
-                    .search
-                    .limit
-                    .is_some_and(|limit| state.search.depth == limit)
+        // Undefined/Null keeps walking the target Proxy chain iteratively; every
+        // level first tries the trap cache and otherwise keeps the dynamic read.
+        loop {
+            if matches!(value, Value::Undefined | Value::Null) {
+                let target = self
+                    .0
+                    .rooted
+                    .as_ref()
+                    .expect("proxy owner")
+                    .target
+                    .clone();
+                let Some(data) = runtime.proxy_snapshot_if_any(&target)? else {
+                    return Ok(MethodStep::Complete { resume: self });
+                };
                 {
-                    return overflow(runtime, state.search.realm);
+                    let state = &mut *self.0;
+                    state.search.depth = state.search.depth.saturating_add(1);
+                    if state
+                        .search
+                        .limit
+                        .is_some_and(|limit| state.search.depth == limit)
+                    {
+                        return overflow(runtime, state.search.realm);
+                    }
                 }
                 if data.is_revoked {
+                    let realm = self.0.search.realm;
                     let NativeConversion::Throw(value) =
-                        runtime.proxy_revoked_throw::<()>(state.search.realm)?
+                        runtime.proxy_revoked_throw::<()>(realm)?
                     else {
                         unreachable!("revoked proxy throws")
                     };
                     return Ok(MethodStep::Throw(value));
                 }
-                let next = runtime.root_proxy_snapshot(&rooted.target, data)?;
-                let old = state.rooted.replace(next);
-                let rooted = state.rooted.as_ref().unwrap();
-                let object = rooted.handler.clone();
-                let receiver = Value::Object(rooted.handler.clone());
-                let key = state.search.key.clone();
-                let step = MethodStep::request_read(object, key, receiver, self);
-                drop(old);
-                return Ok(step);
+                let next = runtime.root_proxy_snapshot(&target, data)?;
+                let cached = runtime.proxy_trap_read(
+                    self.0.search.trap,
+                    self.0.search.realm,
+                    next.handler.object_id(),
+                    self.0.search.key.atom(),
+                )?;
+                let old = self.0.rooted.replace(next);
+                match cached {
+                    Some(method_value) => {
+                        drop(old);
+                        value = method_value;
+                        continue;
+                    }
+                    None => {
+                        let (object, receiver, key) = {
+                            let rooted = self.0.rooted.as_ref().expect("proxy owner");
+                            (
+                                rooted.handler.clone(),
+                                Value::Object(rooted.handler.clone()),
+                                self.0.search.key.clone(),
+                            )
+                        };
+                        let step = MethodStep::request_read(object, key, receiver, self);
+                        drop(old);
+                        return Ok(step);
+                    }
+                }
             }
+            let method = match runtime.direct_call_target_from_value(value) {
+                Ok(method) => method,
+                Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
+                    return Ok(MethodStep::Throw(runtime.new_native_error_from_error(
+                        self.0.search.realm,
+                        NativeErrorKind::Type,
+                        &error,
+                    )?));
+                }
+                Err(error) => return Err(error),
+            };
+            self.0.selected = Some(method);
             return Ok(MethodStep::Complete { resume: self });
         }
-        let method = match runtime.direct_call_target_from_value(value) {
-            Ok(method) => method,
-            Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
-                return Ok(MethodStep::Throw(runtime.new_native_error_from_error(
-                    state.search.realm,
-                    NativeErrorKind::Type,
-                    &error,
-                )?));
-            }
-            Err(error) => return Err(error),
-        };
-        state.selected = Some(method);
-        Ok(MethodStep::Complete { resume: self })
     }
 }
 
@@ -260,5 +311,171 @@ mod resident_tests {
         assert_eq!((&*resume.0) as *const MethodResumeState, address);
         assert_eq!(resume.take_completed_rooted().proxy, proxy);
         assert!(resume.take_completed_target().is_none());
+    }
+}
+
+#[cfg(test)]
+mod trap_cache_tests {
+    use super::*;
+
+    fn object(value: Value) -> ObjectRef {
+        let Value::Object(object) = value else {
+            panic!("expected object")
+        };
+        object
+    }
+
+    fn callable_id(target: &DirectCallTarget) -> crate::engine::heap::ObjectId {
+        match target {
+            DirectCallTarget::Callable(callable) => callable.as_object().object_id(),
+            DirectCallTarget::NonCallableProxy(object) => object.object_id(),
+        }
+    }
+
+    fn start(runtime: &Runtime, realm: ContextId, proxy: &ObjectRef) -> MethodStep {
+        MethodStep::start(runtime, realm, proxy.clone(), "get").unwrap()
+    }
+
+    #[test]
+    fn trap_cache_skips_the_dynamic_read_and_follows_same_shape_overwrite() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval(
+                "var first=function(){return 1};var second=function(){return 2};\
+                 var trapHandler={get:first};var trapProxy=new Proxy({},trapHandler);",
+            )
+            .unwrap();
+        let proxy = object(context.eval("trapProxy").unwrap());
+        let realm = context.realm;
+
+        assert!(
+            matches!(start(&runtime, realm, &proxy), MethodStep::Read { .. }),
+            "a cold cache still performs the canonical dynamic read"
+        );
+        let MethodStep::Complete { mut resume } = start(&runtime, realm, &proxy) else {
+            panic!("the trained location must skip the dynamic read")
+        };
+        assert_eq!(
+            callable_id(&resume.take_completed_target().unwrap()),
+            object(context.eval("first").unwrap()).object_id()
+        );
+
+        // Overwriting a data property keeps the shape and revision; the cache
+        // stores a location, so the next operation observes the new function.
+        context.eval("trapHandler.get=second").unwrap();
+        let MethodStep::Complete { mut resume } = start(&runtime, realm, &proxy) else {
+            panic!("same-shape overwrite keeps the cache location")
+        };
+        assert_eq!(
+            callable_id(&resume.take_completed_target().unwrap()),
+            object(context.eval("second").unwrap()).object_id()
+        );
+    }
+
+    #[test]
+    fn accessor_proxy_handler_trap_always_uses_the_dynamic_read() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval(
+                "var accessorReads=0;var accessorHandler={};\
+                 Object.defineProperty(accessorHandler,'get',{get(){accessorReads++;return function(){return 5}}});\
+                 var accessorProxy=new Proxy({},accessorHandler);",
+            )
+            .unwrap();
+        let proxy = object(context.eval("accessorProxy").unwrap());
+        for _ in 0..3 {
+            assert!(
+                matches!(start(&runtime, context.realm, &proxy), MethodStep::Read { .. }),
+                "an accessor trap may run observable code on every read"
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_handler_trap_declines_the_cache() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval(
+                "var innerHandler={get:function(){return 1}};\
+                 var proxyHandler=new Proxy(innerHandler,{});\
+                 var chainedProxy=new Proxy({},proxyHandler);",
+            )
+            .unwrap();
+        let proxy = object(context.eval("chainedProxy").unwrap());
+        for _ in 0..3 {
+            assert!(matches!(
+                start(&runtime, context.realm, &proxy),
+                MethodStep::Read { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn deleted_trap_location_falls_back_to_the_dynamic_read() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval("var delHandler={get:function(){return 1}};var delProxy=new Proxy({},delHandler);")
+            .unwrap();
+        let proxy = object(context.eval("delProxy").unwrap());
+        assert!(matches!(
+            start(&runtime, context.realm, &proxy),
+            MethodStep::Read { .. }
+        ));
+        assert!(matches!(
+            start(&runtime, context.realm, &proxy),
+            MethodStep::Complete { .. }
+        ));
+        context.eval("delete delHandler.get").unwrap();
+        assert!(
+            matches!(
+                start(&runtime, context.realm, &proxy),
+                MethodStep::Read { .. }
+            ),
+            "removing the layout revision invalidates the location"
+        );
+    }
+
+    #[test]
+    fn revoked_proxy_is_rejected_before_the_cache_is_consulted() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        context
+            .eval("var revocable=Proxy.revocable({},{get:function(){return 1}});var revoked=revocable.proxy;")
+            .unwrap();
+        let proxy = object(context.eval("revoked").unwrap());
+        assert!(matches!(
+            start(&runtime, context.realm, &proxy),
+            MethodStep::Read { .. }
+        ));
+        context.eval("revocable.revoke()").unwrap();
+        assert!(
+            matches!(
+                start(&runtime, context.realm, &proxy),
+                MethodStep::Throw(_)
+            ),
+            "revocation is checked before any cached hit"
+        );
+    }
+
+    #[test]
+    fn proxy_method_chain_limit_still_bounds_cached_descent() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        // Empty handlers forward by returning a non-method, so an end-to-end
+        // lookup descends the whole chain and trips the closed logical budget.
+        assert_eq!(
+            context
+                .eval(
+                    "(()=>{let chain=new Proxy({},{});\
+                     for(let i=0;i<3000;i++)chain=new Proxy(chain,{});\
+                     try{chain.x;return false}catch(e){return String(e).includes('stack overflow')}})()"
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
     }
 }

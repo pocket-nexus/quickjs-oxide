@@ -35,3 +35,33 @@ TypedArray additionally decline numeric spellings because indexed reads can be
 intercepted before shape lookup. Proxy traps and ModuleNamespace live bindings
 always retain their domain algorithms. The same classification applies at each
 prototype holder. A newly added class must make an explicit admission choice.
+
+## Proxy trap selection cache (S21)
+
+`MethodStep::start` resolves one of the 13 Proxy traps by reading
+`handler[trapName]` on every operation. S21 reuses the same guarded
+`PropertyReadCache` location protocol for that read. One cache per runtime is
+indexed by a closed trap index (`RuntimeState.proxy_trap_reads`), so the cache
+key is the handler's shape lineage, not a specific proxy: proxies that share a
+handler shape share the cache entry. The cache owns no object, atom or value,
+and lives outside `ProxyData`, so it adds no GC edge and does not change
+`ProxyData`/`ArenaSlot` layout.
+
+The cacheable judgement is deliberately narrower than an ordinary read:
+the trap location must be an own or inherited **Data** slot. `locate` reuses the
+read-IC admission test, so an accessor trap (`get get(){...}`), a
+`VarRef`/`AutoInit` slot, a dictionary layout, or a handler that is itself a
+Proxy declines and keeps the canonical dynamic read. A declined handler cools
+the trap entry down (megamorphic) for the same 1024 reads as a read site, which
+only degrades to today's every-read cost. Accessors therefore run their getter
+on every read; nested Proxy handlers keep their trap ordering.
+
+Invalidation is the read-IC invalidation verbatim: adding/removing properties or
+`defineProperty` changes the layout revision, a same-shape overwrite of
+`handler.get` is read as today's slot value (the cache stores a location, never
+a value), a prototype hit checks the global layout epoch, a collected shape
+fails the generational `heap.shape(id)` lookup, and a revoked Proxy is rejected
+*before* the cache is consulted. Realm and runtime domain mismatches are
+`Location` guards. The dynamic `handler[trapName]` read is always retained as the
+semantic fallback, so a cache miss never changes operation order or observable
+results.
