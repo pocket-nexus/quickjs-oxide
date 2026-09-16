@@ -243,7 +243,7 @@
 - [x] S13 退役旧路径 — `d63c34b0`；`legacy_dispatches`/桥接计数全零
 - [ ] 编译 5 项伪影：锁频三轮复测未执行（R10 保持开放）
 - [ ] RSS 2 项：S13 后验收未执行（R9 保持开放）
-- [ ] 残留收口：depth-proxy 3 项 → S21；string/转换族 4 项 + v8-richards/richards Score + v8-earley-boyer 待重新归因立项
+- [ ] 残留收口：depth-proxy 3 项 → [S21](primitive-vm-s21-proxy-trap-plan.md)；string_build3/large2（及顺带 int_to_string/bigint64_arith）→ [S22](primitive-vm-s22-string-concat-plan.md)；v8-richards/richards Score + v8-earley-boyer 待重新归因立项
 
 ## 6. 最终测量结果（2026-09-16，唯一一轮）
 
@@ -251,7 +251,7 @@
 
 **总体**：fixed 几何均值 0.697×S0、探针 0.752×S0、original Score 几何均值 1.354×S0；QuickJS 差距维持既有量级。
 
-**残留 >+5%（10 项，三轮中位）**：depth-proxy-32 +28.7%、string_build_large2 +28.5%、depth-proxy-0 +26.6%、string_build3 +22.0%、depth-proxy-128 +21.5%、int_to_string +11.7%、v8-earley-boyer +11.3%、bigint64_arith +11.0%、depth-native-0 +7.3%、v8-richards +6.6%。original Score 仅 richards 低于 S0（48.0 vs 53.9，其余 8 项全部持平或反超）。注意 string_build_large2/build3 较立项数字（+14.2%/+11.5%）**恶化**，与 depth-proxy、richards 一并列入待归因清单——单轮口径纪律照旧，先归因再立项。
+**残留 >+5%（10 项，三轮中位）**：depth-proxy-32 +28.7%、string_build_large2 +28.5%、depth-proxy-0 +26.6%、string_build3 +22.0%、depth-proxy-128 +21.5%、int_to_string +11.7%、v8-earley-boyer +11.3%、bigint64_arith +11.0%、depth-native-0 +7.3%、v8-richards +6.6%。original Score 仅 richards 低于 S0（48.0 vs 53.9，其余 8 项全部持平或反超）。注意 string_build_large2/build3 较 S10–S12 三轮中位（+10.1%/+3.8%）**恶化** +18pp——已于 2026-09-16 归因闭环：S15 将 String 形态 Add 驻留时未随迁 add_store 融合与发布豁免，每次前插拼接多付 1 次 StringRc 拷贝、1 次热释放与 2 次 PC 注册表发布（+33~35ns × 1.6M 次 = 恶化全量），立项 [S22](primitive-vm-s22-string-concat-plan.md)；richards/earley-boyer 仍待归因——单轮口径纪律照旧，先归因再立项。
 
 **depth-proxy 根因已闭环**（2026-09-16 补测：depth-proxy-0/getter-0 cost profile 逐迭代计数 + release 二进制 perf 采样）：残留为 proxy get 陷阱主干专属——陷阱查找零缓存、invariant 检查绕完整分派轮、状态机相位搬运税；S18 外围项（惰性 install、池化、快速回执）全部确认生效。证据、定量与修复设计见 [S21 计划](primitive-vm-s21-proxy-trap-plan.md) §1。
 

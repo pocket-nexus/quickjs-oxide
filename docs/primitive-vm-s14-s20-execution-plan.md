@@ -348,6 +348,6 @@ RuntimeState 建 `PinnedAtoms` 表：`length/next/return/done/value/index/input/
 全部工序代码已落地（S14–S20 + S13 提交清单见[逐 commit 计划](primitive-vm-commit-plan.md#s13s20-本次交付账本2026-09-16)），额外覆盖 review 的补漏记录见 [S16/S17/S20 复核](primitive-vm-s16-s17-s20-coverage.md)。收尾事项判定：
 
 1. 编译 67 项锁频复测：**未执行**，R10 保持开放。
-2. 全量终测：以 ad-hoc 单轮管线执行（正式管线受 boundary-checker 快照过期所阻）；按矩阵验收口径（相对 S0 转负或 ≤+2%）对账——fixed 21 项中 15 项达标（未达：string_build3/large2、int_to_string、bigint64_arith、v8-crypto +4.0%、v8-earley-boyer）；探针 12 项中 6 项达标（getter 全档、mixed-128、native-32/128；未达：proxy 全档 +21.5~28.7%、native-0 +7.3%、mixed-0/32 +2.5%/+2.9%）；Score 3 项中 splay/raytrace 反超、crypto 差 +4.2% 未达。残留 >+5% 共 10 项，清单与后继归因见[修复计划 §5–§6](primitive-vm-s14-s20-recovery-plan.md)；depth-proxy 残留立项 [S21](primitive-vm-s21-proxy-trap-plan.md)。
+2. 全量终测：以 ad-hoc 单轮管线执行（正式管线受 boundary-checker 快照过期所阻）；按矩阵验收口径（相对 S0 转负或 ≤+2%）对账——fixed 21 项中 15 项达标（未达：string_build3/large2、int_to_string、bigint64_arith、v8-crypto +4.0%、v8-earley-boyer）；探针 12 项中 6 项达标（getter 全档、mixed-128、native-32/128；未达：proxy 全档 +21.5~28.7%、native-0 +7.3%、mixed-0/32 +2.5%/+2.9%）；Score 3 项中 splay/raytrace 反超、crypto 差 +4.2% 未达。残留 >+5% 共 10 项，清单与后继归因见[修复计划 §5–§6](primitive-vm-s14-s20-recovery-plan.md)；depth-proxy 残留立项 [S21](primitive-vm-s21-proxy-trap-plan.md)，string 前插拼接族恶化已归因立项 [S22](primitive-vm-s22-string-concat-plan.md)。
 3. S13 已交付（`d63c34b0`），RSS 2 项验收**未执行**，R9 保持开放。
 4. 架构文档同步已随各阶段提交。

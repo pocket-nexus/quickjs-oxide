@@ -11,8 +11,10 @@ The [stack VM redesign](primitive-vm-plan.md), organized as
 the legacy execution path is retired and the SlotStore/FrameEntry/driver core
 is the only engine. Final semantic gates passed with a bit-identical Test262
 result vector, so the validation baseline below is unchanged. The single final
-benchmark round leaves 10 cases above S0 +5% (proxy call probes foremost;
-follow-up in [S21](primitive-vm-s21-proxy-trap-plan.md), full ledger in the
+benchmark round leaves 10 cases above S0 +5% (proxy call probes and prepend
+string concatenation foremost; follow-up in
+[S21](primitive-vm-s21-proxy-trap-plan.md) and
+[S22](primitive-vm-s22-string-concat-plan.md), full ledger in the
 [recovery plan](primitive-vm-s14-s20-recovery-plan.md)).
 
 ## Current baseline
