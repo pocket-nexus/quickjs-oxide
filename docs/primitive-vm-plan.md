@@ -2,6 +2,8 @@
 
 状态：2026-09-16。S14–S20 的计划内代码及 S13 旧执行路径退役已实现（S13=`d63c34b0`），额外覆盖 review 发现的遗漏已补齐。当前只有 SlotStore/FrameEntry/driver 执行核心，已移除 stack-vm feature 开关。联合语义门禁 8 项作业全部通过，Test262 结果向量逐位对齐；唯一一轮 benchmark 已执行：fixed 几何均值 0.697×S0、探针 0.752×S0、original Score 1.354×S0，仍有 10 项 >+5% 残留（depth-proxy 三档与 string 前插拼接族为主，已分别归因立项 [S21](primitive-vm-s21-proxy-trap-plan.md)/[S22](primitive-vm-s22-string-concat-plan.md)），编译复测与 RSS 验收未执行，**性能退出条件未全部通过**。结果与残留清单见[修复计划 §5–§6](primitive-vm-s14-s20-recovery-plan.md)；实施与验证记录见[逐 commit 计划](primitive-vm-commit-plan.md)、[工序覆盖核对](primitive-vm-s14-s20-execution-plan.md)和[迁移账本](primitive-vm-migration.md#s13-单执行核心退役实现与测试迁移)。
 
+**状态续（2026-09-16）：**S21（陷阱选择缓存 + ordinary-target 同步 invariant）与 S22（前插拼接融合 + 驻留/释放发布豁免）已实现并推送（`23e58e4c`/`85aeb20e`/`083b53f9`/`3b0804d2`），S22.3/S21.3 经测量门控关闭。合并单轮后 >+5% 残留由 10 项降为 4 项（depth-proxy-0/32、v8-earley-boyer、richards），fixed/探针/original 相对 S0 分别为 0.680/0.721/1.386；对 QuickJS 差距由 fixed 17.6×/original 23.7× 收敛到 12.0×/18.3×。详见 [S21 §9](primitive-vm-s21-proxy-trap-plan.md) 与 [S22 §9](primitive-vm-s22-string-concat-plan.md)。
+
 面向实现者和审查者。目标是在一个 PR 内改进执行架构，解决 issue #16 的栈深、数值执行、调用存储、局部更新与 PC 管理问题。算法和模块设计见[实施设计](primitive-vm-implementation-plan.md)，顺序见[逐 commit 计划](primitive-vm-commit-plan.md)，范围见[迁移清单](primitive-vm-migration.md)。
 
 [架构说明](architecture.md)记录当前实现与跨模块职责；本文及上述三份文档共同定义本次改造。[历史计划](archive/README.md)保留旧基线，不为本轮追加目录、接口或执行方式的保留要求。

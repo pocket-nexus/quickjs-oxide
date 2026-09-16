@@ -149,3 +149,7 @@ S21.1 的命中路径仍付一次 `MethodResumeState` 的 PooledBox 进出（构
 耗时（三轮中位对 S0 三轮中位）：depth-proxy-0 **+26.6% → +8.9%**、depth-proxy-32 **+28.7% → +10.2%**、depth-proxy-128 **+21.5% → +4.8%**；512/2048 与 128 档差值 ≤±1%（固定成本一致性达标）。目标 ≤+2% **未达标**。getter/native/mixed 探针族无连带回退；fixed geomean 0.697→0.692、probe geomean 0.752→0.726（整体改善）。>5% 对 S0 回归项（string_build*、int_to_string、float_arith、bigint64_arith、v8-earley-boyer、richards）为 S22 已立项的先存 prepend/字符串拼接回归，非 S21 引入。
 
 结论：S21.1/S21.2 消掉了 R-A（每读全量动态读）与 R-B（descriptor 分派轮），机械计数全部达标；残余 ≈15 ms 属 R-C（proxy_get_driver 相位搬运）与 S21.4 类结构成本，字面 S21.3 收益上界 <1%（perf：`PooledBox::drop` 0.38%），不足以收敛剩余差值。
+
+### 9.1 与 S22 合测后的最终状态
+
+S21 以 `23e58e4c`（陷阱缓存，含架构文档与红线测试）、`85aeb20e`（ordinary-target 同步 invariant）、`083b53f9`（本文档）落地并推送。与 S22 合测的同一轮（单轮 ×3）复现 depth-proxy-0 **+11.4%**、depth-proxy-32 **+10.5%**、128 约 +5%，与上表同量级、属轮间波动；S22 已消除全部字符串/算术族回归，两项合并后 >5% 对 S0 回归仅剩 **depth-proxy-0/32**（S21 残余）与非线性族的 v8-earley-boyer、richards。整体对 QuickJS 差距由 S0 的 fixed 17.6×/original 23.7× 收敛到 **12.0×/18.3×**。

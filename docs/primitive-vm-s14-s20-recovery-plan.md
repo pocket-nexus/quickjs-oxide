@@ -258,3 +258,13 @@
 **语义门禁**：final-gates 8 项作业全部通过（workspace 测试、oracle 压力、doc 测试、clippy、rust-only、source-layout、Test262、Web/Node），Test262 结果向量与基线逐位相等（tsv/jsonl 均 equal）。门禁运行于 `429effc7` + S13 工作树补丁（后原样提交为 `d63c34b0`）；驱动进程收尾时收到 SIGTERM 使总状态字段记为 interrupted，但全部作业均已 passed，无一失败。
 
 **未测项**：编译 67 项与峰值 RSS 本轮未测量，R10/R9 的关闭判定保持开放。
+
+## 7. S21/S22 收口（2026-09-16 续）
+
+S21（陷阱选择缓存 + ordinary-target 同步 invariant，`23e58e4c`/`85aeb20e`/`083b53f9`）与 S22（前插拼接融合 + 驻留/释放发布豁免，`3b0804d2`）已实现并推送；S22.3/S21.3 经测量门控关闭，S21.4 缓行。合并单轮（`target/latest-round/`，单轮 ×3）结果：
+
+- **S22 消除全部字符串/算术族残留**：string_build3 +22.0%→−21.8%、string_build_large2 +28.5%→−15.5%、int_to_string +11.7%→+3.4%、bigint64_arith +11.0%→+1.9%、float_arith +10.8%→+1.3%（均对 S0 三轮中位）。
+- **S21 使 depth-proxy 开销约减半**（+26.6%→+11%），但未达 ≤+2%，残余属 S21.4 类结构成本。
+- **>+5% 残留由 10 项降为 4 项**：depth-proxy-0（+11.4%）、depth-proxy-32（+10.5%）、v8-earley-boyer（+10.9%）、richards Score（−8.2%）。
+- 合并 overall：fixed 0.680×S0、探针 0.721×S0、original Score 1.386×S0；对 QuickJS 差距由 fixed 17.6×/original 23.7× 收敛到 12.0×/18.3×。
+- Test262 full 结果向量仍逐位对齐（79982/80032/102037）；详见证词见 [S21 §9](primitive-vm-s21-proxy-trap-plan.md) 与 [S22 §9](primitive-vm-s22-string-concat-plan.md)。

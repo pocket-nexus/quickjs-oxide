@@ -10,12 +10,15 @@ The [stack VM redesign](primitive-vm-plan.md), organized as
 [staged commits](primitive-vm-commit-plan.md), is implemented as of 2026-09-16:
 the legacy execution path is retired and the SlotStore/FrameEntry/driver core
 is the only engine. Final semantic gates passed with a bit-identical Test262
-result vector, so the validation baseline below is unchanged. The single final
-benchmark round leaves 10 cases above S0 +5% (proxy call probes and prepend
-string concatenation foremost; follow-up in
-[S21](primitive-vm-s21-proxy-trap-plan.md) and
-[S22](primitive-vm-s22-string-concat-plan.md), full ledger in the
-[recovery plan](primitive-vm-s14-s20-recovery-plan.md)).
+result vector, so the validation baseline below is unchanged. The follow-up
+[S21 proxy trap cache](primitive-vm-s21-proxy-trap-plan.md) and
+[S22 string-concat fusion](primitive-vm-s22-string-concat-plan.md) are now
+implemented: S22 removes the real prepend-string regression (string_build3
++22.0% -> -21.8%, string_build_large2 +28.5% -> -15.5% vs S0), while S21 cuts the
+depth-proxy overhead roughly in half (+26.6% -> +11%). The single combined round
+leaves 4 cases above S0 +5% (depth-proxy-0/32, v8-earley-boyer, richards);
+details and the S21 residual are recorded in the plan §9 sections and the
+[recovery plan](primitive-vm-s14-s20-recovery-plan.md).
 
 ## Current baseline
 

@@ -149,3 +149,5 @@
 
 （同轮 S21 残余 depth-proxy 仍 ~+11%，属 S21 计划的未达标项，与 S22 无关。）
 
+S22.1 与 S22.2 因 `run.rs`/`local_add.rs` 改动交织，作为一个可独立 revert 的提交 `3b0804d2`（`perf(vm): fuse constant-left string concatenation and publish primitive PCs lazily`）落地并推送；S22.3 关闭。合并后整体对 QuickJS 差距由 S0 的 fixed 17.6×/original 23.7× 收敛到 **12.0×/18.3×**。
+
