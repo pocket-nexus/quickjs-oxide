@@ -312,10 +312,12 @@ mod tests {
         let depth = execution.slots.depth(&frame.window);
         let before = (frame.fault_pc, frame.resume_pc);
         let realm = frame.executable.realm;
+        let active_frame = frame.active_frame;
+        let fault_pc = frame.fault_pc;
         runtime
             .update_active_bytecode_pc(
-                frame.active_frame,
-                crate::engine::vm::BytecodePc::new(frame.fault_pc),
+                active_frame,
+                crate::engine::vm::BytecodePc::new(fault_pc),
             )
             .unwrap();
         {
@@ -336,6 +338,8 @@ mod tests {
                 &mut transaction,
                 NumericKind::PostInc,
                 &mut execution.pending,
+                active_frame,
+                fault_pc,
             );
             assert!(
                 result.is_err(),

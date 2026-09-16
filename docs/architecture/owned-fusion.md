@@ -25,6 +25,8 @@ Supported spans:
 | Primitive AddStore with discarded result | Add, SetLocal[/Check], Drop | 3 |
 | Borrowed LocalAdd | GetLocal[/Check] L, GetLocal[/Check] R, Add, PutLocal[/Check] L | 4 |
 | Borrowed LocalAdd with discarded result | GetLocal[/Check] L, GetLocal[/Check] R, Add, SetLocal[/Check] L, Drop | 5 |
+| Borrowed constant-left LocalAdd | PushConst C, GetLocal[/Check] R, Add, PutLocal[/Check] R | 4 |
+| Borrowed constant-left LocalAdd with discarded result | PushConst C, GetLocal[/Check] R, Add, SetLocal[/Check] R, Drop | 5 |
 | Direct method call | GetField2, 0–7 literal/direct binding reads, matching CallMethod | 2–9 |
 
 Any branch, catch or gosub target inside a proposed span rejects it. The next PC
@@ -189,3 +191,35 @@ PC publication deduplicates against the actual active-frame record, rather than
 an independent cached PC in Frame. Direct run publication and driver publication
 therefore cannot invalidate each other's last-published knowledge. Call/Complete
 exemption selection is centralized in RunExit::observes_activation.
+
+## S22 constant-left LocalAdd and primitive publication exemption
+
+`r = "x" + r` (prepend) compiles to `PushConst C, GetLocal[/Check] R, Add,
+PutLocal[/Check] R` or `... SetLocal[/Check] R, Drop`. The same borrowed LocalAdd
+completion now covers this shape (flags 130/131, span 4/5). Admission is
+structural at compile time; the constant's String form, the local's Normal
+non-const definition, matching store target and the runtime `Direct`, non-Object,
+domain-valid guard are all checked before `RunExit::AddLocal`. Concatenation order
+is preserved: the constant is the left operand, so `try_concat(C, R)` never
+appends into the shared constant buffer and never swaps operand roles. The local
+is borrowed through `FrameTransaction::with_local_add_constant_left` while
+primitive storage is allocated; the result replaces the local through the same
+`replace_local_pending` path and the old local owner is released after the
+transaction. Object operands, TDZ/captured/const bindings, insufficient window
+capacity and non-String constants decline to the canonical `PushConst`/`GetLocal`
+sequence.
+
+Publication is split from materialization for the resident primitive boundary.
+The condition for skipping an active-PC publication is exactly: the completion
+constructs no JavaScript error and every released owner is a non-heap-object
+Rc/scalar (String, BigInt, Number, Bool, Undefined, Null). Object and Symbol
+owners keep the canonical materialize+`publish_fault`+active-PC sequence because
+their release can drain runtime roots or observe the frame. The resident numeric
+entry publishes only immediately before `new_native_error_from_error` in
+`numeric::complete`, and the Symbol/BigInt pre-materialize gate remains so that
+published frame is already materialized; `JsInternal` (string too long / out of
+memory) is a JavaScript error and takes the same publication. `complete_local_add`
+and the overwritten-local release path follow the same rule. Canonical fault/resume
+Frame writes and the canonical store-site publication on an internal replacement
+error are unchanged.
+

@@ -124,10 +124,28 @@
 
 ## 8. 状态
 
-- [ ] 架构文档条款（工序 1）
-- [ ] 红线测试先行（工序 2）
-- [ ] S22.1 前插融合（工序 3–6）
-- [ ] S22.2 发布豁免（工序 7–10）
-- [ ] 语义门禁全量（工序 11）
-- [ ] 最终测量与验收（工序 12）
-- [ ] S22.3 门控判定（工序 13）
+- [x] 架构文档条款（工序 1）：`docs/architecture/owned-fusion.md` 新增常量左 LocalAdd 行与 "S22 constant-left LocalAdd and primitive publication exemption"。
+- [x] 红线测试先行（工序 2）：`fusion.rs` 前插模式/拒绝矩阵；`local_add.rs` 拼接序、求值序/捕获/TDZ/BigInt/Symbol 回退、失败绑定与 PC、profiling `local_add_borrowed_span` 计数。
+- [x] S22.1 前插融合（工序 3–5）：`FusionPlan` flag 130/131 + `const_add_span`；`run.rs` PushConst 准入臂（String 常量 + `local_add_constant_supported`）；`complete_local_add` 三形态 operand 分派 + `with_local_add_constant_left`，前插不原地追加。
+- [x] S22.2 发布豁免（工序 7–9）：`numeric::complete` 惰性发布（错误物化前）；`primitive_release_owner` 豁免 SetLocal/PutLocal、SetArg/PutArg、Drop、Nip；`complete_local_add` 移除每操作发布、错误分支补发。
+- [x] 语义门禁全量（工序 11）：工作区 `--all-targets`/`--doc`/`--features test262-host --lib --bins` 全绿；`--features profiling --lib` 2495/2495；Test262 full vector 逐位对齐 `79982 pass of 80032 eligible (102037 total)`。
+- [x] 最终测量与验收（工序 12）：见 §9。
+- [x] S22.3 门控判定（工序 13）：S22.1+S22.2 已使 large2 转负（−15.45%），**不触发 S22.3**，关闭。
+
+## 9. 实测结论（2026-09-16，与 S21 合测单轮 ×3，core 6，governor=powersave，loadavg 0.25）
+
+机械计数（`string_build3`，1.6M 次前插拼接，profiling 二进制）：
+
+| 计数 | 现值 | 目标 | 判定 |
+|---|---|---|---|
+| `local_add_borrowed_span`（驻留融合等价事件） | 1,600,000 | 1.6M | 达标 |
+| `runtime_pc_publication` | 3,394 | ≤ 启动量级 | 达标（原 3.19M） |
+| `slot_copy.StringRc` | 4,800 | ≤ 1.6M | 达标（原 3.2M） |
+| `hot_value_releases` | 0 | ≤ 启动量级 | 达标（原 1.6M） |
+| `run_exit.ConvertAdd` / `numeric_completed_in_run` | 0 / 3 | — | 达标 |
+| `slot_authentication` | 3.2M（2/拼接） | S10–S12 水平 | 达标 |
+
+耗时（三轮中位对 S0 三轮中位）：string_build3 **+22.0% → −21.75%**、string_build_large2 **+28.5% → −15.45%**、string_build1 −49.1%、string_build_large1 −24.0%；顺带项 int_to_string +11.7% → +3.44%、bigint64_arith +11.0% → +1.93%、float_arith +10.8% → +1.25%。**主目标（build3/large2 ≤ S0+2% 或转负，且不劣于 S10–S12 的 +3.8%/+10.1%）全部满足并反超**；fixed 全族无 >2% 连带回退。S22.3「驻留融合直存」不再需要。
+
+（同轮 S21 残余 depth-proxy 仍 ~+11%，属 S21 计划的未达标项，与 S22 无关。）
+

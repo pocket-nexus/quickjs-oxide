@@ -117,6 +117,29 @@ impl FrameTransaction<'_> {
         }
         Ok(Some(consume(left, right)))
     }
+    /// Prepend `C + R`: the constant is the mutable left operand and the local
+    /// is borrowed immutably for the allocation. Concatenation order is fixed
+    /// by the caller; the shared constant buffer is never appended into.
+    pub(in crate::engine::vm) fn with_local_add_constant_left<T>(
+        &mut self,
+        local: u16,
+        constant: Value,
+        consume: impl FnOnce(&mut Value, &Value) -> T,
+    ) -> Result<Option<T>, Error> {
+        let local = self.store.slots[self.window.locals()]
+            .get(usize::from(local))
+            .ok_or_else(|| Error::internal("owned local index is out of bounds"))?
+            .as_ref()
+            .ok_or_else(|| Error::internal("owned local is vacant"))?;
+        let FrameBinding::Direct(local) = local else {
+            return Ok(None);
+        };
+        if !local_add_values(&constant, local) {
+            return Ok(None);
+        }
+        let mut constant = constant;
+        Ok(Some(consume(&mut constant, local)))
+    }
     pub(in crate::engine::vm) fn slots(&mut self) -> RunSlots<'_> {
         RunSlots {
             store: self.store,

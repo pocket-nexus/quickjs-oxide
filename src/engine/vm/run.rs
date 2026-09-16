@@ -203,8 +203,10 @@ pub(super) fn test_complete_numeric(
     transaction: &mut super::stack::FrameTransaction<'_>,
     kind: super::numeric::operation::NumericKind,
     thrown: &mut Option<Value>,
+    active_frame: super::frames::ActiveFrameToken,
+    fault_pc: usize,
 ) -> Result<bool, Error> {
-    numeric::complete(runtime, realm, transaction, kind, thrown)
+    numeric::complete(runtime, realm, transaction, kind, thrown, active_frame, fault_pc)
 }
 
 fn number(value: &Value) -> Option<Number> {
@@ -246,6 +248,15 @@ fn release_displaced(
         ));
     }
     Ok(())
+}
+
+/// String, BigInt and scalar owners drop Rc/number storage directly. That drop
+/// cannot execute JavaScript, drain runtime roots or observe the active frame,
+/// so the overwrite/drop paths may release them inside the RunSlots borrow
+/// without materialization or active-PC publication. Symbols stay conservative
+/// because their atom release touches runtime tables.
+fn primitive_release_owner(value: &Value) -> bool {
+    !matches!(value, Value::Object(_) | Value::Symbol(_))
 }
 
 // Explicit drops end the NoJs slot borrow before publication or owner release.
@@ -991,6 +1002,20 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::PushConst(index) => {
+                // Constant-left prepend `C + R` begins at this PushConst. The
+                // constant must be a String and the local a direct, non-Object,
+                // domain-valid binding; otherwise the canonical push runs.
+                if executable.fusion.const_add_span(pc.fault).is_some()
+                    && matches!(
+                        executable.constant(*index),
+                        Some(BytecodeConstant::Value(RawValue::String(_)))
+                    )
+                    && let Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) =
+                        executable.code.get(pc.fault + 1)
+                    && slots.local_add_constant_supported(runtime, *right)?
+                {
+                    return Ok(RunExit::AddLocal);
+                }
                 let result = match executable.constant(*index) {
                     Some(BytecodeConstant::Value(RawValue::Int(number))) => {
                         Some(Value::Int(*number))
@@ -1422,6 +1447,19 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
                     release_displaced(runtime, old)?;
                     true
+                } else if matches!(slots.local(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
+                {
+                    let next = if matches!(
+                        instruction,
+                        Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
+                    ) {
+                        copy_value(slots.peek(0)?)?
+                    } else {
+                        slots.pop()?
+                    };
+                    let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
+                    drop(old);
+                    true
                 } else if matches!(slots.local(*index)?, FrameBinding::Direct(_)) {
                     release_outside_slots!({
                         let next = if matches!(
@@ -1458,6 +1496,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     };
                     let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
                     release_displaced(runtime, old)?;
+                    true
+                } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
+                {
+                    let next = if matches!(instruction, Instruction::SetArg(_)) {
+                        copy_value(slots.peek(0)?)?
+                    } else {
+                        slots.pop()?
+                    };
+                    let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
+                    drop(old);
                     true
                 } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(_)) {
                     release_outside_slots!({
@@ -1512,6 +1560,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if slots.release_operand(0, runtime)? {
                     slots.pop()?;
                     true
+                } else if primitive_release_owner(slots.peek(0)?) {
+                    let released = slots.pop()?;
+                    drop(released);
+                    true
                 } else {
                     release_outside_slots!(slots.pop()?);
                     true
@@ -1526,6 +1578,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     let right = slots.pop()?;
                     slots.pop()?;
                     slots.push(right)?;
+                    true
+                } else if primitive_release_owner(slots.peek(1)?) {
+                    let kept = slots.pop()?;
+                    let released = slots.pop()?;
+                    slots.push(kept)?;
+                    drop(released);
                     true
                 } else {
                     release_outside_slots!({
@@ -1783,22 +1841,18 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                     // Preserve active-PC admission before consuming operands,
                     // then keep this transaction and run frame across parsing.
+                    // The active PC is published lazily by numeric::complete
+                    // only if a JavaScript error is materialized.
                     drop(slots);
                     pc.publish_fault();
-                    if frame.active_frame.is_materialized() {
-                        runtime
-                            .update_active_bytecode_pc(
-                                frame.active_frame,
-                                super::BytecodePc::new(pc.fault),
-                            )
-                            .map_err(runtime_error_to_vm_error)?;
-                    }
                     if !numeric::complete(
                         runtime,
                         executable.realm,
                         &mut transaction,
                         kind,
                         &mut execution.pending,
+                        frame.active_frame,
+                        pc.fault,
                     )? {
                         return Ok(RunExit::PrimitiveThrow);
                     }

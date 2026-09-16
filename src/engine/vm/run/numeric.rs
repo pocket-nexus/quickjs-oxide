@@ -21,6 +21,11 @@ pub(super) fn supported(slots: &RunSlots<'_>, kind: NumericKind) -> bool {
 /// The caller published the exact arithmetic PC before entering this helper.
 /// The output and possible exception stay here or in pending owner storage;
 /// only a bool/engine-error crosses back into the resident dispatch frame.
+///
+/// Active-PC publication is deferred to the JavaScript error branch: a
+/// successful primitive completion allocates only Rc/scalar storage and never
+/// observes the stack, so the eager publication the caller previously performed
+/// was pure bookkeeping.
 #[inline(never)]
 pub(super) fn complete(
     runtime: &Runtime,
@@ -28,6 +33,8 @@ pub(super) fn complete(
     transaction: &mut FrameTransaction<'_>,
     kind: NumericKind,
     thrown: &mut Option<Value>,
+    active_frame: super::super::frames::ActiveFrameToken,
+    fault_pc: usize,
 ) -> Result<bool, Error> {
     let (left, right) = {
         let mut slots = transaction.slots();
@@ -48,6 +55,17 @@ pub(super) fn complete(
             else {
                 return Err(error);
             };
+            // The JavaScript error is the only observation point for this PC.
+            // The Symbol/BigInt pre-materialize gate already materialized the
+            // frame for the cases that reach it; string-too-long may not have.
+            if active_frame.is_materialized() {
+                runtime
+                    .update_active_bytecode_pc(
+                        active_frame,
+                        crate::engine::vm::BytecodePc::new(fault_pc),
+                    )
+                    .map_err(runtime_error_to_vm_error)?;
+            }
             *thrown = Some(
                 runtime
                     .new_native_error_from_error(realm, kind, &error)

@@ -131,7 +131,38 @@ impl FusionPlan {
                 _ => None,
             };
             let method = method_call_count(rest).map(|count| (160 + count as u8, count + 2));
-            let candidate = method.or(local_add).or(update).or_else(|| match rest {
+            let const_local_add = match rest {
+                [
+                    Instruction::PushConst(_constant),
+                    Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
+                    Instruction::Add,
+                    store,
+                    ..,
+                ] if locals
+                    .get(usize::from(*right))
+                    .is_some_and(|d| d.kind == ClosureVariableKind::Normal && !d.is_const) =>
+                {
+                    match store {
+                        Instruction::PutLocal(index) | Instruction::PutLocalCheck(index)
+                            if index == right =>
+                        {
+                            Some((130, 4))
+                        }
+                        Instruction::SetLocal(index) | Instruction::SetLocalCheck(index)
+                            if index == right && matches!(rest.get(4), Some(Instruction::Drop)) =>
+                        {
+                            Some((131, 5))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let candidate = method
+                .or(local_add)
+                .or(const_local_add)
+                .or(update)
+                .or_else(|| match rest {
                 [
                     Instruction::Lt
                     | Instruction::Lte
@@ -215,8 +246,18 @@ impl FusionPlan {
     /// Full borrowed-local addition begins before either operand copy.
     pub(crate) fn local_add_span(&self, pc: usize) -> Option<usize> {
         match self.flag(pc) {
-            128 => Some(4),
-            129 => Some(5),
+            128 | 130 => Some(4),
+            129 | 131 => Some(5),
+            _ => None,
+        }
+    }
+    /// Constant-left (prepend) LocalAdd span length. Admission is structural;
+    /// the runtime still proves the constant is a String and the local is a
+    /// direct, non-Object, domain-valid binding.
+    pub(crate) fn const_add_span(&self, pc: usize) -> Option<usize> {
+        match self.flag(pc) {
+            130 => Some(4),
+            131 => Some(5),
             _ => None,
         }
     }
@@ -303,6 +344,84 @@ mod tests {
             FusionPlan::build(&code, &[local(false), local(false)]).local_add_span(0),
             None
         );
+    }
+
+    #[test]
+    fn constant_left_local_add_requires_normal_target_and_no_interior_entry() {
+        use Instruction::*;
+        let code = [
+            PushConst(0),
+            GetLocalCheck(1),
+            Add,
+            PutLocalCheck(1),
+            ReturnUndefined,
+        ];
+        let plan = FusionPlan::build(&code, &[local(false), local(false)]);
+        assert_eq!(plan.const_add_span(0), Some(4));
+        assert_eq!(plan.local_add_span(0), Some(4));
+        assert_eq!(plan.const_add_span(1), None);
+
+        let code = [
+            PushConst(0),
+            GetLocal(1),
+            Add,
+            SetLocal(1),
+            Drop,
+            ReturnUndefined,
+        ];
+        let plan = FusionPlan::build(&code, &[local(false), local(false)]);
+        assert_eq!(plan.const_add_span(0), Some(5));
+
+        // Store must target the right local.
+        let code = [
+            PushConst(0),
+            GetLocal(1),
+            Add,
+            PutLocal(0),
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false), local(false)]).const_add_span(0),
+            None
+        );
+        // Constant target local is rejected.
+        let code = [
+            PushConst(0),
+            GetLocal(1),
+            Add,
+            PutLocal(1),
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false), local(true)]).const_add_span(0),
+            None
+        );
+        // Const-left shape is only tagged at the PushConst PC.
+        let code = [
+            PushConst(0),
+            GetLocal(1),
+            Add,
+            PutLocal(1),
+            ReturnUndefined,
+        ];
+        let plan = FusionPlan::build(&code, &[local(false), local(false)]);
+        assert_eq!(plan.local_add_span(1), None);
+        // Any interior control target rejects the span.
+        let base = [
+            PushConst(0),
+            GetLocal(1),
+            Add,
+            PutLocal(1),
+            ReturnUndefined,
+        ];
+        for target in 1..4 {
+            let mut code = base.to_vec();
+            code.push(Goto(target));
+            assert_eq!(
+                FusionPlan::build(&code, &[local(false), local(false)]).const_add_span(0),
+                None
+            );
+        }
     }
 
     #[test]
