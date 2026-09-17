@@ -15,7 +15,7 @@
 //! entry observes only when its native operation needs activation visibility; suspend
 //! and run-owned release/error paths explicitly observe. PropertyRead trap returns
 //! may directly reply after child retirement, with exact parent/operation identity.
-//! See docs/architecture/lazy-callback-frames.md for the callback ownership protocol.
+//! See docs/primitive-vm.md for the execution and callback ownership protocol.
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {

@@ -1,10 +1,10 @@
 # Workspace architecture
 
 This document describes the current implementation and its responsibility
-boundaries. The [stack VM plan](primitive-vm-plan.md) describes the pending
-redesign, including the structures that will replace the current execution
-path. As of 2026-09-12, that redesign is still a plan; it has no new engine
-implementation or measured optimization result.
+boundaries. The [primitive VM overview](primitive-vm.md) summarizes the
+execution-core redesign (S01–S22): the legacy execution path is retired and the
+unified `root_call` core — explicit JS frames, one driver and owned domain
+continuations — is the only engine.
 
 ## Packages and module owners
 
@@ -92,11 +92,9 @@ sharing as a missing feature. Code representation and publication belong in
 
 The redesign keeps stack instructions and the complete language frontend.
 It introduces explicit JS frames, one execution driver, domain-owned callback
-state and concentrated slot ownership. Algorithms, proposed files and
-migration order live in the [implementation design](primitive-vm-implementation-plan.md),
-[10-commit plan](primitive-vm-commit-plan.md) and
-[migration checklist](primitive-vm-migration.md). Those documents are the
-implementation plan; this overview does not duplicate their future file tree.
+state and concentrated slot ownership. The final architecture, the delivered
+stages and the measured results are recorded in the
+[primitive VM overview](primitive-vm.md).
 
 ## State and semantic boundaries
 
@@ -175,8 +173,8 @@ or fingerprints.
 Use the [verification entry point](../README.md#verify) and the affected
 owners' tests. Frozen oracle and Test262 receipts refer to their recorded
 source; a refactor or documentation edit does not renew them. The
-[archived architecture and completed plans](archive/README.md) preserve
-previous decisions and results without prescribing the current VM design.
+[primitive VM overview](primitive-vm.md) preserves the completed redesign
+decisions and results.
 
 S02 已验收：源代码请求及编译错误边界归 `api/compile.rs`；`code/runtime.rs` 负责发布事务。eval 验证接收 `code/function/publication.rs` 的只读权限视图，借用调用方绑定与 profile，不再依赖编译器上下文。函数树验证以命名工作项携带闭包来源状态，保持迭代顺序；入口权限、参数布局、绑定和模块表验证分别归 `verify/{roles,parameters,bindings,modules}.rs`，主流程按原先顺序消费参数分析产物。只读验证与原有测试归 code/verify；Atom 链接、展平和私有绑定发布归 code/bytecode_publish，发布事务仍归 code/runtime。私有绑定名称与配对规则复用 verify/private_elements 中的只读辅助函数。控制流/闭包树拆分、指令契约和帧布局已接入，S02 的 709 项完整边界反例已拒绝；S03 非默认原语栈核心已验收，完整迁移仍按 S04–S10 推进。
 
@@ -197,9 +195,8 @@ S08/S09 当前 PC 选择（覆盖上述早期迁移记录的表示方式）：`r
 冷出口、挂起和 Rust unwind 时物化 resume。Runtime 活跃帧发布仍在既有 driver
 观察出口执行，不随 Frame fault 写入变成逐指令发布。有限融合与 AddStore 的错误
 位置不变，异步 CPU 采样不承诺任意时刻的精确 JS PC。该选择来自普通 A/B 的逐项
-权衡，不以少写次数代替吞吐证据；完整阶段验收仍在进行，详见
-[有限融合与观察点](architecture/owned-fusion.md) 和
-[开发测量记录](performance/README.md)。
+权衡，不以少写次数代替吞吐证据；最终结果详见
+[原语执行核心总览](primitive-vm.md)。
 
 S03 的 `heap/slot_ownership.rs` 提供受限引用预检和提交：Runtime 域、借用、
 deferred references、zero queue 与 primitive 共享存储共同决定是否能热释放。

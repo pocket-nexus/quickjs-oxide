@@ -14,4 +14,4 @@ shape 与 dictionary 维护布局和属性顺序。物理槽可以移动，因�
 
 用户 getter、setter 和 Proxy 回调由 VM 执行，内置方法的完整算法归
 builtins。后续回调恢复状态仍由语义所有者维护，详见
-[栈 VM 计划](../../../docs/primitive-vm-plan.md)。
+[原语执行核心](../../../docs/primitive-vm.md)。

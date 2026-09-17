@@ -1,18 +1,17 @@
 # Profiling and external benchmarks
 
 The optional `profiling` feature implements the memory snapshots, safe partial
-allocation trace, lifecycle timing and benchmark workflow proposed in
-[the original design report](performance/README.md). Diagnostics
-are off by default. This is an observability baseline, not a CPU/call-stack
-sampler or a claim of feature/performance parity with QuickJS.
+allocation trace, lifecycle timing and benchmark workflow proposed in the
+original design report. Diagnostics are off by default. This is an
+observability baseline, not a CPU/call-stack sampler or a claim of
+feature/performance parity with QuickJS.
 
-Historical measurements and validation evidence:
-[PocketLab baseline](performance/README.md) and
-[CPU hotspot investigation](performance/README.md). Each report applies to
-its recorded source and build; its optimization ordering is not a current
-backlog. The [stack VM plan](primitive-vm-plan.md) selects this PR's goals
-from [issue #16's post-PR19 investigation](https://github.com/pocket-stack/quickjs-oxide/issues/16#issuecomment-5634660983).
-The stack VM migration is in progress; these links do not claim a new benchmark run.
+Historical measurements and validation evidence (PocketLab baseline and CPU
+hotspot investigation) are retained locally; each report applies to its recorded
+source and build, and its optimization ordering is not a current backlog. The
+[primitive VM overview](primitive-vm.md) records the goals selected from
+[issue #16's post-PR19 investigation](https://github.com/pocket-stack/quickjs-oxide/issues/16#issuecomment-5634660983)
+and the final architecture and measurement results.
 
 ## Build and run
 
@@ -186,8 +185,8 @@ steps dispatched through synchronous Runtime entries. S05 synchronous native
 families now register typed domain continuations or explicitly audited NoJs
 leaves. Their property, conversion, iterator and callback requests stay in the
 owned driver; old synchronous consumers use the same domain steps. Promise,
-generator, module and host/API entries still have the S06/S07 migration work
-listed in [the callback ledger](primitive-vm-sync-callbacks.md).
+generator, module and host/API entries now run through the same owned driver as
+described in [the primitive VM overview](primitive-vm.md).
 The counters describe the measured interval, not every possible path of an
 intrinsic. A coverage claim requires all three legacy/bridge counters to be zero
 and a source audit of the selected native leaves. PendingCall remains a counted
@@ -210,8 +209,8 @@ owned instruction count, with resume and Runtime publication each 1. That bound
 is fixture-specific, not a universal relationship for failed dispatches. Earlier
 both-local PC experiments had different write counts and remain historical
 measurements. The local-resume choice came from ordinary paired candidate
-measurements, not from assuming fewer stores are faster. See the
-[S08 development evidence](performance/README.md).
+measurements, not from assuming fewer stores are faster; the final results are
+in [the primitive VM overview](primitive-vm.md).
 
 `owned_storage` records SlotStore/FrameStore capacity changes, frame-depth and
 slot peaks, logical owner moves, cleanup clears, value copies, and narrow hot

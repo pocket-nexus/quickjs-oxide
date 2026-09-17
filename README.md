@@ -58,11 +58,9 @@ Neither is a general untrusted-bytecode loader or Feature Parity claim.
 
 ## Status
 
-- [Documentation index](docs/README.md)
 - [Engine module responsibilities](docs/architecture.md)
 - [Current implementation status](docs/status.md)
-- [Stack VM redesign: goals and architecture](docs/primitive-vm-plan.md)
-- [Stack VM redesign: staged implementation plan](docs/primitive-vm-commit-plan.md)
+- [Primitive VM: final architecture and results](docs/primitive-vm.md)
 - [Profiling and external benchmarks](docs/profiling.md)
 - [Pinned Test262 baseline and metric definitions](docs/test262.md)
 - [Parity acceptance contract](docs/parity.md)

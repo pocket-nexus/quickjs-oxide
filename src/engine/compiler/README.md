@@ -17,5 +17,5 @@ compiler 使用 source 的精确源码表示和 code 的代码契约。它不选
 provider，也不拥有正在执行的帧；运行时链接、roots 和发布事务属于 code
 及 heap。对象和 Symbol 的运行时身份不成为普通编译常量。
 
-[栈 VM 实施设计](../../../docs/primitive-vm-implementation-plan.md)
-描述待实施的内部重组；完整前端及其语义仍由本模块负责。
+[原语执行核心](../../../docs/primitive-vm.md)
+记录已完成的内部重组；完整前端及其语义仍由本模块负责。

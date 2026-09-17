@@ -13,4 +13,4 @@ Runtime 的共享堆与 Atom 状态也由本模块管理。高层属性访问、
 实现中。修改存储时，要区分物理槽位置、稳定身份和可观察顺序。
 
 VM 重组继续使用现有 RC 与循环回收。活动 owning 值与长期挂起的原始
-引用边之间如何交接，见[栈 VM 实施设计](../../../docs/primitive-vm-implementation-plan.md)。
+引用边之间如何交接，见[原语执行核心](../../../docs/primitive-vm.md)。
