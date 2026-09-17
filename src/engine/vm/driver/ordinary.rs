@@ -335,8 +335,6 @@ mod layout_tests {
                 .get("native_linked_classification_consumed"),
             Some(&1)
         );
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
     }
 
     #[test]

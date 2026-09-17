@@ -236,12 +236,7 @@ mod enabled {
         fn drop(&mut self) {
             if let Some(costs) = &self.costs {
                 let snapshot = costs.snapshot();
-                if snapshot.parse.attempts != 0
-                    || snapshot.legacy_dispatches != 0
-                    || snapshot.owned_instructions != 0
-                    || snapshot.owned_bridge_exits != 0
-                    || snapshot.owned_sync_call_bridges != 0
-                {
+                if snapshot.parse.attempts != 0 || snapshot.owned_instructions != 0 {
                     self.write(|out| write_costs(out, &snapshot, self.json));
                 }
             }
@@ -315,11 +310,8 @@ mod enabled {
             )?;
             writeln!(
                 out,
-                "owned_instructions={} bridge_exits={} sync_call_bridges={} max_operand_depth={}",
-                costs.owned_instructions,
-                costs.owned_bridge_exits,
-                costs.owned_sync_call_bridges,
-                costs.owned_max_operand_depth
+                "owned_instructions={} max_operand_depth={}",
+                costs.owned_instructions, costs.owned_max_operand_depth
             )?;
             writeln!(
                 out,
@@ -347,13 +339,7 @@ mod enabled {
                     phase.omitted_samples
                 )?;
             }
-            return writeln!(
-                out,
-                "legacy_dispatches={} pc_publications={} max_operand_depth={}; all-call allocations and total retain/release accounting unavailable",
-                costs.legacy_dispatches,
-                costs.legacy_pc_publications,
-                costs.legacy_max_operand_depth
-            );
+            return Ok(());
         }
         write!(
             out,
@@ -553,15 +539,7 @@ mod enabled {
 
         write!(
             out,
-            ",\"scope\":\"thread-interval-innermost-collector\",\"execution_path\":\"{}\",\"timer\":\"inclusive-monotonic-wall-ns\",\"phase_totals_additive\":false,\"phases\":{{",
-            if costs.owned_instructions != 0
-                || costs.owned_bridge_exits != 0
-                || costs.owned_sync_call_bridges != 0
-            {
-                "owned-stack-with-legacy-bridge"
-            } else {
-                "legacy"
-            }
+            ",\"scope\":\"thread-interval-innermost-collector\",\"execution_path\":\"owned-stack\",\"timer\":\"inclusive-monotonic-wall-ns\",\"phase_totals_additive\":false,\"phases\":{{",
         )?;
         for (index, (name, phase)) in [
             ("parse", costs.parse),
@@ -592,17 +570,12 @@ mod enabled {
         }
         writeln!(
             out,
-            "}},\"lowered_functions\":{},\"code_instructions\":{},\"code_inline_bytes\":{},\"maximum_verified_stack\":{},\"legacy_dispatches\":{},\"legacy_pc_publications\":{},\"legacy_max_operand_depth\":{},\"owned_instructions\":{},\"owned_bridge_exits\":{},\"owned_sync_call_bridges\":{},\"owned_max_operand_depth\":{},\"code_bytes_basis\":\"typed-instruction-inline-storage-excludes-boxed-operands-and-metadata\",\"ir_capacity_basis\":\"phase-boundary-owned-Vec-buffers-excludes-payloads-source-hash-tables-worklists\",\"unavailable\":[\"compile-peak-memory\",\"all-call-allocations\",\"primitive-rc-reference-events\",\"all-retain-release\"]}}",
+            "}},\"lowered_functions\":{},\"code_instructions\":{},\"code_inline_bytes\":{},\"maximum_verified_stack\":{},\"owned_instructions\":{},\"owned_max_operand_depth\":{},\"code_bytes_basis\":\"typed-instruction-inline-storage-excludes-boxed-operands-and-metadata\",\"ir_capacity_basis\":\"phase-boundary-owned-Vec-buffers-excludes-payloads-source-hash-tables-worklists\",\"unavailable\":[\"compile-peak-memory\",\"all-call-allocations\",\"primitive-rc-reference-events\",\"all-retain-release\"]}}",
             costs.lowered_functions,
             costs.code_instructions,
             costs.code_inline_bytes,
             costs.maximum_verified_stack,
-            costs.legacy_dispatches,
-            costs.legacy_pc_publications,
-            costs.legacy_max_operand_depth,
             costs.owned_instructions,
-            costs.owned_bridge_exits,
-            costs.owned_sync_call_bridges,
             costs.owned_max_operand_depth
         )
     }

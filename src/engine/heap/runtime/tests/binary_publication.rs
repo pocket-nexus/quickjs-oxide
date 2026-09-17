@@ -736,7 +736,4 @@ fn trusted_binary_callable_runs_on_the_owned_context_entry_after_gc() {
     );
     let snapshot = profile.snapshot();
     assert!(snapshot.owned_instructions > 0);
-    assert_eq!(snapshot.legacy_dispatches, 0);
-    assert_eq!(snapshot.owned_bridge_exits, 0);
-    assert_eq!(snapshot.owned_sync_call_bridges, 0);
 }

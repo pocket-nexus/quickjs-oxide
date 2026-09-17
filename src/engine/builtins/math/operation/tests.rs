@@ -37,8 +37,6 @@ fn primitive_math_completes_without_owning_a_second_argument_vector() {
             .unwrap_or(0),
         0
     );
-    assert_eq!(costs.owned_bridge_exits, 0);
-    assert_eq!(costs.owned_sync_call_bridges, 0);
 }
 
 #[test]
@@ -124,6 +122,5 @@ fn global_primitive_stages_preserve_input_then_radix_order() {
             .unwrap_or(0)
             >= 5
     );
-    assert_eq!(costs.owned_bridge_exits, 0);
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }

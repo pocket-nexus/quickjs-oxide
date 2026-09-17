@@ -18,5 +18,3 @@ features = ["test262-host"]
 [[bin]]
 name = "run-test262"
 path = "src/main.rs"
-
-[features]

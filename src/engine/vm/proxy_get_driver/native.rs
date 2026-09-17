@@ -930,8 +930,6 @@ mod tests {
                 .unwrap_or(0)
                 > 0
         );
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -1027,8 +1025,6 @@ mod tests {
                 .unwrap_or(0)
                 > 0
         );
-        assert_eq!(cost.owned_bridge_exits, 0);
-        assert_eq!(cost.owned_sync_call_bridges, 0);
     }
 
     #[test]
@@ -1106,8 +1102,6 @@ mod tests {
             identity >= synchronous + 10,
             "identity: {identity}, narrow: {synchronous}"
         );
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }
@@ -1160,8 +1154,6 @@ mod array_next_small_entry_tests {
                     .unwrap_or(0)
                     >= 24
             );
-            assert_eq!(cost.owned_bridge_exits, 0);
-            assert_eq!(cost.owned_sync_call_bridges, 0);
         }
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

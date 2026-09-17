@@ -23,8 +23,6 @@ fn trusted_construct_prototype_getter_resumes_once_in_owned_driver() {
     let costs = profile.snapshot();
     assert_eq!(costs.owned_storage.frames_pushed, 3);
     assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
-    assert_eq!(costs.legacy_dispatches, 0);
-    assert_eq!(costs.owned_bridge_exits, 0);
     assert_eq!(
         runtime
             .get_prototype_of(&instance)

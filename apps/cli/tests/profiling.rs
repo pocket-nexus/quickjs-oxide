@@ -104,11 +104,8 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     assert!(costs.contains("\"verify\":{\"attempts\":1,"));
     assert!(costs.contains("\"publish\":{\"attempts\":1,"));
     {
-        assert!(costs.contains("\"execution_path\":\"owned-stack-with-legacy-bridge\""));
+        assert!(costs.contains("\"execution_path\":\"owned-stack\""));
         assert!(!costs.contains("\"owned_instructions\":0"));
-        assert!(costs.contains("\"owned_bridge_exits\":0"));
-        assert!(costs.contains("\"legacy_dispatches\":0"));
-        assert!(costs.contains("\"owned_sync_call_bridges\":0,"));
         assert!(!costs.contains("\"frames_pushed\":0"));
         assert!(!costs.contains("\"slot_capacity_growths\":0"));
         assert!(costs.contains("\"Next\":{\"size_bytes\":"));
@@ -117,7 +114,6 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     }
     assert!(costs.contains("\"owned_storage\":{\"coverage\":\"partial\""));
     assert!(costs.contains("\"maximum_live_slots\":"));
-    assert!(costs.contains("\"owned_sync_call_bridges\":"));
     assert!(costs.contains(
         "\"call_preparation\":{\"coverage\":\"bytecode-preparation-and-owned-frame-storage\""
     ));

@@ -110,7 +110,6 @@ mod tests {
                 "missing {event}: {costs:?}"
             );
         }
-        assert_eq!(costs.owned_bridge_exits, 0);
     }
 
     #[test]

@@ -311,7 +311,6 @@ mod tests {
                 <= 2
         );
         assert!(snapshot.owned_execution_events["call_outgoing_tail_transferred"] >= 2000);
-        assert_eq!(snapshot.legacy_dispatches, 0);
     }
     #[test]
     fn repeated_deep_calls_reuse_the_peak_cold_capacity() {

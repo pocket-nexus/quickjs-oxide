@@ -6,12 +6,9 @@ original design report. Diagnostics are off by default. This is an
 observability baseline, not a CPU/call-stack sampler or a claim of
 feature/performance parity with QuickJS.
 
-Historical measurements and validation evidence (PocketLab baseline and CPU
-hotspot investigation) are retained locally; each report applies to its recorded
-source and build, and its optimization ordering is not a current backlog. The
-[primitive VM overview](primitive-vm.md) records the goals selected from
-[issue #16's post-PR19 investigation](https://github.com/pocket-stack/quickjs-oxide/issues/16#issuecomment-5634660983)
-and the final architecture and measurement results.
+Historical measurement reports are retained locally; each applies to its
+recorded source and build. The [primitive VM overview](primitive-vm.md) records
+the final architecture and measurement results.
 
 ## Build and run
 
@@ -92,12 +89,12 @@ reject profiling flags with an explanatory error.
 ## Compile and VM cost diagnostics
 
 `-d --profile-json` reuses the same CLI and benchmark workload entry. Its
-`oxide-compile-vm-cost-v1` record describes the **legacy** execution path:
+`oxide-compile-vm-cost-v1` record describes the owned execution core:
 parse/resolution/lowering, blocks, fusion, relocation, verify and publish attempts
 and inclusive/exclusive monotonic wall nanoseconds,
 successfully lowered function drafts (including children), final instruction
-count and inline typed-code bytes, maximum verified stack, dynamic dispatches,
-successful PC publications, and operand depth observed at dispatch boundaries.
+count and inline typed-code bytes, maximum verified stack, and owned instruction
+count and operand depth.
 Failed parses still count as attempts; lowered drafts are not published-code
 or unique-code counts. Inline code bytes exclude boxed operands and metadata.
 Inclusive phase time includes nested compilation and callbacks and is not
@@ -153,49 +150,25 @@ Only our orchestration, parsers, tests, documentation and result summaries live
 in this repository. Third-party benchmark source and generated bundles stay
 outside it. No complete QuickJS `std`/`os` module implementation is required.
 
-For this work, run release builds, broader tests, profiler experiments and
-benchmarks in the `eric-83am` Herdr PocketLab workspace, under
-`/home/eric/Documents/Sources/PocketLab/quickjs-oxide`. The development computer
-is limited to minimal checks/tests. Keep timing runs serial and separate from
-compilation and correctness tests on PocketLab.
-
-Correctness remains independent of performance. A timeout, unsupported case,
-missing score, swallowed benchmark error or partial result cannot become a
-zero-time result or contribute to a speed ratio. Keep raw logs to distinguish
-those cases, and use unchanged workloads and the same clock/harness on both
-engines. QuickJS lifecycle CPU times must not be divided by Oxide wall times.
-
 ### 最终码与指令契约
 
 `profiling` feature 下，调用 `CostProfile::capture_disassembly()` 可为该作用域随后成功完成的 lowering 捕获逐函数反汇编。`snapshot().code_disassembly` 按 lowering 完成顺序保存文本；每行包括最终 PC、指令与同一 `InstructionInfo` 的栈状态、控制流、操作数和潜在效果。默认是 `None`，重复启用不清空已有记录。该选项用于诊断，不能用于正式计时；文本不持有 Runtime roots 或原始 IR。
 
 潜在回调/分配效果是通用语义的保守上界，不能据此断言每次 Number 运算都会调用 JS 或分配。可捕获 JS 异常与引擎分配/不变量错误分开；catch、iterator、gosub 和 resume 的动态验证不会被 nominal 栈数量代替。
 
-The non-default `stack-vm` migration configuration adds `owned_instructions`,
-`owned_bridge_exits`, `owned_sync_call_bridges`, and `owned_max_operand_depth`
-to the same cost snapshot.
-An owned instruction is counted after its step commits (a call commits when its
-child frame is installed, before the callee returns); a bridge exit is counted
-separately and resumes the untouched opcode in the previous VM. CLI reports use
-`owned-stack-with-legacy-bridge` when an owned counter is nonzero. This is partial
-coverage, not a claim that a whole sample ran in the new core.
+The same cost snapshot carries `owned_instructions` and
+`owned_max_operand_depth`. An owned instruction is counted after its step
+commits (a call commits when its child frame is installed, before the callee
+returns). Property, conversion, iterator and callback requests stay in the
+owned driver; synchronous consumers use the same domain steps. Promise,
+generator, module and host/API entries run through the same owned driver as
+described in [the primitive VM overview](primitive-vm.md). The counters
+describe the measured interval, not every possible path of an intrinsic.
+Temporary request/continuation Box allocations and Proxy operation state
+storage are outside `call_preparation` coverage.
 
-`owned_sync_call_bridges` counts selected owned calls and unresolved domain
-steps dispatched through synchronous Runtime entries. S05 synchronous native
-families now register typed domain continuations or explicitly audited NoJs
-leaves. Their property, conversion, iterator and callback requests stay in the
-owned driver; old synchronous consumers use the same domain steps. Promise,
-generator, module and host/API entries now run through the same owned driver as
-described in [the primitive VM overview](primitive-vm.md).
-The counters describe the measured interval, not every possible path of an
-intrinsic. A coverage claim requires all three legacy/bridge counters to be zero
-and a source audit of the selected native leaves. PendingCall remains a counted
-internal migration boundary; it is not a host delimiter.
-Temporary request/continuation Box allocations and Proxy operation state storage
-are outside `call_preparation` coverage.
-
-The current S08/S09 run keeps only resume PC local; fault PC is written directly
-into Frame at each actual dispatch entry. `owned_execution_events` separates:
+`run` keeps only the resume PC local; the fault PC is written directly into
+Frame at each actual dispatch entry. `owned_execution_events` separates:
 
 | Counter | Current meaning |
 | --- | --- |
@@ -203,14 +176,9 @@ into Frame at each actual dispatch entry. `owned_execution_events` separates:
 | `run_frame_resume_pc_write` | Publication of the local resume value when its ProgramCounter guard drops on normal, Result-error, cold, suspension, or Rust-unwind exit. |
 | `runtime_pc_publication` | Existing driver publication to the active Runtime frame at observation boundaries; this is not a per-instruction counter. |
 
-These source-level counters are not machine store counts. The ordinary-loop
-fixture expects fault writes greater than 100 and no greater than its committed
-owned instruction count, with resume and Runtime publication each 1. That bound
-is fixture-specific, not a universal relationship for failed dispatches. Earlier
-both-local PC experiments had different write counts and remain historical
-measurements. The local-resume choice came from ordinary paired candidate
-measurements, not from assuming fewer stores are faster; the final results are
-in [the primitive VM overview](primitive-vm.md).
+These source-level counters are not machine store counts. The resume and
+Runtime-publication counters describe observation boundaries rather than
+per-instruction stores.
 
 `owned_storage` records SlotStore/FrameStore capacity changes, frame-depth and
 slot peaks, logical owner moves, cleanup clears, value copies, and narrow hot
@@ -246,16 +214,10 @@ operands count toward logical initialization and active extent, not live slots.
 
 `copied_heap_roots` and `hot_heap_root_releases` cover Object/Symbol operations at
 the narrow slot boundaries only. Primitive Rc operations, binding/cold-payload
-roots, cleanup cascades, window-identity/registry containers and legacy bridge
-allocations are excluded. The counters therefore cannot be subtracted to infer
+roots, cleanup cascades and window-identity/registry containers are excluded.
+The counters therefore cannot be subtracted to infer
 leaks or treated as a total allocation/RC profile. Features compile these hooks
 out of ordinary builds; instrumented timings are not formal throughput results.
-
-An S03 debug diagnostic of a 100-iteration addition function returned `4950` and
-recorded 1,510 owned instructions, 8 legacy dispatches, 2 slot capacity growths,
-2,022 logical slot moves, 604 value copies, and a per-store peak of 6 live slots.
-The script/print wrapper uses the bridge; this sample is explicitly mixed. The
-separately measured ordinary-call regression requires zero legacy dispatches.
 
 
 ### 字节码调用准备成本
@@ -276,7 +238,7 @@ owned 入口另记录 FrameCold Box 的成功分配、captured-reuse 位标记 V
 不等于全 Runtime retain/release 统计。正式性能仍须使用关闭诊断的构建。
 
 
-### S09 调用临时缓冲区与暂停阶段诊断
+### 调用临时缓冲区与暂停阶段诊断
 
 owned 普通根调用和普通子调用直接初始化 SlotStore 参数/局部区，因此其
 `parameter_buffer_allocations`、`local_buffer_allocations` 为零；原始 argv

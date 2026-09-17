@@ -114,18 +114,8 @@ pub struct CostSnapshot {
     /// Optional final-code dumps, in lowering completion order. Disabled by
     /// default; these retain text only, not Runtime roots or IR storage.
     pub code_disassembly: Option<Vec<String>>,
-    /// Actual entries to the previous interpreter's instruction dispatch.
-    pub legacy_dispatches: u64,
-    pub legacy_pc_publications: u64,
-    /// Operand depth at dispatch boundaries, excluding locals/arguments.
-    pub legacy_max_operand_depth: usize,
     /// Successfully completed instructions in the owned ordinary-call core.
     pub owned_instructions: u64,
-    /// Untouched instructions handed to the temporary previous-VM bridge.
-    pub owned_bridge_exits: u64,
-    /// Selected calls still executed through the transitional synchronous
-    /// runtime boundary. Includes callback-free callees; not all nested calls.
-    pub owned_sync_call_bridges: u64,
     pub owned_max_operand_depth: usize,
     /// Rust inline layouts as [size bytes, alignment bytes]; excludes owned
     /// allocations and is not a measurement of dynamic payload-copy traffic.
@@ -411,7 +401,6 @@ mod tests {
         {
             assert!(before.owned_instructions > 0);
         }
-        assert_eq!(before.legacy_dispatches, before.legacy_pc_publications);
         {
             let inner = CostProfile::start();
             context.eval("1+2").unwrap();

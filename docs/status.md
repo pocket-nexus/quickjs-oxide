@@ -6,16 +6,10 @@ Rust/WASM engine in the GitHub Pages playground, but it is not yet at Feature
 Parity.
 
 The [architecture guide](architecture.md) describes the current implementation.
-The primitive VM redesign (S01–S22), including the proxy trap cache and the
-prepend string-concatenation fusion, is implemented as of 2026-09-16: the legacy
-execution path is retired and the SlotStore/FrameEntry/driver core is the only
-engine. Final semantic gates passed with a bit-identical Test262 result vector,
-so the validation baseline below is unchanged. S22 removed the real
-prepend-string regression (string_build3 +22.0% -> -21.8%, string_build_large2
-+28.5% -> -15.5% vs S0) and S21 roughly halved the depth-proxy overhead
-(+26.6% -> +11%). The single combined round leaves 4 cases above S0 +5%
-(depth-proxy-0/32, v8-earley-boyer, richards); the full architecture, results and
-residual list are in the [primitive VM overview](primitive-vm.md).
+The primitive execution core is the only engine: explicit JS frames, one driver
+and owned domain continuations replace the retired dispatch/bridge paths. The
+validation baseline below is unchanged; the final architecture and measured
+results are in the [primitive VM overview](primitive-vm.md).
 
 ## Current baseline
 
@@ -1006,7 +1000,3 @@ cargo test --locked --features test262-host --lib --bins
 TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
 ./scripts/web/test-web-playground.sh
 ```
-
-Historical milestone gates, profiles, result vectors, baselines, and the former
-long-form ledgers are preserved in the release archive indexed under
-[`dev-support/test262/archive`](../dev-support/test262/archive/index.tsv).

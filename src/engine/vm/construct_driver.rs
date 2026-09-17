@@ -505,14 +505,11 @@ mod owned_definition_tests {
             let result = runtime
                 .call_internal(context.realm, &callable, Value::Undefined, &[])
                 .unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             assert!(
                 matches!(result, Completion::Return(Value::Int(42))),
                 "{source}: {result:?}"
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -534,14 +531,11 @@ mod owned_definition_tests {
             let result = runtime
                 .call_internal(context.realm, &callable, Value::Undefined, &[])
                 .unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             assert!(
                 matches!(result, Completion::Return(Value::Int(42))),
                 "{source}: {result:?}"
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }

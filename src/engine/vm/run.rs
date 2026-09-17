@@ -1906,7 +1906,6 @@ mod tests {
                     .unwrap_or(0),
                 0
             );
-            assert_eq!(costs.owned_bridge_exits, 0);
         }
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -1985,9 +1984,6 @@ mod tests {
                 "{event}: {costs:?}"
             );
         }
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -2042,9 +2038,6 @@ mod tests {
                     >= 6,
                 "{kind}: {costs:?}"
             );
-            assert_eq!(costs.legacy_dispatches, 0);
-            assert_eq!(costs.owned_bridge_exits, 0);
-            assert_eq!(costs.owned_sync_call_bridges, 0);
         }
     }
 
@@ -2084,9 +2077,6 @@ mod tests {
                 >= 7,
             "{costs:?}"
         );
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
     }
 
     #[test]
@@ -2139,9 +2129,6 @@ mod tests {
                     >= 6,
                 "{kind}: {costs:?}"
             );
-            assert_eq!(costs.legacy_dispatches, 0);
-            assert_eq!(costs.owned_bridge_exits, 0);
-            assert_eq!(costs.owned_sync_call_bridges, 0);
         }
     }
 
@@ -2187,8 +2174,6 @@ mod tests {
                 let costs = profile.snapshot();
                 assert_eq!(costs.owned_storage.maximum_frame_depth, 1001, "{costs:?}");
                 assert_eq!(costs.owned_storage.frames_pushed, 1001, "{costs:?}");
-                assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-                assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
                 assert!(runtime.0.state.borrow().active_frames.is_empty());
             })
             .unwrap()
@@ -2216,8 +2201,6 @@ mod tests {
         );
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 65);
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -2230,8 +2213,6 @@ mod tests {
         assert_eq!(result, Value::Int(421));
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -2270,14 +2251,6 @@ mod tests {
             costs.owned_execution_events["slot_authentication"] < 20,
             "{costs:?}"
         );
-        assert_eq!(
-            costs.owned_bridge_exits, 0,
-            "the ordinary numeric loop must not use the bridge"
-        );
-        assert_eq!(
-            costs.legacy_dispatches, 0,
-            "the measured call must finish entirely in the owned core"
-        );
     }
 
     #[test]
@@ -2302,10 +2275,7 @@ mod tests {
                 Value::Int(42),
                 "{source}"
             );
-            let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2332,8 +2302,6 @@ mod tests {
         );
         let costs = profile.snapshot();
         assert!(costs.owned_instructions > 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
         assert_eq!(costs.owned_storage.frames_pushed, 1);
         assert!(costs.owned_storage.copied_heap_roots > 0);
         assert!(costs.owned_storage.hot_heap_root_releases > 0);
@@ -2381,8 +2349,6 @@ mod tests {
                 assert_eq!(result.to_bits(), expected.to_bits(), "{expression}");
             }
             assert!(profile.snapshot().owned_instructions > 0, "{expression}");
-            assert_eq!(profile.snapshot().owned_bridge_exits, 0, "{expression}");
-            assert_eq!(profile.snapshot().legacy_dispatches, 0, "{expression}");
         }
     }
 
@@ -2410,8 +2376,6 @@ mod tests {
             let profile = CostProfile::start();
             let result = context.call(&callable, Value::Undefined, &[]).unwrap();
             let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
             assert!(costs.owned_instructions > 0, "{costs:?}");
             drop(callable);
             drop(function);
@@ -2449,8 +2413,6 @@ mod tests {
             );
             let costs = profile.snapshot();
             assert!(costs.owned_instructions > 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
         }
     }
 
@@ -2463,8 +2425,6 @@ mod tests {
         assert_eq!(result, Value::Int(91));
         let costs = profile.snapshot();
         assert!(costs.owned_instructions > 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.legacy_dispatches, 0);
     }
 }
 

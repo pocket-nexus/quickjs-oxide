@@ -2098,9 +2098,6 @@ mod native_scope_tests {
                 > 0,
             "{costs:?}"
         );
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 

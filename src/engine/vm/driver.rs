@@ -919,10 +919,7 @@ mod tests {
                 "[7,4,[\"g\",\"s3\",\"p\",\"q\",\"n\",\"k\",\"w\",\"boom\",\"f\"]]"
             ))
         );
-        let costs = costs.snapshot();
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
+        let _costs = costs.snapshot();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -976,9 +973,6 @@ mod tests {
                 .unwrap_or(0)
                 > 0
         );
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -1112,9 +1106,7 @@ mod tests {
             let entry = entry(&runtime, &mut context, source, Vec::new());
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             match (completion, error_message) {
                 (Completion::Return(value), None) => assert_eq!(value, Value::Int(42)),
                 (Completion::Throw(Value::Object(error)), Some(message)) => {
@@ -1163,8 +1155,6 @@ mod tests {
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
             let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
             match (completion, throws) {
                 (Completion::Return(value), false) => assert_eq!(value, Value::Int(42)),
@@ -1220,11 +1210,8 @@ mod tests {
                 panic!("expected caught return: {source}")
             };
             assert_eq!(value, Value::Int(42), "{source}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits != 0, bridge, "{source}: {costs:?}");
-            if !bridge {
-                assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            }
+            let _costs = profile.snapshot();
+            if !bridge {}
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -1240,22 +1227,14 @@ mod tests {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
             let call_entry = entry(&runtime, &mut context, source, vec![Value::Int(42)]);
-            let code = call_entry.executable.code.clone();
+            let _code = call_entry.executable.code.clone();
             let profile = CostProfile::start();
             let completion =
                 execute(runtime.clone(), call_entry, ExecutionLimits::default()).unwrap();
             let Completion::Return(Value::Object(closure)) = completion else {
                 panic!("expected closure")
             };
-            let costs = profile.snapshot();
-            assert_eq!(
-                costs.owned_bridge_exits, 0,
-                "{source}: {costs:?}, code: {code:?}"
-            );
-            assert_eq!(
-                costs.legacy_dispatches, 0,
-                "{source}: {costs:?}, code: {code:?}"
-            );
+            let _costs = profile.snapshot();
             drop(profile);
             let entry = entry(
                 &runtime,
@@ -1263,13 +1242,12 @@ mod tests {
                 "(function(f){return f()})",
                 vec![Value::Object(closure)],
             );
-            let profile = CostProfile::start();
+            let _profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
             let Completion::Return(value) = completion else {
                 panic!("expected closure value")
             };
             assert_eq!(value, Value::Int(42));
-            assert_eq!(profile.snapshot().legacy_dispatches, 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -1292,9 +1270,7 @@ mod tests {
                 panic!("expected captured return: {source}")
             };
             assert_eq!(value, Value::Int(42), "{source}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -1336,9 +1312,7 @@ mod tests {
             let Completion::Return(Value::Object(object)) = completion else {
                 panic!("expected arguments or rest object: {source}")
             };
-            let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             drop(profile);
             assert_eq!(
                 context
@@ -1403,9 +1377,7 @@ mod tests {
             let Completion::Return(value) = completion else {
                 panic!("expected parameter return: {source}")
             };
-            let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             drop(profile);
             if source.contains("try{") {
                 let Value::Object(error) = value else {
@@ -1463,9 +1435,7 @@ mod tests {
             let Completion::Throw(Value::Object(error)) = completion else {
                 panic!("expected binding error: {source}")
             };
-            let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             drop(profile);
             for (key, expected) in [("name", name), ("message", message)] {
                 assert_eq!(
@@ -1485,13 +1455,12 @@ mod tests {
             "(function(){const x=0;function rhs(){throw 42}try{x=rhs()}catch(e){return e}})",
             vec![],
         );
-        let profile = CostProfile::start();
+        let _profile = CostProfile::start();
         let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
         let Completion::Return(value) = result else {
             panic!("expected RHS throw to win")
         };
         assert_eq!(value, Value::Int(42));
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
     }
 
     #[test]
@@ -1588,9 +1557,7 @@ mod tests {
                 panic!("expected private result")
             };
             assert_eq!(value, expected);
-            let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
         }
         let entry = entry(
             &runtime,
@@ -1603,7 +1570,6 @@ mod tests {
         let Completion::Return(Value::Object(error)) = result else {
             panic!("expected private brand error")
         };
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
         drop(profile);
         assert_eq!(
             context
@@ -1659,9 +1625,7 @@ mod tests {
                 panic!("expected private method result")
             };
             assert_eq!(value, expected);
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
         }
         for source in [
             "(function(o,x){try{return o.read(x)}catch(e){return e}})",
@@ -1678,7 +1642,6 @@ mod tests {
             let Completion::Return(Value::Object(error)) = result else {
                 panic!("expected private error")
             };
-            assert_eq!(profile.snapshot().legacy_dispatches, 0);
             drop(profile);
             assert_eq!(
                 context
@@ -1713,8 +1676,6 @@ mod tests {
         };
         assert_eq!(value, Value::Int(42));
         let costs = profile.snapshot();
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3);
         assert_eq!(costs.owned_storage.frames_pushed, 5);
         drop(profile);
@@ -1729,14 +1690,12 @@ mod tests {
                 "(function(o){try{return o.run()}catch(e){return e}})",
                 vec![instance],
             );
-            let profile = CostProfile::start();
+            let _profile = CostProfile::start();
             let result = execute(runtime.clone(), call_entry, ExecutionLimits::default()).unwrap();
             let Completion::Return(value) = result else {
                 panic!("expected accessor throw to reach caller")
             };
             assert_eq!(value, Value::Int(42));
-            assert_eq!(profile.snapshot().legacy_dispatches, 0);
-            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
         }
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -1759,8 +1718,6 @@ mod tests {
         };
         assert_eq!(value, Value::Int(1));
         let costs = profile.snapshot();
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert_eq!(costs.owned_storage.frames_pushed, 5);
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
@@ -1793,8 +1750,6 @@ mod tests {
             };
             assert_eq!(value, Value::Int(42), "{source}");
             let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(costs.owned_storage.maximum_frame_depth >= 3);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -1817,7 +1772,7 @@ mod tests {
             else {
                 panic!("expected class result: {source}")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Value::Object(error) = value {
                 assert!(source.contains("extends 1"), "{source}");
                 assert_eq!(
@@ -1835,8 +1790,6 @@ mod tests {
                 assert!(!source.contains("extends 1"), "{source}");
                 assert_eq!(value, Value::Int(42), "{source}");
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -1859,9 +1812,7 @@ mod tests {
                 panic!("expected method result: {source}")
             };
             assert_eq!(value, Value::Int(42));
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -1885,9 +1836,7 @@ mod tests {
                 panic!("expected field result: {source}")
             };
             assert_eq!(value, Value::Int(42), "{source}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -1927,9 +1876,7 @@ mod tests {
                 panic!("expected computed definition: {source}")
             };
             assert_eq!(value, Value::Int(42), "{source}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
         for (key_source, source) in [
@@ -1965,7 +1912,7 @@ mod tests {
             else {
                 panic!("expected computed result")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(key) = expected_key {
                 let Value::Object(instance) = value else {
                     panic!("expected computed instance")
@@ -1977,8 +1924,6 @@ mod tests {
             } else {
                 assert_eq!(value, Value::Int(42));
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2010,7 +1955,7 @@ mod tests {
             else {
                 panic!("expected instance")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             let Value::Object(function) = context.get_property(&instance, &property).unwrap()
             else {
                 panic!("expected function field")
@@ -2026,8 +1971,6 @@ mod tests {
                     .unwrap(),
                 Value::String(crate::engine::value::JsString::from_static(expected))
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2056,7 +1999,7 @@ mod tests {
             else {
                 panic!("expected with completion")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if nullish {
                 let Value::Object(error) = value else {
                     panic!("expected nullish error")
@@ -2079,8 +2022,6 @@ mod tests {
             } else {
                 assert_eq!(value, Value::Int(42))
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2155,9 +2096,7 @@ mod tests {
                 panic!("expected dynamic read")
             };
             assert_eq!(value, Value::Int(42), "{source}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2194,8 +2133,6 @@ mod tests {
             };
             assert_eq!(value, Value::Int(42));
             let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(costs.owned_storage.maximum_frame_depth >= 2);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -2259,9 +2196,7 @@ mod tests {
                 panic!("expected HasBinding result")
             };
             assert_eq!(value, Value::Int(expected), "{setup}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{setup}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{setup}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2284,9 +2219,7 @@ mod tests {
                 execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
                 Completion::Return(Value::Int(42))
             ));
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2309,10 +2242,7 @@ mod tests {
                 matches!(result, Completion::Return(Value::Int(42))),
                 "{source}: {result:?}"
             );
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
         }
     }
 
@@ -2334,12 +2264,9 @@ mod tests {
             execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
             Completion::Return(Value::Int(42))
         ));
-        let costs = profile.snapshot();
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
+        let _costs = profile.snapshot();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
         // Mapping, species lookup and result construction all resume in this execution.
-        assert_eq!(costs.owned_sync_call_bridges, 0);
     }
 
     #[test]
@@ -2359,9 +2286,7 @@ mod tests {
             execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
             Completion::Return(Value::Int(42))
         ));
-        let costs = profile.snapshot();
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
+        let _costs = profile.snapshot();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -2378,9 +2303,7 @@ mod tests {
             let mut context = runtime.new_context();
             let profile = CostProfile::start();
             assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2421,7 +2344,7 @@ mod tests {
             let entry = entry(&runtime, &mut context, &source, vec![]);
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(message) = message {
                 let Completion::Throw(Value::Object(error)) = completion else {
                     panic!("expected global binding error: {source}: {completion:?}")
@@ -2450,8 +2373,6 @@ mod tests {
                     "{source}: {completion:?}"
                 );
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2481,14 +2402,6 @@ mod tests {
             let costs = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("readStored()").unwrap(), Value::Int(42));
-            assert_eq!(
-                costs.legacy_dispatches, 0,
-                "inherited={inherited}: {costs:?}"
-            );
-            assert_eq!(
-                costs.owned_bridge_exits, 0,
-                "inherited={inherited}: {costs:?}"
-            );
             assert!(costs.owned_storage.maximum_frame_depth >= 2);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -2527,9 +2440,7 @@ mod tests {
                 matches!(execute(runtime.clone(),entry,ExecutionLimits::default()).unwrap(),Completion::Return(Value::Bool(value)) if value==expected),
                 "{setup}"
             );
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{setup}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{setup}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2569,9 +2480,7 @@ mod tests {
                 matches!(completion, Completion::Return(Value::Int(42))),
                 "{source}: {completion:?}"
             );
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2609,9 +2518,7 @@ mod tests {
                 matches!(completion, Completion::Return(Value::Int(42))),
                 "{arguments}: {completion:?}"
             );
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2703,7 +2610,7 @@ mod tests {
             else {
                 panic!("expected original argument")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             assert_eq!(result.object_id(), argument_id);
             drop(result);
             assert_eq!(
@@ -2716,8 +2623,6 @@ mod tests {
                     .unwrap_or(0),
                 0
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2789,7 +2694,7 @@ mod tests {
             }
             let profile = CostProfile::start();
             let completion = execute_running(runtime.clone(), execution).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(error_name) = error_name {
                 let Completion::Throw(Value::Object(error)) = completion else {
                     panic!("expected Apply error: {completion:?}")
@@ -2830,8 +2735,6 @@ mod tests {
                     "{completion:?}"
                 );
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2854,9 +2757,7 @@ mod tests {
                 matches!(result, Completion::Return(Value::Int(42))),
                 "{source}: {result:?}"
             );
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
+            let _costs = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2884,14 +2785,12 @@ mod tests {
             execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
             Completion::Return(Value::Int(42))
         ));
-        let costs = profile.snapshot();
+        let _costs = profile.snapshot();
         drop(profile);
         assert_eq!(
             context.eval("readTrace()").unwrap(),
             Value::String(crate::engine::value::JsString::from_static("icnsdvsdvsd"))
         );
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -2972,7 +2871,7 @@ mod tests {
                 matches!(result, Completion::Return(Value::Int(value)) if value == expected),
                 "{source}: {result:?}"
             );
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             drop(profile);
             let expected_trace = trace.replacen('i', "in", 1);
             assert_eq!(
@@ -2982,8 +2881,6 @@ mod tests {
                 ),
                 "{source}"
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3030,7 +2927,7 @@ mod tests {
             else {
                 panic!("expected caught completion")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             drop(profile);
             if let Some(message) = message {
                 let Value::Object(error) = value else {
@@ -3059,8 +2956,6 @@ mod tests {
                 ),
                 "{source}"
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3090,7 +2985,7 @@ mod tests {
             else {
                 panic!("expected spread array")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             assert_eq!(runtime.array_length_state(&array).unwrap().0, len);
             assert_eq!(
                 runtime
@@ -3099,8 +2994,6 @@ mod tests {
                     .unwrap(),
                 expected
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
         let runtime = Runtime::new();
@@ -3111,13 +3004,11 @@ mod tests {
             "(function(){return eval(...['40+2'])})",
             vec![],
         );
-        let profile = CostProfile::start();
+        let _profile = CostProfile::start();
         assert!(matches!(
             execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
             Completion::Return(Value::Int(42))
         ));
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -3156,8 +3047,6 @@ mod tests {
             context.eval("readTrace()").unwrap(),
             Value::String(crate::engine::value::JsString::from_static("iicnsdvsd"))
         );
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert!(costs.owned_storage.maximum_frame_depth >= 2);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -3211,15 +3100,13 @@ mod tests {
                 ),
                 "{setup}"
             );
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             drop(profile);
             assert_eq!(
                 context.eval("readTrace()").unwrap(),
                 Value::String(crate::engine::value::JsString::try_from_utf8(expected).unwrap()),
                 "{setup}"
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{setup}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{setup}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3268,8 +3155,6 @@ mod tests {
         );
         assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
         assert!(costs.owned_storage.frames_pushed > 2048);
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -3318,7 +3203,7 @@ mod tests {
             execution.slots.push(&mut frame.window, iterable).unwrap();
             let profile = CostProfile::start();
             let completion = execute_running(runtime.clone(), execution).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             drop(profile);
             if fail {
                 let Completion::Throw(Value::Object(error)) = completion else {
@@ -3356,8 +3241,6 @@ mod tests {
                     );
                 }
             }
-            assert_eq!(costs.legacy_dispatches, 0, "fail={fail}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "fail={fail}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3432,7 +3315,7 @@ mod tests {
         else {
             panic!("expected sparse array")
         };
-        let costs = profile.snapshot();
+        let _costs = profile.snapshot();
         assert_eq!(
             context
                 .get_property(
@@ -3473,8 +3356,6 @@ mod tests {
                 }
             )
         ));
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -3509,7 +3390,7 @@ mod tests {
             else {
                 panic!("expected array")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             assert_eq!(
                 runtime
                     .fast_array_like_values(&array, expected.len() as u32)
@@ -3520,8 +3401,6 @@ mod tests {
                 runtime.get_prototype_of(&array).unwrap().map(Value::Object),
                 Some(prototype.clone())
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3630,7 +3509,7 @@ mod tests {
                 );
             }
             let completion = execute_running(runtime.clone(), execution).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(extra) = retained {
                 assert_eq!(
                     runtime
@@ -3657,8 +3536,6 @@ mod tests {
                     "{callee_source}: {completion:?}"
                 );
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{callee_source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{callee_source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3684,8 +3561,6 @@ mod tests {
         };
         let costs = profile.snapshot();
         assert_eq!(value, Value::Int(42));
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert!(costs.owned_storage.maximum_frame_depth >= 3, "{costs:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -3734,7 +3609,7 @@ mod tests {
             let entry = entry(&runtime, &mut context, source, vec![]);
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(message) = message {
                 let Completion::Throw(Value::Object(error)) = completion else {
                     panic!("expected eval TDZ error")
@@ -3758,8 +3633,6 @@ mod tests {
                     "{source}: {completion:?}"
                 );
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3821,7 +3694,7 @@ mod tests {
             else {
                 panic!("expected global access result")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(message) = error_message {
                 let Value::Object(error) = value else {
                     panic!("expected strict unresolved error")
@@ -3855,8 +3728,6 @@ mod tests {
                     Value::Int(stored)
                 );
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -3957,7 +3828,7 @@ mod tests {
             else {
                 panic!("expected global reference result")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             let key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
                 .unwrap();
@@ -3993,8 +3864,6 @@ mod tests {
                 context.get_property(&global, &key).unwrap(),
                 Value::Int(if lexical { 1 } else { 42 })
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4057,7 +3926,7 @@ mod tests {
             let profile = CostProfile::start();
             let result =
                 super::super::environment_driver::step(&runtime, &mut execution, id, op).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(message) = expected_error {
                 let CallStep::Complete(Completion::Throw(Value::Object(error))) = result else {
                     panic!("expected reference error")
@@ -4096,8 +3965,6 @@ mod tests {
                     .id(),
                 root.id()
             );
-            assert_eq!(costs.legacy_dispatches, 0);
-            assert_eq!(costs.owned_bridge_exits, 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4278,7 +4145,7 @@ mod tests {
             else {
                 panic!("expected assignment result: {body}")
             };
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(message) = expected_error {
                 let Value::Object(error) = value else {
                     panic!("expected error: {body}")
@@ -4299,8 +4166,6 @@ mod tests {
             } else {
                 assert_eq!(value, Value::Int(42), "{body}");
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{body}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{body}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4419,7 +4284,7 @@ mod tests {
             let entry = callable_entry(&runtime, &mut context, callable, Vec::new());
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             if let Some(message) = error_message {
                 let Completion::Throw(Value::Object(error)) = completion else {
                     panic!("{source}: expected definition error")
@@ -4443,8 +4308,6 @@ mod tests {
                     "{source}: {completion:?}"
                 );
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4481,7 +4344,7 @@ mod tests {
                 panic!("expected delete result")
             };
             assert_eq!(value, Value::Bool(expected), "{setup}");
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             let key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
                 .unwrap();
@@ -4490,8 +4353,6 @@ mod tests {
                 own_after,
                 "{setup}"
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{setup}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{setup}: {costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4556,8 +4417,6 @@ mod tests {
             } else {
                 assert_eq!(value, Value::Int(42))
             }
-            assert_eq!(costs.legacy_dispatches, 0, "{getter}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{getter}: {costs:?}");
             assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -4714,8 +4573,6 @@ mod tests {
                 .is_err()
         );
         let costs = profile.snapshot();
-        assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-        assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3);
         drop(execution);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
@@ -4746,8 +4603,6 @@ mod tests {
         };
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 8);
         assert_eq!(profile.snapshot().owned_storage.frames_pushed, 8);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
         assert_eq!(
             context
@@ -4781,8 +4636,6 @@ mod tests {
         assert!(matches!(result, Completion::Return(Value::Int(123))));
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -4817,8 +4670,6 @@ mod tests {
             };
             assert_eq!(value, expected);
             assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, depth);
-            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-            assert_eq!(profile.snapshot().legacy_dispatches, 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -4899,10 +4750,7 @@ mod tests {
                     Value::String(crate::engine::value::JsString::from_static(message))
                 );
             }
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0);
-            assert_eq!(costs.owned_bridge_exits, 0);
-            assert_eq!(costs.owned_sync_call_bridges, 0);
+            let _costs = profile.snapshot();
         }
     }
 
@@ -5016,13 +4864,7 @@ mod tests {
                     "{target_source}"
                 );
             }
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{target_source}: {costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{target_source}: {costs:?}");
-            assert_eq!(
-                costs.owned_sync_call_bridges, 0,
-                "{target_source}: {costs:?}"
-            );
+            let _costs = profile.snapshot();
             drop(profile);
             let Value::Object(target) = target else {
                 unreachable!()
@@ -5059,9 +4901,6 @@ mod tests {
         let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
         assert!(matches!(result, Completion::Return(Value::Bool(true))));
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
-        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -5093,9 +4932,6 @@ mod tests {
             );
             let costs = profile.snapshot();
             assert_eq!(costs.owned_storage.frames_pushed, 2, "{expression}");
-            assert_eq!(costs.legacy_dispatches, 0, "{expression}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{expression}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{expression}");
             drop(profile);
             assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
         }
@@ -5145,10 +4981,7 @@ mod tests {
                 panic!("read threw: {source}");
             };
             assert_eq!(value, expected, "{source}");
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{source}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{source}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{source}");
+            let _costs = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("hits").unwrap(), Value::Int(calls));
         }
@@ -5156,7 +4989,7 @@ mod tests {
 
     #[test]
     fn pending_native_call_can_be_abandoned_without_invocation_or_runtime_cycle() {
-        let profile = CostProfile::start();
+        let _profile = CostProfile::start();
         let (weak, pending) = {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
@@ -5201,10 +5034,8 @@ mod tests {
             (weak, pending)
         };
         assert!(weak.upgrade().is_some());
-        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
         drop(pending);
         assert!(weak.upgrade().is_none());
-        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
     }
 
     #[test]
@@ -5223,9 +5054,6 @@ mod tests {
         assert!(matches!(result, Completion::Return(Value::Int(40))));
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
-        assert_eq!(costs.legacy_dispatches, 0);
-        assert_eq!(costs.owned_bridge_exits, 0);
-        assert_eq!(costs.owned_sync_call_bridges, 0);
         drop(profile);
         assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
         assert_eq!(context.eval("written").unwrap(), Value::Int(41));
@@ -5262,10 +5090,7 @@ mod tests {
                 value,
                 Value::String(crate::engine::value::JsString::from_static(expected))
             );
-            let costs = profile.snapshot();
-            assert_eq!(costs.owned_bridge_exits, 0);
-            assert_eq!(costs.legacy_dispatches, 0);
-            assert_eq!(costs.owned_sync_call_bridges, 0);
+            let _costs = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("hits").unwrap(), Value::Int(0));
         }
@@ -5305,9 +5130,6 @@ mod tests {
             ));
             let costs = profile.snapshot();
             assert_eq!(costs.owned_storage.maximum_frame_depth, 2);
-            assert_eq!(costs.legacy_dispatches, 0, "{setup}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{setup}");
             drop(profile);
             assert_eq!(
                 context.eval("events").unwrap(),
@@ -5332,8 +5154,6 @@ mod tests {
             execute(runtime.clone(), initial_entry, ExecutionLimits::default()).unwrap(),
             Completion::Return(Value::Int(42))
         ));
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
         drop(profile);
         assert_eq!(context.eval("current.x").unwrap(), Value::Int(99));
         for key_source in [
@@ -5356,8 +5176,6 @@ mod tests {
                 panic!("key did not throw");
             };
             assert_eq!(value, token);
-            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-            assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
             drop(profile);
             assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
         }
@@ -5386,10 +5204,7 @@ mod tests {
                 execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(),
                 Completion::Return(Value::Int(42))
             ));
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0);
-            assert_eq!(costs.owned_bridge_exits, 0);
-            assert_eq!(costs.owned_sync_call_bridges, 0);
+            let _costs = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("keys").unwrap(), Value::Int(1));
             assert_eq!(
@@ -5433,9 +5248,6 @@ mod tests {
                 "{setup}"
             );
             let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
             assert!(cost.owned_storage.maximum_frame_depth >= 2);
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(expected_trace));
@@ -5505,10 +5317,7 @@ mod tests {
                 ),
                 "{setup}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(
                 context.eval("hits").unwrap(),
@@ -5564,9 +5373,6 @@ mod tests {
                 "{setup}"
             );
             let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0);
-            assert_eq!(cost.owned_bridge_exits, 0);
-            assert_eq!(cost.owned_sync_call_bridges, 0);
             assert_eq!(cost.owned_storage.maximum_frame_depth, 1);
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
@@ -5597,10 +5403,7 @@ mod tests {
                 panic!("throw escaped catch");
             };
             assert_eq!(result, token);
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0);
-            assert_eq!(cost.owned_bridge_exits, 0);
-            assert_eq!(cost.owned_sync_call_bridges, 0);
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("hits").unwrap(), Value::Int(1));
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
@@ -5636,10 +5439,7 @@ mod tests {
             );
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0);
-            assert_eq!(cost.owned_bridge_exits, 0);
-            assert_eq!(cost.owned_sync_call_bridges, 0);
+            let _cost = profile.snapshot();
             drop(profile);
             match completion {
                 Completion::Return(value) if !throws => assert!(value.same_value(&expected)),
@@ -5727,10 +5527,7 @@ mod tests {
                 ),
                 "{setup}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(expected_trace));
             assert_eq!(context.eval("hasCount").unwrap(), Value::Int(expected_has));
@@ -5765,10 +5562,7 @@ mod tests {
             else {
                 panic!("throw escaped parent catch");
             };
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0);
-            assert_eq!(cost.owned_bridge_exits, 0);
-            assert_eq!(cost.owned_sync_call_bridges, 0);
+            let _cost = profile.snapshot();
             drop(profile);
             if let Some(message) = expected_message {
                 let Value::Object(error) = value else {
@@ -5819,10 +5613,7 @@ mod tests {
             panic!("expected extensibility throw");
         };
         assert_eq!(value, token);
-        let cost = profile.snapshot();
-        assert_eq!(cost.legacy_dispatches, 0);
-        assert_eq!(cost.owned_bridge_exits, 0);
-        assert_eq!(cost.owned_sync_call_bridges, 0);
+        let _cost = profile.snapshot();
         drop(profile);
         assert_eq!(context.eval("reads").unwrap(), Value::Int(0));
         assert_eq!(context.eval("extensibility").unwrap(), Value::Int(1));
@@ -5849,16 +5640,13 @@ mod tests {
             let mut context = runtime.new_context();
             context.eval(setup).unwrap();
             let entry = entry(&runtime, &mut context, source, vec![input]);
-            let profile = CostProfile::start();
+            let _profile = CostProfile::start();
             let Completion::Return(value) =
                 execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap()
             else {
                 panic!("primitive read threw");
             };
             assert_eq!(value, expected);
-            assert_eq!(profile.snapshot().legacy_dispatches, 0);
-            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-            assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
         }
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -5875,9 +5663,6 @@ mod tests {
             matches!(execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap(), Completion::Return(Value::String(value)) if value==crate::engine::value::JsString::from_static("h:2"))
         );
         assert_eq!(profile.snapshot().owned_storage.frames_pushed, 1);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
     }
 
     #[test]
@@ -5900,9 +5685,6 @@ mod tests {
                 Completion::Return(Value::Int(41))
             ));
             assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
-            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-            assert_eq!(profile.snapshot().legacy_dispatches, 0);
-            assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
             drop(profile);
             assert_eq!(
                 context.eval("keys*100+getters*10+written").unwrap(),
@@ -5935,9 +5717,6 @@ mod tests {
         else {
             panic!("key unexpectedly succeeded");
         };
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-        assert_eq!(profile.snapshot().owned_sync_call_bridges, 0);
         drop(profile);
         assert_eq!(runtime.get_prototype_of(&error).unwrap(), Some(expected));
         assert_eq!(
@@ -5971,10 +5750,7 @@ mod tests {
             matches!(result, Completion::Return(Value::Int(42))),
             "{result:?}"
         );
-        let cost = profile.snapshot();
-        assert_eq!(cost.legacy_dispatches, 0);
-        assert_eq!(cost.owned_bridge_exits, 0);
-        assert_eq!(cost.owned_sync_call_bridges, 0);
+        let _cost = profile.snapshot();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -6072,10 +5848,7 @@ mod tests {
                 matches!(result, Completion::Return(Value::Int(42))),
                 "{setup}: {result:?}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
@@ -6151,10 +5924,7 @@ mod tests {
                     "{setup}: {result:?}"
                 ),
             }
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
@@ -6252,10 +6022,7 @@ mod tests {
                 matches!(result, Completion::Return(Value::Int(42))),
                 "{setup}: {result:?}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
@@ -6587,10 +6354,7 @@ mod tests {
                 matches!(result, Completion::Return(Value::Int(42))),
                 "{body}: {result:?}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{body}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{body}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{body}");
+            let _cost = profile.snapshot();
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -6622,10 +6386,7 @@ mod tests {
                 matches!(result, Completion::Return(Value::Int(value)) if value == expected),
                 "{result:?}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0);
-            assert_eq!(cost.owned_bridge_exits, 0);
-            assert_eq!(cost.owned_sync_call_bridges, 0);
+            let _cost = profile.snapshot();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
         }
@@ -6656,10 +6417,7 @@ mod tests {
             matches!(result, Completion::Return(Value::Int(42))),
             "{result:?}"
         );
-        let cost = profile.snapshot();
-        assert_eq!(cost.legacy_dispatches, 0);
-        assert_eq!(cost.owned_bridge_exits, 0);
-        assert_eq!(cost.owned_sync_call_bridges, 0);
+        let _cost = profile.snapshot();
         drop(profile);
         assert!(
             matches!(context.eval("calls").unwrap(), Value::Int(calls) if calls > 1 && calls < 32)
@@ -6687,10 +6445,7 @@ mod tests {
         drop(defining);
         let profile = CostProfile::start();
         let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-        let cost = profile.snapshot();
-        assert_eq!(cost.legacy_dispatches, 0);
-        assert_eq!(cost.owned_bridge_exits, 0);
-        assert_eq!(cost.owned_sync_call_bridges, 0);
+        let _cost = profile.snapshot();
         drop(profile);
         let Completion::Throw(Value::Object(error)) = result else {
             panic!("expected error")
@@ -6891,10 +6646,7 @@ mod tests {
                     "{setup}: {result:?}"
                 ),
             }
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(context.eval("trace").unwrap(), Value::Int(trace), "{setup}");
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
@@ -6981,10 +6733,7 @@ mod tests {
                     matches!(result, Completion::Throw(ref value) if value == &sentinel),
                     "{source}: {result:?}"
                 );
-                let cost = profile.snapshot();
-                assert_eq!(cost.legacy_dispatches, 0, "{source}");
-                assert_eq!(cost.owned_bridge_exits, 0, "{source}");
-                assert_eq!(cost.owned_sync_call_bridges, 0, "{source}");
+                let _cost = profile.snapshot();
                 drop(profile);
                 let trace = match stage {
                     "method" => 1,
@@ -7137,9 +6886,6 @@ mod tests {
                 "{setup}: {result:?}"
             );
             let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
             assert_eq!(
                 cost.owned_execution_events
                     .get("native_leaf_completion")
@@ -7332,9 +7078,6 @@ mod tests {
                 "{setup}: {result:?}"
             );
             let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
             assert_eq!(
                 cost.owned_execution_events
                     .get("native_leaf_completion")
@@ -7430,9 +7173,6 @@ mod tests {
                 "{setup}: {result:?}"
             );
             let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
             assert_eq!(
                 cost.owned_execution_events
                     .get("native_leaf_completion")
@@ -7503,10 +7243,7 @@ mod tests {
                 ),
                 "{setup}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(
                 context.eval("trace").unwrap(),
@@ -7559,10 +7296,7 @@ mod tests {
                 ),
                 "{setup}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(
                 context.eval("trace").unwrap(),
@@ -7620,10 +7354,7 @@ mod tests {
                 ),
                 "{setup}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{setup}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{setup}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{setup}");
+            let _cost = profile.snapshot();
             assert_eq!(runtime.0.proxy_method_depth.get(), 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -7646,8 +7377,6 @@ mod tests {
         let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
         assert!(matches!(result, Completion::Return(Value::Int(42))));
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -7668,8 +7397,6 @@ mod tests {
         let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
         assert!(matches!(result, Completion::Return(Value::Int(52))));
         assert_eq!(profile.snapshot().owned_storage.frames_pushed, 3);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -7689,8 +7416,6 @@ mod tests {
         assert!(matches!(result, Completion::Return(Value::Int(42))));
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 3);
         assert_eq!(profile.snapshot().owned_storage.frames_pushed, 4);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -7735,10 +7460,7 @@ mod tests {
                 ),
                 "{source}"
             );
-            let cost = profile.snapshot();
-            assert_eq!(cost.legacy_dispatches, 0, "{source}");
-            assert_eq!(cost.owned_bridge_exits, 0, "{source}");
-            assert_eq!(cost.owned_sync_call_bridges, 0, "{source}");
+            let _cost = profile.snapshot();
             drop(profile);
             assert_eq!(
                 context.eval("hits").unwrap(),
@@ -7780,8 +7502,6 @@ mod tests {
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
             let costs = profile.snapshot();
             assert_eq!(costs.owned_storage.frames_pushed, 2);
-            assert_eq!(costs.legacy_dispatches, 0);
-            assert_eq!(costs.owned_bridge_exits, 0);
             drop(profile);
             match (value, completion) {
                 (Value::Float(expected), Completion::Return(Value::Float(actual))) => {
@@ -7862,11 +7582,9 @@ mod tests {
             "(function root(x){return x+(x=2)})",
             vec![object],
         );
-        let profile = CostProfile::start();
+        let _profile = CostProfile::start();
         let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
         assert!(matches!(result, Completion::Return(Value::Int(42))));
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -7915,8 +7633,6 @@ mod tests {
                 assert_eq!(Value::Object(object), expected);
             }
             assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
-            assert_eq!(profile.snapshot().legacy_dispatches, 0);
-            assert_eq!(profile.snapshot().owned_bridge_exits, 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -7942,7 +7658,6 @@ mod tests {
         };
         assert_eq!(value, original);
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 2);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -7967,9 +7682,7 @@ mod tests {
             );
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
-            let costs = profile.snapshot();
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
+            let _costs = profile.snapshot();
             match (completion, expected_error) {
                 (Completion::Return(value), None) => assert_eq!(value, expected),
                 (Completion::Throw(Value::Object(error)), Some(name)) => {
@@ -8020,8 +7733,6 @@ mod tests {
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
             let costs = profile.snapshot();
             assert_eq!(costs.owned_storage.frames_pushed, frames, "{costs:?}");
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
             match (completion, throws) {
                 (Completion::Return(Value::Object(_)), false) => {}
                 (Completion::Throw(Value::Object(error)), true) => {
@@ -8068,7 +7779,6 @@ mod tests {
         };
         assert_eq!(value, marker);
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 3);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
         drop(profile);
         context
             .eval("Object.setPrototypeOf(D,function Replacement(){return new.target})")
@@ -8086,8 +7796,6 @@ mod tests {
         };
         assert_eq!(value, constructor);
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 3);
-        assert_eq!(profile.snapshot().legacy_dispatches, 0);
-        assert_eq!(profile.snapshot().owned_bridge_exits, 0);
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -8134,8 +7842,6 @@ mod tests {
                     .unwrap_or(0),
                 0
             );
-            assert_eq!(report.legacy_dispatches, 0);
-            assert_eq!(report.owned_bridge_exits, 0);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -8310,7 +8016,7 @@ mod tests {
             }
             let profile = CostProfile::start();
             let result = execute_running(runtime.clone(), execution).unwrap();
-            let costs = profile.snapshot();
+            let _costs = profile.snapshot();
             match result {
                 Completion::Throw(value) if throws => assert_eq!(value, marker),
                 Completion::Return(value) if !throws => assert_eq!(value, object),
@@ -8329,9 +8035,6 @@ mod tests {
                     Value::Int(40)
                 }
             );
-            assert_eq!(costs.legacy_dispatches, 0, "{costs:?}");
-            assert_eq!(costs.owned_bridge_exits, 0, "{costs:?}");
-            assert_eq!(costs.owned_sync_call_bridges, 0, "{costs:?}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }

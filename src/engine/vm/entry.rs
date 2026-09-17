@@ -208,9 +208,6 @@ mod tests {
         assert!(context.set_property(&proxy, &key, Value::Int(42)).unwrap());
         assert_eq!(context.get_property(&proxy, &key).unwrap(), Value::Int(42));
         let snapshot = profile.snapshot();
-        assert_eq!(snapshot.legacy_dispatches, 0);
-        assert_eq!(snapshot.owned_bridge_exits, 0);
-        assert_eq!(snapshot.owned_sync_call_bridges, 0);
     }
 
     #[test]
@@ -249,9 +246,6 @@ mod tests {
         };
         assert_eq!(context.get_property(&result, &key).unwrap(), Value::Int(9));
         let snapshot = profile.snapshot();
-        assert_eq!(snapshot.legacy_dispatches, 0);
-        assert_eq!(snapshot.owned_bridge_exits, 0);
-        assert_eq!(snapshot.owned_sync_call_bridges, 0);
     }
     #[test]
     fn template_value_constants_keep_identity_and_roots_through_owned_entry_and_gc() {
@@ -296,8 +290,5 @@ mod tests {
             Value::String(crate::engine::value::JsString::from_static("alive"))
         );
         let snapshot = profile.snapshot();
-        assert_eq!(snapshot.legacy_dispatches, 0);
-        assert_eq!(snapshot.owned_bridge_exits, 0);
-        assert_eq!(snapshot.owned_sync_call_bridges, 0);
     }
 }

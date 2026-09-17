@@ -29,8 +29,6 @@ fn ordinary_array_next_finishes_locally_for_values_keys_and_entries() {
             .unwrap_or(0)
             >= 9
     );
-    assert_eq!(costs.owned_bridge_exits, 0);
-    assert_eq!(costs.owned_sync_call_bridges, 0);
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }
 
@@ -157,7 +155,5 @@ fn dense_immediate_next_preserves_frozen_holes_proxy_and_loop_mutations() {
             .unwrap_or(0)
             >= 3
     );
-    assert_eq!(cost.owned_bridge_exits, 0);
-    assert_eq!(cost.owned_sync_call_bridges, 0);
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }
