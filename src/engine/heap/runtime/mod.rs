@@ -54,6 +54,9 @@ pub(crate) struct RuntimeInner {
     /// host-stack budget; no pointer is dereferenced after the marker ends.
     pub(crate) host_stack_top: Cell<Option<usize>>,
     pub(crate) proxy_method_depth: Cell<usize>,
+    /// Maximum number of installed JavaScript call frames for one top-level
+    /// execution. Read at execution entry; the default matches `ExecutionLimits`.
+    pub(crate) recursion_limit: Cell<usize>,
     pub(crate) next_context_id: Cell<u64>,
     pub(crate) domain_id: u64,
 }

@@ -46,7 +46,7 @@ impl Runtime {
         let result = super::driver::execute(
             self.clone(),
             entry,
-            super::execution::ExecutionLimits::default(),
+            super::execution::ExecutionLimits::for_runtime(self),
         )
         .map_err(RuntimeError::Engine)?;
         if matches!(

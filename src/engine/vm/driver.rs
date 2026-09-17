@@ -516,7 +516,7 @@ fn start_root(
     realm: crate::engine::heap::ContextId,
     operation: RootOperation,
 ) -> Result<RunningExit, Error> {
-    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default())?;
+    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::for_runtime(&runtime))?;
     match super::proxy_get_driver::start_root(&runtime, &mut execution, realm, operation)? {
         super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
             Ok(RunningExit::Complete(completion))
@@ -565,7 +565,7 @@ impl RunningExit {
 /// Install an authenticated dormant frame and inject abrupt resumption into
 /// the same unwinder used by ordinary child-frame throws.
 pub(super) fn resume(runtime: Runtime, entry: FrameEntry, pc: usize) -> Result<RunningExit, Error> {
-    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default())?;
+    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::for_runtime(&runtime))?;
     let id = push_frame(&mut execution, entry)?;
     let frame = execution.frames.current_mut(id)?;
     frame.resume_pc = pc;

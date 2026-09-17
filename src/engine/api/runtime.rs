@@ -101,6 +101,7 @@ impl Runtime {
             module_host_callback_depth: Cell::new(0),
             host_stack_top: Cell::new(None),
             proxy_method_depth: Cell::new(0),
+            recursion_limit: Cell::new(u16::MAX as usize),
             next_context_id: Cell::new(0),
             domain_id,
         }))
@@ -159,6 +160,24 @@ impl Runtime {
     pub fn domain_id(&self) -> u64 {
         self.0.domain_id
     }
+
+    /// Set the maximum number of installed JavaScript call frames for one
+    /// top-level execution. This is the JavaScript-frame ceiling only; the
+    /// native host-stack budget that protects Rust reentry is independent and
+    /// unaffected.
+    ///
+    /// The value is sampled when a top-level execution starts, so already
+    /// running executions keep the limit they began with. A limit of `0` is
+    /// raised to `1`.
+    pub fn set_recursion_limit(&self, limit: usize) {
+        self.0.recursion_limit.set(limit.max(1));
+    }
+
+    /// Return the configured JavaScript call-frame recursion limit.
+    #[must_use]
+    pub fn recursion_limit(&self) -> usize {
+        self.0.recursion_limit.get()
+    }
 }
 
 /// A single-threaded QuickJS-compatible runtime.
@@ -172,5 +191,42 @@ pub struct Runtime(pub(crate) Rc<RuntimeInner>);
 impl Default for Runtime {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod recursion_limit_tests {
+    use super::*;
+    use crate::engine::value::{JsString, Value};
+
+    // Deep enough to exceed a small configured limit but not the default one.
+    const DEEP: &str = "(function(){try{(function f(n){return n<=0?0:1+f(n-1)})(5000);return 'ok'}catch(e){return e.message}})()";
+
+    #[test]
+    fn runtime_recursion_limit_is_configurable_and_default_is_unchanged() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(runtime.recursion_limit(), u16::MAX as usize);
+        assert_eq!(
+            context.eval(DEEP).unwrap(),
+            Value::String(JsString::from_static("ok"))
+        );
+
+        runtime.set_recursion_limit(200);
+        assert_eq!(runtime.recursion_limit(), 200);
+        let Value::String(message) = context.eval(DEEP).unwrap() else {
+            panic!("expected a message string")
+        };
+        assert!(message.to_string().contains("stack overflow"), "{message}");
+
+        // A zero limit is clamped to one; a very low but usable limit still
+        // produces a catchable overflow from inside JavaScript.
+        runtime.set_recursion_limit(0);
+        assert_eq!(runtime.recursion_limit(), 1);
+        runtime.set_recursion_limit(10);
+        let Value::String(message) = context.eval(DEEP).unwrap() else {
+            panic!("expected a message string")
+        };
+        assert!(message.to_string().contains("stack overflow"), "{message}");
     }
 }

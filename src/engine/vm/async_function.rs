@@ -135,7 +135,7 @@ impl Runtime {
         let outcome = super::driver::execute(
             self.clone(),
             entry,
-            super::execution::ExecutionLimits::default(),
+            super::execution::ExecutionLimits::for_runtime(self),
         )
         .and_then(|exit| exit.finish_suspending(self.clone()))
         .map_err(RuntimeError::Engine);

@@ -32,6 +32,17 @@ impl Default for ExecutionLimits {
     }
 }
 
+impl ExecutionLimits {
+    /// JavaScript-frame ceiling sampled from the runtime configuration. The
+    /// slot budget keeps its default; the native host-stack budget is separate.
+    pub(super) fn for_runtime(runtime: &Runtime) -> Self {
+        Self {
+            frames: runtime.recursion_limit(),
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ExecutionRegistration {
     domain: u64,
