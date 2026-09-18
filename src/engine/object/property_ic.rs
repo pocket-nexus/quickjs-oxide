@@ -82,14 +82,14 @@ impl PropertyReadCache {
         if location.domain != domain || location.realm != realm {
             return None;
         }
-        let object = heap.object(receiver).ok()?;
+        let object = heap.object_fast(receiver);
         if !ordinary_receiver(object, location.numeric_key) {
             return None;
         }
         if object.shape != location.shape {
             return None;
         }
-        let shape = heap.shape(object.shape).ok()?;
+        let shape = heap.shape_fast(object.shape);
         if shape.layout_revision() != location.revision {
             return None;
         }
@@ -99,16 +99,11 @@ impl PropertyReadCache {
                 return None;
             }
             for _ in 0..location.depth {
-                let data = heap.object(holder).ok()?;
-                holder = heap.shape(data.shape).ok()?.prototype()?;
+                let data = heap.object_fast(holder);
+                holder = heap.shape_fast(data.shape).prototype()?;
             }
         }
-        match heap
-            .object(holder)
-            .ok()?
-            .slots
-            .get(location.slot as usize)?
-        {
+        match heap.object_fast(holder).slots.get(location.slot as usize)? {
             PropertySlot::Data(value) => Some(value),
             // VarRef/AutoInit can share data-shaped storage; never treat them
             // as immutable data, even if an internal slot writer changed kind.
