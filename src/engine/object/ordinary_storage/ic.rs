@@ -105,6 +105,107 @@ impl Runtime {
         crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
         Ok(Some(value))
     }
+
+    /// Trusted shared-borrow data-property read.
+    ///
+    /// Covers the location-cache hit for a live receiver without a mutable
+    /// state borrow or fallible plumbing. Symbols need an atom-table retain
+    /// (S1b) and every non-data or non-cached case declines with `None`, so the
+    /// caller keeps its canonical `try_property_ic_read_owned` fallback. A
+    /// declined read claims no owner.
+    #[inline]
+    pub(crate) fn property_ic_read_fast(
+        &self,
+        base: &Value,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> Option<Value> {
+        let atom = linked_field_atom(self, executable, key_index)?;
+        let cache = executable.property_read_ic.site(pc)?;
+        if !keep_receiver && self.0.deferred_references.has_pending() {
+            return None;
+        }
+        let state = self.0.state.try_borrow().ok()?;
+        if !keep_receiver && state.heap.has_pending_zero_cleanup() {
+            return None;
+        }
+        let receiver = match base {
+            Value::Object(object) if object.belongs_to(self) => object.object_id(),
+            Value::Object(_) => return None,
+            _ => {
+                cache.miss(
+                    &state.heap,
+                    &state.atoms,
+                    self.domain_id(),
+                    executable.realm,
+                    None,
+                    atom,
+                );
+                return None;
+            }
+        };
+        if !keep_receiver
+            && state.heap.slot_object_release_readiness(receiver).ok()?
+                != SlotReleaseReadiness::Ready
+        {
+            return None;
+        }
+        let Some(raw) = cache.read(&state.heap, self.domain_id(), executable.realm, receiver)
+        else {
+            cache.miss(
+                &state.heap,
+                &state.atoms,
+                self.domain_id(),
+                executable.realm,
+                Some(receiver),
+                atom,
+            );
+            return None;
+        };
+        match raw {
+            RawValue::Object(function) => {
+                let selected = if keep_receiver {
+                    let object = state.heap.object_fast(*function);
+                    match &object.payload {
+                        ObjectPayload::NativeFunction { data, .. } => {
+                            data.realm.and_then(|realm| {
+                                (data.operation().is_some() && state.heap.context(realm).is_ok())
+                                    .then_some((*function, *data))
+                            })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                state.heap.retain_object_fast(*function);
+                *native = selected.map(|(function, data)| LinkedNativeSelection {
+                    runtime: self.clone(),
+                    function,
+                    data,
+                });
+                Some(self.take_owned_raw_value_fast(RawValue::Object(*function)))
+            }
+            RawValue::String(value) => {
+                Some(self.take_owned_raw_value_fast(RawValue::String(value.clone())))
+            }
+            RawValue::BigInt(value) => {
+                Some(self.take_owned_raw_value_fast(RawValue::BigInt(value.clone())))
+            }
+            RawValue::Undefined
+            | RawValue::Null
+            | RawValue::Bool(_)
+            | RawValue::Int(_)
+            | RawValue::Float(_) => Some(self.take_owned_raw_value_fast(raw.clone())),
+            RawValue::Symbol(_)
+            | RawValue::Private(_)
+            | RawValue::Uninitialized
+            | RawValue::Exception => None,
+        }
+    }
 }
 
 impl Runtime {

@@ -306,7 +306,8 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
 
     heap.live_node_mut(RawId::Object(iterator_prototype))
         .unwrap()
-        .strong = u32::MAX;
+        .strong
+        .set(u32::MAX);
     assert_eq!(
         heap.attach_map_intrinsics(realm, map),
         Err(HeapError::Overflow {
@@ -321,7 +322,8 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
     );
     heap.live_node_mut(RawId::Object(iterator_prototype))
         .unwrap()
-        .strong = iterator_strong;
+        .strong
+        .set(iterator_strong);
 
     heap.attach_map_intrinsics(realm, map).unwrap();
     assert_eq!(heap.context(realm).unwrap().map, Some(map));
@@ -665,7 +667,8 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
 
     heap.live_node_mut(RawId::Object(iterator_prototype))
         .unwrap()
-        .strong = u32::MAX;
+        .strong
+        .set(u32::MAX);
     assert_eq!(
         heap.attach_set_intrinsics(realm, set),
         Err(HeapError::Overflow {
@@ -680,7 +683,8 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
     );
     heap.live_node_mut(RawId::Object(iterator_prototype))
         .unwrap()
-        .strong = iterator_strong;
+        .strong
+        .set(iterator_strong);
 
     heap.attach_set_intrinsics(realm, set).unwrap();
     assert_eq!(heap.context(realm).unwrap().set, Some(set));

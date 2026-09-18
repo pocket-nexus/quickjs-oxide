@@ -631,9 +631,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             )
                     })
                     .and_then(|_| cold.closure_slots.get(usize::from(*index)))
-                    .map(|root| super::bindings::read_run_cell(runtime, &root))
-                    .transpose()?
-                    .flatten();
+                    .and_then(|root| super::bindings::read_run_cell(runtime, &root));
                 if let Some((value, _owned)) = immediate {
                     slots.push(value)?;
                     #[cfg(feature = "profiling")]
@@ -1061,9 +1059,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if let Some((value, _owned)) = cold
                     .closure_slots
                     .get(usize::from(*index))
-                    .map(|root| super::bindings::read_run_cell(runtime, &root))
-                    .transpose()?
-                    .flatten()
+                    .and_then(|root| super::bindings::read_run_cell(runtime, &root))
                 {
                     slots.push(value)?;
                     #[cfg(feature = "profiling")]
@@ -1169,7 +1165,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let immediate = if matches!(instruction, Instruction::GetArg(_)) {
                     match slots.parameter(*index)? {
                         FrameBinding::Captured(root) => {
-                            super::bindings::read_run_cell(runtime, &root)?
+                            super::bindings::read_run_cell(runtime, &root)
                         }
                         _ => None,
                     }
@@ -1269,7 +1265,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                     FrameBinding::Captured(root) => {
                         if let Some((value, _owned)) =
-                            super::bindings::read_run_cell(runtime, &root)?
+                            super::bindings::read_run_cell(runtime, &root)
                         {
                             slots.push(value)?;
                             #[cfg(feature = "profiling")]

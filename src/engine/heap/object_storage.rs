@@ -36,6 +36,15 @@ impl Heap {
         }
     }
 
+    /// Trusted shared read for a live `ObjectId` held by an owning root.
+    #[inline]
+    pub(crate) fn object_fast(&self, id: ObjectId) -> &ObjectData {
+        match &self.live_node_fast(RawId::Object(id)).data {
+            NodeData::Object(object) => object,
+            _ => unreachable!("trusted object handle reached another node payload"),
+        }
+    }
+
     /// Set QuickJS's identity-local Annex B `is_HTMLDDA` bit.
     #[cfg(feature = "test262-host")]
     pub(crate) fn set_object_is_html_dda(&mut self, id: ObjectId) -> Result<(), HeapError> {

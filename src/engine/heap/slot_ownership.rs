@@ -32,8 +32,8 @@ impl Heap {
             return Ok(SlotReleaseReadiness::Drain);
         }
         match &self.slots[index].state {
-            SlotState::Live(node) if node.strong > 1 => Ok(SlotReleaseReadiness::Ready),
-            SlotState::Live(node) if node.strong == 1 => {
+            SlotState::Live(node) if node.strong.get() > 1 => Ok(SlotReleaseReadiness::Ready),
+            SlotState::Live(node) if node.strong.get() == 1 => {
                 // release_raw_no_drain would push to this queue. Do not commit
                 // its decrement before deciding whether that push can allocate.
                 Ok(if self.zero_queue.len() == self.zero_queue.capacity() {
@@ -387,7 +387,8 @@ mod tests {
             .heap
             .live_node_mut(id)
             .unwrap()
-            .strong = u32::MAX;
+            .strong
+            .set(u32::MAX);
         let result = root.try_clone();
         let count = runtime.0.state.borrow().heap.strong_count(id).unwrap();
         // Restore the actual owner count before assertions can unwind roots.
@@ -398,7 +399,8 @@ mod tests {
             .heap
             .live_node_mut(id)
             .unwrap()
-            .strong = 1;
+            .strong
+            .set(1);
         assert!(result.is_err());
         assert_eq!(count, u32::MAX);
         drop(root);

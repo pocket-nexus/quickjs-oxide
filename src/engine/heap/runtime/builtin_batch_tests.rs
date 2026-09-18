@@ -165,8 +165,8 @@ fn builtin_batch_rolls_back_shape_and_realm_edges_on_retain_overflow() {
             .heap
             .live_node_mut(RawId::Context(context.realm))
             .unwrap();
-        let strong = node.strong;
-        node.strong = u32::MAX;
+        let strong = node.strong.get();
+        node.strong.set(u32::MAX);
         (strong, counts.live, counts.shape_nodes)
     };
     let result = runtime.define_native_builtin_auto_init_batch(
@@ -180,8 +180,8 @@ fn builtin_batch_rolls_back_shape_and_realm_edges_on_retain_overflow() {
             .heap
             .live_node_mut(RawId::Context(context.realm))
             .unwrap();
-        let after = node.strong;
-        node.strong = strong;
+        let after = node.strong.get();
+        node.strong.set(strong);
         assert_eq!(after, u32::MAX);
         assert_eq!(state.heap.counts().live, live);
         assert_eq!(state.heap.counts().shape_nodes, shapes);

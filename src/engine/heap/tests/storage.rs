@@ -472,7 +472,8 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
 
     heap.live_node_mut(RawId::Object(wrap_prototype))
         .unwrap()
-        .strong = u32::MAX;
+        .strong
+        .set(u32::MAX);
     assert_eq!(
         heap.attach_iterator_intrinsics(realm, iterator),
         Err(HeapError::Overflow {
@@ -494,7 +495,8 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
     );
     heap.live_node_mut(RawId::Object(wrap_prototype))
         .unwrap()
-        .strong = wrap_strong;
+        .strong
+        .set(wrap_strong);
 
     heap.attach_iterator_intrinsics(realm, iterator).unwrap();
     assert_eq!(heap.context(realm).unwrap().iterator, Some(iterator));
@@ -693,7 +695,8 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
         .heap
         .live_node_mut(RawId::Shape(fixture.object_shape))
         .unwrap()
-        .strong = u32::MAX;
+        .strong
+        .set(u32::MAX);
     assert_eq!(
         fixture
             .heap
@@ -725,7 +728,8 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
         .heap
         .live_node_mut(RawId::Shape(fixture.object_shape))
         .unwrap()
-        .strong = object_shape_strong;
+        .strong
+        .set(object_shape_strong);
 
     fixture
         .heap
@@ -1322,7 +1326,10 @@ fn property_slot_transaction_retains_before_publish_and_marks_cleanup_failures()
             vec![PropertySlot::Data(RawValue::Undefined)],
         ))
         .unwrap();
-    heap.live_node_mut(RawId::Object(target)).unwrap().strong = u32::MAX;
+    heap.live_node_mut(RawId::Object(target))
+        .unwrap()
+        .strong
+        .set(u32::MAX);
     let failure = heap
         .replace_object_slot_with_status(object, 0, PropertySlot::Data(RawValue::Object(target)))
         .err()
@@ -1333,10 +1340,16 @@ fn property_slot_transaction_retains_before_publish_and_marks_cleanup_failures()
         PropertySlot::Data(RawValue::Int(7))
     ));
     assert_eq!(heap.object_strong_count(target), Ok(u32::MAX));
-    heap.live_node_mut(RawId::Object(target)).unwrap().strong = 1;
+    heap.live_node_mut(RawId::Object(target))
+        .unwrap()
+        .strong
+        .set(1);
     heap.replace_object_slot(object, 0, PropertySlot::Data(RawValue::Object(target)))
         .unwrap();
-    heap.live_node_mut(RawId::Object(target)).unwrap().strong = 0;
+    heap.live_node_mut(RawId::Object(target))
+        .unwrap()
+        .strong
+        .set(0);
     let failure = heap
         .replace_object_slot_with_status(object, 0, PropertySlot::Data(RawValue::Int(42)))
         .err()
@@ -1346,7 +1359,10 @@ fn property_slot_transaction_retains_before_publish_and_marks_cleanup_failures()
         heap.object(object).unwrap().slots[0],
         PropertySlot::Data(RawValue::Int(42))
     ));
-    heap.live_node_mut(RawId::Object(target)).unwrap().strong = 1;
+    heap.live_node_mut(RawId::Object(target))
+        .unwrap()
+        .strong
+        .set(1);
     heap.release_object(target).unwrap();
     heap.release_object(object).unwrap();
     heap.release_shape(shape).unwrap();
@@ -1380,7 +1396,8 @@ fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure()
             .heap
             .live_node_mut(RawId::Object(old.object_id()))
             .unwrap()
-            .strong = 0;
+            .strong
+            .set(0);
         assert!(
             state
                 .replace_property_slot(
@@ -1398,7 +1415,8 @@ fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure()
             .heap
             .live_node_mut(RawId::Object(old.object_id()))
             .unwrap()
-            .strong = 1;
+            .strong
+            .set(1);
         state.atoms.release(symbol).unwrap();
     }
     drop(object);

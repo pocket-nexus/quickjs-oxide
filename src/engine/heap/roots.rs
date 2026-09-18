@@ -172,6 +172,52 @@ impl Runtime {
         self.take_owned_raw_value(raw).map(Some)
     }
 
+    /// Trusted shared-borrow read of a proven live captured cell.
+    ///
+    /// Handles the object, string and BigInt cases without a mutable state
+    /// borrow and without fallible plumbing. Symbols need an atom-table retain
+    /// (S1b) and scalars are handled by the immediate read, so both decline
+    /// here and fall back to the ordinary path. A declined read claims no
+    /// owner and leaves the cell unchanged.
+    #[inline]
+    pub(crate) fn read_owned_cell_fast(
+        &self,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
+    ) -> Option<Value> {
+        if !root.belongs_to(self) || self.0.deferred_references.has_pending() {
+            return None;
+        }
+        let state = self.0.state.try_borrow().ok()?;
+        if !state.heap.zero_queue.is_empty() {
+            return None;
+        }
+        let cell = state.heap.var_ref_fast(root.id());
+        if cell.kind.is_private() {
+            return None;
+        }
+        match &cell.value {
+            RawValue::Object(object) => {
+                state.heap.retain_object_fast(*object);
+                Some(self.take_owned_raw_value_fast(RawValue::Object(*object)))
+            }
+            RawValue::String(value) => {
+                Some(self.take_owned_raw_value_fast(RawValue::String(value.clone())))
+            }
+            RawValue::BigInt(value) => {
+                Some(self.take_owned_raw_value_fast(RawValue::BigInt(value.clone())))
+            }
+            RawValue::Undefined
+            | RawValue::Null
+            | RawValue::Bool(_)
+            | RawValue::Int(_)
+            | RawValue::Float(_)
+            | RawValue::Symbol(_)
+            | RawValue::Private(_)
+            | RawValue::Uninitialized
+            | RawValue::Exception => None,
+        }
+    }
+
     /// Guarded global own-data read for an unresolved, non-lexical binding.
     /// No lookup fact escapes this borrow, and autoinit/accessor/prototype
     /// cases retain the normal environment driver. As with owned cell reads,
@@ -366,6 +412,33 @@ impl Runtime {
                 ));
             }
         })
+    }
+
+    /// Trusted variant of [`Runtime::take_owned_raw_value`] for a raw payload
+    /// already proven to be one of the public variants.
+    ///
+    /// The caller owns one reference for the payload (an object edge, atom
+    /// edge, or primitive backing store). Internal sentinels at a trusted call
+    /// site are a heap invariant violation, so they panic instead of returning
+    /// an error.
+    #[inline]
+    pub(crate) fn take_owned_raw_value_fast(&self, value: RawValue) -> Value {
+        match value {
+            RawValue::Undefined => Value::Undefined,
+            RawValue::Null => Value::Null,
+            RawValue::Bool(value) => Value::Bool(value),
+            RawValue::Int(value) => Value::Int(value),
+            RawValue::Float(value) => Value::Float(value),
+            RawValue::BigInt(value) => Value::BigInt(value),
+            RawValue::String(value) => Value::String(value),
+            RawValue::Symbol(atom) => Value::Symbol(SymbolRef::from_owned_atom(self.clone(), atom)),
+            RawValue::Object(object) => {
+                Value::Object(ObjectRef::from_owned_handle(self.clone(), object))
+            }
+            RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => {
+                unreachable!("trusted raw value conversion received an internal sentinel")
+            }
+        }
     }
 
     pub(crate) fn root_raw_value(&self, value: &RawValue) -> Result<Value, RuntimeError> {
@@ -636,7 +709,8 @@ mod owned_cell_tests {
             .heap
             .live_node_mut(RawId::Object(id))
             .unwrap()
-            .strong = u32::MAX;
+            .strong
+            .set(u32::MAX);
         let result = runtime.try_read_owned_var_ref(&root);
         let after = runtime
             .0
@@ -653,7 +727,8 @@ mod owned_cell_tests {
             .heap
             .live_node_mut(RawId::Object(id))
             .unwrap()
-            .strong = before;
+            .strong
+            .set(before);
         assert!(result.is_err());
         assert_eq!(after, u32::MAX);
         assert_eq!(
