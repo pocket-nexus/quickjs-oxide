@@ -154,3 +154,36 @@ A1 额外门禁：`tests/checked_string_construction.rs`（公共 `JsString` 构
 - **A1 的行为敏感点**：字符串身份（`same_representation`）、atom 身份恢复
   （`released_strings`）、teardown `live == 0` 断言——三处都有测试/诊断
   覆盖，改动时逐条核对。
+
+## 5. 实施进度
+
+### A0-a：内部 `AtomIdx` + `Cell` refcount（已落地）
+
+| 提交 | 内容 |
+| --- | --- |
+| `860b67f2` | `AtomTable::Entry.ref_count: u32 → Cell<u32>`，`retain` 改 `&self`；captured-cell 与属性 IC 快路的 Symbol 分支改为共享借用下 retain，S1b 的 Symbol decline 移除 |
+| `ba7619a1` | 引入内部 `AtomIdx(u32)` 与可信索引 API；`ShapeEntry`/`Shape.lookup`、`RawValue::Symbol/Private`、`WeakCollectionKey`、`WeakSymbolGcEvent`、`HeapCleanup.atoms` 全部改 `AtomIdx`；堆侧原子所有权（`retain_*_atoms`/`release_atoms`/`preflight_atom_releases`/各 `*_atoms` 收集器）一并成型；出值边界用 `brand_idx`/`take_owned_symbol_fast` 重建品牌根 |
+
+**尺寸（编译期断言已钉死）：**
+
+- `AtomIdx` = 4B（`atom/mod.rs`）。
+- `ShapeEntry` 24B → **8B**（`atom: AtomIdx` + `PropertyFlags`，`shape.rs` 断言）。
+
+**信任模型落地（D3.2）：** 内部句柄只做槽位存活校验，免 generation/table_id
+品牌校验；品牌只在公共/跨 runtime/C-ABI 边界重建。
+
+**一处显式契约变更：** `Shape::ordered_own_keys(&AtomTable)` 原逐条校验
+「atom 属于传入表」，改为只校验槽位在传入表中存活——句柄已无品牌。原测试
+`own_key_snapshot_validates_the_runtime_local_atom_table` 相应改名并放宽。
+若需保留跨表拒绝，可给 `Shape` 增加一个 owning `table_id`（每 shape 8B，
+非每 entry），留待评审。
+
+**本阶段未纳入（A0-a 尾部，随后续阶段）：** 字节码/编译器元数据仍持品牌
+`Atom`（`FunctionBytecodeData.auxiliary_atoms`、`property_key_atoms`、
+`ClosureVariableName::Atom`、`VariableDefinition.name`、`ObjectData.private_brand_home`
+等）；它们进入堆原子所有权时转 `AtomIdx`，尚未做存储瘦身。
+
+**门禁（1.88.0）：** `fmt`、`clippy --workspace --lib --bins -D warnings`、
+CLI profiling / oracle clippy、`cargo test --locked --workspace --all-targets`
+（lib 2278 / oracle 907 / CLI 32 等全绿）、`check-source-layout.py`、
+`check-rust-only.sh` 全部通过。
