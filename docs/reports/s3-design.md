@@ -112,6 +112,62 @@
   `cargo test --locked --workspace --all-targets` + test262 `--check`（源码
   哈希会变，需重跑 `--full` 出 current-source receipt，不改 `current.conf`）。
 
+### E 实测（相对 pre-S3 HEAD `06386457`）
+
+在独立 worktree、同机串行构建并测量三个普通 release 二进制，无并发构建/测试：
+
+| 标签 | 配置 |
+| --- | --- |
+| `baseline` | pre-S3 HEAD 默认 release（无 LTO、16 CGU） |
+| `lto` | `lto = "fat"` + `codegen-units = 1` |
+| `pgo` | LTO/CGU=1 + PGO；训练负载 = `scaling.py` 全 22 case×{64,128} + v8-v7 全 8 suite |
+
+`pgo.py` 逐进程设置唯一 `LLVM_PROFILE_FILE=<dir>/%m_%p.profraw`，再
+`llvm-profdata merge` 合并（否则每进程覆盖同一个 `default_%m_%c.profraw`，只剩
+最后一次训练负载）；产物带 `.build.json` receipt，记录 profdata 哈希与训练负载。
+
+**属性读探针（`property_read_probe.py`，N=5,000,000，repeat 7，median ns/op）：**
+
+| case | baseline | lto | pgo | lto 变化 | pgo 变化 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| prop_read_int | 176.23 | 160.64 | 112.34 | −8.8% | −36.3% |
+| prop_read_obj | 215.68 | 203.83 | 135.83 | −5.5% | −37.0% |
+| prop_read_string | 271.43 | 249.57 | 198.37 | −8.1% | −26.9% |
+
+**`scaling.py`（22 case × 2 size = 44 cell，operations=32768，repeat 3，整进程 wall）：**
+`lto` geomean `0.898×`；`pgo` geomean `0.696×`、中位 `0.685×`（**−31.5%**），
+区间 0.555–0.996（最好 cell `array-holey`、`array-index`、`set`，最差 `scope`）。
+
+**V8-v7（Score，越高越好，repeat 3）：**
+
+| case | baseline | lto | pgo | lto 变化 | pgo 变化 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| richards | 50.7 | 55.7 | 87.6 | +9.9% | +72.8% |
+| deltablue | 64.1 | 72.2 | 110.0 | +12.6% | +71.6% |
+| crypto | 62.9 | 65.6 | 101.0 | +4.3% | +60.6% |
+| raytrace | 95.7 | 105.0 | 143.0 | +9.7% | +49.4% |
+| earley-boyer | 117 | 127 | 181 | +8.5% | +54.7% |
+| regexp | 88.5 | 90.5 | 138 | +2.3% | +55.9% |
+| splay | 320 | 349 | 483 | +9.1% | +50.9% |
+| navier-stokes | 255 | 299 | 422 | +17.3% | +65.5% |
+| **geomean** | | | | **+9.1%** | **+60.0%** |
+
+**`microbench`（ms 分辨率，仅定性，min ns/op）：** `empty_loop` 100→50→40、
+`prop_read` 250→125→100、`array_read` 200→200→100、`func_call` 500→500→250；
+`int_arith` 三档均为 200、未分辨。
+
+**结论：** 方案 E 的实测收益超出 §2 预计的 8–20%——LTO+CGU=1 约 5–9%，
+PGO 把属性读延迟压低 27–37%、V8-v7 Score 整体抬高 **1.60×**、混合整进程负载
+geomean **0.696×**（≈1.44× 吞吐）。这是纯构建层收益、无语义改动，成功为
+后续 A/B/D 建立更高的比较基线。
+
+**门禁：** `cargo fmt --check`、`check-source-layout.py`、workspace
+`cargo test --locked --workspace --all-targets`、benchmark 单测（22）全部通过；
+Test262 `--check` 如预期报 baseline 源码过期（`Cargo.toml` 在
+`engine_semantics_files` 内），`--full` 重跑得到 current-source receipt：
+`complete Test262 vector matches: 79982 pass of 80032 eligible (102037 total)`，
+零回归，`current.conf` 未改。
+
 ## 4. A：8B 值表示——索引 NaN-box（零 unsafe）
 
 ### 4.1 编码
