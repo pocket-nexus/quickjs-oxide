@@ -212,7 +212,7 @@ fn iterator_wrap_source_and_cached_next_are_owned_edges() {
             shape,
             Vec::new(),
             RawValue::Object(source),
-            RawValue::Symbol(symbol),
+            RawValue::Symbol(symbol.into()),
         ))
         .unwrap();
     let cleanup = heap
@@ -226,13 +226,13 @@ fn iterator_wrap_source_and_cached_next_are_owned_edges() {
         .allocate_object(ObjectData::iterator_wrap(
             shape,
             Vec::new(),
-            RawValue::Symbol(source_symbol),
+            RawValue::Symbol(source_symbol.into()),
             RawValue::Undefined,
         ))
         .unwrap();
     assert_eq!(
         heap.iterator_wrap_state(primitive_wrapper),
-        Ok((RawValue::Symbol(source_symbol), RawValue::Undefined))
+        Ok((RawValue::Symbol(source_symbol.into()), RawValue::Undefined))
     );
     let cleanup = heap.release_object(primitive_wrapper).unwrap();
     assert_eq!(cleanup.atoms, vec![source_symbol]);
@@ -275,7 +275,7 @@ fn async_from_sync_iterator_owns_source_cached_next_and_symbol_atom() {
             shape,
             Vec::new(),
             source,
-            RawValue::Symbol(symbol),
+            RawValue::Symbol(symbol.into()),
         ))
         .unwrap();
     let cleanup = heap.release_object(symbol_wrapper).unwrap();
@@ -651,7 +651,7 @@ fn regexp_fixture() -> RegExpFixture {
             Shape::new(
                 Some(prototype),
                 [ShapeEntry {
-                    atom: last_index,
+                    atom: last_index.into(),
                     flags: PropertyFlags::data(true, false, false),
                 }],
             )
@@ -905,7 +905,7 @@ fn regexp_intrinsics_reject_mismatched_constructor_prototype_and_shape() {
             Shape::new(
                 Some(fixture.root),
                 [ShapeEntry {
-                    atom: fixture.last_index,
+                    atom: fixture.last_index.into(),
                     flags: PropertyFlags::data(true, false, false),
                 }],
             )
@@ -933,7 +933,7 @@ fn regexp_intrinsics_reject_mismatched_constructor_prototype_and_shape() {
             Shape::new(
                 Some(fixture.prototype),
                 [ShapeEntry {
-                    atom: fixture.last_index,
+                    atom: fixture.last_index.into(),
                     flags: DATA_FLAGS,
                 }],
             )
@@ -1160,7 +1160,11 @@ fn object_slot_replacement_rejects_private_name_payloads() {
     let private = Atom::from_raw(91);
 
     assert_eq!(
-        heap.replace_object_slot(object, 0, PropertySlot::Data(RawValue::Private(private)),),
+        heap.replace_object_slot(
+            object,
+            0,
+            PropertySlot::Data(RawValue::Private(private.into())),
+        ),
         Err(HeapError::Invariant(
             "private-name identity escaped into an object value slot"
         ))
@@ -1403,7 +1407,7 @@ fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure()
                 .replace_property_slot(
                     object.object_id(),
                     0,
-                    PropertySlot::Data(RawValue::Symbol(symbol))
+                    PropertySlot::Data(RawValue::Symbol(symbol.into()))
                 )
                 .is_err()
         );

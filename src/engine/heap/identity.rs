@@ -206,11 +206,11 @@ pub enum RawValue {
     Float(f64),
     BigInt(JsBigInt),
     String(JsString),
-    Symbol(Atom),
+    Symbol(AtomIdx),
     /// Heap-internal class-private identity. This owns one private-atom
     /// reference exactly like `Symbol`, but it is not an ECMAScript Value and
     /// must never cross `Runtime::root_raw_value` or enter ordinary storage.
-    Private(Atom),
+    Private(AtomIdx),
     Object(ObjectId),
     Uninitialized,
     #[cfg_attr(

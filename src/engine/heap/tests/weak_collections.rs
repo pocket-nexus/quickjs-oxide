@@ -95,7 +95,7 @@ fn finalization_job_moves_held_symbol_ownership_until_job_release() {
     heap.finalization_registry_register(
         registry,
         WeakCollectionKey::Object(target),
-        RawValue::Symbol(held),
+        RawValue::Symbol(held.into()),
         None,
     )
     .unwrap();
@@ -105,10 +105,10 @@ fn finalization_job_moves_held_symbol_ownership_until_job_release() {
     heap.run_gc_with_finalization_sink(
         |event| {
             Ok(match event {
-                WeakSymbolGcEvent::IsLive(atom) => atoms.is_live(atom),
+                WeakSymbolGcEvent::IsLive(atom) => atoms.is_live_idx(atom),
                 WeakSymbolGcEvent::Release(atom) => {
                     atoms
-                        .release(atom)
+                        .release_idx(atom)
                         .map_err(|_| HeapError::Invariant("held Symbol release failed"))?;
                     true
                 }
@@ -118,7 +118,7 @@ fn finalization_job_moves_held_symbol_ownership_until_job_release() {
     )
     .unwrap();
     assert_eq!(sink.jobs.len(), 1);
-    assert_eq!(sink.jobs[0].held_value, RawValue::Symbol(held));
+    assert_eq!(sink.jobs[0].held_value, RawValue::Symbol(held.into()));
     assert!(atoms.is_live(held));
 
     heap.release_object(registry).unwrap();
@@ -541,10 +541,10 @@ fn weak_symbol_hook_release_precedes_later_record_liveness_query() {
     let first_key = leaf(&mut heap, shape);
     let held_value = leaf(&mut heap, shape);
     let weak_first = WeakCollectionKey::Object(first_key);
-    let weak_symbol = WeakCollectionKey::Symbol(symbol);
+    let weak_symbol = WeakCollectionKey::Symbol(symbol.into());
 
     // The first value owns the symbol used non-owningly by the next key.
-    heap.weak_map_set(weak_map, weak_first, RawValue::Symbol(symbol))
+    heap.weak_map_set(weak_map, weak_first, RawValue::Symbol(symbol.into()))
         .unwrap();
     heap.weak_map_set(weak_map, weak_symbol, RawValue::Object(held_value))
         .unwrap();
@@ -557,9 +557,9 @@ fn weak_symbol_hook_release_precedes_later_record_liveness_query() {
             |event| {
                 events.push(event);
                 match event {
-                    WeakSymbolGcEvent::IsLive(atom) => Ok(atoms.is_live(atom)),
+                    WeakSymbolGcEvent::IsLive(atom) => Ok(atoms.is_live_idx(atom)),
                     WeakSymbolGcEvent::Release(atom) => {
-                        atoms.release(atom).map_err(|_| {
+                        atoms.release_idx(atom).map_err(|_| {
                             HeapError::Invariant("weak-symbol test hook release failed")
                         })?;
                         Ok(true)
@@ -572,12 +572,12 @@ fn weak_symbol_hook_release_precedes_later_record_liveness_query() {
     assert_eq!(
         events,
         vec![
-            WeakSymbolGcEvent::Release(symbol),
-            WeakSymbolGcEvent::IsLive(symbol)
+            WeakSymbolGcEvent::Release(symbol.into()),
+            WeakSymbolGcEvent::IsLive(symbol.into())
         ]
     );
     assert!(!atoms.is_live(symbol));
-    assert!(!stats.cleanup.atoms.contains(&symbol));
+    assert!(!stats.cleanup.atoms.contains(&symbol.into()));
     assert_eq!(stats.cleanup.finalized_objects, 1);
     assert!(heap.weak_map_get(weak_map, weak_first).unwrap().is_none());
     assert!(heap.weak_map_get(weak_map, weak_symbol).unwrap().is_none());
@@ -600,7 +600,7 @@ fn gc_release_hook_can_defer_detached_value_atoms() {
     heap.weak_map_set(
         weak_map,
         WeakCollectionKey::Object(key),
-        RawValue::Symbol(symbol),
+        RawValue::Symbol(symbol.into()),
     )
     .unwrap();
     heap.release_object(key).unwrap();
@@ -609,7 +609,7 @@ fn gc_release_hook_can_defer_detached_value_atoms() {
         .run_gc_with_finalization_sink(
             |event| {
                 Ok(match event {
-                    WeakSymbolGcEvent::IsLive(atom) => atoms.is_live(atom),
+                    WeakSymbolGcEvent::IsLive(atom) => atoms.is_live_idx(atom),
                     WeakSymbolGcEvent::Release(_) => false,
                 })
             },
@@ -825,7 +825,7 @@ fn stale_symbol_keys_are_pruned_without_owning_the_atom() {
         .allocate_object(ObjectData::weak_set(shape, Vec::new()))
         .unwrap();
     let value = leaf(&mut heap, shape);
-    let weak_key = WeakCollectionKey::Symbol(symbol);
+    let weak_key = WeakCollectionKey::Symbol(symbol.into());
     heap.weak_map_set(weak_map, weak_key, RawValue::Object(value))
         .unwrap();
     assert!(heap.weak_set_add(weak_set, weak_key).unwrap());
@@ -841,7 +841,7 @@ fn stale_symbol_keys_are_pruned_without_owning_the_atom() {
         .run_gc_with_finalization_sink(
             |event| {
                 Ok(match event {
-                    WeakSymbolGcEvent::IsLive(atom) => atoms.is_live(atom),
+                    WeakSymbolGcEvent::IsLive(atom) => atoms.is_live_idx(atom),
                     WeakSymbolGcEvent::Release(_) => false,
                 })
             },
@@ -849,7 +849,7 @@ fn stale_symbol_keys_are_pruned_without_owning_the_atom() {
         )
         .unwrap();
     assert_eq!(stats.cleanup.finalized_objects, 1);
-    assert!(!stats.cleanup.atoms.contains(&symbol));
+    assert!(!stats.cleanup.atoms.contains(&symbol.into()));
     assert!(heap.weak_map_get(weak_map, weak_key).unwrap().is_none());
     assert!(!heap.weak_set_has(weak_set, weak_key).unwrap());
 

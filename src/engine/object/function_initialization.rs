@@ -212,7 +212,7 @@ impl Runtime {
             )
         };
         entries.push(ShapeEntry {
-            atom: key.atom(),
+            atom: key.atom().into(),
             flags: PropertyFlags::data(true, false, false),
         });
         slots.push(PropertySlot::AutoInit(
@@ -274,7 +274,7 @@ impl Runtime {
             )
         };
         entries.push(ShapeEntry {
-            atom: key.atom(),
+            atom: key.atom().into(),
             flags,
         });
         slots.push(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
@@ -313,7 +313,7 @@ impl Runtime {
             )
         };
         entries.push(ShapeEntry {
-            atom: key.atom(),
+            atom: key.atom().into(),
             flags: PropertyFlags::data(true, false, true),
         });
         slots.push(PropertySlot::AutoInit(AutoInitProperty::String {
@@ -344,7 +344,7 @@ impl Runtime {
             )
         };
         entries.push(ShapeEntry {
-            atom: key.atom(),
+            atom: key.atom().into(),
             flags: PropertyFlags::data(true, false, true),
         });
         slots.push(PropertySlot::AutoInit(AutoInitProperty::FailureProbe {

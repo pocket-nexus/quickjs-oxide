@@ -220,7 +220,7 @@ fn append_edges_are_weak_and_unlinked_on_mutation_and_collection() {
     let atom = state.atoms.intern_static("transition-key").unwrap();
     let parent = state.get_or_create_shape(None, &[]).unwrap();
     let entry = crate::engine::object::shape::ShapeEntry {
-        atom,
+        atom: atom.into(),
         flags: crate::engine::object::shape::PropertyFlags::data(true, true, true),
     };
     let first = state.append_transition(parent, entry).unwrap();

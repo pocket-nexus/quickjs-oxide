@@ -28,9 +28,9 @@ impl Runtime {
             heap.run_gc_with_finalization_sink(
                 |event| {
                     Ok(match event {
-                        WeakSymbolGcEvent::IsLive(atom) => atoms.is_live(atom),
+                        WeakSymbolGcEvent::IsLive(atom) => atoms.is_live_idx(atom),
                         WeakSymbolGcEvent::Release(atom) => {
-                            if let Err(error) = atoms.release(atom) {
+                            if let Err(error) = atoms.release_idx(atom) {
                                 // A detached weak value owned this atom, so this
                                 // can fail only after an ownership invariant has
                                 // already been violated. Latch the exact error but

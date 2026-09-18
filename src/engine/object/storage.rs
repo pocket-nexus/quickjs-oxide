@@ -169,7 +169,7 @@ impl Runtime {
                 if !symbol.belongs_to(self) {
                     return Err(RuntimeError::WrongRuntime("property value"));
                 }
-                RawValue::Symbol(symbol.atom())
+                RawValue::Symbol(symbol.atom().into())
             }
             Value::Object(object) => {
                 if !object.belongs_to(self) {
@@ -464,7 +464,13 @@ impl RuntimeState {
             );
         }
         if existing.is_none() && !dictionary {
-            let target = state.append_transition(shape_id, ShapeEntry { atom, flags })?;
+            let target = state.append_transition(
+                shape_id,
+                ShapeEntry {
+                    atom: atom.into(),
+                    flags,
+                },
+            )?;
             let mut slots = state.heap.object(object_id)?.slots.clone();
             slots.push(replacement);
             return state.replace_layout_with_owned_shape(object_id, target, slots);
@@ -485,7 +491,10 @@ impl RuntimeState {
             entries[index].flags = flags;
             slots[index] = replacement;
         } else {
-            entries.push(ShapeEntry { atom, flags });
+            entries.push(ShapeEntry {
+                atom: atom.into(),
+                flags,
+            });
             slots.push(replacement);
         }
         state.replace_layout(object_id, prototype, &entries, slots)

@@ -5,7 +5,7 @@
 //! The language state machines and microtask policy stay with their own drivers.
 
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
-use crate::engine::atom::{Atom, AtomKind};
+use crate::engine::atom::{AtomIdx, AtomKind};
 use crate::engine::code::function::metadata::{
     ClosureVariableKind, FunctionKind, VariableDefinition,
 };
@@ -163,7 +163,7 @@ pub(crate) struct EncodedVmActivation {
 }
 
 impl EncodedVmActivation {
-    pub(crate) fn atoms(&self) -> Vec<Atom> {
+    pub(crate) fn atoms(&self) -> Vec<AtomIdx> {
         let vm = &self.data.vm;
         vm.stack
             .iter()
@@ -179,7 +179,7 @@ impl EncodedVmActivation {
                     .chain(self.data.locals.iter())
                     .filter_map(|binding| match binding {
                         GeneratorFrameBinding::Direct(value) => generator_raw_value_atom(value),
-                        GeneratorFrameBinding::Private(atom) => Some(*atom),
+                        GeneratorFrameBinding::Private(atom) => Some((*atom).into()),
                         GeneratorFrameBinding::PrivateCallable(_)
                         | GeneratorFrameBinding::Uninitialized
                         | GeneratorFrameBinding::Captured(_) => None,
@@ -189,7 +189,7 @@ impl EncodedVmActivation {
     }
 }
 
-fn generator_raw_value_atom(value: &RawValue) -> Option<Atom> {
+fn generator_raw_value_atom(value: &RawValue) -> Option<AtomIdx> {
     match value {
         RawValue::Symbol(atom) | RawValue::Private(atom) => Some(*atom),
         RawValue::Undefined

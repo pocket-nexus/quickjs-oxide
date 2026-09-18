@@ -4,7 +4,7 @@
 mod ic;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::Atom;
+use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
@@ -95,7 +95,7 @@ fn select_set_slot(
                     && shape
                         .entries()
                         .first()
-                        .is_some_and(|entry| entry.atom != atom)
+                        .is_some_and(|entry| entry.atom != AtomIdx::from(atom))
             }
             _ => false,
         };
@@ -920,7 +920,7 @@ impl Runtime {
             (ObjectKind::Array, ObjectPayload::Array { .. })
         ) {
             let first = state.heap.shape(data.shape).ok()?.entries().first()?;
-            if first.atom == atom {
+            if first.atom == AtomIdx::from(atom) {
                 let (length, _) =
                     Self::array_length_state_in_heap(&state.heap, id, atom).ok()??;
                 return Some(Self::array_length_value(length));

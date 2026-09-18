@@ -57,7 +57,7 @@ impl Heap {
             slots.shrink_to(len.saturating_mul(2).saturating_add(8));
         }
         let mut cleanup = HeapCleanup::default();
-        cleanup.atoms.push(atom);
+        cleanup.atoms.push(atom.into());
         cleanup.atoms.extend(property_slot_atoms(&previous));
         for edge in property_slot_edges(&previous) {
             self.release_raw_no_drain(edge)?;

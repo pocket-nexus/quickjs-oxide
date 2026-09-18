@@ -179,7 +179,7 @@ impl Runtime {
         let mut state = self.0.state.borrow_mut();
         let mut retained_atoms = Vec::with_capacity(atoms.len());
         for atom in atoms {
-            if let Err(error) = state.atoms.retain(atom) {
+            if let Err(error) = state.atoms.retain_idx(atom) {
                 state.release_atoms(retained_atoms)?;
                 return Err(error.into());
             }

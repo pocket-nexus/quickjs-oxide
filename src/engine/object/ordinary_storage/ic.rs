@@ -196,8 +196,8 @@ impl Runtime {
                 Some(self.take_owned_raw_value_fast(RawValue::BigInt(value.clone())))
             }
             RawValue::Symbol(atom) => {
-                state.atoms.retain(*atom).ok()?;
-                Some(self.take_owned_raw_value_fast(RawValue::Symbol(*atom)))
+                state.atoms.retain_idx(*atom).ok()?;
+                Some(self.take_owned_symbol_fast(*atom, &state.atoms))
             }
             RawValue::Undefined
             | RawValue::Null

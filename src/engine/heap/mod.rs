@@ -63,7 +63,7 @@ pub(crate) use collections::CollectionIteratorCurrentIndices;
 pub use collections::{WeakCollectionKey, WeakCollectionRecords};
 mod private_validation;
 use crate::engine::api::error::NativeErrorKind;
-use crate::engine::atom::Atom;
+use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::builtins::native;
 use native::{
     ArrayBufferNativeKind, ArrayIteratorKind, DataViewNativeKind, DynamicFunctionKind,

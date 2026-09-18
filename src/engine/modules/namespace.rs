@@ -96,7 +96,7 @@ impl Runtime {
             let object = state.heap.object(object.object_id())?;
             let mut atoms = Vec::new();
             for entry in state.heap.shape(object.shape)?.entries() {
-                if state.atoms.property_key_kind(entry.atom)? != PropertyKeyKind::Private {
+                if state.atoms.property_key_kind_idx(entry.atom)? != PropertyKeyKind::Private {
                     atoms.push(entry.atom);
                 }
             }
@@ -104,7 +104,10 @@ impl Runtime {
         };
         atoms
             .into_iter()
-            .map(|atom| PropertyKey::from_borrowed_atom(self.clone(), atom).map_err(Into::into))
+            .map(|atom| {
+                let branded = self.0.state.borrow().atoms.brand_idx(atom)?;
+                PropertyKey::from_borrowed_atom(self.clone(), branded).map_err(Into::into)
+            })
             .collect::<Result<Vec<_>, RuntimeError>>()
             .map(Some)
     }

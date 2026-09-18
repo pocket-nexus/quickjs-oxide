@@ -6,6 +6,7 @@ pub(crate) use super::executable::{
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::atom::AtomIdx;
 use crate::engine::code::bytecode_publish;
 
 use crate::engine::code::function::metadata::{
@@ -222,7 +223,7 @@ impl Runtime {
                     Ok(())
                 })();
                 if let Err(error) = linking {
-                    state.release_atoms(auxiliary_atoms.drain(..))?;
+                    state.release_atoms(auxiliary_atoms.drain(..).map(AtomIdx::from))?;
                     return Err(error);
                 }
 
@@ -250,7 +251,7 @@ impl Runtime {
                 match state.heap.allocate_function_bytecode(bytecode) {
                     Ok(id) => id,
                     Err(error) => {
-                        state.release_atoms(owned_atoms)?;
+                        state.release_atoms(owned_atoms.into_iter().map(AtomIdx::from))?;
                         return Err(error.into());
                     }
                 }
