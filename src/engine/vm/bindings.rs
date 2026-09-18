@@ -73,8 +73,8 @@ pub(in crate::engine::vm) fn read_run_cell(
     if let Some(value) = runtime.read_owned_cell_fast(root) {
         return Some((value, true));
     }
-    // Cold decline: Symbols need an atom-table retain, and other cases fall
-    // back to the ordinary binding path when this returns `None`.
+    // Cold decline for the remaining non-immediate cases (private names and
+    // sentinels) falling back to the ordinary binding path.
     runtime
         .try_read_owned_var_ref(root)
         .ok()

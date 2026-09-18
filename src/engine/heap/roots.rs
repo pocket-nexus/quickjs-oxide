@@ -174,11 +174,11 @@ impl Runtime {
 
     /// Trusted shared-borrow read of a proven live captured cell.
     ///
-    /// Handles the object, string and BigInt cases without a mutable state
-    /// borrow and without fallible plumbing. Symbols need an atom-table retain
-    /// (S1b) and scalars are handled by the immediate read, so both decline
-    /// here and fall back to the ordinary path. A declined read claims no
-    /// owner and leaves the cell unchanged.
+    /// Handles the object, string, BigInt and symbol cases without a mutable
+    /// state borrow and without fallible plumbing. The atom counter is a
+    /// `Cell` (S1b), so a symbol retain also completes under the shared
+    /// borrow; scalars are handled by the immediate read. A declined read
+    /// claims no owner and leaves the cell unchanged.
     #[inline]
     pub(crate) fn read_owned_cell_fast(
         &self,
@@ -206,12 +206,15 @@ impl Runtime {
             RawValue::BigInt(value) => {
                 Some(self.take_owned_raw_value_fast(RawValue::BigInt(value.clone())))
             }
+            RawValue::Symbol(atom) => {
+                state.atoms.retain(*atom).ok()?;
+                Some(self.take_owned_raw_value_fast(RawValue::Symbol(*atom)))
+            }
             RawValue::Undefined
             | RawValue::Null
             | RawValue::Bool(_)
             | RawValue::Int(_)
             | RawValue::Float(_)
-            | RawValue::Symbol(_)
             | RawValue::Private(_)
             | RawValue::Uninitialized
             | RawValue::Exception => None,
