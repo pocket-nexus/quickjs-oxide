@@ -174,6 +174,10 @@ Test262 `--check` 如预期报 baseline 源码过期（`Cargo.toml` 在
 
 ## 4. A：8B 值表示——索引 NaN-box（零 unsafe）
 
+> 实施拆分（A0–A4）与三个设计点（内部 `JsValue`/API 边界、String/BigInt
+> 堆化、`Atom` 瘦身）已钉死于 **`docs/reports/s3-a-plan.md`**；本节为设计
+> 概要，冲突处以 s3-a-plan.md 为准。
+
 ### 4.1 编码
 
 ```rust
@@ -216,7 +220,10 @@ pub struct JsValue(u64);  // 内部执行值；不实现 Copy/Drop
   变为一条 `mov`；值搬运总量降 4×；
 - 每条 64B 缓存行放 8 个值（现状 2 个）。
 
-### 4.5 分步提交（每步独立可编译可测）
+### 4.5 分步提交
+
+下列草单已被 `s3-a-plan.md` 的 A0–A4 拆分取代（新增 A0 地基与 A1
+String/BigInt 堆化两个阶段，原子瘦身提前至 A0-a），保留仅供追溯：
 
 1. `refactor(value): introduce handle-based internal value type` —— 新类型 +
    转换层，先不接线；
