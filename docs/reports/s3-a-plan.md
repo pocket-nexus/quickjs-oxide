@@ -39,7 +39,7 @@ crate::engine::value::{JsString, JsStringError, Value}`），内部数百个文�
    module loader、promise jobs、test262 agent、`adapters/*`），盘点结果记入
    A0 的测量文档。
 
-### D2：String/BigInt 仍是 `Rc`——新增两个堆 kind，typed arena 覆盖
+### D2：String/BigInt 仍是 `Rc`——存储层句柄化，计算类型不动（D2a 修订）
 
 **事实**：`RawValue`（`src/engine/heap/identity.rs:200-224`）对
 Object/Symbol 已是句柄（`ObjectId`/`Atom`），但 `String(JsString)` /
@@ -48,32 +48,51 @@ Object/Symbol 已是句柄（`ObjectId`/`Atom`），但 `String(JsString)` /
 清单只列了 Object/VarRef/Shape/Context/FunctionBytecode——**这是文档缺口**。
 不堆化 String/BigInt，8B 无从谈起。
 
-**决定**：
+**初稿 D2.3/D2.4（rope 子节点句柄化 + 公共 `JsString` 句柄化）已撤回**，
+阻塞证据（A1 前代码复核核实）：`JsString::from_static` 全仓 **1377** 处、
+`try_from_utf*` **853** 处均为无 runtime 的纯构造；`impl JsString` 约 183
+个方法全部 runtime-free；`src/engine/value/collection_key.rs` 是显式
+「no heap access」纯模块，`same_value_zero`/`hash` 按内容比较，句柄化后
+无堆可解引用；`enum { Static(&'static str), Heap(Runtime, StringId) }` 兜底
+为 24B，违背尺寸目标。结论：公共 `JsString` 句柄化与「公共表面不变 +
+单线程设计 + 尺寸目标」冲突，工程上不可接受。
+
+**决定（D2a 修订版）**：
 
 1. `HeapNodeKind`（`src/engine/heap/identity.rs:127-133`）新增 **`String` 与
-   `BigInt`** 两个独立 kind（不合并）——与 §6 typed arena 的 per-kind 拆分
-   对齐；句柄 `StringId`/`BigIntId` 与其余 id 同型（`{index, generation}`）。
-2. **cycle 处理：cascade-only，永不做 anchor**。rope 只引用 string、BigInt
-   无出边，两者按构造无环，与 VarRef/Shape 同级（zero-queue 级联回收，
-   不进 trial-deletion）。
-3. String 节点负载 = 现 `StringRepr`（Latin1/Utf16/Rope），但 rope 子节点从
-   `JsString` 改为 `StringId`；`RefCell<RopeState>` 线性化缓存留在节点内
-   （节点级内部可变性是既有先例）。
-4. 公共 `JsString` 改为 **root 句柄类型**（`{runtime, id: StringId}`），公共
-   表面不变：checked 构造与 UTF-16 门禁不变
-   （`tests/checked_string_construction.rs` 是硬门禁）；`same_representation`
-   从 `Rc::ptr_eq` 改为 id 相等（更便宜）。
-5. `AtomTable` 适配：`strings` 映射改以 `StringId` 为键；`released_strings`
-   的 `WeakJsString`（std `Weak`）改为 **generational 弱句柄**（`StringId` +
-   存活校验）；顺带落 §6.4 的 hash 缓存（字符串节点头部缓存 hash，atom 表
-   换 FxHash）——intern 路径从「每次全串重算 SipHash」变为 O(1) 查表。
-6. BigInt：`Short(i64)` 在 16B 阶段保持内联；**A4 的开放决定**——NaN-box
-   下 short 范围收缩为 **±2⁴⁷ 内联**（48-bit payload + kind tag，超出晋升堆
-   句柄，语义透明，由算术 canonicalization 保证），若编码预算紧张则全堆化。
+   `BigInt`** 两个独立 kind（不合并），与 §6 typed arena 对齐；`StringId`/
+   `BigIntId` 句柄已在 A0-v 定义于 `heap/identity.rs`。**arena 节点持有现成
+   的 `JsString`/`JsBigInt`**（Rc 负载原样）；对象槽、常量池等对
+   String/BigInt 的边纳入既有事务化 retain/release 与 `Edges` 遍历。
+2. **cycle 处理：cascade-only，永不做 anchor**——D2a 下平凡成立：string
+   节点**零堆出边**（rope 子节点留在 `Rc` 树内，不进 arena），BigInt 无
+   出边。
+3. `StringRepr`/rope 算法与 `impl JsString` 整体不动；arena 节点只是 `Rc`
+   的一个持有者。同一节点多次读出克隆同一个内部 `Rc`，`ptr_eq` 身份快路
+   天然保留，`same_representation` 语义不变。
+4. **公共 `JsString` 完全不动**（`Rc<StringRepr>`，runtime-free 构造全保留）；
+   句柄化只发生在**值存储层**：`RawValue::String(StringId)` /
+   `BigInt(BigIntId)`，`JsValue` 同；堆→值边界经 arena 解引用后克隆 `Rc`。
+   公共 `Value`/`JsString` API 零改动，`adapters`/oracle 不受影响。
+5. `AtomTable` 基本不动：`strings` 仍按 `JsString` 键、`released_strings` /
+   `WeakJsString` 保持；§6.4 的 hash 缓存（`StringRepr` 头部缓存 hash、atom
+   表换 FxHash）作为独立项照做。
+6. **内容相等适配（A1.3 的核心）**：`RawValue` 的 `PartialEq` derive
+   （`identity.rs:200`）必须移除或改手工实现——句柄 id 相等 ≠ 内容相等。
+   `collection_key.rs`（`same_value_zero`/`hash`）、StrictEq、switch 字符串
+   匹配等改为「id 相等快路 + arena 解引用内容兜底」；A1 开工先盘点全部
+   `RawValue` 相等性使用点。
+7. BigInt：`RawValue::BigInt(BigIntId)` 全 arena（`Short` 也进 arena，其分配
+   成本列为 A1 测量点）；**A4 开放决定**——NaN-box 下 short 收缩为
+   **±2⁴⁷ 内联**（48-bit payload + kind tag，超出晋升堆句柄，语义透明），
    默认取前者，A4 开工时按测量复核。
-7. 内存语义注意：字符串从「`Rc` 独立分配」变为「arena 节点 + free-list 复用
-   + generation」——teardown 的 `live == 0` 断言与 `GcStats`/`HeapCounts`
-   公共诊断（`api/mod.rs:15` 导出）口径需同步更新。
+8. 内存语义注意：字符串/BigInt 从「`Rc` 独立分配」变为「arena 节点 +
+   free-list 复用 + generation」——teardown 的 `live == 0` 断言与
+   `GcStats`/`HeapCounts` 公共诊断（`api/mod.rs:15` 导出）口径需同步更新。
+9. **新测量点**：瞬态字符串（concat/slice/`number_to_string`）的 arena
+   churn 会推高 zero_queue 水位，而 zero_queue 非空使 IC 快路 decline
+   （`ordinary_storage/ic.rs:27-35`）；A1 测量必须含 string-heavy 负载，
+   确认不放倒 IC 快路。
 
 ### D3：`Atom` 16B 品牌——内部 `u32` + 品牌只留边界
 
@@ -106,10 +125,10 @@ Object/Symbol 已是句柄（`ObjectId`/`Atom`），但 `String(JsString)` /
 | 阶段 | 内容 | 决定依据 |
 | --- | --- | --- |
 | **A0** | 地基，无语义变更。两lane可并行、独立合入：**A0-v** 引入内部 `JsValue`（16B 句柄 enum）+ `root`/`unroot` 转换层 + size 断言，先不接线；A0-v 内先做穿越点盘点（D1.5）。**A0-a** atom 内部瘦身 `AtomIdx` + `Cell` refcount（D3） | D1/D3 |
-| **A1** | String/BigInt 堆化：`HeapNodeKind::String`/`BigInt` + typed arena + `RawValue` 改句柄 + atom 表/弱引用适配 + 公共 `JsString` 句柄化 | D2 |
+| **A1** | String/BigInt 堆化（D2a）：`HeapNodeKind::String`/`BigInt` + typed arena + `RawValue` 改句柄 + 内容相等/哈希适配 + BigInt/诊断适配；公共 `JsString` 不动。子步：A1.1 堆 kind+arena → A1.2 `RawValue` 句柄化 → A1.3 内容相等/哈希适配 → A1.4 BigInt/诊断适配 | D2 |
 | **A2** | VM 接线：`SlotStore`/`FrameBinding`/`run.rs` 切 `JsValue`，显式 dup/release；API 边界走转换层 | D1 |
 | **A3** | `RawValue`/`PropertySlot` 句柄化收尾（此时全为 16B enum 形态） | D1/D2/D3 |
-| **A4** | NaN-box u64 编码（或按 §4.3 退路停在 16B，由测量决定）；BigInt short ±2⁴⁷ 决定在此复核（D2.6） | D1 |
+| **A4** | NaN-box u64 编码（或按 §4.3 退路停在 16B，由测量决定）；BigInt short ±2⁴⁷ 决定在此复核（D2 第 7 项） | D1 |
 
 每阶段末尾一次 `docs(perf): record S3-A<n> measurements`。
 
@@ -141,7 +160,10 @@ rust-only 门禁 → benchmark receipts（`property_read_probe.py` +
 更新本文档实测章节。
 
 A1 额外门禁：`tests/checked_string_construction.rs`（公共 `JsString` 构造
-语义）与 `GcStats`/`HeapCounts` 相关诊断测试必须逐条核对后适配。
+语义，D2a 下应**零改动**通过——公共表面不动，任何需要改它的迹象即警报）；
+`GcStats`/`HeapCounts` 相关诊断测试逐条核对后适配；内容相等适配点
+（`collection_key` / StrictEq / switch 字符串匹配）逐项核对 SameValueZero
+语义。
 
 ## 4. 风险（继承 §4.6，按阶段具体化）
 
@@ -151,9 +173,10 @@ A1 额外门禁：`tests/checked_string_construction.rs`（公共 `JsString` 构
   必须有完整的门禁绿色窗口，严禁跨阶段混合提交。
 - **8B 索引 NaN-box 无生产先例**（附录 A.8）：每次 deref 多一次 base load +
   bounds check；A4 必须以测量定去留，退路（16B enum）不是失败而是默认值。
-- **A1 的行为敏感点**：字符串身份（`same_representation`）、atom 身份恢复
-  （`released_strings`）、teardown `live == 0` 断言——三处都有测试/诊断
-  覆盖，改动时逐条核对。
+- **A1 的行为敏感点**（D2a 后）：集合键 SameValueZero 与内容 hash
+  （`collection_key.rs`）、StrictEq/switch 的字符串路径、teardown
+  `live == 0` 断言、`GcStats`/`HeapCounts` 口径；`same_representation`
+  与 `released_strings` 在 D2a 下**不变**（公共 `JsString` 不动）。
 
 ## 5. 实施进度
 
