@@ -125,8 +125,10 @@ E 之后的分母是 PGO 二进制，但 A 每改代码 profile 即失效。约�
 2. **正式 receipt**（每阶段末的测量记录）：对改前/改后**各自重训一次**
    `scripts/benchmark/pgo.py`，训练负载冻结（cases/sizes/operations/repeat
    写进报告）；receipt 已含 `profdata_sha256`，可审计；
-3. **严禁**「改后 PGO vs 改前非 PGO」这类跨协议对比——会把编译器布局噪声
-   算成设计收益（`performance-architecture.md` §3 E 实测的教训）。
+3. **跨协议对比**（如「改后 PGO vs 改前非 PGO」）允许用于累计/用户口径的
+   报告，但必须标注双方构建协议；**单阶段设计收益归因仍只认同协议配对**——
+   否则会把编译器布局噪声算成设计收益（`performance-architecture.md` §3
+   E 实测的教训）。
 
 ## 3. 验证门禁
 
