@@ -7,7 +7,7 @@
 - **S1**：可信快路（trusted fast path）——已实现
 - **S2**：可信路径收尾 + 快速释放——部分实现（S2.2；S2.1/S2.3 因契约冲突撤销）
 - **S3 及之后**：横向设计比较（见文末「横向设计比较」）→ S3 已定稿为
-  `docs/reports/s3-design.md`（8B 值表示 + quickening + 数据导向堆，无 JIT、默认无 unsafe）
+  `docs/reports/performance-architecture.md`（8B 值表示 + quickening + 数据导向堆，无 JIT、默认无 unsafe）
 
 ---
 
@@ -680,9 +680,9 @@ S2.2 是安全的增量（对象属性读 S1→S2 −7%）；S2.1/S2.3 的正确
 4. **分配器**：bump + 内联属性 + 去 arena/`RefCell`/`Result` 间接。
 5. **JIT 排除**：2× 是极限目标；且安全 Rust 相对 C 仍有税，需靠 2/3/4 补回。
 
-这份比较取代原 S3 计划。S3 已据此定稿为 **`docs/reports/s3-design.md`**：
+这份比较取代原 S3 计划。S3 已据此定稿为 **`docs/reports/performance-architecture.md`**：
 「8B 值表示 + quickening + 数据导向堆」的组合，而不是单纯的 16B 瘦身。
 相对上面第 1 条有一处关键修正：8B 值表示**不需要 unsafe**——本项目句柄
 本就是 arena 索引（`ObjectId{index,generation}`），把 u32 索引装进 NaN
 payload 是纯位运算，「索引 NaN-box」在安全 Rust 内成立；受审计 unsafe
-降级为保留席位（s3-design.md 方案 F）。
+降级为保留席位（performance-architecture.md 方案 F）。
