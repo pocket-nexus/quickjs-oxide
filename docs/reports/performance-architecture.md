@@ -455,7 +455,11 @@ E（重定基线）→ A（地基）→ B（差异化）→ D/C 按测量交替�
    环境变量）；只产出 current-source receipt，**不改 `current.conf`**；
 5. `python3 scripts/checks/check-source-layout.py` + rust-only 门禁；
 6. 基准：`property_read_probe.py` + `scaling.py` + `run.py`（v8-v7 /
-   microbench），串行、独立输出目录、receipts 齐全；
+   microbench），串行、独立输出目录、receipts 齐全。**PGO 协议**：日常迭代
+   一律用非 PGO 普通 release（同 flags）看比率；正式 receipt 对改前/改后
+   各自重训 `pgo.py`、训练负载冻结；严禁跨协议对比（细则见
+   `scripts/benchmark/README.md`「Profile-guided optimization」与
+   `s3-a-plan.md` §2）；
 7. profiling 构建核对计数器无异常漂移；
 8. 每阶段结束更新本文档对应章节的实测结果。
 
