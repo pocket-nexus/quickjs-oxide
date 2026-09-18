@@ -158,19 +158,11 @@ impl Heap {
     }
 
     /// Duplicate one externally owned heap String reference.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
     pub fn retain_string(&mut self, id: StringId) -> Result<(), HeapError> {
         self.retain_raw(RawId::String(id), 1)
     }
 
     /// Duplicate one externally owned heap BigInt reference.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
     pub fn retain_bigint(&mut self, id: BigIntId) -> Result<(), HeapError> {
         self.retain_raw(RawId::BigInt(id), 1)
     }
