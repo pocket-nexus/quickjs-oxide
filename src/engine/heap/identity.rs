@@ -167,6 +167,10 @@ pub enum HeapNodeKind {
     VarRef,
     Context,
     FunctionBytecode,
+    /// One heap-owned ECMAScript String payload (holds the existing `JsString`).
+    String,
+    /// One heap-owned BigInt payload (holds the existing `JsBigInt`).
+    BigInt,
 }
 
 /// Failure of a checked heap ownership operation.

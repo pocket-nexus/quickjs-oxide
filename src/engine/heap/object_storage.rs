@@ -30,7 +30,9 @@ impl Heap {
             NodeData::Shape(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed object lookup reached another node payload",
             )),
         }
@@ -120,7 +122,9 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed shape lookup reached another node payload",
             )),
         }
@@ -147,7 +151,9 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed mutable shape lookup reached another node payload",
             )),
         }
@@ -160,7 +166,9 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::VarRef(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed context lookup reached another node payload",
             )),
         }

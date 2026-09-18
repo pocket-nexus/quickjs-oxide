@@ -9,7 +9,9 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed var-ref lookup reached another node payload",
             )),
         }
@@ -43,7 +45,9 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::VarRef(_)
-            | NodeData::Context(_) => Err(HeapError::Invariant(
+            | NodeData::Context(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed bytecode lookup reached another node payload",
             )),
         }
