@@ -90,6 +90,18 @@ rebuilds from existing raw profiles. Ordinary release builds also take
 `lto = "fat"` and `codegen-units = 1` from `[profile.release]`; comparisons
 must use the same flags on both sides.
 
+Protocol for using PGO binaries in comparisons:
+
+- **Day-to-day iteration never uses PGO builds.** Any code change stales the
+  trained profile, so routine before/after ratios are measured with plain
+  release builds (same flags on both sides).
+- **Formal receipts** (stage-end measurement records) retrain `pgo.py` on both
+  the before and after revision with a frozen training load
+  (cases/sizes/operations/repeat recorded in the report; the receipt carries
+  `profdata_sha256` for audit).
+- **Never compare across protocols** (e.g. after-PGO vs before-plain): compiler
+  layout noise must not be counted as design gain.
+
 ## External V8 v7 suite
 
 ```sh
