@@ -122,6 +122,29 @@ retain、生产者交接后 release**——与现有 Object 模型完全同构
 - A1.2/A1.3 的审计面因此从「逐点判断 adopt 还是 retain」缩为「确认
   store 一律 retain」。
 
+#### D2a-placement：String/BigInt 节点分配的借用放置规则（钉死）
+
+A1.2b 首次实施曾误判「D2a 与借用模型存在结构冲突」（转换点落在持有
+借用的区域内 → `AlreadyBorrowed` panic），并回滚。误诊证据：**shape
+创建**（堆节点）今天就在持有 `&mut RuntimeState` 的 store 事务内部发生
+（`get_or_create_shape`/`append_transition`）——「store 期间分配节点」
+有现成先例，结构上无冲突。错误在于把节点分配放进了值转换边界
+（`raw_property_value`）。钉死两条放置规则：
+
+1. **转换提出借用区**：值→`RawValue` 的转换必须发生在任何 `state` 借用
+   之外。值刚从持有借用的结构读出的路径，先结束借用、转换、再重新借用
+   ——单线程引擎、两次借用之间无 JS/native 回调，拆分借用语义不可见。
+2. **物化沉进事务**：批量/事务性存储路径（`retain_edges_transactionally`、
+   publish、dense 写）把 String/BigInt 节点分配放在事务内部（本来就持
+   `&mut`、本来就走边），同 shape 分配先例。
+3. **旁证自查**：`try_property_ic_write_scalar` 是标量专用快路，不接受
+   字符串；若它调到 `raw_property_value`，说明转换放得过深，先查这个。
+4. **升级条款**：某条路径疑似无法提出借用区时，举证标准 = 两次借用之间
+   存在 JS 可观察行为；成立则对该点用规则 2。两条都走不通才允许复审
+   「独立 `RefCell` 侧 arena」方案（拆锁式治标：复制 RC/zero-queue/GC 边
+   纪律、改变 deferred-release 契约覆盖面、与 §6 typed arena「物理拆分、
+   纪律统一」方向冲突），**不允许静默采用**。
+
 ### D3：`Atom` 16B 品牌——内部 `u32` + 品牌只留边界
 
 **事实**：`Atom { raw: u32, generation: u32, table_id: u64 }`
