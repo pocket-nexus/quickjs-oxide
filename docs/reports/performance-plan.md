@@ -6,7 +6,7 @@
 - **S0**：属性读路径成本测量 → `docs/reports/s0-property-read.md`
 - **S1**：可信快路（trusted fast path）——已实现
 - **S2**：可信路径收尾 + 快速释放——部分实现（S2.2；S2.1/S2.3 因契约冲突撤销）
-- **S3**：值瘦身（规划中）
+- **S3 及之后**：横向设计比较（见文末「横向设计比较」），值表示/派发/特化将在其后重新规划
 
 ---
 
@@ -611,5 +611,72 @@ readiness 无校验）；int/string 基本不变（噪声）。
 ### 结论
 
 S2.2 是安全的增量（对象属性读 S1→S2 −7%）；S2.1/S2.3 的正确做法需要改动既有
-事务/延迟释放契约，应作为独立设计项，而不是塞进性能 PR。S3（值瘦身）仍是下一
-个数量级的关键。
+事务/延迟释放契约，应作为独立设计项，而不是塞进性能 PR。下一阶段（值表示 /
+派发 / 自适应特化）见文末「横向设计比较」。
+
+---
+
+# 横向设计比较：参考引擎 vs quickjs-oxide
+
+> 原 S3「值表示瘦身」计划已移除，改为本横向比较，作为重新设计 S3 的依据。目标
+> 不是「补齐常数因子」，而是对齐/超过参考引擎的关键设计。
+
+## 1. 总表
+
+| 引擎 | 值表示 | 属性键 | GC / 回收 | 分配器 | 派发 | IC / 自适应特化 | JIT |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **QuickJS** | **8B NaN-box** `JSValue` | `JSAtom` = 裸 `u32` | 侵入式 RC + 循环回收 | 自研 `js_malloc` | 栈式 + switch/threading | 少量静态快路径，**无 quickening** | 无 |
+| **Lua 5.4** | 16B `TValue`（union+tag） | interned `TString*` 指针 | 增量/分代标记清除 | size-class | **寄存器式** | 无 | 无（LuaJIT 另立） |
+| **LuaJIT** | 8B NaN-box | interned 指针 | tracing GC + RC | — | 解释器 + 汇编桩 | — | **tracing JIT** |
+| **V8** | 8B / 32-bit 压缩 `Tagged` | `Name` 指针 | 分代 tracing（并发/增量） | bump nursery + size-class | **寄存器式（Ignition）** | feedback vector + 多态 IC | Sparkplug / Maglev / TurboFan |
+| **JSC** | 指针 tagging | `Identifier`/`Name` | 分代 tracing | — | 手写汇编 LLInt + Baseline | 多态 IC | LLInt / Baseline / DFG / FTL |
+| **SpiderMonkey** | 指针 tagging | `Name` | 分代 tracing | — | Baseline 解释器 | CacheIR | Warp |
+| **CPython** | `PyObject*` 8B 指针 | 任意对象（interned `str`） | RC + 分代循环 GC | pymalloc / size-class | 栈式 | **PEP 659 特化 + IC** | 无（3.13 实验副本补丁，默认关） |
+| **Boa** | Rust enum `JsValue`（~16B） | interner | `Gc<T>` 标记清除 | — | 栈式 | 无 | 无 |
+| **quickjs-oxide（现状）** | **32B enum**（实测） | `Atom` = raw+generation+table_id（16B） | arena RC + 循环回收 | arena `Vec<ArenaSlot>` | 栈式 | mono/poly-2 IC + fusion，**无 quickening** | 无 |
+
+## 2. 逐维度要点与启示
+
+### 值表示
+- 主流是 **8B**：QuickJS/LuaJIT 用 NaN-box；V8 用指针 tagging + 指针压缩；CPython 是 8B `PyObject*` 指针。**没有任何主流引擎用 32B 带标签枚举**（那是 Boa 与 quickjs-oxide 这类安全 Rust 实现的产物）。
+- 8B 的意义：一条 64B 缓存行放 8 个值（而非 2 个）、复制是一条 `mov`、可进 CPU 寄存器。
+- **quickjs-oxide 的 32B** 是最大差距；要追平 QuickJS，值表示必须降到 8B（NaN-box 或 thin 指针）。这需要 `unsafe`，与当前 `forbid(unsafe_code)` 冲突（`parity.md` 已允许受审计 `unsafe`）。
+
+### 属性键 / atom
+- QuickJS：裸 `u32`；Lua：interned 指针；V8/CPython：指针。**都无 per-handle 品牌**；有效性靠构造（per-runtime 表、不跨域）或 tracing（活对象不复用）。
+- **quickjs-oxide 的 16B `Atom`（raw + generation + table_id）** 是 Rust arena 安全的额外产物，比 QuickJS 每个键多 12 字节；shape entry、属性键内存同受其累。
+- 启示：去品牌 + 裸句柄能缩小键/shape，但只覆盖「值表示」的一个子维度；参考引擎靠「指针 + GC/构造」而非句柄品牌。
+
+### GC / 分配
+- 回收：侵入式 RC + 循环回收（QuickJS）vs 分代 tracing（V8/JSC/SpiderMonkey）vs RC + 分代循环（CPython）。
+- 分配：bump nursery（V8）或 size-class（CPython）vs 你们的分代 arena。
+- **quickjs-oxide**：arena + `Cell` strong + 全局 `RefCell` + generation 校验，是 Rust 安全的产物，也是常数因子的主要来源。方向是 bump + 侵入式（需 `unsafe`），或至少去掉全局借用/校验。
+
+### 派发
+- 栈式：QuickJS、CPython、Boa、**quickjs-oxide**。
+- 寄存器式：Lua 5.4、V8 Ignition——指令更少、栈流量更少。
+- 栈式优化：**stack caching**（Ertl：栈顶若干槽放寄存器）。
+- **quickjs-oxide**：`run` 自耗时约 **36%**，派发是最大单点；寄存器式或 stack caching 是主要杠杆。
+
+### IC / 自适应特化
+- V8/JSC/SpiderMonkey：feedback vector + 多态/megamorphic IC。
+- CPython：**PEP 659 specializing adaptive interpreter**（quickening）。
+- QuickJS / Lua：基本没有。
+- **quickjs-oxide**：mono/poly-2 IC + `fusion`（superinstruction） + 编译期常量折叠 + resident 手写快分支；**没有 type feedback、专用 opcode、deopt**，因此**没有 quickening**。
+- 启示：这是**纯安全 Rust 可做**、且 QuickJS 没有的少数优势点，优先级应高。
+
+### JIT
+- 有：V8、JSC、SpiderMonkey、LuaJIT。无：QuickJS、Lua、CPython（默认）。
+- 本项目的 JIT 被排除，因此**上限是「极致解释器」**：可追平/略超 QuickJS，但拿不到 V8/LuaJIT 那种数量级。
+
+## 3. 结论：2× 目标（无 JIT）需要什么
+
+按杠杆排序：
+
+1. **值表示 8B + 侵入式 RC**（需受审计 `unsafe`）—— 追平 QuickJS 的入场券。
+2. **quickening + 更深 IC**（纯安全 Rust，QuickJS 没有）—— 确定的优势点。
+3. **派发改造**：stack caching 先行，评估后再决定是否寄存器式 VM；配 superinstruction。
+4. **分配器**：bump + 内联属性 + 去 arena/`RefCell`/`Result` 间接。
+5. **JIT 排除**：2× 是极限目标；且安全 Rust 相对 C 仍有税，需靠 2/3/4 补回。
+
+这份比较取代原 S3 计划；后续 S3 将据此重新定义为「值表示 + 派发 + 特化」的组合，而不是单纯的 16B 瘦身。
