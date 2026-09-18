@@ -16,8 +16,8 @@ use crate::engine::{builtins as intrinsics, jobs, modules as module};
 use crate::engine::atom::{Atom, AtomIdx, AtomTable};
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::heap::{
-    ContextId, FunctionBytecodeId, Heap, HeapCleanup, ObjectId, PropertySlot, RawValue, ShapeId,
-    VarRefId,
+    BigIntId, ContextId, FunctionBytecodeId, Heap, HeapCleanup, ObjectId, PropertySlot, RawValue,
+    ShapeId, StringId, VarRefId,
 };
 use crate::engine::object::WellKnownSymbol;
 use crate::engine::object::shape::{Shape, ShapeEntry};
@@ -68,6 +68,8 @@ pub(crate) enum DeferredRefOp {
     FunctionBytecode(FunctionBytecodeId),
     VarRef(VarRefId),
     Atom(Atom),
+    String(StringId),
+    BigInt(BigIntId),
     ActiveFramePop {
         token: ActiveFrameToken,
         depth: usize,
