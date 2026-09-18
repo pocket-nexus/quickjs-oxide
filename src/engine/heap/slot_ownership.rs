@@ -26,6 +26,31 @@ impl Heap {
         self.slot_release_readiness(RawId::Object(object))
     }
 
+    /// Trusted hot-path release readiness for a live object held by an owning
+    /// root. Identical to [`Heap::slot_object_release_readiness`] except that
+    /// the generation check is omitted; a non-live slot still reports `Drain`
+    /// rather than aborting.
+    #[inline]
+    pub(crate) fn slot_object_release_readiness_fast(
+        &self,
+        object: super::ObjectId,
+    ) -> SlotReleaseReadiness {
+        if !self.zero_queue.is_empty() {
+            return SlotReleaseReadiness::Drain;
+        }
+        match &self.slots[object.index as usize].state {
+            SlotState::Live(node) if node.strong.get() > 1 => SlotReleaseReadiness::Ready,
+            SlotState::Live(node) if node.strong.get() == 1 => {
+                if self.zero_queue.len() == self.zero_queue.capacity() {
+                    SlotReleaseReadiness::QueueCapacity
+                } else {
+                    SlotReleaseReadiness::Drain
+                }
+            }
+            _ => SlotReleaseReadiness::Drain,
+        }
+    }
+
     fn slot_release_readiness(&self, id: RawId) -> Result<SlotReleaseReadiness, HeapError> {
         let index = self.validate_slot_identity(id)?;
         if !self.zero_queue.is_empty() {

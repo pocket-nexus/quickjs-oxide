@@ -126,6 +126,15 @@ impl Heap {
         }
     }
 
+    /// Trusted shared read for a live `ShapeId` reachable from a live object.
+    #[inline]
+    pub(crate) fn shape_fast(&self, id: ShapeId) -> &Shape {
+        match &self.live_node_fast(RawId::Shape(id)).data {
+            NodeData::Shape(shape) => shape,
+            _ => unreachable!("trusted shape handle reached another node payload"),
+        }
+    }
+
     pub(in crate::engine::heap) fn shape_mut(
         &mut self,
         id: ShapeId,

@@ -349,3 +349,253 @@ V8-v7 整体**中性（±2%，噪声内）**：计算密集型套件中属性读
     Test262 与 workspace 测试兜底。
   - 共享借用与活动 `borrow_mut` 冲突时快路返回 `None` 回退，行为与现状一致。
   - `property_ic_read_fast` 只覆盖数据属性命中；其余走原路径，正确性不受影响。
+
+---
+
+# S2 计划：可信路径收尾 + 快速释放
+
+## S2.0 背景与重定义
+
+原 S2 目标是「热路径去 generation 校验」，但 S1 之后该目标**已基本达成**：
+release 构建下 `live_node_fast`/`object_fast`/`var_ref_fast` 已省掉 generation
+校验，重采样里 `slot_ownership`（ready 校验）仅约 **0.2%**。
+
+S1 后 `prop_read_int` 热点（debug 构建，`perf report --no-children`）：
+
+| 符号 | 占比 |
+| --- | ---: |
+| `vm::run::run` | 36.26% |
+| `RunSlots::property_ic_read` | 14.97% |
+| `SlotStore::push_current` | 10.48% |
+| `try_replace_immediate_var_ref_value` | 9.36% |
+| `bindings::read_run_cell` | 7.75% |
+| `run::binary` | 4.94% |
+| `RunSlots::insert_copy` | 4.20% |
+| `apply_deferred_operation` + `release_raw_no_drain` + `release_or_defer` | ~4.1% |
+| `slot_ownership`（generation ready） | 0.18% |
+
+因此把 S2 重定义为**三个仍可执行、可度量的子项**，继续不动 GC 模型、不动值大小：
+
+- **S2.1 快速释放**：释放路径在共享借用下用 `Cell` 递减，避免大部分独占借用与
+  generation 校验。
+- **S2.2 可信 IC 读**：`PropertyReadCache::read_location` 与 readiness 证明改用
+  可信访问器，去掉 IC 读里的 generation 校验。
+- **S2.3 非失败 operand push**：`push_current` 的不变量检查改为非失败，去掉
+  `Result` 分支。
+
+共享原则与 S1 一致：**可信路径对不变量破坏 panic；通用可失败路径保留。**
+
+## S2.1 快速释放
+
+### 现状
+
+`ObjectRef::drop` → `Runtime::release_object_handle`（`ownership.rs:68`）→
+`release_or_defer(DeferredRefOp::Object(id))`（`ownership.rs:44`）：
+
+```
+try_borrow_mut(state)                      // 独占借用整个 runtime
+→ apply_deferred_operation
+  → release_heap_reference
+    → heap.release_object
+      → release_raw_no_drain               // validate_slot_identity（generation）
+→ drain_deferred_references()
+```
+
+即每次释放都占独占借用、做 generation 校验；共享对象的递减本不需要这些。
+
+### 设计
+
+- 新增 `Heap::release_raw_fast(&self, id: RawId) -> bool`（`gc.rs`）：
+  ```rust
+  /// Trusted: only decrements while another owner remains. Returns false when
+  /// the count is 1, leaving the zero transition to the ordinary fallible path.
+  #[inline]
+  pub(in crate::engine::heap) fn release_raw_fast(&self, id: RawId) -> bool {
+      let node = self.live_node_fast(id);
+      let current = node.strong.get();
+      if current > 1 {
+          node.strong.set(current - 1);
+          true
+      } else {
+          false
+      }
+  }
+  ```
+  （`live_node_fast` 在 release 下不校验 generation；`current == 0` 不会出现，
+  Live 蕴含 `strong >= 1`。）
+- `Runtime::release_object_handle`（`ownership.rs`）：
+  ```rust
+  pub(crate) fn release_object_handle(&self, id: ObjectId) {
+      if let Ok(state) = self.0.state.try_borrow() {
+          if state.heap.release_raw_fast(RawId::Object(id)) {
+              return; // count>1, 无归零清理
+          }
+      }
+      self.release_or_defer(DeferredRefOp::Object(id)); // 只能 count==1 或借用失败
+  }
+  ```
+  `live_node_fast` 若遇到非 Live 会 panic（可信路径语义）。count==1 时不递减，
+  交由 `release_or_defer` 正常递减归零入队，**不会重复递减**。
+- 对 `release_var_ref_handle` / `release_context_handle` /
+  `release_function_bytecode_handle` 同样处理（各自 `release_raw_fast(RawId::X)`）。
+- `Atom` 保持原路径（需要 atom 表可变借用）。
+
+### Scope
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/engine/heap/gc.rs` | 新增 `release_raw_fast` |
+| `src/engine/heap/ownership.rs` | 4 个 `release_*_handle` 加快速分支 |
+
+估计 ~40 行。
+
+### 预期
+
+削掉共享对象释放的独占借用 + generation 校验 + `apply_cleanup`。收益取决于负载中
+「引用计数 >1 的对象」比例（对象/数组共享多的负载更高）。`count==1` 的临时值仍
+走慢路，因此 **S2.1 不是普适加速**。
+
+## S2.2 可信 IC 读
+
+### 现状
+
+`PropertyReadCache::read_location`（`object/property_ic.rs:74`）用可失败、带
+generation 校验的访问器：
+
+```rust
+let object = heap.object(receiver).ok()?;                 // validate
+let shape = heap.shape(object.shape).ok()?;               // validate
+// depth 循环里同样 object()/shape()
+```
+
+`property_ic_read_fast`（`ordinary_storage/ic.rs`）调用
+`slot_object_release_readiness`（`slot_ownership.rs:22`）→ `validate_slot_identity`。
+
+### 设计
+
+- 新增 `Heap::shape_fast(&self, id: ShapeId) -> &Shape`（`object_storage.rs`，紧邻
+  `shape`），与 `object_fast` 同型：`debug_assert` 存活，非 Live panic。
+- `read_location` 改用 `object_fast`/`shape_fast`。命中路径的 `receiver` 与原型链
+  `holder` 都是活对象（由活 receiver 可达，且 shape/revision/epoch 已判定匹配），
+  可信。
+- 新增 `Heap::slot_release_readiness_fast(&self, id: RawId) -> SlotReleaseReadiness`
+  （`slot_ownership.rs`）：去掉 `validate_slot_identity`，其余逻辑不变
+  （zero_queue 检查 + strong 分支）。
+- `property_ic_read_fast` 改调 `slot_release_readiness_fast`。
+
+### Scope
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/engine/heap/object_storage.rs` | 新增 `shape_fast` |
+| `src/engine/heap/slot_ownership.rs` | 新增 `slot_release_readiness_fast` |
+| `src/engine/object/property_ic.rs` | `read_location` 改可信访问器 |
+| `src/engine/object/ordinary_storage/ic.rs` | `property_ic_read_fast` 改调 fast readiness |
+
+估计 ~50 行。
+
+### 风险
+
+`read_location` 也被 Proxy trap 缓存等复用；这些调用点的 receiver 同样来自活值，
+可信。若非可信调用者存在，保留原 `read` 走可失败路径即可（S2 只改热路径调用）。
+
+## S2.3 非失败 operand push
+
+### 现状
+
+`SlotStore::operand_push_index`（`vm/stack.rs:925`）返回 `Result<usize, Error>`，
+两个检查都是 VM 已验证的不变量（操作数容量、目标槽为空）；`push_current`/
+`push_pending_current` 因此返回 `Result`，调用点用 `?`。
+
+### 设计
+
+- `operand_push_index` 改非失败：
+  ```rust
+  #[inline]
+  fn operand_push_index(&self, window: &FrameWindow) -> usize {
+      debug_assert!(window.depth < window.operands().len());
+      debug_assert!(self.slots[index].is_none());
+      ...
+      index
+  }
+  ```
+  越界/占位按不变量破坏 panic。
+- `push_current`/`push_pending_current` 去掉 `Result`；`insert_copy_current` 内部
+  调用相应调整；对外的 `push`（`vm/stack/window.rs:288/296`）保留 `Result` 或同步
+  改非失败（按调用者需要）。
+- 全仓库仅 5 个调用点，改动可控。
+
+### Scope
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/engine/vm/stack.rs` | `operand_push_index`/`push_current`/`push_pending_current` |
+| `src/engine/vm/stack/window.rs` | `push`/`push_pending` 包装 |
+
+估计 ~60 行。
+
+## S2.4 提交与验证
+
+- 分 3 个 commit：`perf(heap): add fast shared release`、`perf(object): use trusted
+  accessors in the property-read cache`、`perf(vm): make operand pushes infallible`。
+  每步独立可编译/可测。
+- 验证：`cargo fmt`、workspace `--all-targets`、`TEST262_WORKERS=2 ... --full`
+  零回归、`property_read_probe.py` + `scaling.py` 前后对比（pre-S2 vs S2）。
+- 老规矩：`prepare-test262.sh` 会拒绝 `GIT_*` 环境变量，需先清理。
+
+## S2.5 风险与预期
+
+- **失败模式**：与 S1 一致，可信路径把不变量破坏当 bug（panic）。
+- **预期量级**：S2.1 释放路径约 4%，S2.2 削 `property_ic_read` 的 15% 中的
+  generation 部分，S2.3 削 `push_current` 的分支部分；合计**个位数百分比**。
+  诚实地说，剩余大头（`run` 36% + 值/槽表示）要靠 S3。
+- **S3（下一步）**：`Value` 从 32B 瘦身（去掉 runtime `Rc`、thin 句柄 + 显式
+  retain，保持计数以免改 GC 根），目标 `push_current`/`insert_copy`/`copy_value`/
+  drop 合计约 20% 与所有值搬运。
+
+## S2.6 实施结果
+
+实施中发现 **S2.1 与 S2.3 与既有契约冲突，已撤销**；只落地 **S2.2**。
+
+- **S2.1 快速释放（撤销）**：既有测试
+  `heap::slot_ownership::blocked_borrow_and_deferred_release_do_not_commit_or_drain`
+  把「**任意**借用（含共享）都使释放 defer、不立即提交」固定为契约。快速释放用
+  共享借用递减，会在已持有共享借用时成功提交，改变该契约与 deferred 出队顺序。
+  需要单独立项评估该松弛是否安全，故本次不做。
+- **S2.3 非失败 push（撤销）**：`operand_push_index` 的容量/占位失败是**被显式
+  测试覆盖的可恢复事务路径**（`failed_capacity_and_shape_checks_do_not_change_live_windows`、
+  多个 `primitive_transaction_*` 测试）。改为 panic 会破坏该契约，故保持可失败。
+- **S2.2 可信 IC 读（已落地）**：
+  - 新增 `Heap::shape_fast`（`object_storage.rs`）。
+  - `PropertyReadCache::read_location`（`object/property_ic.rs`）改用
+    `object_fast`/`shape_fast`。
+  - 新增 `Heap::slot_object_release_readiness_fast`（`slot_ownership.rs`），
+    `property_ic_read_fast` 改用，去掉读路径上的 `validate_slot_identity`。
+
+### S2.2 计时（`property_read_probe.py`，N=5,000,000，repeat 7，median）
+
+| case | before ns/op | S1 ns/op | S2 ns/op | S1→S2 | before→S2 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| prop_read_int | 222.73 | 185.97 | 184.35 | −0.9% | −17.2% |
+| prop_read_obj | 281.70 | 236.71 | 220.22 | **−7.0%** | **−21.8%** |
+| prop_read_string | 300.87 | 280.10 | 280.86 | +0.3% | −6.7% |
+
+S2.2 的收益集中在**对象结果的属性读**（IC 命中里 object/shape 的可信访问 +
+readiness 无校验）；int/string 基本不变（噪声）。
+
+### 验证
+
+- `cargo test --locked -p quickjs-oxide --lib`：2259 通过。
+- `cargo test --locked --workspace --all-targets`：全部通过（lib 2278、oracle 907、
+  CLI 32 等，0 失败）。
+- `cargo fmt`：通过。
+- Test262 全量零回归：`TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full`
+  得 `total=102037 pass=79982 runnable=80032`，门禁判定
+  `complete Test262 vector matches`，与冻结基线逐字节一致（仅产出 current-source
+  receipt，未改 `current.conf`）。
+
+### 结论
+
+S2.2 是安全的增量（对象属性读 S1→S2 −7%）；S2.1/S2.3 的正确做法需要改动既有
+事务/延迟释放契约，应作为独立设计项，而不是塞进性能 PR。S3（值瘦身）仍是下一
+个数量级的关键。

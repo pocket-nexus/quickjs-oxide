@@ -148,7 +148,7 @@ impl Runtime {
             }
         };
         if !keep_receiver
-            && state.heap.slot_object_release_readiness(receiver).ok()?
+            && state.heap.slot_object_release_readiness_fast(receiver)
                 != SlotReleaseReadiness::Ready
         {
             return None;
