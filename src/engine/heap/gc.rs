@@ -6,14 +6,14 @@
 
 use super::Edges;
 use super::{
-    AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BytecodeConstant, ContextData, ContextId,
-    FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId, GeneratorActivationData,
-    GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, InternalCallableData, NativeErrorKind,
-    Node, NodeData, ObjectData, ObjectId, ObjectPayload, PrimitiveKind, PrimitiveObjectData,
-    PromiseCapabilityData, PromiseReaction, PropertySlot, RawId, RawModuleEvaluationState,
-    RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord, RawModuleRecordBody, RawValue,
-    Shape, ShapeId, SlotState, TypedArrayElementKind, VarRefData, VarRefId, VecDeque,
-    WeakCollectionKey, is_map_storable_value,
+    AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BigIntId, BytecodeConstant, ContextData,
+    ContextId, FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId,
+    GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError,
+    InternalCallableData, NativeErrorKind, Node, NodeData, ObjectData, ObjectId, ObjectPayload,
+    PrimitiveKind, PrimitiveObjectData, PromiseCapabilityData, PromiseReaction, PropertySlot,
+    RawId, RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord,
+    RawModuleRecordBody, RawValue, Shape, ShapeId, SlotState, StringId, TypedArrayElementKind,
+    VarRefData, VarRefId, VecDeque, WeakCollectionKey, is_map_storable_value,
 };
 
 /// Resources finalized by a release, mutation, or collection operation.
@@ -24,6 +24,8 @@ pub struct HeapCleanup {
     pub finalized_var_refs: usize,
     pub finalized_contexts: usize,
     pub finalized_function_bytecodes: usize,
+    pub finalized_strings: usize,
+    pub finalized_bigints: usize,
     /// Finalized shape identities for O(1) weak-cache unlinking.
     pub finalized_shape_ids: Vec<ShapeId>,
     /// Owned non-GC atom edges detached from shapes and symbol values.
@@ -45,6 +47,12 @@ impl HeapCleanup {
         self.finalized_function_bytecodes = self
             .finalized_function_bytecodes
             .saturating_add(other.finalized_function_bytecodes);
+        self.finalized_strings = self
+            .finalized_strings
+            .saturating_add(other.finalized_strings);
+        self.finalized_bigints = self
+            .finalized_bigints
+            .saturating_add(other.finalized_bigints);
         self.finalized_shape_ids
             .append(&mut other.finalized_shape_ids);
         self.atoms.append(&mut other.atoms);
@@ -147,6 +155,42 @@ impl Heap {
     /// Duplicate one externally owned function-bytecode reference.
     pub fn retain_function_bytecode(&mut self, id: FunctionBytecodeId) -> Result<(), HeapError> {
         self.retain_raw(RawId::FunctionBytecode(id), 1)
+    }
+
+    /// Duplicate one externally owned heap String reference.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
+    )]
+    pub fn retain_string(&mut self, id: StringId) -> Result<(), HeapError> {
+        self.retain_raw(RawId::String(id), 1)
+    }
+
+    /// Duplicate one externally owned heap BigInt reference.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
+    )]
+    pub fn retain_bigint(&mut self, id: BigIntId) -> Result<(), HeapError> {
+        self.retain_raw(RawId::BigInt(id), 1)
+    }
+
+    /// Release one heap String reference and drain the cascade.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
+    )]
+    pub fn release_string(&mut self, id: StringId) -> Result<HeapCleanup, HeapError> {
+        self.release_and_drain(RawId::String(id))
+    }
+
+    /// Release one heap BigInt reference and drain the cascade.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
+    )]
+    pub fn release_bigint(&mut self, id: BigIntId) -> Result<HeapCleanup, HeapError> {
+        self.release_and_drain(RawId::BigInt(id))
     }
 
     /// Release one object reference and iteratively drain zero-reference nodes.
@@ -494,7 +538,10 @@ impl Heap {
                     index,
                     generation: slot.generation,
                 })),
-                NodeData::Shape(_) | NodeData::VarRef(_) => {}
+                NodeData::Shape(_)
+                | NodeData::VarRef(_)
+                | NodeData::String(_)
+                | NodeData::BigInt(_) => {}
             }
         }
 
@@ -1230,6 +1277,12 @@ impl Heap {
                 for edge in function_bytecode_edges(&bytecode) {
                     self.release_raw_no_drain(edge)?;
                 }
+            }
+            NodeData::String(_) => {
+                cleanup.finalized_strings = cleanup.finalized_strings.saturating_add(1);
+            }
+            NodeData::BigInt(_) => {
+                cleanup.finalized_bigints = cleanup.finalized_bigints.saturating_add(1);
             }
         }
         Ok(())

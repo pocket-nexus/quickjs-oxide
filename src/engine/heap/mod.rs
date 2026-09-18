@@ -116,6 +116,8 @@ pub struct HeapCounts {
     pub var_ref_nodes: usize,
     pub context_nodes: usize,
     pub function_bytecode_nodes: usize,
+    pub string_nodes: usize,
+    pub bigint_nodes: usize,
     pub initializing: usize,
     pub live: usize,
     pub zero_queued: usize,
@@ -132,6 +134,8 @@ enum RawId {
     VarRef(VarRefId),
     Context(ContextId),
     FunctionBytecode(FunctionBytecodeId),
+    String(StringId),
+    BigInt(BigIntId),
 }
 
 impl RawId {
@@ -142,6 +146,8 @@ impl RawId {
             Self::VarRef(_) => HeapNodeKind::VarRef,
             Self::Context(_) => HeapNodeKind::Context,
             Self::FunctionBytecode(_) => HeapNodeKind::FunctionBytecode,
+            Self::String(_) => HeapNodeKind::String,
+            Self::BigInt(_) => HeapNodeKind::BigInt,
         }
     }
 
@@ -152,6 +158,8 @@ impl RawId {
             Self::VarRef(id) => id.index,
             Self::Context(id) => id.index,
             Self::FunctionBytecode(id) => id.index,
+            Self::String(id) => id.index,
+            Self::BigInt(id) => id.index,
         }
     }
 
@@ -162,6 +170,8 @@ impl RawId {
             Self::VarRef(id) => id.generation,
             Self::Context(id) => id.generation,
             Self::FunctionBytecode(id) => id.generation,
+            Self::String(id) => id.generation,
+            Self::BigInt(id) => id.generation,
         }
     }
 }
@@ -173,6 +183,11 @@ enum NodeData {
     VarRef(VarRefData),
     Context(Box<ContextData>),
     FunctionBytecode(FunctionBytecodeData),
+    /// Holds the existing runtime-free `JsString`; the arena slot is only a
+    /// managed holder, so rope internals and `Rc` identity stay untouched (D2a).
+    String(JsString),
+    /// Holds the existing `JsBigInt` (short or heap).
+    BigInt(JsBigInt),
 }
 
 impl NodeData {
@@ -183,6 +198,8 @@ impl NodeData {
             Self::VarRef(_) => HeapNodeKind::VarRef,
             Self::Context(_) => HeapNodeKind::Context,
             Self::FunctionBytecode(_) => HeapNodeKind::FunctionBytecode,
+            Self::String(_) => HeapNodeKind::String,
+            Self::BigInt(_) => HeapNodeKind::BigInt,
         }
     }
 
@@ -193,6 +210,10 @@ impl NodeData {
             Self::VarRef(var_ref) => var_ref_edges(var_ref),
             Self::Context(context) => context_edges(context).into(),
             Self::FunctionBytecode(bytecode) => function_bytecode_edges(bytecode).into(),
+            // String/BigInt nodes own no heap edges: rope children and atom
+            // references remain inside the existing `Rc`/atom ownership, and a
+            // BigInt has no outgoing references. This keeps them cascade-only.
+            Self::String(_) | Self::BigInt(_) => Edges::new(),
         }
     }
 }
@@ -329,6 +350,12 @@ fn increment_kind_count(counts: &mut HeapCounts, kind: HeapNodeKind) {
         HeapNodeKind::Context => counts.context_nodes = counts.context_nodes.saturating_add(1),
         HeapNodeKind::FunctionBytecode => {
             counts.function_bytecode_nodes = counts.function_bytecode_nodes.saturating_add(1);
+        }
+        HeapNodeKind::String => {
+            counts.string_nodes = counts.string_nodes.saturating_add(1);
+        }
+        HeapNodeKind::BigInt => {
+            counts.bigint_nodes = counts.bigint_nodes.saturating_add(1);
         }
     }
 }
