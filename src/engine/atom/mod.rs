@@ -19,6 +19,7 @@
 //! for future C-ABI compatibility without letting a stale or cross-runtime
 //! [`Atom`] alias the new occupant.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -254,7 +255,10 @@ impl From<JsStringError> for AtomError {
 struct Entry {
     kind: AtomKind,
     text: Option<JsString>,
-    ref_count: u32,
+    /// Interior-mutable so [`AtomTable::retain`] can run under a shared runtime
+    /// state borrow, like the heap's `Node.strong` counter. Final removal still
+    /// requires `&mut self` and stays on the ordinary path.
+    ref_count: Cell<u32>,
     pinned: bool,
 }
 
@@ -266,7 +270,7 @@ impl Entry {
                 Some(text) => AtomSpelling::Text(text),
                 None => AtomSpelling::NoDescription,
             },
-            ref_count: (!self.pinned).then_some(self.ref_count),
+            ref_count: (!self.pinned).then_some(self.ref_count.get()),
             is_permanent: self.pinned,
         }
     }
@@ -674,23 +678,30 @@ impl AtomTable {
     ///
     /// Permanent atoms are returned unchanged without a counter update.
     ///
+    /// This takes `&self`: the counter is a `Cell`, so a trusted caller may
+    /// retain a proven-live atom while holding only a shared runtime state
+    /// borrow (S1b). Final removal remains on [`Self::release`] and needs
+    /// `&mut self`.
+    ///
     /// # Errors
     ///
     /// Returns [`AtomError::UnknownAtom`] for an invalid or released table ID,
     /// or [`AtomError::RefCountOverflow`] if its counter is already maximal.
-    pub fn retain(&mut self, atom: Atom) -> Result<Atom, AtomError> {
+    pub fn retain(&self, atom: Atom) -> Result<Atom, AtomError> {
         if atom.is_null() || atom.is_immediate_integer() {
             return Ok(atom);
         }
 
-        let entry = self.entry_mut(atom)?;
+        let entry = self.entry(atom)?;
         if entry.pinned {
             return Ok(atom);
         }
-        entry.ref_count = entry
+        let next = entry
             .ref_count
+            .get()
             .checked_add(1)
             .ok_or(AtomError::RefCountOverflow(atom))?;
+        entry.ref_count.set(next);
         Ok(atom)
     }
 
@@ -713,12 +724,13 @@ impl AtomTable {
             return Ok(ReleaseOutcome::Permanent);
         }
 
-        if entry.ref_count == 0 {
+        let count = entry.ref_count.get();
+        if count == 0 {
             return Err(AtomError::UnknownAtom(atom));
         }
-        entry.ref_count -= 1;
-        if entry.ref_count != 0 {
-            return Ok(ReleaseOutcome::Retained(entry.ref_count));
+        entry.ref_count.set(count - 1);
+        if count != 1 {
+            return Ok(ReleaseOutcome::Retained(count - 1));
         }
 
         let entry = self.entries[index]
@@ -763,7 +775,7 @@ impl AtomTable {
         }
         let entry = self.entry_mut(atom)?;
         entry.pinned = true;
-        entry.ref_count = 0;
+        entry.ref_count.set(0);
         Ok(())
     }
 
@@ -928,7 +940,7 @@ impl AtomTable {
         self.entries[index_usize] = Some(Entry {
             kind,
             text,
-            ref_count: u32::from(!pinned),
+            ref_count: Cell::new(u32::from(!pinned)),
             pinned,
         });
         self.live_table_atoms += 1;

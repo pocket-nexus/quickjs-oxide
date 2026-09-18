@@ -195,15 +195,16 @@ impl Runtime {
             RawValue::BigInt(value) => {
                 Some(self.take_owned_raw_value_fast(RawValue::BigInt(value.clone())))
             }
+            RawValue::Symbol(atom) => {
+                state.atoms.retain(*atom).ok()?;
+                Some(self.take_owned_raw_value_fast(RawValue::Symbol(*atom)))
+            }
             RawValue::Undefined
             | RawValue::Null
             | RawValue::Bool(_)
             | RawValue::Int(_)
             | RawValue::Float(_) => Some(self.take_owned_raw_value_fast(raw.clone())),
-            RawValue::Symbol(_)
-            | RawValue::Private(_)
-            | RawValue::Uninitialized
-            | RawValue::Exception => None,
+            RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => None,
         }
     }
 }

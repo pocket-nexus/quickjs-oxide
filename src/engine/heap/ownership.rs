@@ -70,7 +70,9 @@ impl Runtime {
     }
 
     pub(crate) fn retain_atom_handle(&self, atom: Atom) -> Result<(), AtomError> {
-        self.0.state.borrow_mut().atoms.retain(atom).map(drop)
+        // The atom counter is a `Cell`, so a proven-live atom can be retained
+        // under a shared state borrow (S1b).
+        self.0.state.borrow().atoms.retain(atom).map(drop)
     }
 
     pub(crate) fn retain_function_bytecode_handle(
