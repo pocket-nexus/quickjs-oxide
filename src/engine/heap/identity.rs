@@ -97,6 +97,43 @@ impl fmt::Debug for ContextId {
     }
 }
 
+/// Stable identity of one heap-owned ECMAScript String payload.
+///
+/// S3-A1 backs this with a `HeapNodeKind::String` arena slot; the handle type
+/// exists in A0-v so the internal value enum can name every heap kind.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StringId {
+    pub(in crate::engine::heap) index: u32,
+    pub(in crate::engine::heap) generation: u32,
+}
+
+impl fmt::Debug for StringId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StringId")
+            .field("index", &self.index)
+            .field("generation", &self.generation)
+            .finish()
+    }
+}
+
+/// Stable identity of one heap-owned BigInt payload. See [`StringId`].
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BigIntId {
+    pub(in crate::engine::heap) index: u32,
+    pub(in crate::engine::heap) generation: u32,
+}
+
+impl fmt::Debug for BigIntId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BigIntId")
+            .field("index", &self.index)
+            .field("generation", &self.generation)
+            .finish()
+    }
+}
+
 /// Stable identity of immutable executable bytecode and its constant pool.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FunctionBytecodeId {

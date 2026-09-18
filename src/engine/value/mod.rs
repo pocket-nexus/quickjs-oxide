@@ -7,6 +7,7 @@ use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::object::{ObjectRef, SymbolRef};
 use crate::engine::value::bigint::JsBigInt;
 
+pub(crate) mod js_value;
 mod primitive;
 pub use primitive::*;
 

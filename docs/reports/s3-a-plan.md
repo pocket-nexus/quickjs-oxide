@@ -187,3 +187,34 @@ A1 额外门禁：`tests/checked_string_construction.rs`（公共 `JsString` 构
 CLI profiling / oracle clippy、`cargo test --locked --workspace --all-targets`
 （lib 2278 / oracle 907 / CLI 32 等全绿）、`check-source-layout.py`、
 `check-rust-only.sh` 全部通过。
+
+### A0-v：内部 `JsValue` + 转换层（已落地，未接线）
+
+**穿越点盘点（D1.5）——公共 `Value` 与内部执行值的边界：**
+
+- `Context::eval` / `eval_bytes` → `Value`（`api/context/script.rs:116,121`）；
+- `Context::execute` → `Value`（`api/context/calls.rs:11`）；
+- `Context::take_exception` → `Option<Value>`（`api/context/mod.rs:98`）；
+- `Context::new_array_from_values(Vec<Value>)`（`api/context/objects.rs:39`）；
+- native 调用参数缓冲：`&[Value]` / `Vec<Value>`（`builtins/dispatch.rs`、
+  `builtins/*/callback.rs` 等），内部以 `RawValue` 持有、边界再 root；
+- promise jobs / module loader / test262 agent 均经 `engine::api` 或内部
+  `RawValue`，没有额外的公共 `Value` 签名；
+- `adapters/native` 仅转导出 `engine::api`，`adapters/web` 只用 wasm 侧
+  `wasm_bindgen::JsValue`，不直接持有引擎 `Value`。
+
+结论：A2 的转换层只需挂在 `engine::api` 与 native 边界，外加内部 `RawValue`
+↔ `JsValue` 的堆内转换。
+
+**类型与转换层：** 新增 `src/engine/value/js_value.rs`：
+
+- `pub(crate) enum JsValue`：标量内联，堆类型为
+  `Object(ObjectId)` / `Symbol(AtomIdx)` / `String(StringId)` / `BigInt(BigIntId)`
+  ——16B（编译期断言）；不实现 `Copy`/`Drop`。
+- `StringId`/`BigIntId` 句柄类型已在 `heap/identity.rs` 定义（A1 提供其 arena）。
+- `Runtime::unroot_value`（借值→dup 一条堆边）、`dup_js_value`、
+  `release_js_value`（消费并释放）、`root_js_value`（消费并 root）。
+- 标量 / Object / Symbol 已实现并有 round-trip 测试；String / BigInt 因尚未
+  堆化，转换层暂返 `Invariant` 错误，**由 A1 补齐**。
+
+**门禁：** 同 A0-a；新增 `js_value` 3 项 round-trip 测试通过。
