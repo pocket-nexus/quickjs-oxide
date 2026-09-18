@@ -1,4 +1,4 @@
-# S3 设计：8B 值表示 + quickening + 数据导向堆（无 JIT、默认无 unsafe）
+# 性能架构：8B 值表示 + quickening + 数据导向堆（无 JIT、默认无 unsafe）
 
 > 状态：设计定稿，待评审与分阶段实施。本文档取代
 > `performance-plan.md`「横向设计比较」之后悬置的 S3 定义；S0–S2 是常数因子
