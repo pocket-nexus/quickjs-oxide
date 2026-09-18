@@ -111,6 +111,10 @@
 - 提交粒度：profile 改动与 PGO 流程脚本各一个 commit；无语义变更，门禁走
   `cargo test --locked --workspace --all-targets` + test262 `--check`（源码
   哈希会变，需重跑 `--full` 出 current-source receipt，不改 `current.conf`）。
+- 生效范围：`lto = "fat"` + `codegen-units = 1` 对**任何 `cargo build --release`
+  自动生效**（含 CLI、`build.py`）；**PGO 不会**——它需要 `pgo.py` 的两阶段
+  `RUSTFLAGS=-Cprofile-use`，默认 release 构建没有 profile，需显式跑 PGO 流程
+  才能得到完整方案 E 的二进制。
 
 ### E 实测（相对 pre-S3 HEAD `06386457`）
 

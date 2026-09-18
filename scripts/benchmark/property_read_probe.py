@@ -10,10 +10,10 @@ Output directories must not already exist, protecting prior evidence.
 
 ```sh
 python3 scripts/benchmark/property_read_probe.py \
-  --engine plain=target/s0-plain/release/qjs \
+  --engine plain=target/plain/release/qjs \
   --engine profiling=target/profile-feature/release/qjs \
   --iterations 20000000 --repeat 5 --perf \
-  --output target/s0-property-read
+  --output target/property-read-probe
 ```
 """
 import argparse
