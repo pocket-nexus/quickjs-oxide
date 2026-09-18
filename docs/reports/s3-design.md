@@ -18,7 +18,8 @@
    动态代码复制、wasm-as-format 均属 JIT 近亲，不采纳。
 2. **GC 模型被契约钉死**：`parity.md:183-191`（§13）要求保持 QuickJS 式确定性
    RC + 循环回收，finalize 时机可观察。因此「换 tracing GC 消灭 RC 流量」
-   不采纳；RC 只能做便宜，不能消灭。
+   **不在 S3 范围**；S3 内 RC 只能做便宜，不能消灭。契约修订情形下的
+   tracing 迁移列为 **S4 候选（推迟，非否决）**，决策门禁见 §10。
 3. **unsafe 政策**：`parity.md:23` 允许受审计 `unsafe`，但 workspace 现状是
    `unsafe_code = "forbid"`（`Cargo.toml:46-47`），且 `status.md:3` 对外宣称
    "unsafe-free"。S3 的默认路线**零 unsafe**；受审计 unsafe 只作保留席位
@@ -96,8 +97,9 @@
 | **C** | 派发与栈流量：TOS/accumulator 缓存、扩展静态超指令、可选 fn-pointer threading | 无 | +5–15% | 附录 A.4–A.6 |
 | **F** | 受审计 unsafe 保留席位：仅在测量点名后逐点引入 | 受审计 | 视点名位置 | §8 |
 
-不采纳：寄存器式 VM 全面重写、tracing GC、nightly `become`、copy-and-patch /
-动态复制（理由见 §9）。
+不采纳：寄存器式 VM 全面重写、nightly `become`、copy-and-patch /
+动态复制（理由见 §9）。**S4 候选：RC → tracing GC——推迟而非否决**，
+双门禁见 §10。
 
 ## 3. E：构建基线（第一阶段，先于一切测量）
 
@@ -271,18 +273,101 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 | 路线 | 理由 |
 | --- | --- |
 | 寄存器式 VM 全面重写 | fat-opcode JS 实测 ~1.067×（附录 A.5）；重写成本巨大 |
-| tracing GC 替代 RC | `parity.md` §13 契约排除；只能降 RC 单价（A/D） |
+| tracing GC 替代 RC | **推迟至 S4（见 §10），非否决**：§13 契约当前排除；S3 内只降 RC 单价（A/D） |
 | nightly `become` / musttail | MSRV 1.88 stable；x86 codegen 仍不稳定（附录 A.4） |
 | copy-and-patch / 动态复制 | 运行期机器码生成，属 JIT（约束 1） |
 | wasm-as-interpreter-format | 是换产品形态，不是解释器技术 |
 | Nova 式 8B enum（boxed f64） | 浮点上堆，算术密集路径引入分配；索引 NaN-box 更优 |
 
-## 10. 路线、预期与验证门禁
+## 10. S4 候选：RC → tracing GC（推迟，非否决）
+
+### 10.1 定位
+
+- **不是当前差距的约束项**：QuickJS 同为 RC + 循环回收，仍快本项目
+  10–25×（`performance-plan.md:319-320`）——RC 不是天花板，值表示 / 派发 /
+  IC / 对象布局才是。S0–S2 实测 RC 直接成本 ≈ `copy_value` ~8% + release
+  路径 ~4%（S1 后更低）。
+- **是 S3 之后的最大单项杠杆**：S3 削掉其他项后，「每次值复制/销毁各一次
+  计数」的语义性开销将浮为头部项——RC 是一块地板，tracing 是拆地板的
+  唯一手段。
+- **与方案 A 不冲突**：A 的 8B 句柄值 / 索引 NaN-box / typed arena / 边界
+  root 层在 tracing 下约 80% 原样复用；被废弃的只有「显式 dup/release
+  纪律」一层。先做 A 在任何未来路径上都不亏。
+
+### 10.2 若实施的设计形态
+
+- **保留**：typed arena；`{index, generation}` 句柄；`Edges` 出边遍历
+  （循环回收器已有，mark 阶段直接复用）；边界 root 类型。
+- **删除**：`strong` 计数、zero_queue、deferred 队列、trial-deletion 循环
+  收集器、全部 retain/release、所有「drop 改堆」逻辑。
+- **新增**：
+  - per-slot mark 位（或侧 bitmap）+ mark stack + sweep 重建 free list；
+  - **Root registry**：边界 root 类型从「Rc + 计数」改为「registry 条目 +
+    Drop 注销」，仅跨 GC 点持有的代码创建——tracing 的结构性优势即在此：
+    RC 在每条内部路径按次计费（操作数栈、帧、对象字段、常量池），tracing
+    只在 native 边界收注册费，内部流量全免；
+  - **safepoint 纪律**：GC 仅发生在分配点与 operation 边界；「两个分配点
+    之间持有的裸句柄必须活在 VM 可扫描状态（操作数栈/帧）」成为不变量；
+  - 分代化时的 write barrier：老→新字段写 push remembered set（仅堆字段
+    写收费）；
+  - **debug GC stress 模式**：每次分配即回收，配合 generation 校验把
+    rooting 错误从「事后悬垂」变成「即时 panic」。
+- **架构简化红利**：drop-defer 契约网整体蒸发（S2.1 类冲突不复存在）、
+  Rc + heap 双计数消失、retain-during-borrow panic 类别消失、`Value` 变
+  `Copy`、操作数栈操作退化为数组搬移。
+
+### 10.3 安全 Rust 下 rooting 纪律的三条路线
+
+| 路线 | 结论 |
+| --- | --- |
+| gc-arena（不变量生命周期） | 完全安全证明，但堆访问闭包域化 ≈ 强制 stackless 解释器，等于全引擎重写——否决 |
+| Nova 式 reborrow | 编译期强制 rooting，但 ~800 个 bind/unbind 站点、人体工学差，作者自述 soundness 仍在研究——不选 |
+| **显式 root registry**（SpiderMonkey `Rooted<T>` / V8 `HandleScope` 同族） | **选中**：纪律性风险用 generation 校验 + stress 模式兜底；是「运行时抓」而非「编译期消灭」，接受这一点 |
+
+### 10.4 成本与风险（诚实清单）
+
+- rooting 纪律是全 codebase 级人因风险（忘 root = 提前回收）；
+- **契约谈判是真正门槛**：§13 钉的是可观察的确定性回收——临时对象立即
+  释放、FinalizationRegistry/WeakRef 时机、内存 footprint 行为；换 tracing
+  后对象死于 GC 时刻，冻结向量需逐案重审、`parity.md` 需修订——这是产品
+  主人的决定，不是性能 PR；
+- 内存 headroom：tracing 不能像 RC 在接近满堆时运行；分代 minor GC 控制
+  暂停；
+- write barrier 常驻税约几个百分点；
+- 工期估计与方案 A 同级或更大。
+
+### 10.5 中间路线（不动 §13，先拿走 RC 税的大块）
+
+1. pinned atom / interned string 全体 immortal 化（`u32::MAX` 饱和先例已有）；
+2. consume 点 move-not-copy 纪律 + 直线代码 retain/release 配对消除；
+3. S2.1 快速释放单独立项（§6 第 5 项）。
+
+中间路线落地后**必须重新量化** tracing 的边际收益——届时残余 RC 成本可能
+只剩个位数百分比，S4 未必仍值得。
+
+### 10.6 决策门禁（两个同时满足才启动 S4）
+
+1. **量化门禁**：S3（E/A/B/D）落地且 §10.5 中间路线榨尽后，profile 归因于
+   RC 机制的总成本（copy/retain/release/deferred/zero-queue/atom 计数）在
+   目标负载上仍 **> 15–20%**；
+2. **契约门禁**：产品主人书面接受修订 `parity.md` §13；
+   FinalizationRegistry/WeakRef 时机语义重新审计；冻结向量重基线。
+
+### 10.7 预期与证据
+
+- S3 之上再 **1.3–2×**；分配/GC 密集负载（splay 类）数倍。
+- 证据：RC Immix（OOPSLA 2013，附录 A.8）显示优化后的 RC 可追平分代
+  tracing——「RC vs tracing」的差距大半在实现质量而非原理；CPython 以
+  PEP 683（immortal objects）/ PEP 703（biased refcounting）给 RC 本身做
+  手术，证明 RC 成本真实且值得重构。
+
+## 11. 路线、预期与验证门禁
 
 ### 路线
 
 E（重定基线）→ A（地基）→ B（差异化）→ D/C 按测量交替推进。每阶段
-独立可回退，严禁跨阶段混合提交。
+独立可回退，严禁跨阶段混合提交。S4（RC → tracing GC）不在此路线内，按
+§10.6 双门禁另行决策。
 
 ### 预期（诚实口径）
 
@@ -402,7 +487,8 @@ E（重定基线）→ A（地基）→ B（差异化）→ D/C 按测量交替�
   bounds check）须自行测量——这正是方案 A 要求先建基线的原因。
 - RC vs tracing：RC Immix（OOPSLA 2013）在 JVM/MMTk 上追平分代 Immix，
   但解释器里每次计数操作都是软件开销，无公开数据覆盖「索引 arena + 安全
-  Rust」场景；本项目由契约排除 tracing，此比较仅作背景。
+  Rust」场景；本项目 S3 内由契约排除 tracing（S4 候选见 §10），此比较
+  仅作背景。
   <https://www.cs.utexas.edu/users/mckinley/papers/rcix-oopsla-2013.pdf>
 
 ## 附录 B：为什么 C 的常数与安全 Rust 的税不会全消失
@@ -432,4 +518,4 @@ E（重定基线）→ A（地基）→ B（差异化）→ D/C 按测量交替�
    量级：同设计下典型残留 **10–30%** 常数差。
 4. **反向项**：安全换来的是激进重构不穿帮——quickening、IR 重写、typed
    arena 在 C 里是高危手术，在这里由类型系统兜底。税是常数项，设计收益
-   是结构项；这正是「分轴反超」（§10 预期）的根据。
+   是结构项；这正是「分轴反超」（§11 预期）的根据。
