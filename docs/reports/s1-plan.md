@@ -281,6 +281,48 @@ pub(crate) fn property_ic_read_fast(
   归属到 `RunSlots::property_ic_read`，不再看到成片的 `Result::branch` 子项。
 - `try_replace_immediate_var_ref_value` 去掉重复 `validate_var_ref_value`。
 
+### 完整性能对比（pre-S1 `34db437c` vs S1 `fe537951`）
+
+基线在独立 worktree 构建；两者使用**相同 flags 的普通 release**（无 debug、
+无 profiling），串行运行，无并发构建/测试。
+
+**属性读探针（`property_read_probe.py`，N=5,000,000，repeat 7，median）：**
+
+| case | before ns/op | after ns/op | 变化 |
+| --- | ---: | ---: | ---: |
+| prop_read_int | 222.87 | 185.38 | −16.8% |
+| prop_read_obj | 279.78 | 234.58 | −16.2% |
+| prop_read_string | 306.63 | 284.84 | −7.1% |
+
+**`scaling.py`（整进程 wall，16 case × 3 size = 48 单元，operations=32768，
+repeat 3）：** 中位 `after/before = 97.0%`（**−3.0%**），区间 −15% ~ +23%
+（小负载启动噪声大）。稳定收益集中在 S1 直接命中的路径：`long-key`
+−8~−13%、`map-churn` −4~−14%、`arguments` −7~−15%、`array-holey`
+−3.5~−7.5%、`array-index` −10~−12%、`typed-index` −3~−10.5%、
+`mapped-arguments` −1~−9.5%、`scope` 多为 −6~−12%。`map-*`/`set*` 基本中性。
+
+**QuickJS 官方 `microbench`（毫秒分辨率）：** `prop_read`/`array_read`/
+`int_arith` 前后均为定值、无法分辨 ~10% 变化；仅用于标定与 QuickJS 的差距
+（对应项 QuickJS 约 10–25 倍快）。
+
+**V8-v7（Score，越高越好，repeat 3）：**
+
+| case | before | after | quickjs | after 变化 |
+| --- | ---: | ---: | ---: | ---: |
+| richards | 48.7 | 48.6 | 1378 | −0.2% |
+| deltablue | 63.4 | 62.2 | 1259 | −1.9% |
+| crypto | 60.9 | 61.8 | 1522 | +1.5% |
+| raytrace | 94.2 | 93.6 | 2832 | −0.6% |
+| earley-boyer | 117 | 117 | 3504 | 0% |
+| regexp | 87.6 | 86.9 | 639 | −0.8% |
+| splay | 316 | 313 | 5118 | −0.9% |
+| navier-stokes | 254 | 262 | 3224 | +3.1% |
+
+V8-v7 整体**中性（±2%，噪声内）**：计算密集型套件中属性读/binding 不是主导。
+
+**小结：** S1 是定向优化——目标路径提升 7–17%，混合整进程负载中位 −3%，
+计算密集型套件中性；不是全局加速，符合计划定位。
+
 ### 验证
 
 - `cargo test --locked --workspace --all-targets`：通过（lib 2278、oracle 907、
@@ -288,10 +330,14 @@ pub(crate) fn property_ic_read_fast(
 - `cargo fmt`：通过。
 - clippy：本次改动未新增 lint；1.88/1.94 下报出的均为仓库既有 lint
   （`collapsible_if`、`manual_is_multiple_of`、测试 cfg 的 unused/dead_code）。
-- Test262 冻结门禁：因为 `engine_semantics_trees=src`，任何 `src` 改动都会使
-  冻结基线变为 stale，需走 milestone promotion 重新冻结；本 PR 不改基线
-  （符合 README 的“不得为性能改动修改基线”）。行为不变由全量测试与 oracle
-  907 例覆盖。
+- **Test262 全量通过、零回归**：`TEST262_WORKERS=2 ./scripts/test262/test-test262.sh
+  --full` 得到
+  `total=102037 pass=79982 fail=3580 unsupported=3530 skipped=18475`，
+  `runnable=80032`，门禁判定 `complete Test262 vector matches:
+  79982 pass of 80032 eligible (102037 total) variants`，与冻结基线逐字节一致。
+  该次运行只产出 current-source receipt，**未修改 `current.conf`**（符合 README
+  的“不得为性能改动修改基线”）。注：`prepare-test262.sh` 会拒绝任何 `GIT_*`
+  环境变量，运行前需清理。
 
 ## 10. 预期与风险
 
