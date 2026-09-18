@@ -90,19 +90,21 @@ rebuilds from existing raw profiles. Ordinary release builds also take
 `lto = "fat"` and `codegen-units = 1` from `[profile.release]`; comparisons
 must use the same flags on both sides.
 
-Protocol for using PGO binaries in comparisons:
+Protocol for comparisons during staged performance work:
 
-- **Day-to-day iteration never uses PGO builds.** Any code change stales the
-  trained profile, so routine before/after ratios are measured with plain
-  release builds (same flags on both sides).
-- **Formal receipts** (stage-end measurement records) retrain `pgo.py` on both
-  the before and after revision with a frozen training load
-  (cases/sizes/operations/repeat recorded in the report; the receipt carries
-  `profdata_sha256` for audit).
-- **Cross-protocol comparisons** (e.g. after-PGO vs before-plain) are accepted
-  for reporting cumulative, user-facing deltas; label the build protocol of
-  both sides. Per-stage attribution of design gains still requires
-  same-protocol pairs, so compiler layout noise is not counted as design gain.
+- A fixed baseline is saved before the work starts: a release build with PGO
+  off and LTO off (`CARGO_PROFILE_RELEASE_LTO=off
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`); its full benchmark numbers are
+  recorded in the stage reports and serve as one of the fixed denominators.
+- Each stage is compared twice: against the previous stage and against the
+  saved baseline, always with identical flags on both sides (no PGO, no LTO).
+  Per-stage PGO retraining is **not** required.
+- Exception: stage E measures the build configuration itself and keeps its own
+  protocol. At the close of each major stage (A/B/D) a full-protocol check
+  (LTO+PGO, both sides retrained) is recommended but not mandatory: LTO
+  changes inlining and code layout, and can occasionally flip a no-LTO result.
+- Cross-protocol comparisons are accepted for cumulative, user-facing deltas;
+  label the build protocol of both sides.
 
 ## External V8 v7 suite
 
