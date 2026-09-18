@@ -324,7 +324,7 @@ impl RuntimeState {
                     self.apply_cleanup(cleanup)?;
                 }
                 RawValue::Symbol(atom) => {
-                    self.atoms.release(*atom)?;
+                    self.atoms.release_idx(*atom)?;
                 }
                 RawValue::Private(_) => {
                     return Err(RuntimeError::Invariant(

@@ -274,7 +274,7 @@ impl Runtime {
         let last_index =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let entries = [ShapeEntry {
-            atom: last_index.atom(),
+            atom: last_index.atom().into(),
             flags: PropertyFlags::data(true, false, false),
         }];
         let object_shape = self
@@ -296,7 +296,7 @@ impl Runtime {
                 .iter()
                 .enumerate()
                 .map(|(index, key)| ShapeEntry {
-                    atom: key.atom(),
+                    atom: key.atom().into(),
                     flags: if index == 0 {
                         PropertyFlags::data(true, false, false)
                     } else {

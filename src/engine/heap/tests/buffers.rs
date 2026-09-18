@@ -855,7 +855,7 @@ fn symbol_atom_ownership_is_returned_on_replace_and_finalize() {
     let object = heap
         .allocate_object(ObjectData::ordinary(
             shape,
-            vec![PropertySlot::Data(RawValue::Symbol(first_symbol))],
+            vec![PropertySlot::Data(RawValue::Symbol(first_symbol.into()))],
         ))
         .unwrap();
 
@@ -863,7 +863,7 @@ fn symbol_atom_ownership_is_returned_on_replace_and_finalize() {
         .replace_object_slot(
             object,
             0,
-            PropertySlot::Data(RawValue::Symbol(second_symbol)),
+            PropertySlot::Data(RawValue::Symbol(second_symbol.into())),
         )
         .unwrap();
     assert_eq!(replacement.atoms, vec![first_symbol]);

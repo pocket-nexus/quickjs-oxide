@@ -790,7 +790,7 @@ impl Runtime {
                 };
                 let shape = state.heap.shape(object_data.shape)?;
                 for entry in shape.entries() {
-                    if state.atoms.array_index(entry.atom)?.is_some() {
+                    if state.atoms.array_index_idx(entry.atom)?.is_some() {
                         return Err(RuntimeError::Invariant(
                             "fast Array shape already contained a numeric property",
                         ));
@@ -819,7 +819,7 @@ impl Runtime {
                 .map_err(|_| RuntimeError::Invariant("fast Array count exceeded Uint32"))?;
             let key = self.property_key_for_index(index as u64)?;
             entries.push(ShapeEntry {
-                atom: key.atom(),
+                atom: key.atom().into(),
                 flags: PropertyFlags::data(true, true, true),
             });
             keys.push(key);

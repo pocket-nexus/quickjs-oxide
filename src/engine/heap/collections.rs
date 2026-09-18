@@ -4,7 +4,7 @@
 //! These operations maintain records and transfer or release their owned heap edges.
 
 use super::{
-    Atom, CollectionRecords, Heap, HeapCleanup, HeapError, MapIteratorKind, MapRecord, NodeData,
+    AtomIdx, CollectionRecords, Heap, HeapCleanup, HeapError, MapIteratorKind, MapRecord, NodeData,
     ObjectData, ObjectId, ObjectPayload, RawId, RawValue, SetIteratorKind, SlotState,
     is_map_storable_value, raw_value_atom, raw_value_edges,
 };
@@ -41,7 +41,7 @@ impl CollectionIteratorCurrentIndices {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WeakCollectionKey {
     Object(ObjectId),
-    Symbol(Atom),
+    Symbol(AtomIdx),
 }
 
 /// One hash-indexed weak-collection record with intrusive insertion-order

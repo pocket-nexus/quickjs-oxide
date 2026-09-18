@@ -725,7 +725,7 @@ impl Runtime {
         let settlement = (|| -> Result<(), RuntimeError> {
             let mut state_ref = self.0.state.borrow_mut();
             let retained_atom = if let RawValue::Symbol(atom) = &raw {
-                state_ref.atoms.retain(*atom)?;
+                state_ref.atoms.retain_idx(*atom)?;
                 Some(*atom)
             } else {
                 None
@@ -737,7 +737,7 @@ impl Runtime {
                 Ok(cleanup) => cleanup,
                 Err(error) => {
                     if let Some(atom) = retained_atom {
-                        state_ref.atoms.release(atom)?;
+                        state_ref.atoms.release_idx(atom)?;
                     }
                     return Err(error.into());
                 }

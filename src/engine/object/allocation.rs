@@ -73,7 +73,7 @@ impl Runtime {
         }
         let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
         let entries = [ShapeEntry {
-            atom: length.atom(),
+            atom: length.atom().into(),
             flags: PropertyFlags::data(true, false, false),
         }];
         let mut state = self.0.state.borrow_mut();

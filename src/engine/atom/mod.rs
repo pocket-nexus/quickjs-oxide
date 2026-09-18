@@ -147,6 +147,107 @@ impl fmt::Debug for Atom {
     }
 }
 
+/// Internal, unbranded atom handle: a bare `u32` table index (or immediate
+/// integer) with no generation or table-domain tag.
+///
+/// Branded [`Atom`] handles stay at public and cross-runtime boundaries. Inside
+/// the engine, an [`AtomIdx`] is only ever held by an owner that already retains
+/// the atom (a shape entry, published bytecode's property-key atoms, or a
+/// `RawValue` heap payload), so trusted paths may skip brand validation. A stale
+/// `AtomIdx` aliases whatever later occupies the slot, which is why holding one
+/// without the corresponding atom reference is a bug rather than a recoverable
+/// error.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AtomIdx(u32);
+
+const _: () = assert!(std::mem::size_of::<AtomIdx>() == 4);
+
+impl AtomIdx {
+    /// Sentinel used for "no atom". It is never a string or symbol atom.
+    pub const NULL: Self = Self(0);
+
+    /// Reconstruct an internal handle from its raw representation.
+    #[must_use]
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// Return the compact raw representation.
+    #[must_use]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    /// Whether this is the reserved null sentinel.
+    #[must_use]
+    pub const fn is_null(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Whether this atom directly encodes a non-negative integer property.
+    #[must_use]
+    pub const fn is_immediate_integer(self) -> bool {
+        self.0 & ATOM_TAG_INT != 0
+    }
+
+    /// Decode an immediate integer atom.
+    #[must_use]
+    pub const fn immediate_integer(self) -> Option<u32> {
+        if self.is_immediate_integer() {
+            Some(self.0 & !ATOM_TAG_INT)
+        } else {
+            None
+        }
+    }
+
+    /// Construct an immediate integer atom when `value` is within range.
+    #[must_use]
+    pub const fn from_immediate_integer(value: u32) -> Option<Self> {
+        if value <= ATOM_MAX_INT {
+            Some(Self(ATOM_TAG_INT | value))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<Atom> for AtomIdx {
+    fn from(atom: Atom) -> Self {
+        Self(atom.raw())
+    }
+}
+
+/// Compare an internal handle with a branded handle by raw value.
+///
+/// An [`AtomIdx`] is the brand-free projection of its [`Atom`], so this is the
+/// natural identity check for the heap's diagnostic assertions. It exists only
+/// for tests; engine paths compare handles of the same type.
+#[cfg(test)]
+impl PartialEq<Atom> for AtomIdx {
+    fn eq(&self, other: &Atom) -> bool {
+        self.0 == other.raw
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<AtomIdx> for Atom {
+    fn eq(&self, other: &AtomIdx) -> bool {
+        self.raw == other.0
+    }
+}
+
+impl fmt::Debug for AtomIdx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_null() {
+            f.write_str("AtomIdx::NULL")
+        } else if let Some(value) = self.immediate_integer() {
+            write!(f, "AtomIdx::Integer({value})")
+        } else {
+            f.debug_tuple("AtomIdx").field(&self.0).finish()
+        }
+    }
+}
+
 /// Internal atom classification needed to implement ECMAScript property keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AtomKind {
@@ -897,6 +998,13 @@ impl AtomTable {
     /// Null is a sentinel rather than a live atom. All well-formed immediate
     /// integers are live without table storage.
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Branded liveness is exercised by atom-table tests; engine paths use is_live_idx."
+        )
+    )]
     pub fn is_live(&self, atom: Atom) -> bool {
         if atom.is_null() {
             return false;
@@ -905,6 +1013,224 @@ impl AtomTable {
             return true;
         }
         self.valid_index(atom).is_ok()
+    }
+
+    /// Reconstruct the branded handle for a live internal index.
+    ///
+    /// Used at boundaries where an owning `Atom` must outlive the internal
+    /// metadata that carried the [`AtomIdx`]. Immediate integers need no table
+    /// storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AtomError::NullAtom`] for the null sentinel and
+    /// [`AtomError::UnknownAtom`] for a slot which is no longer live.
+    pub fn brand_idx(&self, idx: AtomIdx) -> Result<Atom, AtomError> {
+        if idx.is_null() {
+            return Err(AtomError::NullAtom);
+        }
+        if idx.is_immediate_integer() {
+            return Ok(Atom::from_raw(idx.raw()));
+        }
+        let index = self.live_index(idx)?;
+        Ok(Atom {
+            raw: idx.raw(),
+            generation: self.generations[index],
+            table_id: self.table_id,
+        })
+    }
+
+    /// Trusted index-based lookup of one live table entry.
+    fn live_index(&self, idx: AtomIdx) -> Result<usize, AtomError> {
+        if idx.is_null() {
+            return Err(AtomError::NullAtom);
+        }
+        let index = idx.raw() as usize;
+        match self.entries.get(index) {
+            Some(Some(_)) => Ok(index),
+            _ => Err(AtomError::UnknownAtom(Atom {
+                raw: idx.raw(),
+                generation: self.generations.get(index).copied().unwrap_or(0),
+                table_id: self.table_id,
+            })),
+        }
+    }
+
+    /// Trusted index-based variant of [`Self::resolve`] for an owning handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::resolve`].
+    pub fn resolve_idx(&self, idx: AtomIdx) -> Result<AtomInfo<'_>, AtomError> {
+        if idx.is_null() {
+            return Err(AtomError::NullAtom);
+        }
+        if let Some(value) = idx.immediate_integer() {
+            return Ok(AtomInfo {
+                kind: AtomKind::String,
+                spelling: AtomSpelling::Integer(value),
+                ref_count: None,
+                is_permanent: true,
+            });
+        }
+        let index = self.live_index(idx)?;
+        Ok(self.entries[index]
+            .as_ref()
+            .expect("live_index guarantees a live entry")
+            .info())
+    }
+
+    /// Trusted index-based variant of [`Self::kind`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::resolve`].
+    pub fn kind_idx(&self, idx: AtomIdx) -> Result<AtomKind, AtomError> {
+        Ok(self.resolve_idx(idx)?.kind)
+    }
+
+    /// Trusted index-based variant of [`Self::property_key_kind`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::resolve`].
+    pub fn property_key_kind_idx(&self, idx: AtomIdx) -> Result<PropertyKeyKind, AtomError> {
+        Ok(self.kind_idx(idx)?.property_key_kind())
+    }
+
+    /// Trusted index-based variant of [`Self::array_index`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::resolve`].
+    pub fn array_index_idx(&self, idx: AtomIdx) -> Result<Option<u32>, AtomError> {
+        if idx.is_null() {
+            return Err(AtomError::NullAtom);
+        }
+        if let Some(value) = idx.immediate_integer() {
+            return Ok(Some(value));
+        }
+        let index = self.live_index(idx)?;
+        let entry = self.entries[index]
+            .as_ref()
+            .expect("live_index guarantees a live entry");
+        if entry.kind != AtomKind::String {
+            return Ok(None);
+        }
+        let value = entry.text.as_ref().and_then(parse_canonical_u32_js_string);
+        Ok(value.filter(|value| *value != u32::MAX))
+    }
+
+    /// Trusted index-based variant of [`Self::to_js_string`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::resolve`].
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Internal spellings are consumed by heap diagnostic tests; engine paths use resolve_idx."
+        )
+    )]
+    pub fn to_js_string_idx(&self, idx: AtomIdx) -> Result<JsString, AtomError> {
+        match self.resolve_idx(idx)?.spelling {
+            AtomSpelling::Integer(value) => Ok(JsString::from_fresh_decimal_u32(value)),
+            AtomSpelling::Text(text) => Ok(text.clone()),
+            AtomSpelling::NoDescription => Ok(JsString::from_static("")),
+        }
+    }
+
+    /// Trusted index-based liveness check for an owning handle.
+    #[must_use]
+    pub fn is_live_idx(&self, idx: AtomIdx) -> bool {
+        if idx.is_null() {
+            return false;
+        }
+        if idx.is_immediate_integer() {
+            return true;
+        }
+        self.entries
+            .get(idx.raw() as usize)
+            .is_some_and(Option::is_some)
+    }
+
+    /// Trusted index-based variant of [`Self::retain`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::retain`].
+    pub fn retain_idx(&self, idx: AtomIdx) -> Result<AtomIdx, AtomError> {
+        if idx.is_null() || idx.is_immediate_integer() {
+            return Ok(idx);
+        }
+        let index = self.live_index(idx)?;
+        let entry = self.entries[index]
+            .as_ref()
+            .expect("live_index guarantees a live entry");
+        if entry.pinned {
+            return Ok(idx);
+        }
+        let next = entry
+            .ref_count
+            .get()
+            .checked_add(1)
+            .ok_or_else(|| AtomError::RefCountOverflow(Atom::from_raw(idx.raw())))?;
+        entry.ref_count.set(next);
+        Ok(idx)
+    }
+
+    /// Trusted index-based variant of [`Self::release`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::release`].
+    pub fn release_idx(&mut self, idx: AtomIdx) -> Result<ReleaseOutcome, AtomError> {
+        if idx.is_null() || idx.is_immediate_integer() {
+            return Ok(ReleaseOutcome::Permanent);
+        }
+        let index = self.live_index(idx)?;
+        let entry = self.entries[index]
+            .as_mut()
+            .ok_or_else(|| AtomError::UnknownAtom(Atom::from_raw(idx.raw())))?;
+        if entry.pinned {
+            return Ok(ReleaseOutcome::Permanent);
+        }
+        let count = entry.ref_count.get();
+        if count == 0 {
+            return Err(AtomError::UnknownAtom(Atom::from_raw(idx.raw())));
+        }
+        entry.ref_count.set(count - 1);
+        if count != 1 {
+            return Ok(ReleaseOutcome::Retained(count - 1));
+        }
+
+        let entry = self.entries[index]
+            .take()
+            .ok_or_else(|| AtomError::UnknownAtom(Atom::from_raw(idx.raw())))?;
+        match entry.kind {
+            AtomKind::String => {
+                if let Some(text) = entry.text {
+                    let hash = Self::string_identity_hash(&text);
+                    let weak = text.downgrade();
+                    self.strings.remove(&text);
+                    self.released_strings.entry(hash).or_default().push(weak);
+                    self.maintain_released_strings();
+                }
+            }
+            AtomKind::GlobalSymbol => {
+                if let Some(key) = entry.text {
+                    self.global_symbols.remove(&key);
+                }
+            }
+            AtomKind::Symbol | AtomKind::Private => {}
+        }
+        self.live_table_atoms -= 1;
+        if let Some(generation) = self.generations[index].checked_add(1) {
+            self.generations[index] = generation;
+            self.free.push(idx.raw());
+        }
+        Ok(ReleaseOutcome::Removed)
     }
 
     fn allocate(

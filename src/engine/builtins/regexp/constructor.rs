@@ -160,7 +160,7 @@ impl Runtime {
         let last_index =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let entries = [ShapeEntry {
-            atom: last_index.atom(),
+            atom: last_index.atom().into(),
             flags: PropertyFlags::data(true, false, false),
         }];
         let mut state = self.0.state.borrow_mut();

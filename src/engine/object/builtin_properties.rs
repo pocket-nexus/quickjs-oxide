@@ -110,7 +110,7 @@ impl Runtime {
             })?;
         for (key, method) in &properties {
             entries.push(ShapeEntry {
-                atom: key.atom(),
+                atom: key.atom().into(),
                 flags: method.flags,
             });
             slots.push(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {

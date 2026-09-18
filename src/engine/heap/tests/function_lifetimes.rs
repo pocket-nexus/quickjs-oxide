@@ -444,7 +444,7 @@ fn bytecode_constant_pool_owns_child_and_returns_all_atoms() {
             context,
             vec![
                 BytecodeConstant::Function(child),
-                BytecodeConstant::Value(RawValue::Symbol(symbol_atom)),
+                BytecodeConstant::Value(RawValue::Symbol(symbol_atom.into())),
             ],
             vec![parent_atom],
         ))
@@ -752,7 +752,7 @@ fn async_function_state_traces_callbacks_and_transfers_await_activation() {
     let activation = GeneratorActivationData {
         bytecode,
         vm: GeneratorVmActivation {
-            stack: vec![RawValue::Symbol(awaited_atom)],
+            stack: vec![RawValue::Symbol(awaited_atom.into())],
             regions: Vec::new(),
             pc: 2,
             callee_realm,

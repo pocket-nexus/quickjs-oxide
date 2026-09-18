@@ -42,7 +42,7 @@ impl ArgumentsLayout {
 
     fn push(&mut self, key: PropertyKey, flags: PropertyFlags, slot: PropertySlot) {
         self.entries.push(ShapeEntry {
-            atom: key.atom(),
+            atom: key.atom().into(),
             flags,
         });
         self.slots.push(slot);

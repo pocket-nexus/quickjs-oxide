@@ -6,7 +6,7 @@
 
 use super::Edges;
 use super::{
-    AsyncGeneratorRequestData, Atom, AutoInitProperty, BytecodeConstant, ContextData, ContextId,
+    AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BytecodeConstant, ContextData, ContextId,
     FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId, GeneratorActivationData,
     GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, InternalCallableData, NativeErrorKind,
     Node, NodeData, ObjectData, ObjectId, ObjectPayload, PrimitiveKind, PrimitiveObjectData,
@@ -27,7 +27,7 @@ pub struct HeapCleanup {
     /// Finalized shape identities for O(1) weak-cache unlinking.
     pub finalized_shape_ids: Vec<ShapeId>,
     /// Owned non-GC atom edges detached from shapes and symbol values.
-    pub atoms: Vec<Atom>,
+    pub atoms: Vec<AtomIdx>,
 }
 
 impl HeapCleanup {
@@ -69,8 +69,8 @@ pub struct GcStats {
 /// [`HeapCleanup::atoms`] for the caller to release after collection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WeakSymbolGcEvent {
-    IsLive(Atom),
-    Release(Atom),
+    IsLive(AtomIdx),
+    Release(AtomIdx),
 }
 
 /// Whether an internal collection performs QuickJS's ordered weak-object
@@ -1867,7 +1867,7 @@ pub(super) fn function_bytecode_edges(bytecode: &FunctionBytecodeData) -> Vec<Ra
     edges
 }
 
-pub(super) fn property_slot_atoms(slot: &PropertySlot) -> impl Iterator<Item = Atom> + '_ {
+pub(super) fn property_slot_atoms(slot: &PropertySlot) -> impl Iterator<Item = AtomIdx> + '_ {
     match slot {
         PropertySlot::Data(RawValue::Symbol(atom) | RawValue::Private(atom)) => Some(*atom),
         PropertySlot::Data(_)
@@ -1878,11 +1878,11 @@ pub(super) fn property_slot_atoms(slot: &PropertySlot) -> impl Iterator<Item = A
     .into_iter()
 }
 
-fn object_slot_atoms(object: &ObjectData) -> impl Iterator<Item = Atom> + '_ {
+fn object_slot_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx> + '_ {
     object.slots.iter().flat_map(property_slot_atoms)
 }
 
-fn internal_callable_atoms(internal: &InternalCallableData) -> Vec<Atom> {
+fn internal_callable_atoms(internal: &InternalCallableData) -> Vec<AtomIdx> {
     match internal {
         InternalCallableData::PromiseCapabilityExecutor(capture) => capture
             .resolve
@@ -1908,9 +1908,9 @@ fn internal_callable_atoms(internal: &InternalCallableData) -> Vec<Atom> {
     }
 }
 
-pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = Atom> + '_ {
+pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx> + '_ {
     let payload = match &object.payload {
-        ObjectPayload::Primitive(PrimitiveObjectData::Symbol(atom)) => vec![*atom],
+        ObjectPayload::Primitive(PrimitiveObjectData::Symbol(atom)) => vec![(*atom).into()],
         ObjectPayload::Primitive(
             PrimitiveObjectData::Number(_)
             | PrimitiveObjectData::String(_)
@@ -2020,10 +2020,10 @@ pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = Atom> + 
     };
     object_slot_atoms(object)
         .chain(payload)
-        .chain(object.private_brand_home)
+        .chain(object.private_brand_home.map(AtomIdx::from))
 }
 
-pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -> Vec<Atom> {
+pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -> Vec<AtomIdx> {
     let vm = &activation.vm;
     vm.stack
         .iter()
@@ -2039,7 +2039,7 @@ pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -
                 .chain(activation.locals.iter())
                 .filter_map(|binding| match binding {
                     GeneratorFrameBinding::Direct(value) => raw_value_atom(value),
-                    GeneratorFrameBinding::Private(atom) => Some(*atom),
+                    GeneratorFrameBinding::Private(atom) => Some((*atom).into()),
                     GeneratorFrameBinding::PrivateCallable(_)
                     | GeneratorFrameBinding::Uninitialized
                     | GeneratorFrameBinding::Captured(_) => None,
@@ -2048,7 +2048,7 @@ pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -
         .collect()
 }
 
-pub(super) fn raw_value_atom(value: &RawValue) -> Option<Atom> {
+pub(super) fn raw_value_atom(value: &RawValue) -> Option<AtomIdx> {
     match value {
         RawValue::Symbol(atom) | RawValue::Private(atom) => Some(*atom),
         RawValue::Undefined
@@ -2074,7 +2074,7 @@ pub(super) fn raw_value_matches_weak_key(value: &RawValue, key: WeakCollectionKe
     }
 }
 
-fn context_atoms(context: &ContextData) -> impl Iterator<Item = Atom> + '_ {
+fn context_atoms(context: &ContextData) -> impl Iterator<Item = AtomIdx> + '_ {
     context.intrinsics.iter().filter_map(raw_value_atom).chain(
         context
             .loaded_modules
@@ -2085,7 +2085,9 @@ fn context_atoms(context: &ContextData) -> impl Iterator<Item = Atom> + '_ {
     )
 }
 
-pub(super) fn raw_module_record_atoms(record: &RawModuleRecord) -> impl Iterator<Item = Atom> + '_ {
+pub(super) fn raw_module_record_atoms(
+    record: &RawModuleRecord,
+) -> impl Iterator<Item = AtomIdx> + '_ {
     let body = match &record.body {
         RawModuleRecordBody::Json { default_value } => raw_value_atom(default_value),
         RawModuleRecordBody::Parsing
@@ -2103,11 +2105,12 @@ pub(super) fn raw_module_record_atoms(record: &RawModuleRecord) -> impl Iterator
     body.into_iter().chain(evaluation)
 }
 
-fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Item = Atom> + '_ {
+fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Item = AtomIdx> + '_ {
     bytecode
         .auxiliary_atoms
         .iter()
         .copied()
+        .map(AtomIdx::from)
         .chain(
             bytecode
                 .constants
@@ -2119,6 +2122,6 @@ fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Ite
         )
 }
 
-fn var_ref_atoms(var_ref: &VarRefData) -> impl Iterator<Item = Atom> + '_ {
+fn var_ref_atoms(var_ref: &VarRefData) -> impl Iterator<Item = AtomIdx> + '_ {
     raw_value_atom(&var_ref.value).into_iter()
 }

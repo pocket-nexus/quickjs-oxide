@@ -140,7 +140,7 @@ fn one_slot_shape(heap: &mut Heap) -> ShapeId {
         Shape::new(
             None,
             [ShapeEntry {
-                atom,
+                atom: atom.into(),
                 flags: DATA_FLAGS,
             }],
         )

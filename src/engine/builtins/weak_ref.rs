@@ -192,7 +192,7 @@ impl Runtime {
                 let atom = symbol.atom();
                 let can_be_held_weakly =
                     self.0.state.borrow().atoms.kind(atom)? == AtomKind::Symbol;
-                Ok(can_be_held_weakly.then_some(WeakCollectionKey::Symbol(atom)))
+                Ok(can_be_held_weakly.then_some(WeakCollectionKey::Symbol(atom.into())))
             }
             _ => Ok(None),
         }
@@ -326,7 +326,7 @@ impl Runtime {
                                 Err(error) => return Err(error.into()),
                             }
                         }
-                        WeakCollectionKey::Symbol(atom) => state.atoms.is_live(atom),
+                        WeakCollectionKey::Symbol(atom) => state.atoms.is_live_idx(atom),
                     }
                 };
                 if !live {
