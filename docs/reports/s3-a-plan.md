@@ -94,6 +94,34 @@ Object/Symbol 已是句柄（`ObjectId`/`Atom`），但 `String(JsString)` /
    （`ordinary_storage/ic.rs:27-35`）；A1 测量必须含 string-heavy 负载，
    确认不放倒 IC 快路。
 
+#### D2a-ownership：`RawValue` 句柄边的所有权模型（钉死）
+
+**一条规则**：`RawValue` 永远不持有堆边；**生产者持有、store 一律
+retain、生产者交接后 release**——与现有 Object 模型完全同构
+（`allocate_object` 返回拥有型句柄 → 容器事务化 retain → 生产者释放；
+`identity.rs:196-199` 的「Clone does not retain an object edge」纪律）。
+
+- **创建路径**：`raw_property_value`（及同类创建点）新建 String/BigInt
+  节点（strong=1，归生产者），返回 **`OwnedRawValue`**——non-Clone、只能
+  move 的 newtype，`Drop` 走既有 `release_or_defer`（忘 release 自动
+  defer-release，leak 用 RAII 封死）；容器 store 对它**照常 retain**，
+  无变体特例。
+- **读取/跨容器复制路径**：借用读 + 存储方 retain，现状不变。
+- **明确否决的两个替代**（A1.2 前评审记录）：
+  - *adopt 语义*（store 对 String/BigInt 不 retain、直接接管生产者那
+    一份）：同一容器 store 按负载变体走不同所有权规则（Object retain、
+    String adopt），两个方向的错误都难测全（漏 retain → trusted panic；
+    多 retain → teardown `live==0`），是 bug 温床。若未来 profile 点名
+    创建-入库路径，再引入**类型化** `store_adopt(OwnedRawValue)` 微优化，
+    不作为基础纪律。
+  - *自持有 `StringRef`（Clone=retain / Drop=release）*：`RawValue` 随容器
+    drop 时（如 `finish_node` finalize 中途、持有 `&mut heap`）其 Drop
+    需要堆访问，而 `StringRef` 只持 `StringId`、拿不到 runtime，连 defer
+    队列都进不去；违背「`RawValue` 的 drop 不需要堆」的既有纪律。补救
+    （`StringRef` 携带 `Runtime`）会把值重新做胖，违背 D2a 目标。
+- A1.2/A1.3 的审计面因此从「逐点判断 adopt 还是 retain」缩为「确认
+  store 一律 retain」。
+
 ### D3：`Atom` 16B 品牌——内部 `u32` + 品牌只留边界
 
 **事实**：`Atom { raw: u32, generation: u32, table_id: u64 }`
