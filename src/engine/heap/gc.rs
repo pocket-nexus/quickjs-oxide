@@ -123,6 +123,12 @@ impl Heap {
         self.retain_raw(RawId::Object(id), 1)
     }
 
+    /// Trusted hot-path retain for a live object handle.
+    #[inline]
+    pub(crate) fn retain_object_fast(&self, id: ObjectId) {
+        self.retain_raw_fast(RawId::Object(id));
+    }
+
     /// Duplicate one externally owned shape reference.
     pub fn retain_shape(&mut self, id: ShapeId) -> Result<(), HeapError> {
         self.retain_raw(RawId::Shape(id), 1)
@@ -411,7 +417,7 @@ impl Heap {
         let mut examined_nodes = 0usize;
         for (index, slot) in self.slots.iter().enumerate() {
             if let SlotState::Live(node) = &slot.state {
-                trial[index] = Some(node.strong);
+                trial[index] = Some(node.strong.get());
                 examined_nodes = examined_nodes.saturating_add(1);
             }
         }
@@ -1022,6 +1028,7 @@ impl Heap {
     fn preflight_edge_retain(&self, edge: RawId, additional: u32) -> Result<(), HeapError> {
         self.live_node(edge)?
             .strong
+            .get()
             .checked_add(additional)
             .ok_or(HeapError::Overflow {
                 operation: "retaining outgoing heap edges",
@@ -1031,13 +1038,27 @@ impl Heap {
 
     pub(super) fn retain_raw(&mut self, id: RawId, additional: u32) -> Result<(), HeapError> {
         let node = self.live_node_mut(id)?;
-        node.strong = node
-            .strong
-            .checked_add(additional)
-            .ok_or(HeapError::Overflow {
-                operation: "retaining a heap reference",
-            })?;
+        node.strong.set(
+            node.strong
+                .get()
+                .checked_add(additional)
+                .ok_or(HeapError::Overflow {
+                    operation: "retaining a heap reference",
+                })?,
+        );
         Ok(())
+    }
+
+    /// Trusted hot-path retain for a proven-live handle.
+    ///
+    /// Callers hold a live owning edge, so a stale or wrong-kind handle is a
+    /// heap invariant violation rather than a recoverable condition. The
+    /// count saturates at `u32::MAX`, matching QuickJS's immortal value; the
+    /// fallible [`Heap::retain_raw`] keeps its checked overflow behavior.
+    #[inline]
+    pub(in crate::engine::heap) fn retain_raw_fast(&self, id: RawId) {
+        let node = self.live_node_fast(id);
+        node.strong.set(node.strong.get().saturating_add(1));
     }
 
     pub(super) fn release_and_drain(&mut self, id: RawId) -> Result<HeapCleanup, HeapError> {
@@ -1067,12 +1088,14 @@ impl Heap {
             let slot = &mut self.slots[index];
             match &mut slot.state {
                 SlotState::Live(node) => {
-                    node.strong = node.strong.checked_sub(1).ok_or(HeapError::Underflow {
-                        kind: id.kind(),
-                        index: id.index(),
-                        generation: id.generation(),
-                    })?;
-                    if node.strong == 0 {
+                    node.strong.set(node.strong.get().checked_sub(1).ok_or(
+                        HeapError::Underflow {
+                            kind: id.kind(),
+                            index: id.index(),
+                            generation: id.generation(),
+                        },
+                    )?);
+                    if node.strong.get() == 0 {
                         let state = std::mem::replace(&mut slot.state, SlotState::Vacant);
                         let SlotState::Live(node) = state else {
                             return Err(HeapError::Invariant(
@@ -1127,7 +1150,7 @@ impl Heap {
                         "zero queue referenced a node not in ZeroQueued state",
                     ));
                 };
-                if node.strong != 0 {
+                if node.strong.get() != 0 {
                     return Err(HeapError::Invariant(
                         "zero queue contained a nonzero reference count",
                     ));
@@ -1242,7 +1265,7 @@ impl Heap {
             }
             slot.state = SlotState::Zombie {
                 kind: id.kind(),
-                strong: node.strong,
+                strong: node.strong.get(),
             };
             node
         };

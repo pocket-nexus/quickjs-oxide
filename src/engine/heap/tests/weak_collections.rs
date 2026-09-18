@@ -1018,7 +1018,8 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
 
     heap.live_node_mut(RawId::Object(finalization_registry_prototype))
         .unwrap()
-        .strong = u32::MAX;
+        .strong
+        .set(u32::MAX);
     assert_eq!(
         heap.attach_weak_ref_intrinsics(realm, roots),
         Err(HeapError::Overflow {
@@ -1032,7 +1033,8 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
     );
     heap.live_node_mut(RawId::Object(finalization_registry_prototype))
         .unwrap()
-        .strong = finalization_registry_strong;
+        .strong
+        .set(finalization_registry_strong);
 
     heap.attach_weak_ref_intrinsics(realm, roots).unwrap();
     assert_eq!(heap.context(realm).unwrap().weak_ref, Some(roots));

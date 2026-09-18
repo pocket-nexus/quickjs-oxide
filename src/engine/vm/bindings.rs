@@ -59,19 +59,27 @@ pub(in crate::engine::vm) fn read_immediate_cell(
 }
 
 /// Keep the scalar read cheap; only a non-immediate miss attempts an owned
-/// read under the shared heap guard. The flag distinguishes profiling events.
+/// shared-borrow read. `None` declines to the ordinary binding path. The flag
+/// distinguishes profiling events; a trusted non-immediate read never fails,
+/// so a stale or sentinel cell panics instead of returning an error.
 #[inline]
 pub(in crate::engine::vm) fn read_run_cell(
     runtime: &Runtime,
     root: &impl crate::engine::heap::roots::VarRefHandle,
-) -> Result<Option<(Value, bool)>, Error> {
+) -> Option<(Value, bool)> {
     if let Some(value) = read_immediate_cell(runtime, root) {
-        return Ok(Some((value, false)));
+        return Some((value, false));
     }
+    if let Some(value) = runtime.read_owned_cell_fast(root) {
+        return Some((value, true));
+    }
+    // Cold decline: Symbols need an atom-table retain, and other cases fall
+    // back to the ordinary binding path when this returns `None`.
     runtime
         .try_read_owned_var_ref(root)
-        .map(|value| value.map(|value| (value, true)))
-        .map_err(runtime_error_to_vm_error)
+        .ok()
+        .flatten()
+        .map(|value| (value, true))
 }
 
 /// Commit only a no-owner immediate replacement. The caller first proves its

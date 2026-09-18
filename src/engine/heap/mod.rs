@@ -198,7 +198,7 @@ impl NodeData {
 }
 
 struct Node {
-    strong: u32,
+    strong: Cell<u32>,
     data: NodeData,
 }
 
@@ -223,7 +223,7 @@ impl SlotState {
     const fn strong(&self) -> Option<u32> {
         match self {
             Self::Initializing { strong, .. } | Self::Zombie { strong, .. } => Some(*strong),
-            Self::Live(node) | Self::ZeroQueued(node) => Some(node.strong),
+            Self::Live(node) | Self::ZeroQueued(node) => Some(node.strong.get()),
             Self::Vacant | Self::Retired => None,
         }
     }

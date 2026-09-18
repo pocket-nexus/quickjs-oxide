@@ -110,11 +110,31 @@ impl SlotStore {
             None
         };
         let base = self.peek_current(window, 0)?;
-        let Some(value) = runtime
-            .try_property_ic_read_owned(base, executable, pc, key_index, keep_receiver, native)
-            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?
-        else {
-            return Ok(false);
+        let value = match runtime.property_ic_read_fast(
+            base,
+            executable,
+            pc,
+            key_index,
+            keep_receiver,
+            native,
+        ) {
+            Some(value) => value,
+            None => {
+                let Some(value) = runtime
+                    .try_property_ic_read_owned(
+                        base,
+                        executable,
+                        pc,
+                        key_index,
+                        keep_receiver,
+                        native,
+                    )
+                    .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?
+                else {
+                    return Ok(false);
+                };
+                value
+            }
         };
         if let Some(index) = output_index {
             self.install_operand(window, index, value);
