@@ -99,8 +99,10 @@ Protocol for using PGO binaries in comparisons:
   the before and after revision with a frozen training load
   (cases/sizes/operations/repeat recorded in the report; the receipt carries
   `profdata_sha256` for audit).
-- **Never compare across protocols** (e.g. after-PGO vs before-plain): compiler
-  layout noise must not be counted as design gain.
+- **Cross-protocol comparisons** (e.g. after-PGO vs before-plain) are accepted
+  for reporting cumulative, user-facing deltas; label the build protocol of
+  both sides. Per-stage attribution of design gains still requires
+  same-protocol pairs, so compiler layout noise is not counted as design gain.
 
 ## External V8 v7 suite
 
