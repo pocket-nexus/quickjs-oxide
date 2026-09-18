@@ -116,19 +116,19 @@ Object/Symbol 已是句柄（`ObjectId`/`Atom`），但 `String(JsString)` /
 范围确认：**先做 A0+A1**（地基 + 堆化，风险可控、独立可评审），A2–A4 按
 门禁逐个推进；本文档覆盖 A 全程，不意味着一次合入。
 
-## 2. PGO 基线随阶段更新的约定（钉死）
+## 2. 阶段性能比较协议（钉死）
 
-E 之后的分母是 PGO 二进制，但 A 每改代码 profile 即失效。约定：
-
-1. **日常迭代**：改前/改后都用**非 PGO 普通 release**（同 flags）看比率，
-   快、且不受 profile  staleness 影响；
-2. **正式 receipt**（每阶段末的测量记录）：对改前/改后**各自重训一次**
-   `scripts/benchmark/pgo.py`，训练负载冻结（cases/sizes/operations/repeat
-   写进报告）；receipt 已含 `profdata_sha256`，可审计；
-3. **跨协议对比**（如「改后 PGO vs 改前非 PGO」）允许用于累计/用户口径的
-   报告，但必须标注双方构建协议；**单阶段设计收益归因仍只认同协议配对**——
-   否则会把编译器布局噪声算成设计收益（`performance-architecture.md` §3
-   E 实测的教训）。
+1. **固定基线**：S3-A 开工前保存一份基线——无 PGO、无 LTO 的 release
+   构建（`CARGO_PROFILE_RELEASE_LTO=off
+   CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`），全量基准数字记入报告，
+   作为所有阶段的固定分母之一；
+2. **每阶段只比两次**：本阶段 vs 上一阶段、本阶段 vs 保存的基线；两侧
+   都是无 PGO、无 LTO 的同 flags 构建。**不做每阶段 PGO 重训**；
+3. **例外与复核**：E 阶段测的就是构建配置本身，按
+   `performance-architecture.md` §3 已有口径；每个大阶段（A/B/D）收尾时
+   **建议**（非强制）做一次 LTO+PGO 双方复核——LTO 会改变内联与代码布局，
+   无-LTO 下的阶段胜率偶尔会在最终构建配置下翻转，复核只为确认符号不变；
+4. 跨协议对比允许用于累计/用户口径的报告，须标注双方构建协议。
 
 ## 3. 验证门禁
 
