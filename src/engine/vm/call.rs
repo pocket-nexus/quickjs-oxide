@@ -882,6 +882,12 @@ impl ConstructorRef {
     pub(crate) fn as_object(&self) -> &ObjectRef {
         &self.0
     }
+
+    /// Consume this validated constructor root, transferring its one owned
+    /// object edge to the caller without retaining or releasing.
+    pub(crate) fn into_object(self) -> ObjectRef {
+        self.0
+    }
 }
 
 /// Whether one internal constructor entry carries an ECMAScript-validated
@@ -890,7 +896,6 @@ impl ConstructorRef {
 /// `OP_call_constructor`, `OP_apply` constructor mode, and derived `super()`
 /// use the raw form. Public Context and Reflect entry points retain the
 /// validated form and its existing constructor checks.
-#[derive(Clone)]
 pub(crate) enum ConstructNewTarget {
     Validated(ConstructorRef),
     Raw(crate::engine::value::JsValue),
@@ -902,7 +907,7 @@ impl ConstructNewTarget {
     pub(crate) fn into_value(self) -> crate::engine::value::JsValue {
         match self {
             Self::Validated(constructor) => {
-                crate::engine::value::JsValue::Object(constructor.as_object().into_handle())
+                crate::engine::value::JsValue::Object(constructor.into_object().into_handle())
             }
             Self::Raw(value) => value,
         }
