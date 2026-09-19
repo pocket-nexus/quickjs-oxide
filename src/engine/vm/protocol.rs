@@ -1,4 +1,8 @@
-use crate::engine::{api::Error, object::ObjectRef, value::Value};
+use crate::engine::{
+    api::Error,
+    object::ObjectRef,
+    value::{JsValue, Value},
+};
 
 /// Caller state attached to one original direct-eval invocation.
 ///
@@ -18,8 +22,8 @@ pub(crate) struct DirectEvalInvocation {
 }
 
 pub(crate) struct CallInput {
-    pub this_value: Value,
-    pub new_target: Value,
+    pub this_value: JsValue,
+    pub new_target: JsValue,
     pub callee_global: Option<ObjectRef>,
 }
 

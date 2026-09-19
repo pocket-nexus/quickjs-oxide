@@ -3,7 +3,7 @@
 use std::cell::Cell;
 
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
-use crate::engine::atom::{Atom, AtomTable};
+use crate::engine::atom::{Atom, AtomIdx, AtomTable};
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::heap::{ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
 use crate::engine::value::Value;
@@ -286,7 +286,7 @@ fn locate(
             return None;
         }
         let shape = heap.shape(data.shape).ok()?;
-        if let Some(slot) = shape.find(atom) {
+        if let Some(slot) = shape.find(AtomIdx::from_raw(atom.raw())) {
             return matches!(data.slots.get(slot as usize), Some(PropertySlot::Data(_))).then_some(
                 Location {
                     domain,
@@ -325,7 +325,7 @@ impl PropertyWriteCache {
         if location.depth != 0 {
             return None;
         }
-        if heap.object(receiver).ok()?.kind == ObjectKind::Array && location.slot == 0 {
+        if matches!(heap.object(receiver).ok()?.kind, ObjectKind::Array) && location.slot == 0 {
             return None;
         }
         let shape = heap.shape(location.shape).ok()?;
