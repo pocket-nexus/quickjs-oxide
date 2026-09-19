@@ -6,7 +6,7 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::{Heap, HeapError, RawId, SlotState};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlotReleaseReadiness {
@@ -126,6 +126,43 @@ impl Runtime {
         }
     }
 
+    /// Internal-value form of [`Runtime::slot_value_release_readiness`].
+    /// Handles carry no runtime branding, so the domain checks disappear;
+    /// every heap-backed kind reports its node or atom slot readiness.
+    pub(crate) fn slot_value_release_readiness_jsvalue(
+        &self,
+        value: &JsValue,
+    ) -> Result<SlotReleaseReadiness, RuntimeError> {
+        match value {
+            JsValue::Undefined
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_) => return Ok(SlotReleaseReadiness::Ready),
+            JsValue::Object(_) | JsValue::Symbol(_) | JsValue::String(_) | JsValue::BigInt(_) => {}
+        }
+        if self.0.deferred_references.has_pending() {
+            return Ok(SlotReleaseReadiness::Deferred);
+        }
+        let Ok(state) = self.0.state.try_borrow_mut() else {
+            return Ok(SlotReleaseReadiness::Borrowed);
+        };
+        match value {
+            JsValue::Object(id) => Ok(state.heap.slot_release_readiness(RawId::Object(*id))?),
+            JsValue::String(id) => Ok(state.heap.slot_release_readiness(RawId::String(*id))?),
+            JsValue::BigInt(id) => Ok(state.heap.slot_release_readiness(RawId::BigInt(*id))?),
+            JsValue::Symbol(index) => {
+                let atom = state.atoms.brand(*index)?;
+                Ok(match state.atoms.resolve(atom)?.ref_count {
+                    None => SlotReleaseReadiness::Ready,
+                    Some(count) if count > 1 => SlotReleaseReadiness::Ready,
+                    Some(_) => SlotReleaseReadiness::PrimitiveStorage,
+                })
+            }
+            _ => unreachable!("primitive slots returned before borrowing runtime state"),
+        }
+    }
+
     /// Commit exactly one ordinary owning-root release after the no-drain
     /// proof. No callback or reference decrease can intervene between the
     /// preflight and Drop. Ready consumes the Value; every other outcome leaves
@@ -142,6 +179,26 @@ impl Runtime {
         );
         let old = std::mem::replace(value, Value::Undefined);
         drop(old);
+        Ok(true)
+    }
+
+    /// Internal-value form of [`Runtime::try_release_slot_value`]: on `Ready`
+    /// the value is replaced with `undefined` and its edges are released.
+    pub(crate) fn try_release_slot_value_jsvalue(
+        &self,
+        value: &mut JsValue,
+    ) -> Result<bool, RuntimeError> {
+        if self.slot_value_release_readiness_jsvalue(value)? != SlotReleaseReadiness::Ready {
+            return Ok(false);
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_storage(
+            crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
+                heap_root: matches!(value, JsValue::Object(_) | JsValue::Symbol(_)),
+            },
+        );
+        let old = std::mem::replace(value, JsValue::Undefined);
+        self.release_jsvalue(old)?;
         Ok(true)
     }
 }

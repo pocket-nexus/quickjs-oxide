@@ -191,6 +191,19 @@ impl Runtime {
         })
     }
 
+    /// Internal-value form of [`Runtime::is_original_eval`].
+    pub(crate) fn is_original_eval_jsvalue(
+        &self,
+        realm: ContextId,
+        function: &crate::engine::value::JsValue,
+    ) -> Result<bool, RuntimeError> {
+        let crate::engine::value::JsValue::Object(object) = function else {
+            return Ok(false);
+        };
+        let object = crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *object)?;
+        self.is_original_eval(realm, &Value::Object(object))
+    }
+
     pub(crate) fn is_original_eval(
         &self,
         realm: ContextId,

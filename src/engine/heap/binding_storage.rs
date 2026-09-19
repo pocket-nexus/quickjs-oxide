@@ -9,7 +9,9 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed var-ref lookup reached another node payload",
             )),
         }
@@ -43,7 +45,9 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::VarRef(_)
-            | NodeData::Context(_) => Err(HeapError::Invariant(
+            | NodeData::Context(_)
+            | NodeData::String(_)
+            | NodeData::BigInt(_) => Err(HeapError::Invariant(
                 "typed bytecode lookup reached another node payload",
             )),
         }
@@ -171,9 +175,8 @@ mod immediate_write_tests {
                 .try_replace_immediate_var_ref_value(root.id(), RawValue::Int(2), None)
         );
         assert_eq!(state.heap.zero_queue.len(), 1);
-        assert_eq!(
-            state.heap.var_ref(root.id()).unwrap().value,
-            RawValue::Int(1)
+        assert!(
+            matches!(state.heap.var_ref(root.id()).unwrap().value, RawValue::Int(1))
         );
         let cleanup = state.heap.drain_zero_queue().unwrap();
         state.apply_cleanup(cleanup).unwrap();
@@ -182,9 +185,8 @@ mod immediate_write_tests {
                 .heap
                 .try_replace_immediate_var_ref_value(root.id(), RawValue::Int(2), None)
         );
-        assert_eq!(
-            state.heap.var_ref(root.id()).unwrap().value,
-            RawValue::Int(2)
+        assert!(
+            matches!(state.heap.var_ref(root.id()).unwrap().value, RawValue::Int(2))
         );
     }
 }
