@@ -25,34 +25,6 @@ impl Heap {
         Ok(id)
     }
 
-    /// Allocate and publish a heap-owned String payload (D2a).
-    ///
-    /// The node has no heap edges, so it is cascade-only: when its strong count
-    /// reaches zero the slot is reclaimed without entering trial deletion. The
-    /// caller owns one returned reference and must release it through the same
-    /// raw-reference path as objects.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
-    pub fn allocate_string(&mut self, value: JsString) -> Result<StringId, HeapError> {
-        let (index, generation) = self.reserve(HeapNodeKind::String)?;
-        self.publish(index, NodeData::String(value))?;
-        Ok(StringId { index, generation })
-    }
-
-    /// Allocate and publish a heap-owned BigInt payload (D2a). See
-    /// [`Heap::allocate_string`].
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
-    pub fn allocate_bigint(&mut self, value: JsBigInt) -> Result<BigIntId, HeapError> {
-        let (index, generation) = self.reserve(HeapNodeKind::BigInt)?;
-        self.publish(index, NodeData::BigInt(value))?;
-        Ok(BigIntId { index, generation })
-    }
-
     /// Allocate and publish an object, retaining its shape and property edges.
     ///
     /// The caller owns one returned object reference and must eventually call

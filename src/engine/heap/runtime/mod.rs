@@ -13,11 +13,11 @@ use crate::engine::host::HostServices;
 
 use crate::engine::{builtins as intrinsics, jobs, modules as module};
 
-use crate::engine::atom::{Atom, AtomIdx, AtomTable};
+use crate::engine::atom::{Atom, AtomTable};
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::heap::{
-    BigIntId, ContextId, FunctionBytecodeId, Heap, HeapCleanup, ObjectId, PropertySlot, RawValue,
-    ShapeId, StringId, VarRefId,
+    ContextId, FunctionBytecodeId, Heap, HeapCleanup, ObjectId, PropertySlot, RawValue, ShapeId,
+    VarRefId,
 };
 use crate::engine::object::WellKnownSymbol;
 use crate::engine::object::shape::{Shape, ShapeEntry};
@@ -68,8 +68,6 @@ pub(crate) enum DeferredRefOp {
     FunctionBytecode(FunctionBytecodeId),
     VarRef(VarRefId),
     Atom(Atom),
-    String(StringId),
-    BigInt(BigIntId),
     ActiveFramePop {
         token: ActiveFrameToken,
         depth: usize,
@@ -143,8 +141,8 @@ pub(crate) struct RuntimeState {
 }
 
 impl RuntimeState {
-    pub(crate) fn preflight_atom_releases(&self, atoms: &[AtomIdx]) -> Result<(), RuntimeError> {
-        let mut counts = HashMap::<AtomIdx, u32>::new();
+    pub(crate) fn preflight_atom_releases(&self, atoms: &[Atom]) -> Result<(), RuntimeError> {
+        let mut counts = HashMap::<Atom, u32>::new();
         counts.try_reserve(atoms.len()).map_err(|_| {
             RuntimeError::Invariant("module atom release preflight allocation failed")
         })?;
@@ -155,7 +153,7 @@ impl RuntimeState {
             ))?;
         }
         for (atom, removed) in counts {
-            let info = self.atoms.resolve_idx(atom)?;
+            let info = self.atoms.resolve(atom)?;
             if let Some(ref_count) = info.ref_count
                 && ref_count < removed
             {
@@ -184,7 +182,7 @@ impl RuntimeState {
             }
             RawValue::Symbol(atom) => {
                 self.atoms
-                    .release_idx(atom)
+                    .release(atom)
                     .expect("committed pending-exception Symbol release failed");
             }
             RawValue::Undefined
@@ -204,7 +202,7 @@ impl RuntimeState {
         match value {
             RawValue::Object(object) => self.heap.retain_object(*object)?,
             RawValue::Symbol(atom) => {
-                self.atoms.retain_idx(*atom)?;
+                self.atoms.retain(*atom)?;
             }
             RawValue::Private(_) => {
                 return Err(RuntimeError::Invariant(
@@ -234,7 +232,7 @@ impl RuntimeState {
                 self.apply_cleanup(cleanup)?;
             }
             RawValue::Symbol(atom) => {
-                self.atoms.release_idx(atom)?;
+                self.atoms.release(atom)?;
             }
             RawValue::Private(_) => {
                 return Err(RuntimeError::Invariant(
@@ -357,14 +355,14 @@ impl RuntimeState {
     pub(crate) fn retain_shape_atoms(
         &mut self,
         entries: &[ShapeEntry],
-    ) -> Result<Vec<AtomIdx>, RuntimeError> {
+    ) -> Result<Vec<Atom>, RuntimeError> {
         let mut retained_atoms = Vec::with_capacity(entries.len());
         for entry in entries {
-            if let Err(error) = self.atoms.resolve_idx(entry.atom) {
+            if let Err(error) = self.atoms.resolve(entry.atom) {
                 self.release_atoms(retained_atoms)?;
                 return Err(error.into());
             }
-            if let Err(error) = self.atoms.retain_idx(entry.atom) {
+            if let Err(error) = self.atoms.retain(entry.atom) {
                 self.release_atoms(retained_atoms)?;
                 return Err(error.into());
             }
@@ -377,7 +375,7 @@ impl RuntimeState {
     pub(crate) fn retain_slot_atoms(
         &mut self,
         slots: &[PropertySlot],
-    ) -> Result<Vec<AtomIdx>, RuntimeError> {
+    ) -> Result<Vec<Atom>, RuntimeError> {
         let atoms = slots
             .iter()
             .filter_map(|slot| match slot {
@@ -387,7 +385,7 @@ impl RuntimeState {
             .collect::<Vec<_>>();
         let mut retained = Vec::with_capacity(atoms.len());
         for atom in atoms {
-            if let Err(error) = self.atoms.retain_idx(atom) {
+            if let Err(error) = self.atoms.retain(atom) {
                 self.release_atoms(retained)?;
                 return Err(error.into());
             }
@@ -399,14 +397,14 @@ impl RuntimeState {
     pub(crate) fn retain_raw_value_atoms<'a>(
         &mut self,
         values: impl IntoIterator<Item = &'a RawValue>,
-    ) -> Result<Vec<AtomIdx>, RuntimeError> {
+    ) -> Result<Vec<Atom>, RuntimeError> {
         let atoms = values.into_iter().filter_map(|value| match value {
             RawValue::Symbol(atom) | RawValue::Private(atom) => Some(*atom),
             _ => None,
         });
         let mut retained = Vec::new();
         for atom in atoms {
-            if let Err(error) = self.atoms.retain_idx(atom) {
+            if let Err(error) = self.atoms.retain(atom) {
                 self.release_atoms(retained)?;
                 return Err(error.into());
             }
@@ -538,10 +536,10 @@ impl RuntimeState {
 
     pub(crate) fn release_atoms(
         &mut self,
-        atoms: impl IntoIterator<Item = AtomIdx>,
+        atoms: impl IntoIterator<Item = Atom>,
     ) -> Result<(), RuntimeError> {
         for atom in atoms {
-            self.atoms.release_idx(atom)?;
+            self.atoms.release(atom)?;
         }
         Ok(())
     }

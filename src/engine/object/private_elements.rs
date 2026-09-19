@@ -90,7 +90,7 @@ impl Runtime {
             )
         };
         entries.push(ShapeEntry {
-            atom: name.atom().into(),
+            atom: name.atom(),
             flags: PropertyFlags::data(true, true, true),
         });
         slots.push(PropertySlot::Data(raw));
@@ -215,7 +215,7 @@ impl Runtime {
         let mut state = self.0.state.borrow_mut();
         state.atoms.retain(atom)?;
         let data = VarRefData::captured(
-            RawValue::Private(atom.into()),
+            RawValue::Private(atom),
             true,
             true,
             ClosureVariableKind::PrivateField,
@@ -264,7 +264,7 @@ impl Runtime {
         state.atoms.retain(atom)?;
         let cleanup = match state
             .heap
-            .replace_var_ref_value(root.id(), RawValue::Private(atom.into()))
+            .replace_var_ref_value(root.id(), RawValue::Private(atom))
         {
             Ok(cleanup) => cleanup,
             Err(error) => {
@@ -300,7 +300,7 @@ impl Runtime {
             }
             match &var_ref.value {
                 RawValue::Private(atom) => {
-                    if state.atoms.kind_idx(*atom)? != AtomKind::Private {
+                    if state.atoms.kind(*atom)? != AtomKind::Private {
                         return Err(RuntimeError::Invariant(
                             "private-name VarRef contains a non-private atom",
                         ));
@@ -319,8 +319,7 @@ impl Runtime {
                 }
             }
         };
-        let branded = self.0.state.borrow().atoms.brand_idx(atom)?;
-        PrivateNameRef::from_borrowed_atom(self.clone(), branded).map_err(Into::into)
+        PrivateNameRef::from_borrowed_atom(self.clone(), atom).map_err(Into::into)
     }
 
     const fn is_private_callable_kind(kind: ClosureVariableKind) -> bool {
@@ -571,7 +570,7 @@ impl Runtime {
             )
         };
         entries.push(ShapeEntry {
-            atom: brand.into(),
+            atom: brand,
             flags: PropertyFlags::data(true, true, true),
         });
         slots.push(PropertySlot::Data(RawValue::Undefined));

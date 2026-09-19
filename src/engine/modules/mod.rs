@@ -17,7 +17,7 @@ use crate::engine::api::context::Context;
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind, NativeErrorMessage};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::AtomIdx;
+use crate::engine::atom::Atom;
 
 use crate::engine::builtins::native::{DynamicImportHandlerKind, ModuleEvaluationKind};
 use crate::engine::code::bytecode_publish;
@@ -1056,7 +1056,7 @@ impl Runtime {
         })
     }
 
-    fn module_value_atoms(record: &ModuleRecord) -> Vec<AtomIdx> {
+    fn module_value_atoms(record: &ModuleRecord) -> Vec<Atom> {
         let mut atoms = Vec::with_capacity(2);
         if let ModuleRecordBody::Json {
             default_value: RawValue::Symbol(atom) | RawValue::Private(atom),
@@ -1075,7 +1075,7 @@ impl Runtime {
     fn module_value_atom_delta(
         current: &ModuleRecord,
         replacement: &ModuleRecord,
-    ) -> (Vec<AtomIdx>, Vec<AtomIdx>) {
+    ) -> (Vec<Atom>, Vec<Atom>) {
         let mut old = Self::module_value_atoms(current);
         let new = Self::module_value_atoms(replacement);
         let mut added = Vec::with_capacity(new.len());
@@ -1091,10 +1091,10 @@ impl Runtime {
 
     fn retain_module_atoms(
         state: &mut RuntimeState,
-        atoms: Vec<AtomIdx>,
-    ) -> Result<Vec<AtomIdx>, RuntimeError> {
+        atoms: Vec<Atom>,
+    ) -> Result<Vec<Atom>, RuntimeError> {
         for (retained, &atom) in atoms.iter().enumerate() {
-            if let Err(error) = state.atoms.retain_idx(atom) {
+            if let Err(error) = state.atoms.retain(atom) {
                 state.release_atoms(atoms[..retained].iter().copied())?;
                 return Err(error.into());
             }

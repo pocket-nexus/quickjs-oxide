@@ -38,7 +38,7 @@ impl Runtime {
             let indices = shape
                 .entries()
                 .iter()
-                .map(|entry| state.atoms.array_index_idx(entry.atom))
+                .map(|entry| state.atoms.array_index(entry.atom))
                 .collect::<Result<Vec<_>, _>>()?;
             // Descending deletion stops at the highest non-configurable index.
             // Everything above it is removed; nothing at or below it is touched.

@@ -1,7 +1,6 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::atom::AtomIdx;
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
 use crate::engine::heap::{HeapError, RawValue, VarRefData, VarRefId};
 use crate::engine::object::{ObjectRef, SymbolRef};
@@ -21,7 +20,7 @@ impl Runtime {
         let raw = self.raw_property_value(&value)?;
         let mut state = self.0.state.borrow_mut();
         let retained_atom = if let RawValue::Symbol(atom) = &raw {
-            state.atoms.retain_idx(*atom)?;
+            state.atoms.retain(*atom)?;
             Some(*atom)
         } else {
             None
@@ -31,7 +30,7 @@ impl Runtime {
             Ok(id) => id,
             Err(error) => {
                 if let Some(atom) = retained_atom {
-                    state.atoms.release_idx(atom)?;
+                    state.atoms.release(atom)?;
                 }
                 return Err(error.into());
             }
@@ -175,11 +174,11 @@ impl Runtime {
 
     /// Trusted shared-borrow read of a proven live captured cell.
     ///
-    /// Handles the object, string, BigInt and symbol cases without a mutable
-    /// state borrow and without fallible plumbing. The atom counter is a
-    /// `Cell` (S1b), so a symbol retain also completes under the shared
-    /// borrow; scalars are handled by the immediate read. A declined read
-    /// claims no owner and leaves the cell unchanged.
+    /// Handles the object, string and BigInt cases without a mutable state
+    /// borrow and without fallible plumbing. Symbols need an atom-table retain
+    /// (S1b) and scalars are handled by the immediate read, so both decline
+    /// here and fall back to the ordinary path. A declined read claims no
+    /// owner and leaves the cell unchanged.
     #[inline]
     pub(crate) fn read_owned_cell_fast(
         &self,
@@ -207,15 +206,12 @@ impl Runtime {
             RawValue::BigInt(value) => {
                 Some(self.take_owned_raw_value_fast(RawValue::BigInt(value.clone())))
             }
-            RawValue::Symbol(atom) => {
-                state.atoms.retain_idx(*atom).ok()?;
-                Some(self.take_owned_symbol_fast(*atom, &state.atoms))
-            }
             RawValue::Undefined
             | RawValue::Null
             | RawValue::Bool(_)
             | RawValue::Int(_)
             | RawValue::Float(_)
+            | RawValue::Symbol(_)
             | RawValue::Private(_)
             | RawValue::Uninitialized
             | RawValue::Exception => None,
@@ -372,7 +368,7 @@ impl Runtime {
         let raw = self.raw_property_value(&value)?;
         let mut state = self.0.state.borrow_mut();
         let retained_atom = if let RawValue::Symbol(atom) = &raw {
-            state.atoms.retain_idx(*atom)?;
+            state.atoms.retain(*atom)?;
             Some(*atom)
         } else {
             None
@@ -381,7 +377,7 @@ impl Runtime {
             Ok(cleanup) => cleanup,
             Err(error) => {
                 if let Some(atom) = retained_atom {
-                    state.atoms.release_idx(atom)?;
+                    state.atoms.release(atom)?;
                 }
                 return Err(error.into());
             }
@@ -401,10 +397,7 @@ impl Runtime {
             RawValue::Float(value) => Value::Float(value),
             RawValue::BigInt(value) => Value::BigInt(value),
             RawValue::String(value) => Value::String(value),
-            RawValue::Symbol(atom) => {
-                let branded = self.0.state.borrow().atoms.brand_idx(atom)?;
-                Value::Symbol(SymbolRef::from_owned_atom(self.clone(), branded))
-            }
+            RawValue::Symbol(atom) => Value::Symbol(SymbolRef::from_owned_atom(self.clone(), atom)),
             RawValue::Private(_) => {
                 return Err(RuntimeError::Invariant(
                     "private-name identity occupied a public runtime root",
@@ -438,9 +431,7 @@ impl Runtime {
             RawValue::Float(value) => Value::Float(value),
             RawValue::BigInt(value) => Value::BigInt(value),
             RawValue::String(value) => Value::String(value),
-            RawValue::Symbol(_) => {
-                unreachable!("fast raw conversion requires take_owned_symbol_fast branding")
-            }
+            RawValue::Symbol(atom) => Value::Symbol(SymbolRef::from_owned_atom(self.clone(), atom)),
             RawValue::Object(object) => {
                 Value::Object(ObjectRef::from_owned_handle(self.clone(), object))
             }
@@ -448,22 +439,6 @@ impl Runtime {
                 unreachable!("trusted raw value conversion received an internal sentinel")
             }
         }
-    }
-
-    /// Consume one owned symbol atom and wrap it as a public root.
-    ///
-    /// Fast reads already hold a shared runtime-state borrow, so they brand the
-    /// internal [`AtomIdx`] through the borrowed table instead of re-borrowing.
-    #[inline]
-    pub(crate) fn take_owned_symbol_fast(
-        &self,
-        atom: AtomIdx,
-        atoms: &crate::engine::atom::AtomTable,
-    ) -> Value {
-        let branded = atoms
-            .brand_idx(atom)
-            .expect("trusted fast symbol path received a stale atom handle");
-        Value::Symbol(SymbolRef::from_owned_atom(self.clone(), branded))
     }
 
     pub(crate) fn root_raw_value(&self, value: &RawValue) -> Result<Value, RuntimeError> {
@@ -476,8 +451,7 @@ impl Runtime {
             RawValue::BigInt(value) => Value::BigInt(value.clone()),
             RawValue::String(value) => Value::String(value.clone()),
             RawValue::Symbol(atom) => {
-                let branded = self.0.state.borrow().atoms.brand_idx(*atom)?;
-                Value::Symbol(SymbolRef::from_borrowed_atom(self.clone(), branded)?)
+                Value::Symbol(SymbolRef::from_borrowed_atom(self.clone(), *atom)?)
             }
             RawValue::Private(_) => {
                 return Err(RuntimeError::Invariant(

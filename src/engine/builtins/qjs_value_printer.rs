@@ -153,9 +153,8 @@ impl QjsValuePrinter<'_, '_> {
             }
             RawValue::String(value) => self.print_string(value),
             RawValue::Symbol(atom) => {
-                let branded = self.runtime.0.state.borrow().atoms.brand_idx(*atom)?;
                 self.push_ascii("Symbol(");
-                self.print_atom(branded)?;
+                self.print_atom(*atom)?;
                 self.output.push(b')');
             }
             RawValue::Object(object) => self.print_object(*object)?,
@@ -719,7 +718,7 @@ impl QjsValuePrinter<'_, '_> {
             if let Some(fast_len) = arguments_fast_len {
                 if state
                     .atoms
-                    .array_index_idx(entry.atom)?
+                    .array_index(entry.atom)?
                     .is_some_and(|index| index < fast_len)
                 {
                     // QuickJS keeps the fast Arguments prefix in shape slots,
@@ -745,7 +744,7 @@ impl QjsValuePrinter<'_, '_> {
                 PropertySlot::AutoInit(_) => PrintablePropertyValue::AutoInit,
             };
             properties.push(PrintableProperty {
-                atom: state.atoms.brand_idx(entry.atom)?,
+                atom: entry.atom,
                 value,
             });
         }

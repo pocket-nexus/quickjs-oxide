@@ -41,7 +41,7 @@ fn builtin_batch_preserves_order_flags_metadata_and_lazy_identity() {
             assert_eq!(
                 state
                     .atoms
-                    .to_js_string_idx(entries[index].atom)
+                    .to_js_string(entries[index].atom)
                     .unwrap()
                     .to_string(),
                 method.name
