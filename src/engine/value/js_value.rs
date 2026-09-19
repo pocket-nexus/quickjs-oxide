@@ -148,6 +148,17 @@ impl JsValue {
     }
 }
 
+impl From<crate::engine::value::number::operations::Number> for JsValue {
+    /// Project an already-compacted numeric representation. Scalars only: no
+    /// heap edge is created or duplicated.
+    fn from(value: crate::engine::value::number::operations::Number) -> Self {
+        match value {
+            crate::engine::value::number::operations::Number::Int(value) => Self::Int(value),
+            crate::engine::value::number::operations::Number::Float(value) => Self::Float(value),
+        }
+    }
+}
+
 impl std::fmt::Debug for JsValue {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

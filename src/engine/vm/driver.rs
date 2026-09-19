@@ -558,14 +558,14 @@ pub(crate) fn execute_root(
     realm: crate::engine::heap::ContextId,
     operation: RootOperation,
 ) -> Result<Completion, Error> {
-    start_root(runtime.clone(), realm, operation)?.finish(runtime)
+    start_root(&runtime, realm, operation)?.finish(runtime)
 }
 pub(super) fn execute_root_descriptor(
     runtime: Runtime,
     realm: crate::engine::heap::ContextId,
     operation: RootOperation,
 ) -> Result<super::entry::DescriptorReply, Error> {
-    match start_root(runtime, realm, operation)? {
+    match start_root(&runtime, realm, operation)? {
         RunningExit::RootDescriptor(result) => Ok(result),
         RunningExit::Complete(Completion::Throw(value)) => {
             // The internal exception crosses out to the public host adapter:
@@ -583,17 +583,17 @@ pub(super) fn execute_root_descriptor(
 }
 
 fn start_root(
-    runtime: Runtime,
+    runtime: &Runtime,
     realm: crate::engine::heap::ContextId,
     operation: RootOperation,
 ) -> Result<RunningExit, Error> {
-    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::for_runtime(&runtime))?;
-    match super::proxy_get_driver::start_root(&runtime, &mut execution, realm, operation)? {
+    let mut execution = RunningExecution::new(runtime, ExecutionLimits::for_runtime(runtime))?;
+    match super::proxy_get_driver::start_root(runtime, &mut execution, realm, operation)? {
         super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
             Ok(RunningExit::Complete(completion))
         }
         super::proxy_get_driver::Progress::Call(CallStep::Entered) => {
-            run_frames(&runtime, execution)
+            run_frames(runtime, execution)
         }
         _ => Err(Error::internal(
             "root operation returned a bytecode-only continuation",

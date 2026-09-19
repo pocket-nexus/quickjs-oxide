@@ -17,7 +17,6 @@ pub(crate) struct DirectEvalInvocation {
     pub input: Value,
     pub environment: u16,
     pub this_value: Value,
-    pub new_target: Value,
     pub caller_strict: bool,
 }
 

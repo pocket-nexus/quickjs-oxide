@@ -100,7 +100,6 @@ impl Runtime {
             input,
             environment: environment_index,
             this_value,
-            new_target: _,
             caller_strict,
         } = invocation;
         if !matches!(input, Value::String(_)) {

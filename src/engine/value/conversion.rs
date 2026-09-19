@@ -75,7 +75,7 @@ impl Runtime {
                 atom,
             )?));
         }
-        let string = match crate::engine::vm::numeric::to_js_string_jsvalue(self, &value) {
+        let string = match crate::engine::vm::to_js_string_jsvalue(self, &value) {
             Ok(string) => string,
             Err(error) => {
                 let Some(kind) = NativeErrorKind::from_javascript_error(error.kind()) else {

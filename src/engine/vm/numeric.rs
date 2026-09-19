@@ -115,7 +115,7 @@ pub(in crate::engine::vm) fn to_number_jsvalue(
 }
 
 /// Primitive `ToString` payload for internal values (no object conversion).
-pub(in crate::engine::vm) fn to_js_string_jsvalue(
+pub(crate) fn to_js_string_jsvalue(
     runtime: &Runtime,
     value: &JsValue,
 ) -> Result<JsString, Error> {

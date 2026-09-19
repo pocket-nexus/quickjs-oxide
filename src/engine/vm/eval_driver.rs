@@ -158,7 +158,6 @@ fn prepare_and_enter(
         input,
         environment,
         this_value,
-        new_target: frame.cold.input.new_target.clone(),
         caller_strict: frame.executable.metadata.strict,
     };
     let prepared = runtime
