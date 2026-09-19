@@ -1,157 +1,104 @@
-# S3-A 计划：8B 值表示——融合实施（A12 大扫除 + A4）
+# S3-A 计划：8B 值表示——融合实施
 
-> 状态：融合实施中（§1，2026-09-19 撤销微阶段制）。本文档是
-> `performance-architecture.md` §4（方案 A）的实施计划；若两处表述冲突，
-> **以本文档为准**。约束与证据附录继承
+> 状态：待实施。起点为 pre-A 代码基线，无前置实现资产。本文档是
+> `performance-architecture.md` §4（方案 A）的实施计划与验收规则；若两处
+> 表述冲突，**以本文档为准**。约束与证据附录继承
 > `performance-architecture.md` §0/§11/附录。
 
 ---
 
-## 0. 代码复核钉死的三个设计点
+## 0. 设计决定（动工前钉死）
 
-动工前的代码复核暴露三个架构文档未钉死、决定范围的点。本节给出决定，
-每个决定含论证与边界。
-
-### D1：`Value` 是公共 API 类型——内部值类型与转换层先行
+### D1：内部值类型与转换层先行——`Value` 只是公共 API
 
 **事实**：`Value` 由 `src/engine/api/mod.rs:28` 公开导出（`pub use
-crate::engine::value::{JsString, JsStringError, Value}`），内部数百个文件直接
-使用它。方案 A 要求内部 8B，就必须把「公共值」与「内部值」拆开，否则改动面
-失控。
+crate::engine::value::{JsString, JsStringError, Value}`），内部数百个文件
+直接使用它。方案 A 要求内部 8B，必须把「公共值」与「内部值」拆开，否则
+改动面失控。
 
 **决定**：
 
 1. 公共 `Value`（`src/engine/value/mod.rs:13-24`，含 `ObjectRef` 等带
    `Rc<Runtime>` 的 root 类型）**保持不动**，只在 `engine::api` 与宿主回调
    适配层出现；公共签名一个不改。
-2. 新增 crate 内部类型 **`JsValue`**（`src/engine/value/` 新模块）：
-   - A0–A3 阶段为 **16B 句柄 enum**：标量内联（`Int(i32)`/`Float(f64)` 等），
+2. 新增 crate 内部类型 **`JsValue`**（`src/engine/value/js_value.rs`）：
+   - W1–W5 为 **16B 句柄 enum**：标量内联（`Int(i32)`/`Float(f64)` 等），
      堆类型为 `{index: u32, generation: u32}` 句柄；
    - A4 阶段再编码为 **u64 索引 NaN-box**（`performance-architecture.md`
      §4.1），若实测不划算则停在 16B（§4.3 退路，已比现状 32B 小一半）。
-   - 不实现 `Copy`/`Drop`；显式 `dup`/`release` 纪律见 §4.2。
+   - 不实现 `Copy`/`Drop`；显式 `dup`/`release` 纪律见 §1.2。
 3. 转换层仅两个方向、只挂在 `Runtime` 上：
    - `unroot`（进引擎）：`&Value → JsValue`（dup 堆边）与
      `into_jsvalue(Value) → JsValue`（消费 root，省一次 retain/release 对）；
    - `root`（出引擎）：`JsValue → Value`（retain + 包装 Rc root）。
-4. **边界规则**：A2 完成后，`Value` 不得出现在 `engine::api` 与转换层之外
-   ——评审规则，若便宜则加进 `scripts/checks/check-source-layout.py`。
-5. A0 必须先做**穿越点盘点**（eval 结果、call 参数/返回、host 回调、
-   module loader、promise jobs、test262 agent、`adapters/*`），盘点结果记入
-   A0 的测量文档。
+4. **边界规则**：`Value` 不得出现在 `engine::api` 与转换层之外——评审
+   规则，若便宜则加进 `scripts/checks/check-source-layout.py`。
+5. **穿越点清单**（公共 `Value` 进出引擎的全部位置，转换层只挂这些点）：
+   - `Context::eval` / `eval_bytes` → `Value`（`api/context/script.rs`）；
+   - `Context::execute` → `Value`（`api/context/calls.rs`）；
+   - `Context::take_exception` → `Option<Value>`（`api/context/mod.rs`）；
+   - `Context::new_array_from_values(Vec<Value>)`（`api/context/objects.rs`）；
+   - native 调用参数缓冲：`&[Value]` / `Vec<Value>`（`builtins/dispatch.rs`
+     等），内部以 `RawValue` 持有、边界再 root；
+   - promise jobs / module loader / test262 agent 均经 `engine::api` 或内部
+     `RawValue`，没有额外的公共 `Value` 签名；
+   - `adapters/native` 仅转导出 `engine::api`，`adapters/web` 只用 wasm 侧
+     `wasm_bindgen::JsValue`，不直接持有引擎 `Value`。
 
-### D2：String/BigInt 仍是 `Rc`——存储层句柄化，计算类型不动（D2a 修订）
+### D2：String/BigInt 存储层句柄化，公共 `JsString` 不动
 
 **事实**：`RawValue`（`src/engine/heap/identity.rs:200-224`）对
 Object/Symbol 已是句柄（`ObjectId`/`Atom`），但 `String(JsString)` /
 `BigInt(JsBigInt)` 仍是 `Rc` 负载（`value/primitive.rs:20`、
-`value/bigint.rs:104-115`）。`performance-architecture.md` §6 的 typed arena
-清单只列了 Object/VarRef/Shape/Context/FunctionBytecode——**这是文档缺口**。
-不堆化 String/BigInt，8B 无从谈起。
+`value/bigint.rs:104-115`）。`performance-architecture.md` §6 的 typed
+arena 清单只列了 Object/VarRef/Shape/Context/FunctionBytecode——不堆化
+String/BigInt，8B 无从谈起。
 
-**初稿 D2.3/D2.4（rope 子节点句柄化 + 公共 `JsString` 句柄化）已撤回**，
-阻塞证据（A1 前代码复核核实）：`JsString::from_static` 全仓 **1377** 处、
-`try_from_utf*` **853** 处均为无 runtime 的纯构造；`impl JsString` 约 183
-个方法全部 runtime-free；`src/engine/value/collection_key.rs` 是显式
-「no heap access」纯模块，`same_value_zero`/`hash` 按内容比较，句柄化后
-无堆可解引用；`enum { Static(&'static str), Heap(Runtime, StringId) }` 兜底
-为 24B，违背尺寸目标。结论：公共 `JsString` 句柄化与「公共表面不变 +
-单线程设计 + 尺寸目标」冲突，工程上不可接受。
+**公共 `JsString` 保持 runtime-free 纯计算类型**，约束证据：
+`from_static` 全仓 1377 处、`try_from_utf*` 853 处均为无 runtime 的纯
+构造；`impl JsString` 约 183 个方法全部 runtime-free；
+`value/collection_key.rs` 是显式「no heap access」纯模块；任何带 runtime
+的公共字符串表示都会破坏尺寸目标与公共表面。句柄化只发生在**值存储层**。
 
-**决定（D2a 修订版）**：
+**决定**：
 
-1. `HeapNodeKind`（`src/engine/heap/identity.rs:127-133`）新增 **`String` 与
-   `BigInt`** 两个独立 kind（不合并），与 §6 typed arena 对齐；`StringId`/
-   `BigIntId` 句柄已在 A0-v 定义于 `heap/identity.rs`。**arena 节点持有现成
-   的 `JsString`/`JsBigInt`**（Rc 负载原样）；对象槽、常量池等对
+1. `HeapNodeKind`（`src/engine/heap/identity.rs:127-133`）新增 **`String`
+   与 `BigInt`** 两个独立 kind（不合并），与 §6 typed arena 对齐；新增
+   `StringId`/`BigIntId` 句柄（`heap/identity.rs`，
+   `{index: u32, generation: u32}`）。**arena 节点持有现成的
+   `JsString`/`JsBigInt`**（Rc 负载原样）；对象槽、常量池等对
    String/BigInt 的边纳入既有事务化 retain/release 与 `Edges` 遍历。
-2. **cycle 处理：cascade-only，永不做 anchor**——D2a 下平凡成立：string
-   节点**零堆出边**（rope 子节点留在 `Rc` 树内，不进 arena），BigInt 无
-   出边。
-3. `StringRepr`/rope 算法与 `impl JsString` 整体不动；arena 节点只是 `Rc`
-   的一个持有者。同一节点多次读出克隆同一个内部 `Rc`，`ptr_eq` 身份快路
-   天然保留，`same_representation` 语义不变。
-4. **公共 `JsString` 完全不动**（`Rc<StringRepr>`，runtime-free 构造全保留）；
-   句柄化只发生在**值存储层**：`RawValue::String(StringId)` /
-   `BigInt(BigIntId)`，`JsValue` 同；堆→值边界经 arena 解引用后克隆 `Rc`。
-   公共 `Value`/`JsString` API 零改动，`adapters`/oracle 不受影响。
+2. **cycle 处理：cascade-only，永不做 anchor**——string 节点零堆出边
+   （rope 子节点留在 `Rc` 树内，不进 arena），BigInt 无出边，平凡成立。
+3. `StringRepr`/rope 算法与 `impl JsString` 整体不动；arena 节点只是
+   `Rc` 的一个持有者。同一节点多次读出克隆同一个内部 `Rc`，`ptr_eq`
+   身份快路天然保留，`same_representation` 语义不变。
+4. **公共 `JsString`/`Value` API 零改动**（`Rc<StringRepr>`，runtime-free
+   构造全保留），`adapters`/oracle 不受影响；
+   `RawValue::String(StringId)`/`BigInt(BigIntId)`，`JsValue` 同；堆→值
+   边界经 arena 解引用后克隆 `Rc`。
 5. `AtomTable` 基本不动：`strings` 仍按 `JsString` 键、`released_strings` /
-   `WeakJsString` 保持；§6.4 的 hash 缓存（`StringRepr` 头部缓存 hash、atom
-   表换 FxHash）作为独立项照做。
-6. **内容相等适配（A1.3 的核心）**：`RawValue` 的 `PartialEq` derive
-   （`identity.rs:200`）必须移除或改手工实现——句柄 id 相等 ≠ 内容相等。
-   `collection_key.rs`（`same_value_zero`/`hash`）、StrictEq、switch 字符串
-   匹配等改为「id 相等快路 + arena 解引用内容兜底」；A1 开工先盘点全部
-   `RawValue` 相等性使用点。
-7. BigInt：`RawValue::BigInt(BigIntId)` 全 arena（`Short` 也进 arena，其分配
-   成本列为 A1 测量点）；**A4 开放决定**——NaN-box 下 short 收缩为
+   `WeakJsString` 保持；§6.4 的 hash 缓存（`StringRepr` 头部缓存 hash、
+   atom 表换 FxHash）作为独立项照做。
+6. **内容相等适配**：`RawValue` 的 `PartialEq` derive
+   （`identity.rs:200`）必须移除——句柄 id 相等 ≠ 内容相等。
+   `collection_key.rs`（`same_value_zero`/`hash`）、StrictEq、switch
+   字符串匹配改为「id 相等快路 + arena 解引用内容兜底」；动工先盘点
+   全部 `RawValue` 相等性使用点。
+7. BigInt：`RawValue::BigInt(BigIntId)` 全 arena（`Short` 也进 arena，其
+   分配成本列为测量点）；**A4 开放决定**——NaN-box 下 short 收缩为
    **±2⁴⁷ 内联**（48-bit payload + kind tag，超出晋升堆句柄，语义透明），
    默认取前者，A4 开工时按测量复核。
 8. 内存语义注意：字符串/BigInt 从「`Rc` 独立分配」变为「arena 节点 +
    free-list 复用 + generation」——teardown 的 `live == 0` 断言与
-   `GcStats`/`HeapCounts` 公共诊断（`api/mod.rs:15` 导出）口径需同步更新。
-9. **新测量点**：瞬态字符串（concat/slice/`number_to_string`）的 arena
+   `GcStats`/`HeapCounts` 公共诊断（`api/mod.rs:15` 导出）口径需同步
+   更新。
+9. **测量点**：瞬态字符串（concat/slice/`number_to_string`）的 arena
    churn 会推高 zero_queue 水位，而 zero_queue 非空使 IC 快路 decline
-   （`ordinary_storage/ic.rs:27-35`）；A1 测量必须含 string-heavy 负载，
+   （`ordinary_storage/ic.rs:27-35`）；测量必须含 string-heavy 负载，
    确认不放倒 IC 快路。
 
-#### D2a-ownership：`RawValue` 句柄边的所有权模型（钉死）
-
-> **2026-09-19 修订**：融合实施（§1）下，`OwnedRawValue` RAII 包装退役——
-> api 边界直接产 `JsValue`（owned），引擎内一律显式 dup/release/move；
-> 「生产者持有、store retain、生产者交接后 release」的规则本身保留，
-> 并扩展为 §1.2 的一条总规则（含 move 交接不产生计数对）。
-
-**一条规则**：`RawValue` 永远不持有堆边；**生产者持有、store 一律
-retain、生产者交接后 release**——与现有 Object 模型完全同构
-（`allocate_object` 返回拥有型句柄 → 容器事务化 retain → 生产者释放；
-`identity.rs:196-199` 的「Clone does not retain an object edge」纪律）。
-
-- **创建路径**：`raw_property_value`（及同类创建点）新建 String/BigInt
-  节点（strong=1，归生产者），返回 **`OwnedRawValue`**——non-Clone、只能
-  move 的 newtype，`Drop` 走既有 `release_or_defer`（忘 release 自动
-  defer-release，leak 用 RAII 封死）；容器 store 对它**照常 retain**，
-  无变体特例。
-- **读取/跨容器复制路径**：借用读 + 存储方 retain，现状不变。
-- **明确否决的两个替代**（A1.2 前评审记录）：
-  - *adopt 语义*（store 对 String/BigInt 不 retain、直接接管生产者那
-    一份）：同一容器 store 按负载变体走不同所有权规则（Object retain、
-    String adopt），两个方向的错误都难测全（漏 retain → trusted panic；
-    多 retain → teardown `live==0`），是 bug 温床。若未来 profile 点名
-    创建-入库路径，再引入**类型化** `store_adopt(OwnedRawValue)` 微优化，
-    不作为基础纪律。
-  - *自持有 `StringRef`（Clone=retain / Drop=release）*：`RawValue` 随容器
-    drop 时（如 `finish_node` finalize 中途、持有 `&mut heap`）其 Drop
-    需要堆访问，而 `StringRef` 只持 `StringId`、拿不到 runtime，连 defer
-    队列都进不去；违背「`RawValue` 的 drop 不需要堆」的既有纪律。补救
-    （`StringRef` 携带 `Runtime`）会把值重新做胖，违背 D2a 目标。
-- A1.2/A1.3 的审计面因此从「逐点判断 adopt 还是 retain」缩为「确认
-  store 一律 retain」。
-
-#### D2a-placement：String/BigInt 节点分配的借用放置规则（钉死）
-
-A1.2b 首次实施曾误判「D2a 与借用模型存在结构冲突」（转换点落在持有
-借用的区域内 → `AlreadyBorrowed` panic），并回滚。误诊证据：**shape
-创建**（堆节点）今天就在持有 `&mut RuntimeState` 的 store 事务内部发生
-（`get_or_create_shape`/`append_transition`）——「store 期间分配节点」
-有现成先例，结构上无冲突。错误在于把节点分配放进了值转换边界
-（`raw_property_value`）。钉死两条放置规则：
-
-1. **转换提出借用区**：值→`RawValue` 的转换必须发生在任何 `state` 借用
-   之外。值刚从持有借用的结构读出的路径，先结束借用、转换、再重新借用
-   ——单线程引擎、两次借用之间无 JS/native 回调，拆分借用语义不可见。
-2. **物化沉进事务**：批量/事务性存储路径（`retain_edges_transactionally`、
-   publish、dense 写）把 String/BigInt 节点分配放在事务内部（本来就持
-   `&mut`、本来就走边），同 shape 分配先例。
-3. **旁证自查**：`try_property_ic_write_scalar` 是标量专用快路，不接受
-   字符串；若它调到 `raw_property_value`，说明转换放得过深，先查这个。
-4. **升级条款**：某条路径疑似无法提出借用区时，举证标准 = 两次借用之间
-   存在 JS 可观察行为；成立则对该点用规则 2。两条都走不通才允许复审
-   「独立 `RefCell` 侧 arena」方案（拆锁式治标：复制 RC/zero-queue/GC 边
-   纪律、改变 deferred-release 契约覆盖面、与 §6 typed arena「物理拆分、
-   纪律统一」方向冲突），**不允许静默采用**。
-
-### D3：`Atom` 16B 品牌——内部 `u32` + 品牌只留边界
+### D3：`Atom` 内部 `u32`，品牌只留边界
 
 **事实**：`Atom { raw: u32, generation: u32, table_id: u64 }`
 （`src/engine/atom/mod.rs:52-57`）16B，相等比较逐 16B；shape 线性扫描
@@ -159,42 +106,36 @@ A1.2b 首次实施曾误判「D2a 与借用模型存在结构冲突」（转换�
 
 **决定**：
 
-1. 内部类型 **`AtomIdx(u32)`** newtype；保留 immediate-int 高位 tag
-   （`ATOM_TAG_INT`，QuickJS parity 不动）。16B branded `Atom` 只留：
-   公共 API（`PropertyKey` 等）与跨 runtime 进入点。
-2. **存活不变量**（钉死，与 `live_node_fast` 同一论证）：内部 `AtomIdx` 只能
-   由「已 retain 该 atom 的 owner」持有——shape entry、字节码
+1. 新增内部类型 **`AtomIdx(u32)`** newtype；保留 immediate-int 高位 tag
+   （`ATOM_TAG_INT`，QuickJS parity 不动）。16B branded `Atom` 只留公共
+   API（`PropertyKey` 等）与跨 runtime 进入点。
+2. **存活不变量**（与 `live_node_fast` 同一论证）：内部 `AtomIdx` 只能由
+   「已 retain 该 atom 的 owner」持有——shape entry、字节码
    `property_key_atoms`、pinned 集。可信路径免品牌校验（debug 构建全量
    校验），边界全量。
-3. **收尾 S1b**：`AtomTable::Entry.ref_count` 改 `Cell<u32>`，retain/release
-   在共享借用下完成——`Symbol` 从所有快路 decline 名单移除（S1 §4.5 的
-   遗留）。
-4. 级联：`ShapeEntry`（`object/shape.rs:73-77`）24B→~8B（u32 atom + flags）；
-   shape 迁移表键、shape fingerprint 同减；`RawValue::Symbol/Private` 负载
-   16B→4B，为 A3 的 `RawValue` 8B 化扫清最后一个超标变体。
-5. `Atom` 的 `Hash` 现为 `generation<<32|raw`（`atom/mod.rs:59-65`）；内部
-   `AtomIdx` 直接以 raw 作 hash（Fx），不再移位拼装。
+3. `AtomTable::Entry.ref_count` 改 `Cell<u32>`，retain/release 在共享借用
+   下完成——`Symbol` 从所有快路 decline 名单移除。
+4. 级联：`ShapeEntry`（`object/shape.rs:73-77`）24B→~8B（u32 atom +
+   flags）；shape 迁移表键、shape fingerprint 同减；
+   `RawValue::Symbol/Private` 负载 16B→4B，为 `RawValue` 8B 化扫清最后
+   一个超标变体。
+5. `Atom` 的 `Hash` 现为 `generation<<32|raw`（`atom/mod.rs:59-65`）；
+   内部 `AtomIdx` 直接以 raw 作 hash（Fx），不再移位拼装。
 
 ---
 
-## 1. 融合实施计划（A12 大扫除）
+## 1. 终态设计
 
-> **2026-09-19 修订：撤销微阶段制。** A1.2b 两次实施证明中间态「VM 跑公共
-> `Value` + 存储层句柄」是设计空间最差点——双值类型在每个边界互转，引入
-> 终态不存在的转换税（store 分配、读 deref+clone+release）与新的借用次序
-> 约束。经批准改为**一次性端到端融合**：回退单位 = 整个大阶段（分支级），
-> 中间 commit 不要求可编译。下方原微阶段表仅作追溯保留。
+### 1.1 类型格局
 
-### 1.1 终态类型格局
-
-- **`JsValue`**（crate 内部，16B enum，A0-v 已就位）：标量内联 +
+- **`JsValue`**（crate 内部，16B enum）：标量内联 +
   `String(StringId)`/`BigInt(BigIntId)`/`Symbol(AtomIdx)`/`Object(ObjectId)`；
   无 `Copy`/`Drop`。
 - **`RawValue`**（堆存储形态）：同一套句柄 + `Private`/哨兵；与 `JsValue`
   互转是无分配的同 id 拷贝。
 - **`Value`**（公共）：只在 `engine::api` 边界与宿主回调适配层出现（D1）。
 
-### 1.2 终态所有权纪律（一条规则）
+### 1.2 所有权纪律（一条规则）
 
 每个存储位置（堆槽、帧、操作数栈、记录、常量池、pending_exception）持有
 其句柄的一条边：
@@ -204,53 +145,81 @@ A1.2b 首次实施曾误判「D2a 与借用模型存在结构冲突」（转换�
 - **overwrite / pop / finalize**：release；
 - **String/BigInt 节点只在真创建点分配**：字符串/大整数产生运算、字面量
   publish、api/host 输入转换；**store 永不分配**；
-- dup/release 走 S1/S2 既有快路纪律（可信 Cell retain；release 经
-  `release_or_defer`，S2.1 快路按 §6 第 5 项另行立项）。
+- dup/release 走既有快路纪律（可信 `Cell` retain；release 经
+  `release_or_defer`）；
+- **无 RAII 包装**：`JsValue`/`RawValue` 均无 `Drop`，所有权全靠上述显式
+  纪律——任何「自动释放」包装都会把堆访问需求带进值类型的 drop 路径，
+  与「值的 drop 不需要堆」的既有纪律冲突。
 
-### 1.3 执行序列（compiler-driven）
+## 2. 借用与分配放置规则
+
+1. **转换提出借用区**：值→`RawValue` 的转换必须发生在任何 `state` 借用
+   之外。值刚从持有借用的结构读出的路径，先结束借用、转换、再重新借用
+   ——单线程引擎、两次借用之间无 JS/native 回调，拆分借用语义不可见。
+2. **物化沉进事务**：批量/事务性存储路径（`retain_edges_transactionally`、
+   publish、dense 写）把 String/BigInt 节点分配放在事务内部（本来就持
+   `&mut`、本来就走边），同 shape 分配先例（`get_or_create_shape`/
+   `append_transition` 在持有 `&mut RuntimeState` 的 store 事务内分配堆
+   节点）。
+3. **借用拓扑审计先于编码**：`RefCell` 借用次序是运行期行为，编译器抓
+   不到。每个工作流动笔前，先列出它触到的热路径调用点当前的借用持有
+   情况（谁持 `state` 借用、转换/分配放在哪一层），按规则 1/2 放置后
+   再写代码。重点审计：`property_ic_write_scalar` 及 IC 写路径、dense
+   写、bytecode publish、挂起/恢复、`raw_property_value` 全部调用点。
+4. **升级条款**：某条路径疑似无法提出借用区时，举证标准 = 两次借用之间
+   存在 JS 可观察行为；成立则对该点用规则 2。两条都走不通才允许复审
+   「独立 `RefCell` 侧 arena」方案（拆锁式治标，与 §6 typed arena「物理
+   拆分、纪律统一」方向冲突），**不允许静默采用**。
+
+## 3. 执行序列（compiler-driven）
+
+回退单位 = 整个大阶段（分支级）；中间 commit 不要求可编译；WIP commit
+只留本地，推送以绿为准。
 
 | 工作流 | 内容 |
 | --- | --- |
-| **W1** | `js_value.rs` 四转换函数补全 String/BigInt（创建分配 / retain / release / 解引用出值）；`RawValue`↔`JsValue` 互转辅助 |
-| **W2** | 堆存储层：`RawValue` 句柄化 + `raw_value_edges`/事务 retain-release + collection_key/index heap 化（捡回 stash@{0} 有效部分）；`raw_property_value` 退役为纯 strip，仅供边界 |
+| **W1** | 句柄与转换层地基：`HeapNodeKind::String/BigInt` + typed arena（allocate/retain/release/finalize/counts + trusted 访问器）；`StringId`/`BigIntId`/`AtomIdx` 句柄；`AtomTable::Entry.ref_count` `Cell` 化；`JsValue` 与四转换函数（unroot/dup/release/root）完整实现；deferred release 通路 |
+| **W2** | 堆存储层：`RawValue` 句柄化（String/BigInt/Symbol/Private 全句柄，移除 `PartialEq` derive）+ `raw_value_edges` + 事务 retain-release + collection_key/index heap 化；`raw_property_value` 退役为纯 strip，仅供边界 |
 | **W3** | VM 核心：`FrameBinding`/`SlotStore`/`run.rs` → `JsValue`；帧建立/拆除、挂起编解码、调用约定的显式 dup/release/move |
 | **W4** | builtins 与 drivers 签名 `Value`→`JsValue` |
 | **W5** | api 边界：`eval`/call/host 回调/promise jobs/module loader 的唯一 `Value`↔`JsValue` 转换层 |
 | **W6** | 测试适配 + 全门禁 |
 
-### 1.4 门禁与基准（变更）
+A4（NaN-box 编码）为独立的测量门禁后续阶段，不在本序列内。
 
-- 大阶段中间 commit 允许不绿；**阶段末尾一次全门禁**（fmt / clippy 1.88
-  `-D warnings` / `cargo test --locked --workspace --all-targets` /
-  test262 `--check`+`--focused`+`--full` 零回归（清理 `GIT_*`，只产
-  current-source receipt）/ `check-source-layout.py` + rust-only）。
-- 基准：开工基线（无 PGO/LTO，§2 协议）vs 融合阶段末，一次对比
-  （`property_read_probe.py` + `scaling.py` + `run.py`）。
-- WIP commit 只留本地；推送以绿为准。
-- A4（NaN-box 编码）仍为独立的测量门禁后续阶段，不在本次大扫除内。
+## 4. 验收规则
 
-### 1.5 地基状态
+**设计一致性（评审第一顺位）**：
 
-已落地且继续有效：A0-a（`AtomIdx`/`Cell` refcount）、A0-v（`JsValue`
-类型）、A1.1（String/BigInt arena kinds + allocate/release）、A1.2a
-（deferred releases）。`stash@{0}` 可捡回：`raw_value_edges`、runtime
-retain/release arms、arena trusted 访问器、collection_key/index heap 化。
-作废：`raw_property_value` 分配化与 `OwnedRawValue`（融合设计里 api 边界
-直接产 `JsValue`，引擎内无 RAII 包装）。
+1. 每个引入的类型/函数/构造必须属于 §1 终态设计；仅用于让中间态编译
+   通过的临时构造一律不接受——编译器报错要求的改动，要么按终态设计
+   改到底，要么不改。
+2. 借用与分配放置符合 §2；任何新增分配点必须能指出它属于「真创建点」
+   或「事务内部」。
+3. 公共表面不变：`tests/checked_string_construction.rs` 零改动通过；
+   `engine::api` 签名、`adapters/*` 零改动；任何需要改公共测试的迹象
+   即警报。
 
-<details><summary>原微阶段表（追溯用，已被本节取代）</summary>
+**尺寸断言（编译期钉死）**：`JsValue` = 16B；`AtomIdx` = 4B；
+`ShapeEntry` = 8B；`RawValue` ≤ 16B。
 
-| 阶段 | 内容 |
-| --- | --- |
-| A0 | 地基：JsValue 脚手架 + atom 瘦身 |
-| A1 | String/BigInt 堆化（存储层先行） |
-| A2 | VM 接线 JsValue |
-| A3 | RawValue/PropertySlot 句柄化收尾 |
-| A4 | NaN-box 编码（测量门禁） |
+**语义门禁**：`RawValue` 相等性使用点全部改为「id 快路 + 内容兜底」，
+SameValueZero 语义逐点核对（`collection_key`、StrictEq、switch 字符串
+匹配）；teardown `live == 0` 断言与 `GcStats`/`HeapCounts` 口径适配。
 
-</details>
+**全门禁（大阶段末一次）**：`cargo fmt --check` → clippy 1.88
+`-D warnings` → `cargo test --locked --workspace --all-targets` →
+Test262 `--check`/`--focused`/`--full` 零回归（清理 `GIT_*`，只产
+current-source receipt，不改 `current.conf`）→
+`check-source-layout.py` + rust-only 门禁 → benchmark receipts
+（`property_read_probe.py` + `scaling.py` + `run.py`，串行、独立输出
+目录，协议见 §5）→ profiling 计数器无漂移 → 实测结果记入本文档。
 
-## 2. 阶段性能比较协议（钉死）
+**委托执行交底**：任务拆分委托时，提示词必须包含 §1 终态设计、§1.2
+所有权纪律、§2 放置规则与「临时构造不接受」条款；评审先看设计一致性，
+再看编译。
+
+## 5. 阶段性能比较协议
 
 1. **固定基线**：S3-A 开工前保存一份基线——无 PGO、无 LTO 的 release
    构建（`CARGO_PROFILE_RELEASE_LTO=off
@@ -260,101 +229,22 @@ retain/release arms、arena trusted 访问器、collection_key/index heap 化。
    都是无 PGO、无 LTO 的同 flags 构建。**不做每阶段 PGO 重训**；
 3. **例外与复核**：E 阶段测的就是构建配置本身，按
    `performance-architecture.md` §3 已有口径；每个大阶段（A/B/D）收尾时
-   **建议**（非强制）做一次 LTO+PGO 双方复核——LTO 会改变内联与代码布局，
-   无-LTO 下的阶段胜率偶尔会在最终构建配置下翻转，复核只为确认符号不变；
+   **建议**（非强制）做一次 LTO+PGO 双方复核——LTO 会改变内联与代码
+   布局，无-LTO 下的阶段胜率偶尔会在最终构建配置下翻转，复核只为确认
+   符号不变；
 4. 跨协议对比允许用于累计/用户口径的报告，须标注双方构建协议。
 
-## 3. 验证门禁
+## 6. 风险
 
-**门禁策略变更（2026-09-19）**：融合大扫除（§1）期间中间 commit 允许不绿；
-**大阶段末尾一次全门禁**，清单沿用 `performance-architecture.md` §11 八条：
-`cargo fmt --check` → clippy 1.88 `-D warnings` →
-`cargo test --locked --workspace --all-targets` → Test262
-`--check`/`--focused`/`--full` 零回归（清理 `GIT_*`，只产 current-source
-receipt，不改 `current.conf`）→ `check-source-layout.py` + rust-only 门禁 →
-benchmark receipts（`property_read_probe.py` + `scaling.py` + `run.py`，
-串行、独立输出目录，协议见 §2）→ profiling 计数器无漂移 → 更新本文档
-实测章节。
-
-A1 额外门禁：`tests/checked_string_construction.rs`（公共 `JsString` 构造
-语义，D2a 下应**零改动**通过——公共表面不动，任何需要改它的迹象即警报）；
-`GcStats`/`HeapCounts` 相关诊断测试逐条核对后适配；内容相等适配点
-（`collection_key` / StrictEq / switch 字符串匹配）逐项核对 SameValueZero
-语义。
-
-## 4. 风险（继承 §4.6，按阶段具体化）
-
-- **手工 RC 纪律扩大 panic 面**（A2 起）：debug 构建维持全量 generation
-  校验 + 冻结向量兜底；trusted 访问器遇 stale 即 panic 的政策不变。
+- **手工 RC 纪律扩大 panic 面**（VM 接线起）：debug 构建维持全量
+  generation 校验 + 冻结向量兜底；trusted 访问器遇 stale 即 panic 的
+  政策不变。
 - **触及面全仓最大**：值类型是所有模块的公共依赖；融合大扫除期间允许
-  长时间不绿（§1.4），回退单位是整个大阶段（分支级）。
-- **8B 索引 NaN-box 无生产先例**（附录 A.8）：每次 deref 多一次 base load +
-  bounds check；A4 必须以测量定去留，退路（16B enum）不是失败而是默认值。
-- **A1 的行为敏感点**（D2a 后）：集合键 SameValueZero 与内容 hash
-  （`collection_key.rs`）、StrictEq/switch 的字符串路径、teardown
-  `live == 0` 断言、`GcStats`/`HeapCounts` 口径；`same_representation`
-  与 `released_strings` 在 D2a 下**不变**（公共 `JsString` 不动）。
-
-## 5. 实施进度
-
-### A0-a：内部 `AtomIdx` + `Cell` refcount（已落地）
-
-| 提交 | 内容 |
-| --- | --- |
-| `860b67f2` | `AtomTable::Entry.ref_count: u32 → Cell<u32>`，`retain` 改 `&self`；captured-cell 与属性 IC 快路的 Symbol 分支改为共享借用下 retain，S1b 的 Symbol decline 移除 |
-| `ba7619a1` | 引入内部 `AtomIdx(u32)` 与可信索引 API；`ShapeEntry`/`Shape.lookup`、`RawValue::Symbol/Private`、`WeakCollectionKey`、`WeakSymbolGcEvent`、`HeapCleanup.atoms` 全部改 `AtomIdx`；堆侧原子所有权（`retain_*_atoms`/`release_atoms`/`preflight_atom_releases`/各 `*_atoms` 收集器）一并成型；出值边界用 `brand_idx`/`take_owned_symbol_fast` 重建品牌根 |
-
-**尺寸（编译期断言已钉死）：**
-
-- `AtomIdx` = 4B（`atom/mod.rs`）。
-- `ShapeEntry` 24B → **8B**（`atom: AtomIdx` + `PropertyFlags`，`shape.rs` 断言）。
-
-**信任模型落地（D3.2）：** 内部句柄只做槽位存活校验，免 generation/table_id
-品牌校验；品牌只在公共/跨 runtime/C-ABI 边界重建。
-
-**一处显式契约变更：** `Shape::ordered_own_keys(&AtomTable)` 原逐条校验
-「atom 属于传入表」，改为只校验槽位在传入表中存活——句柄已无品牌。原测试
-`own_key_snapshot_validates_the_runtime_local_atom_table` 相应改名并放宽。
-若需保留跨表拒绝，可给 `Shape` 增加一个 owning `table_id`（每 shape 8B，
-非每 entry），留待评审。
-
-**本阶段未纳入（A0-a 尾部，随后续阶段）：** 字节码/编译器元数据仍持品牌
-`Atom`（`FunctionBytecodeData.auxiliary_atoms`、`property_key_atoms`、
-`ClosureVariableName::Atom`、`VariableDefinition.name`、`ObjectData.private_brand_home`
-等）；它们进入堆原子所有权时转 `AtomIdx`，尚未做存储瘦身。
-
-**门禁（1.88.0）：** `fmt`、`clippy --workspace --lib --bins -D warnings`、
-CLI profiling / oracle clippy、`cargo test --locked --workspace --all-targets`
-（lib 2278 / oracle 907 / CLI 32 等全绿）、`check-source-layout.py`、
-`check-rust-only.sh` 全部通过。
-
-### A0-v：内部 `JsValue` + 转换层（已落地，未接线）
-
-**穿越点盘点（D1.5）——公共 `Value` 与内部执行值的边界：**
-
-- `Context::eval` / `eval_bytes` → `Value`（`api/context/script.rs:116,121`）；
-- `Context::execute` → `Value`（`api/context/calls.rs:11`）；
-- `Context::take_exception` → `Option<Value>`（`api/context/mod.rs:98`）；
-- `Context::new_array_from_values(Vec<Value>)`（`api/context/objects.rs:39`）；
-- native 调用参数缓冲：`&[Value]` / `Vec<Value>`（`builtins/dispatch.rs`、
-  `builtins/*/callback.rs` 等），内部以 `RawValue` 持有、边界再 root；
-- promise jobs / module loader / test262 agent 均经 `engine::api` 或内部
-  `RawValue`，没有额外的公共 `Value` 签名；
-- `adapters/native` 仅转导出 `engine::api`，`adapters/web` 只用 wasm 侧
-  `wasm_bindgen::JsValue`，不直接持有引擎 `Value`。
-
-结论：A2 的转换层只需挂在 `engine::api` 与 native 边界，外加内部 `RawValue`
-↔ `JsValue` 的堆内转换。
-
-**类型与转换层：** 新增 `src/engine/value/js_value.rs`：
-
-- `pub(crate) enum JsValue`：标量内联，堆类型为
-  `Object(ObjectId)` / `Symbol(AtomIdx)` / `String(StringId)` / `BigInt(BigIntId)`
-  ——16B（编译期断言）；不实现 `Copy`/`Drop`。
-- `StringId`/`BigIntId` 句柄类型已在 `heap/identity.rs` 定义（A1 提供其 arena）。
-- `Runtime::unroot_value`（借值→dup 一条堆边）、`dup_js_value`、
-  `release_js_value`（消费并释放）、`root_js_value`（消费并 root）。
-- 标量 / Object / Symbol 已实现并有 round-trip 测试；String / BigInt 因尚未
-  堆化，转换层暂返 `Invariant` 错误，**由 A1 补齐**。
-
-**门禁：** 同 A0-a；新增 `js_value` 3 项 round-trip 测试通过。
+  长时间不绿，回退单位是整个大阶段（分支级）。
+- **8B 索引 NaN-box 无生产先例**（附录 A.8）：每次 deref 多一次 base
+  load + bounds check；A4 必须以测量定去留，退路（16B enum）不是失败
+  而是默认值。
+- **行为敏感点**：集合键 SameValueZero 与内容 hash（`collection_key.rs`）、
+  StrictEq/switch 的字符串路径、teardown `live == 0` 断言、
+  `GcStats`/`HeapCounts` 口径；`same_representation` 与
+  `released_strings` 在 D2 下**不变**（公共 `JsString` 不动）。
