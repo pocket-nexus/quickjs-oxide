@@ -345,7 +345,7 @@ impl Runtime {
                 let atom = symbol.atom();
                 let can_be_held_weakly =
                     self.0.state.borrow().atoms.kind(atom)? == AtomKind::Symbol;
-                Ok(can_be_held_weakly.then_some(WeakCollectionKey::Symbol(atom.into())))
+                Ok(can_be_held_weakly.then_some(WeakCollectionKey::Symbol(atom)))
             }
             _ => Ok(None),
         }

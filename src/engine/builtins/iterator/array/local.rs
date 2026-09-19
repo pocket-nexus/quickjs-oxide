@@ -53,7 +53,7 @@ impl ArrayNextStep {
         let length = first.atom;
         // Borrow the already-owned mandatory property name; a malformed or
         // unexpected layout falls back to the original interned-key accessor.
-        let info = state.atoms.resolve_idx(length)?;
+        let info = state.atoms.resolve(length)?;
         let AtomSpelling::Text(text) = info.spelling else {
             return Ok(None);
         };
@@ -66,11 +66,7 @@ impl ArrayNextStep {
         {
             return Ok(None);
         }
-        let Some((length, _)) = Runtime::array_length_state_in_heap(
-            &state.heap,
-            source,
-            state.atoms.brand_idx(length)?,
-        )?
+        let Some((length, _)) = Runtime::array_length_state_in_heap(&state.heap, source, length)?
         else {
             return Ok(None);
         };

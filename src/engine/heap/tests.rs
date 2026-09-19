@@ -140,7 +140,7 @@ fn one_slot_shape(heap: &mut Heap) -> ShapeId {
         Shape::new(
             None,
             [ShapeEntry {
-                atom: atom.into(),
+                atom,
                 flags: DATA_FLAGS,
             }],
         )
@@ -213,32 +213,6 @@ fn bytecode_test_realm(heap: &mut Heap) -> ContextId {
         prototype, prototype, prototype, prototype, prototype, prototype, prototype, prototype,
     ))
     .unwrap()
-}
-
-#[test]
-fn heap_string_and_bigint_nodes_are_cascade_only() {
-    use crate::engine::value::JsString;
-    use crate::engine::value::bigint::JsBigInt;
-
-    let mut heap = Heap::new();
-    let text = JsString::from_static("heap-node");
-    let string = heap.allocate_string(text.clone()).unwrap();
-    let bigint = heap.allocate_bigint(JsBigInt::zero()).unwrap();
-    let counts = heap.counts();
-    assert_eq!(counts.string_nodes, 1);
-    assert_eq!(counts.bigint_nodes, 1);
-    assert_eq!(counts.live, 2);
-
-    heap.retain_string(string).unwrap();
-    let retained = heap.release_string(string).unwrap();
-    assert_eq!(retained.finalized_strings, 0);
-    assert!(heap.string(string).unwrap().same_representation(&text));
-
-    let string_cleanup = heap.release_string(string).unwrap();
-    assert_eq!(string_cleanup.finalized_strings, 1);
-    let bigint_cleanup = heap.release_bigint(bigint).unwrap();
-    assert_eq!(bigint_cleanup.finalized_bigints, 1);
-    assert_eq!(heap.counts().live, 0);
 }
 
 mod buffers;

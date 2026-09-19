@@ -6,14 +6,14 @@
 
 use super::Edges;
 use super::{
-    AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BigIntId, BytecodeConstant, ContextData,
-    ContextId, FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId,
-    GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError,
-    InternalCallableData, NativeErrorKind, Node, NodeData, ObjectData, ObjectId, ObjectPayload,
-    PrimitiveKind, PrimitiveObjectData, PromiseCapabilityData, PromiseReaction, PropertySlot,
-    RawId, RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord,
-    RawModuleRecordBody, RawValue, Shape, ShapeId, SlotState, StringId, TypedArrayElementKind,
-    VarRefData, VarRefId, VecDeque, WeakCollectionKey, is_map_storable_value,
+    AsyncGeneratorRequestData, Atom, AutoInitProperty, BytecodeConstant, ContextData, ContextId,
+    FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId, GeneratorActivationData,
+    GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, InternalCallableData, NativeErrorKind,
+    Node, NodeData, ObjectData, ObjectId, ObjectPayload, PrimitiveKind, PrimitiveObjectData,
+    PromiseCapabilityData, PromiseReaction, PropertySlot, RawId, RawModuleEvaluationState,
+    RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord, RawModuleRecordBody, RawValue,
+    Shape, ShapeId, SlotState, TypedArrayElementKind, VarRefData, VarRefId, VecDeque,
+    WeakCollectionKey, is_map_storable_value,
 };
 
 /// Resources finalized by a release, mutation, or collection operation.
@@ -24,12 +24,10 @@ pub struct HeapCleanup {
     pub finalized_var_refs: usize,
     pub finalized_contexts: usize,
     pub finalized_function_bytecodes: usize,
-    pub finalized_strings: usize,
-    pub finalized_bigints: usize,
     /// Finalized shape identities for O(1) weak-cache unlinking.
     pub finalized_shape_ids: Vec<ShapeId>,
     /// Owned non-GC atom edges detached from shapes and symbol values.
-    pub atoms: Vec<AtomIdx>,
+    pub atoms: Vec<Atom>,
 }
 
 impl HeapCleanup {
@@ -47,12 +45,6 @@ impl HeapCleanup {
         self.finalized_function_bytecodes = self
             .finalized_function_bytecodes
             .saturating_add(other.finalized_function_bytecodes);
-        self.finalized_strings = self
-            .finalized_strings
-            .saturating_add(other.finalized_strings);
-        self.finalized_bigints = self
-            .finalized_bigints
-            .saturating_add(other.finalized_bigints);
         self.finalized_shape_ids
             .append(&mut other.finalized_shape_ids);
         self.atoms.append(&mut other.atoms);
@@ -77,8 +69,8 @@ pub struct GcStats {
 /// [`HeapCleanup::atoms`] for the caller to release after collection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WeakSymbolGcEvent {
-    IsLive(AtomIdx),
-    Release(AtomIdx),
+    IsLive(Atom),
+    Release(Atom),
 }
 
 /// Whether an internal collection performs QuickJS's ordered weak-object
@@ -155,34 +147,6 @@ impl Heap {
     /// Duplicate one externally owned function-bytecode reference.
     pub fn retain_function_bytecode(&mut self, id: FunctionBytecodeId) -> Result<(), HeapError> {
         self.retain_raw(RawId::FunctionBytecode(id), 1)
-    }
-
-    /// Duplicate one externally owned heap String reference.
-    pub fn retain_string(&mut self, id: StringId) -> Result<(), HeapError> {
-        self.retain_raw(RawId::String(id), 1)
-    }
-
-    /// Duplicate one externally owned heap BigInt reference.
-    pub fn retain_bigint(&mut self, id: BigIntId) -> Result<(), HeapError> {
-        self.retain_raw(RawId::BigInt(id), 1)
-    }
-
-    /// Release one heap String reference and drain the cascade.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
-    pub fn release_string(&mut self, id: StringId) -> Result<HeapCleanup, HeapError> {
-        self.release_and_drain(RawId::String(id))
-    }
-
-    /// Release one heap BigInt reference and drain the cascade.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
-    pub fn release_bigint(&mut self, id: BigIntId) -> Result<HeapCleanup, HeapError> {
-        self.release_and_drain(RawId::BigInt(id))
     }
 
     /// Release one object reference and iteratively drain zero-reference nodes.
@@ -530,10 +494,7 @@ impl Heap {
                     index,
                     generation: slot.generation,
                 })),
-                NodeData::Shape(_)
-                | NodeData::VarRef(_)
-                | NodeData::String(_)
-                | NodeData::BigInt(_) => {}
+                NodeData::Shape(_) | NodeData::VarRef(_) => {}
             }
         }
 
@@ -1270,12 +1231,6 @@ impl Heap {
                     self.release_raw_no_drain(edge)?;
                 }
             }
-            NodeData::String(_) => {
-                cleanup.finalized_strings = cleanup.finalized_strings.saturating_add(1);
-            }
-            NodeData::BigInt(_) => {
-                cleanup.finalized_bigints = cleanup.finalized_bigints.saturating_add(1);
-            }
         }
         Ok(())
     }
@@ -1912,7 +1867,7 @@ pub(super) fn function_bytecode_edges(bytecode: &FunctionBytecodeData) -> Vec<Ra
     edges
 }
 
-pub(super) fn property_slot_atoms(slot: &PropertySlot) -> impl Iterator<Item = AtomIdx> + '_ {
+pub(super) fn property_slot_atoms(slot: &PropertySlot) -> impl Iterator<Item = Atom> + '_ {
     match slot {
         PropertySlot::Data(RawValue::Symbol(atom) | RawValue::Private(atom)) => Some(*atom),
         PropertySlot::Data(_)
@@ -1923,11 +1878,11 @@ pub(super) fn property_slot_atoms(slot: &PropertySlot) -> impl Iterator<Item = A
     .into_iter()
 }
 
-fn object_slot_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx> + '_ {
+fn object_slot_atoms(object: &ObjectData) -> impl Iterator<Item = Atom> + '_ {
     object.slots.iter().flat_map(property_slot_atoms)
 }
 
-fn internal_callable_atoms(internal: &InternalCallableData) -> Vec<AtomIdx> {
+fn internal_callable_atoms(internal: &InternalCallableData) -> Vec<Atom> {
     match internal {
         InternalCallableData::PromiseCapabilityExecutor(capture) => capture
             .resolve
@@ -1953,9 +1908,9 @@ fn internal_callable_atoms(internal: &InternalCallableData) -> Vec<AtomIdx> {
     }
 }
 
-pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx> + '_ {
+pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = Atom> + '_ {
     let payload = match &object.payload {
-        ObjectPayload::Primitive(PrimitiveObjectData::Symbol(atom)) => vec![(*atom).into()],
+        ObjectPayload::Primitive(PrimitiveObjectData::Symbol(atom)) => vec![*atom],
         ObjectPayload::Primitive(
             PrimitiveObjectData::Number(_)
             | PrimitiveObjectData::String(_)
@@ -2065,10 +2020,10 @@ pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx>
     };
     object_slot_atoms(object)
         .chain(payload)
-        .chain(object.private_brand_home.map(AtomIdx::from))
+        .chain(object.private_brand_home)
 }
 
-pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -> Vec<AtomIdx> {
+pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -> Vec<Atom> {
     let vm = &activation.vm;
     vm.stack
         .iter()
@@ -2084,7 +2039,7 @@ pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -
                 .chain(activation.locals.iter())
                 .filter_map(|binding| match binding {
                     GeneratorFrameBinding::Direct(value) => raw_value_atom(value),
-                    GeneratorFrameBinding::Private(atom) => Some((*atom).into()),
+                    GeneratorFrameBinding::Private(atom) => Some(*atom),
                     GeneratorFrameBinding::PrivateCallable(_)
                     | GeneratorFrameBinding::Uninitialized
                     | GeneratorFrameBinding::Captured(_) => None,
@@ -2093,7 +2048,7 @@ pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -
         .collect()
 }
 
-pub(super) fn raw_value_atom(value: &RawValue) -> Option<AtomIdx> {
+pub(super) fn raw_value_atom(value: &RawValue) -> Option<Atom> {
     match value {
         RawValue::Symbol(atom) | RawValue::Private(atom) => Some(*atom),
         RawValue::Undefined
@@ -2119,7 +2074,7 @@ pub(super) fn raw_value_matches_weak_key(value: &RawValue, key: WeakCollectionKe
     }
 }
 
-fn context_atoms(context: &ContextData) -> impl Iterator<Item = AtomIdx> + '_ {
+fn context_atoms(context: &ContextData) -> impl Iterator<Item = Atom> + '_ {
     context.intrinsics.iter().filter_map(raw_value_atom).chain(
         context
             .loaded_modules
@@ -2130,9 +2085,7 @@ fn context_atoms(context: &ContextData) -> impl Iterator<Item = AtomIdx> + '_ {
     )
 }
 
-pub(super) fn raw_module_record_atoms(
-    record: &RawModuleRecord,
-) -> impl Iterator<Item = AtomIdx> + '_ {
+pub(super) fn raw_module_record_atoms(record: &RawModuleRecord) -> impl Iterator<Item = Atom> + '_ {
     let body = match &record.body {
         RawModuleRecordBody::Json { default_value } => raw_value_atom(default_value),
         RawModuleRecordBody::Parsing
@@ -2150,12 +2103,11 @@ pub(super) fn raw_module_record_atoms(
     body.into_iter().chain(evaluation)
 }
 
-fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Item = AtomIdx> + '_ {
+fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Item = Atom> + '_ {
     bytecode
         .auxiliary_atoms
         .iter()
         .copied()
-        .map(AtomIdx::from)
         .chain(
             bytecode
                 .constants
@@ -2167,6 +2119,6 @@ fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Ite
         )
 }
 
-fn var_ref_atoms(var_ref: &VarRefData) -> impl Iterator<Item = AtomIdx> + '_ {
+fn var_ref_atoms(var_ref: &VarRefData) -> impl Iterator<Item = Atom> + '_ {
     raw_value_atom(&var_ref.value).into_iter()
 }

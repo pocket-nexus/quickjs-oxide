@@ -242,18 +242,18 @@ fn map_symbol_atoms_transfer_and_return_on_replace_delete_and_clear() {
 
     heap.map_insert_record(
         map,
-        RawValue::Symbol(first_key.into()),
-        RawValue::Symbol(first_value.into()),
+        RawValue::Symbol(first_key),
+        RawValue::Symbol(first_value),
     )
     .unwrap();
     let cleanup = heap
-        .map_replace_record_value(map, 0, RawValue::Symbol(replacement.into()))
+        .map_replace_record_value(map, 0, RawValue::Symbol(replacement))
         .unwrap();
     assert_eq!(cleanup.atoms, vec![first_value]);
     heap.map_insert_record(
         map,
-        RawValue::Symbol(second_key.into()),
-        RawValue::Symbol(second_value.into()),
+        RawValue::Symbol(second_key),
+        RawValue::Symbol(second_value),
     )
     .unwrap();
 
@@ -546,9 +546,9 @@ fn set_symbol_atoms_transfer_and_return_on_delete_clear_and_finalize() {
     let second = Atom::from_immediate_integer(202).unwrap();
     let third = Atom::from_immediate_integer(203).unwrap();
 
-    heap.set_insert_record(set, RawValue::Symbol(first.into()))
+    heap.set_insert_record(set, RawValue::Symbol(first))
         .unwrap();
-    heap.set_insert_record(set, RawValue::Symbol(second.into()))
+    heap.set_insert_record(set, RawValue::Symbol(second))
         .unwrap();
     let cleanup = heap.set_delete_record(set, 0).unwrap();
     assert_eq!(cleanup.atoms, vec![first]);
@@ -556,7 +556,7 @@ fn set_symbol_atoms_transfer_and_return_on_delete_clear_and_finalize() {
     assert_eq!(cleanup.atoms, vec![second]);
     assert_eq!(heap.set_size(set), Ok(0));
 
-    heap.set_insert_record(set, RawValue::Symbol(third.into()))
+    heap.set_insert_record(set, RawValue::Symbol(third))
         .unwrap();
     let cleanup = heap.release_object(set).unwrap();
     assert_eq!(cleanup.atoms, vec![third]);

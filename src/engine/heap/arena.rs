@@ -224,34 +224,6 @@ impl Heap {
         }
     }
 
-    /// Typed read of a heap-owned String payload (D2a).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
-    pub(in crate::engine::heap) fn string(&self, id: StringId) -> Result<&JsString, HeapError> {
-        match &self.live_node(RawId::String(id))?.data {
-            NodeData::String(value) => Ok(value),
-            _ => Err(HeapError::Invariant(
-                "typed string lookup reached another node payload",
-            )),
-        }
-    }
-
-    /// Typed read of a heap-owned BigInt payload (D2a).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.1 scaffolding; wired in A1.2")
-    )]
-    pub(in crate::engine::heap) fn bigint(&self, id: BigIntId) -> Result<&JsBigInt, HeapError> {
-        match &self.live_node(RawId::BigInt(id))?.data {
-            NodeData::BigInt(value) => Ok(value),
-            _ => Err(HeapError::Invariant(
-                "typed bigint lookup reached another node payload",
-            )),
-        }
-    }
-
     pub(in crate::engine::heap) fn object_mut(
         &mut self,
         id: ObjectId,
@@ -261,9 +233,7 @@ impl Heap {
             NodeData::Shape(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed object lookup reached another node payload",
             )),
         }
@@ -278,9 +248,7 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed var-ref lookup reached another node payload",
             )),
         }

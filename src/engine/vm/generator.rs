@@ -154,7 +154,7 @@ impl Runtime {
         let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
         let mut retained_atoms = Vec::with_capacity(atoms.len());
         for atom in atoms {
-            if let Err(error) = state.atoms.retain_idx(atom) {
+            if let Err(error) = state.atoms.retain(atom) {
                 state.release_atoms(retained_atoms)?;
                 let cleanup = state.heap.release_shape(shape)?;
                 state.apply_cleanup(cleanup)?;
@@ -465,7 +465,7 @@ impl Runtime {
         let mut state = self.0.state.borrow_mut();
         let mut retained_atoms = Vec::with_capacity(atoms.len());
         for atom in atoms {
-            if let Err(error) = state.atoms.retain_idx(atom) {
+            if let Err(error) = state.atoms.retain(atom) {
                 state.release_atoms(retained_atoms)?;
                 return Err(error.into());
             }

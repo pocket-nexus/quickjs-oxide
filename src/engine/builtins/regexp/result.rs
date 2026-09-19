@@ -170,7 +170,7 @@ impl Runtime {
                 let entries = names
                     .iter()
                     .map(|&atom| ShapeEntry {
-                        atom: atom.into(),
+                        atom,
                         flags: PropertyFlags::data(true, true, true),
                     })
                     .collect::<Vec<_>>();

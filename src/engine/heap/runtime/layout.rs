@@ -47,13 +47,13 @@ mod tests {
         let before_key = state.atoms.resolve(key.atom()).unwrap().ref_count;
         let before_symbol = state.atoms.resolve(symbol.atom()).unwrap().ref_count;
         let entries = [ShapeEntry {
-            atom: key.atom().into(),
+            atom: key.atom(),
             flags: PropertyFlags::accessor(true, true),
         }];
         let result = state.allocate_object_with_layout(
             None,
             &entries,
-            vec![PropertySlot::Data(RawValue::Symbol(symbol.atom().into()))],
+            vec![PropertySlot::Data(RawValue::Symbol(symbol.atom()))],
             ObjectData::ordinary,
         );
         assert!(

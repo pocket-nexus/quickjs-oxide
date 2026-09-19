@@ -3,9 +3,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::atom::{Atom, AtomError};
 use crate::engine::heap::runtime::{DeferredRefOp, RuntimeOperation, RuntimeState};
-use crate::engine::heap::{
-    BigIntId, ContextId, FunctionBytecodeId, HeapError, ObjectId, RawId, StringId, VarRefId,
-};
+use crate::engine::heap::{ContextId, FunctionBytecodeId, HeapError, ObjectId, RawId, VarRefId};
 
 impl Runtime {
     #[inline]
@@ -72,9 +70,7 @@ impl Runtime {
     }
 
     pub(crate) fn retain_atom_handle(&self, atom: Atom) -> Result<(), AtomError> {
-        // The atom counter is a `Cell`, so a proven-live atom can be retained
-        // under a shared state borrow (S1b).
-        self.0.state.borrow().atoms.retain(atom).map(drop)
+        self.0.state.borrow_mut().atoms.retain(atom).map(drop)
     }
 
     pub(crate) fn retain_function_bytecode_handle(
@@ -118,44 +114,6 @@ impl Runtime {
     pub(crate) fn release_atom_handle(&self, atom: Atom) {
         self.release_or_defer(DeferredRefOp::Atom(atom));
     }
-
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.2 scaffolding; wired in A1.2b")
-    )]
-    pub(crate) fn retain_string_handle(&self, id: StringId) -> Result<(), HeapError> {
-        let mut state = self.0.state.try_borrow_mut().map_err(|_| {
-            HeapError::Invariant("string root retained during a runtime state borrow")
-        })?;
-        state.heap.retain_string(id)
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.2 scaffolding; wired in A1.2b")
-    )]
-    pub(crate) fn retain_bigint_handle(&self, id: BigIntId) -> Result<(), HeapError> {
-        let mut state = self.0.state.try_borrow_mut().map_err(|_| {
-            HeapError::Invariant("bigint root retained during a runtime state borrow")
-        })?;
-        state.heap.retain_bigint(id)
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.2 scaffolding; wired in A1.2b")
-    )]
-    pub(crate) fn release_string_handle(&self, id: StringId) {
-        self.release_or_defer(DeferredRefOp::String(id));
-    }
-
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "S3-A1.2 scaffolding; wired in A1.2b")
-    )]
-    pub(crate) fn release_bigint_handle(&self, id: BigIntId) {
-        self.release_or_defer(DeferredRefOp::BigInt(id));
-    }
 }
 impl RuntimeState {
     #[inline]
@@ -179,8 +137,6 @@ impl RuntimeState {
                 self.release_heap_reference(RawId::FunctionBytecode(bytecode))
             }
             DeferredRefOp::VarRef(var_ref) => self.release_heap_reference(RawId::VarRef(var_ref)),
-            DeferredRefOp::String(string) => self.release_heap_reference(RawId::String(string)),
-            DeferredRefOp::BigInt(bigint) => self.release_heap_reference(RawId::BigInt(bigint)),
             DeferredRefOp::Atom(atom) => self.atoms.release(atom).map(drop).map_err(Into::into),
             DeferredRefOp::ActiveFramePop { token, depth } => {
                 self.active_frames.retire(token, depth);

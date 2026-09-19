@@ -499,7 +499,7 @@ impl Runtime {
             )
         };
         entries.push(ShapeEntry {
-            atom: key.atom().into(),
+            atom: key.atom(),
             flags: PropertyFlags::data(false, false, true),
         });
         slots.push(PropertySlot::AutoInit(AutoInitProperty::ArrayUnscopables {
