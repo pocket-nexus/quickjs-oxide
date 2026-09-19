@@ -1,8 +1,9 @@
-# S3-A 计划：8B 值表示实施拆分（A0–A4）
+# S3-A 计划：8B 值表示——融合实施（A12 大扫除 + A4）
 
-> 状态：设计点已钉死，待开工。本文档是 `performance-architecture.md` §4
-> （方案 A）的实施计划；若两处表述冲突，**以本文档为准**。只含计划，不含代码。
-> 约束、验证门禁、证据附录均继承 `performance-architecture.md` §0/§11/附录。
+> 状态：融合实施中（§1，2026-09-19 撤销微阶段制）。本文档是
+> `performance-architecture.md` §4（方案 A）的实施计划；若两处表述冲突，
+> **以本文档为准**。约束与证据附录继承
+> `performance-architecture.md` §0/§11/附录。
 
 ---
 
@@ -96,6 +97,11 @@ Object/Symbol 已是句柄（`ObjectId`/`Atom`），但 `String(JsString)` /
 
 #### D2a-ownership：`RawValue` 句柄边的所有权模型（钉死）
 
+> **2026-09-19 修订**：融合实施（§1）下，`OwnedRawValue` RAII 包装退役——
+> api 边界直接产 `JsValue`（owned），引擎内一律显式 dup/release/move；
+> 「生产者持有、store retain、生产者交接后 release」的规则本身保留，
+> 并扩展为 §1.2 的一条总规则（含 move 交接不产生计数对）。
+
 **一条规则**：`RawValue` 永远不持有堆边；**生产者持有、store 一律
 retain、生产者交接后 release**——与现有 Object 模型完全同构
 （`allocate_object` 返回拥有型句柄 → 容器事务化 retain → 生产者释放；
@@ -171,20 +177,78 @@ A1.2b 首次实施曾误判「D2a 与借用模型存在结构冲突」（转换�
 
 ---
 
-## 1. 阶段拆分（每步独立可编译、可测、可回退）
+## 1. 融合实施计划（A12 大扫除）
 
-| 阶段 | 内容 | 决定依据 |
-| --- | --- | --- |
-| **A0** | 地基，无语义变更。两lane可并行、独立合入：**A0-v** 引入内部 `JsValue`（16B 句柄 enum）+ `root`/`unroot` 转换层 + size 断言，先不接线；A0-v 内先做穿越点盘点（D1.5）。**A0-a** atom 内部瘦身 `AtomIdx` + `Cell` refcount（D3） | D1/D3 |
-| **A1** | String/BigInt 堆化（D2a）：`HeapNodeKind::String`/`BigInt` + typed arena + `RawValue` 改句柄 + 内容相等/哈希适配 + BigInt/诊断适配；公共 `JsString` 不动。子步：A1.1 堆 kind+arena → A1.2 `RawValue` 句柄化 → A1.3 内容相等/哈希适配 → A1.4 BigInt/诊断适配 | D2 |
-| **A2** | VM 接线：`SlotStore`/`FrameBinding`/`run.rs` 切 `JsValue`，显式 dup/release；API 边界走转换层 | D1 |
-| **A3** | `RawValue`/`PropertySlot` 句柄化收尾（此时全为 16B enum 形态） | D1/D2/D3 |
-| **A4** | NaN-box u64 编码（或按 §4.3 退路停在 16B，由测量决定）；BigInt short ±2⁴⁷ 决定在此复核（D2 第 7 项） | D1 |
+> **2026-09-19 修订：撤销微阶段制。** A1.2b 两次实施证明中间态「VM 跑公共
+> `Value` + 存储层句柄」是设计空间最差点——双值类型在每个边界互转，引入
+> 终态不存在的转换税（store 分配、读 deref+clone+release）与新的借用次序
+> 约束。经批准改为**一次性端到端融合**：回退单位 = 整个大阶段（分支级），
+> 中间 commit 不要求可编译。下方原微阶段表仅作追溯保留。
 
-每阶段末尾一次 `docs(perf): record S3-A<n> measurements`。
+### 1.1 终态类型格局
 
-范围确认：**先做 A0+A1**（地基 + 堆化，风险可控、独立可评审），A2–A4 按
-门禁逐个推进；本文档覆盖 A 全程，不意味着一次合入。
+- **`JsValue`**（crate 内部，16B enum，A0-v 已就位）：标量内联 +
+  `String(StringId)`/`BigInt(BigIntId)`/`Symbol(AtomIdx)`/`Object(ObjectId)`；
+  无 `Copy`/`Drop`。
+- **`RawValue`**（堆存储形态）：同一套句柄 + `Private`/哨兵；与 `JsValue`
+  互转是无分配的同 id 拷贝。
+- **`Value`**（公共）：只在 `engine::api` 边界与宿主回调适配层出现（D1）。
+
+### 1.2 终态所有权纪律（一条规则）
+
+每个存储位置（堆槽、帧、操作数栈、记录、常量池、pending_exception）持有
+其句柄的一条边：
+
+- **store**：拷贝入库 → retain；**move 入库 → 交接生产者边，不产生计数对**；
+- **读出**：dup（retain）交出 owned `JsValue`；纯读取可原地借用；
+- **overwrite / pop / finalize**：release；
+- **String/BigInt 节点只在真创建点分配**：字符串/大整数产生运算、字面量
+  publish、api/host 输入转换；**store 永不分配**；
+- dup/release 走 S1/S2 既有快路纪律（可信 Cell retain；release 经
+  `release_or_defer`，S2.1 快路按 §6 第 5 项另行立项）。
+
+### 1.3 执行序列（compiler-driven）
+
+| 工作流 | 内容 |
+| --- | --- |
+| **W1** | `js_value.rs` 四转换函数补全 String/BigInt（创建分配 / retain / release / 解引用出值）；`RawValue`↔`JsValue` 互转辅助 |
+| **W2** | 堆存储层：`RawValue` 句柄化 + `raw_value_edges`/事务 retain-release + collection_key/index heap 化（捡回 stash@{0} 有效部分）；`raw_property_value` 退役为纯 strip，仅供边界 |
+| **W3** | VM 核心：`FrameBinding`/`SlotStore`/`run.rs` → `JsValue`；帧建立/拆除、挂起编解码、调用约定的显式 dup/release/move |
+| **W4** | builtins 与 drivers 签名 `Value`→`JsValue` |
+| **W5** | api 边界：`eval`/call/host 回调/promise jobs/module loader 的唯一 `Value`↔`JsValue` 转换层 |
+| **W6** | 测试适配 + 全门禁 |
+
+### 1.4 门禁与基准（变更）
+
+- 大阶段中间 commit 允许不绿；**阶段末尾一次全门禁**（fmt / clippy 1.88
+  `-D warnings` / `cargo test --locked --workspace --all-targets` /
+  test262 `--check`+`--focused`+`--full` 零回归（清理 `GIT_*`，只产
+  current-source receipt）/ `check-source-layout.py` + rust-only）。
+- 基准：开工基线（无 PGO/LTO，§2 协议）vs 融合阶段末，一次对比
+  （`property_read_probe.py` + `scaling.py` + `run.py`）。
+- WIP commit 只留本地；推送以绿为准。
+- A4（NaN-box 编码）仍为独立的测量门禁后续阶段，不在本次大扫除内。
+
+### 1.5 地基状态
+
+已落地且继续有效：A0-a（`AtomIdx`/`Cell` refcount）、A0-v（`JsValue`
+类型）、A1.1（String/BigInt arena kinds + allocate/release）、A1.2a
+（deferred releases）。`stash@{0}` 可捡回：`raw_value_edges`、runtime
+retain/release arms、arena trusted 访问器、collection_key/index heap 化。
+作废：`raw_property_value` 分配化与 `OwnedRawValue`（融合设计里 api 边界
+直接产 `JsValue`，引擎内无 RAII 包装）。
+
+<details><summary>原微阶段表（追溯用，已被本节取代）</summary>
+
+| 阶段 | 内容 |
+| --- | --- |
+| A0 | 地基：JsValue 脚手架 + atom 瘦身 |
+| A1 | String/BigInt 堆化（存储层先行） |
+| A2 | VM 接线 JsValue |
+| A3 | RawValue/PropertySlot 句柄化收尾 |
+| A4 | NaN-box 编码（测量门禁） |
+
+</details>
 
 ## 2. 阶段性能比较协议（钉死）
 
@@ -202,13 +266,15 @@ A1.2b 首次实施曾误判「D2a 与借用模型存在结构冲突」（转换�
 
 ## 3. 验证门禁
 
-沿用 `performance-architecture.md` §11 八条：`cargo fmt --check` → clippy
-1.88 `-D warnings` → `cargo test --locked --workspace --all-targets` →
-Test262 `--check`/`--focused`/`--full` 零回归（清理 `GIT_*`，只产
-current-source receipt，不改 `current.conf`）→ `check-source-layout.py` +
-rust-only 门禁 → benchmark receipts（`property_read_probe.py` +
-`scaling.py` + `run.py`，串行、独立输出目录）→ profiling 计数器无漂移 →
-更新本文档实测章节。
+**门禁策略变更（2026-09-19）**：融合大扫除（§1）期间中间 commit 允许不绿；
+**大阶段末尾一次全门禁**，清单沿用 `performance-architecture.md` §11 八条：
+`cargo fmt --check` → clippy 1.88 `-D warnings` →
+`cargo test --locked --workspace --all-targets` → Test262
+`--check`/`--focused`/`--full` 零回归（清理 `GIT_*`，只产 current-source
+receipt，不改 `current.conf`）→ `check-source-layout.py` + rust-only 门禁 →
+benchmark receipts（`property_read_probe.py` + `scaling.py` + `run.py`，
+串行、独立输出目录，协议见 §2）→ profiling 计数器无漂移 → 更新本文档
+实测章节。
 
 A1 额外门禁：`tests/checked_string_construction.rs`（公共 `JsString` 构造
 语义，D2a 下应**零改动**通过——公共表面不动，任何需要改它的迹象即警报）；
@@ -220,8 +286,8 @@ A1 额外门禁：`tests/checked_string_construction.rs`（公共 `JsString` 构
 
 - **手工 RC 纪律扩大 panic 面**（A2 起）：debug 构建维持全量 generation
   校验 + 冻结向量兜底；trusted 访问器遇 stale 即 panic 的政策不变。
-- **触及面全仓最大**：值类型是所有模块的公共依赖；A0/A1 与 A2–A4 之间
-  必须有完整的门禁绿色窗口，严禁跨阶段混合提交。
+- **触及面全仓最大**：值类型是所有模块的公共依赖；融合大扫除期间允许
+  长时间不绿（§1.4），回退单位是整个大阶段（分支级）。
 - **8B 索引 NaN-box 无生产先例**（附录 A.8）：每次 deref 多一次 base load +
   bounds check；A4 必须以测量定去留，退路（16B enum）不是失败而是默认值。
 - **A1 的行为敏感点**（D2a 后）：集合键 SameValueZero 与内容 hash
