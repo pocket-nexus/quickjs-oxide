@@ -468,12 +468,7 @@ mod lazy_tests {
         let mut storage = CallStorage::default();
         storage.reserve().unwrap();
         let (mut cold, _) = storage.vacant(context.realm);
-        cold.input = CallInput {
-            this_value: JsValue::Undefined,
-            new_target: JsValue::Undefined,
-            callee_global: None,
-        }
-        .into();
+        cold.input = CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None).into();
         assert!(cold.rare.get().is_none());
         assert!(cold.input.callee_global.is_none());
         let expected = runtime.global_object_for_realm(context.realm).unwrap();

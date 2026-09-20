@@ -21,9 +21,38 @@ pub(crate) struct DirectEvalInvocation {
 }
 
 pub(crate) struct CallInput {
+    runtime: crate::engine::api::runtime::Runtime,
     pub this_value: JsValue,
     pub new_target: JsValue,
     pub callee_global: Option<ObjectRef>,
+}
+
+impl CallInput {
+    pub(in crate::engine::vm) fn new(
+        runtime: &crate::engine::api::runtime::Runtime,
+        this_value: JsValue,
+        new_target: JsValue,
+        callee_global: Option<ObjectRef>,
+    ) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            this_value,
+            new_target,
+            callee_global,
+        }
+    }
+}
+
+impl Drop for CallInput {
+    /// Release the two internal call edges the frame still owns when the cold
+    /// owner is recycled. Releases are defer-safe and never run JavaScript;
+    /// consumed slots have already been replaced with `Undefined`.
+    fn drop(&mut self) {
+        let this_value = std::mem::replace(&mut self.this_value, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(this_value);
+        let new_target = std::mem::replace(&mut self.new_target, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(new_target);
+    }
 }
 
 impl CallInput {

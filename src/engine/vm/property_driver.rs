@@ -173,13 +173,10 @@ pub(super) fn read_progress_selected(
                 if method_call.is_none() {
                     record_read_completion(depth);
                 }
-                #[cfg(feature = "profiling")]
-                if preserved_receiver.is_some() {
-                    // One actual driver-scope owner drop, not a claim that
-                    // this was the runtime's final root or that GC ran.
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "linked_read_base_owner_drop",
-                    );
+                if !keep_receiver && let Some(value) = preserved_receiver.take() {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
                 }
                 return Ok(method_call
                     .map(PropertyProgress::MethodCall)
@@ -197,8 +194,16 @@ pub(super) fn read_progress_selected(
                         super::BytecodePc::new(frame.fault_pc),
                     )
                     .map_err(runtime_error_to_vm_error)?;
-                drop(retained_key);
-                drop(preserved_receiver);
+                if let Some(value) = retained_key.take() {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                }
+                if let Some(value) = preserved_receiver.take() {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                }
                 return Err(error);
             }
         }

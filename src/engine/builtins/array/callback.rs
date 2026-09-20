@@ -63,6 +63,7 @@ impl std::ops::DerefMut for CallbackResume {
 }
 const _: () = assert!(std::mem::size_of::<CallbackResume>() <= 8);
 pub(crate) struct CallbackResumeState {
+    runtime: Runtime,
     pending_effect: CallbackStepPending,
     realm: ContextId,
     kind: CallbackKind,
@@ -78,6 +79,24 @@ pub(crate) struct CallbackResumeState {
     length: u64,
     cursor: u64,
     selected: u64,
+}
+impl Drop for CallbackResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl CallbackStep {
     pub(crate) fn start(
@@ -115,6 +134,7 @@ impl CallbackStep {
             object.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             CallbackResume(Box::new(CallbackResumeState {
+                runtime: runtime.clone(),
                 pending_effect: CallbackStepPending::default(),
                 realm,
                 kind,
@@ -230,7 +250,9 @@ impl CallbackResume {
                     CallbackKind::Find(kind) => {
                         if runtime.value_to_boolean(&value)? {
                             let result = match kind {
-                                ArrayFindKind::Find | ArrayFindKind::FindLast => self.0.value,
+                                ArrayFindKind::Find | ArrayFindKind::FindLast => {
+                                    std::mem::replace(&mut self.0.value, Value::Undefined)
+                                }
                                 _ => Value::number(self.index() as f64),
                             };
                             return Ok(CallbackStep::Complete(Completion::Return(
@@ -240,14 +262,14 @@ impl CallbackResume {
                     }
                     CallbackKind::Iteration(kind) => match kind {
                         ArrayIterationKind::Every if !runtime.value_to_boolean(&value)? => {
-                            return Ok(CallbackStep::Complete(Completion::Return(
-                                JsValue::Bool(false),
-                            )));
+                            return Ok(CallbackStep::Complete(Completion::Return(JsValue::Bool(
+                                false,
+                            ))));
                         }
                         ArrayIterationKind::Some if runtime.value_to_boolean(&value)? => {
-                            return Ok(CallbackStep::Complete(Completion::Return(
-                                JsValue::Bool(true),
-                            )));
+                            return Ok(CallbackStep::Complete(Completion::Return(JsValue::Bool(
+                                true,
+                            ))));
                         }
                         ArrayIterationKind::Map => {
                             let index = self.index();
@@ -313,8 +335,10 @@ impl CallbackResume {
     fn next(mut self, runtime: &Runtime) -> Result<CallbackStep, RuntimeError> {
         if self.0.cursor == self.0.length {
             let result = match self.0.kind {
-                CallbackKind::Iteration(_) => self.0.result,
-                CallbackKind::Reduce(_) => match self.0.accumulator {
+                CallbackKind::Iteration(_) => {
+                    std::mem::replace(&mut self.0.result, Value::Undefined)
+                }
+                CallbackKind::Reduce(_) => match self.0.accumulator.take() {
                     Some(value) => value,
                     None => {
                         return Ok(CallbackStep::Complete(Completion::Throw(
@@ -520,7 +544,7 @@ mod tests {
         };
         let arguments = NativeArguments {
             actual_arg_count: 1,
-            readable: vec![runtime.unroot_value(&mapper).unwrap()],
+            readable: vec![runtime.into_jsvalue(mapper).unwrap()],
         };
         let CallbackStep::Read { mut resume } = CallbackStep::start(
             &runtime,
@@ -562,11 +586,7 @@ mod tests {
         let CallbackStep::Has { mut resume } = resume
             .resume(
                 &runtime,
-                Completion::Return(
-                    runtime
-                        .unroot_value(&Value::Object(target.clone()))
-                        .unwrap(),
-                ),
+                Completion::Return(runtime.into_jsvalue(Value::Object(target)).unwrap()),
             )
             .unwrap()
         else {
@@ -581,8 +601,11 @@ mod tests {
         }
         drop(resume);
         runtime.run_gc().unwrap();
-        for id in ids {
-            assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        for (i, id) in ids.into_iter().enumerate() {
+            assert!(
+                runtime.0.state.borrow().heap.object(id).is_err(),
+                "id index {i} still live"
+            );
         }
         drop(context);
         drop(runtime);

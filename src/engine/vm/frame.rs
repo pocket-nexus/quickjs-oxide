@@ -546,13 +546,17 @@ mod tests {
         let (mut first, mut first_slots) = frame(&runtime, context.realm);
         first.cold.reusable_captured_locals = vec![true; 23];
         let address = &*first.cold as *const FrameBody;
-        first_slots.clear_frame(&runtime, first.window.take()).unwrap();
+        first_slots
+            .clear_frame(&runtime, first.window.take())
+            .unwrap();
         cache.recycle(first.cold);
         let (flags, grown) = cache.capture_flags(23).unwrap();
         assert_eq!(grown, 0);
         assert_eq!(flags, vec![false; 23]);
         let (mut second, mut second_slots) = frame(&runtime, context.realm);
-        second_slots.clear_frame(&runtime, second.window.take()).unwrap();
+        second_slots
+            .clear_frame(&runtime, second.window.take())
+            .unwrap();
         let mut contents = second.cold.into_inner();
         contents.reusable_captured_locals = flags;
         let (cold, allocated) = cache.install(contents);
@@ -584,11 +588,12 @@ mod tests {
             rare: std::cell::OnceCell::new(),
             return_to: None,
             entry_guard: None,
-            input: (CallInput {
-                this_value: JsValue::Undefined,
-                new_target: JsValue::Undefined,
-                callee_global: Some(function.clone()),
-            })
+            input: (CallInput::new(
+                &runtime,
+                JsValue::Undefined,
+                JsValue::Undefined,
+                Some(function.clone()),
+            ))
             .into(),
             function: (function).into(),
             closure_slots: Default::default(),
@@ -711,7 +716,9 @@ mod tests {
             child
                 .storage
                 .parameters
-                .push(super::super::bindings::FrameBinding::Direct(JsValue::Int(42)));
+                .push(super::super::bindings::FrameBinding::Direct(JsValue::Int(
+                    42,
+                )));
             let error = push_frame(&mut execution, child).unwrap_err();
             assert!(error.to_string().contains(if exhausted_identity {
                 "identity exhausted"
@@ -729,7 +736,10 @@ mod tests {
             execution.frames.next_generation = generation;
             let replacement = push_frame(&mut execution, entry(&runtime, context.realm)).unwrap();
             let mut frame = execution.frames.pop(replacement).unwrap();
-            execution.slots.clear_frame(&runtime, frame.window.take()).unwrap();
+            execution
+                .slots
+                .clear_frame(&runtime, frame.window.take())
+                .unwrap();
             let parent = execution.frames.current_mut(parent).unwrap();
             assert_eq!(
                 execution.slots.binding_counts(&parent.window).unwrap(),
