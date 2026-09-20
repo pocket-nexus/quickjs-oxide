@@ -15,14 +15,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::PromiseStep::start(
-            self,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Finally),
-            &invocation,
-            arguments,
-        )?
-        .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::PromiseStep::start(
+                self,
+                realm,
+                NativeFunctionId::Promise(PromiseNativeKind::Finally),
+                invocation,
+                arguments,
+            )?
+            .finish(self, realm)
+        })
     }
 
     pub(super) fn prepare_promise_finally_handlers(

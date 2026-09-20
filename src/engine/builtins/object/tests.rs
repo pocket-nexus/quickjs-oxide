@@ -57,6 +57,9 @@ fn reduced_group_by_element_limit_checks_before_next_and_preserves_throw() {
             2,
         )
         .unwrap();
+    for value in arguments.readable {
+        runtime.release_jsvalue(value).unwrap();
+    }
     let Completion::Throw(value) = completion else {
         panic!("reduced Object.groupBy limit did not throw an Error object");
     };

@@ -568,7 +568,10 @@ impl Runtime {
             PromiseNativeKind::Constructor => {
                 self.call_promise_constructor(realm, invocation, arguments)
             }
-            PromiseNativeKind::Species => self.call_promise_species(&invocation),
+            PromiseNativeKind::Species => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_promise_species(invocation)
+                }),
             PromiseNativeKind::Then => self.call_promise_then(realm, invocation, arguments),
             PromiseNativeKind::Catch => self.call_promise_catch(realm, invocation, arguments),
             PromiseNativeKind::Finally => self.call_promise_finally(realm, invocation, arguments),
@@ -602,14 +605,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::PromiseStep::start(
-            self,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Constructor),
-            &invocation,
-            arguments,
-        )?
-        .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::PromiseStep::start(
+                self,
+                realm,
+                NativeFunctionId::Promise(PromiseNativeKind::Constructor),
+                invocation,
+                arguments,
+            )?
+            .finish(self, realm)
+        })
     }
 
     pub(crate) fn call_promise_resolving(
@@ -795,14 +800,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::PromiseStep::start(
-            self,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Then),
-            &invocation,
-            arguments,
-        )?
-        .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::PromiseStep::start(
+                self,
+                realm,
+                NativeFunctionId::Promise(PromiseNativeKind::Then),
+                invocation,
+                arguments,
+            )?
+            .finish(self, realm)
+        })
     }
 
     fn finish_promise_then(
@@ -872,14 +879,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::PromiseStep::start(
-            self,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Catch),
-            &invocation,
-            arguments,
-        )?
-        .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::PromiseStep::start(
+                self,
+                realm,
+                NativeFunctionId::Promise(PromiseNativeKind::Catch),
+                invocation,
+                arguments,
+            )?
+            .finish(self, realm)
+        })
     }
 
     fn call_promise_static_resolve(

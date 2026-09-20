@@ -2244,3 +2244,76 @@ fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Ite
 fn var_ref_atoms(var_ref: &VarRefData) -> impl Iterator<Item = AtomIdx> + '_ {
     raw_value_atom(&var_ref.value).into_iter()
 }
+
+#[cfg(debug_assertions)]
+impl Heap {
+    /// Debug-only: list live nodes whose strong count exceeds internal
+    /// incoming edges, i.e. nodes retained by external roots.
+    pub(crate) fn debug_external_roots(
+        &self,
+    ) -> Vec<(crate::engine::heap::HeapNodeKind, usize, u32, String)> {
+        let mut incoming = vec![0usize; self.slots.len()];
+        for slot in &self.slots {
+            if let SlotState::Live(node) = &slot.state {
+                for edge in node.data.edges() {
+                    if let Ok(index) = self.live_index(edge) {
+                        incoming[index] = incoming[index].saturating_add(1);
+                    }
+                }
+            }
+        }
+        let mut bytecode_names = std::collections::HashMap::new();
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let SlotState::Live(node) = &slot.state {
+                if let NodeData::FunctionBytecode(data) = &node.data {
+                    bytecode_names.insert(
+                        index,
+                        match &data.func_name {
+                            Some(name) => name.to_utf8_lossy(),
+                            None => "<anon>".to_string(),
+                        },
+                    );
+                }
+            }
+        }
+        let mut roots = Vec::new();
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let SlotState::Live(node) = &slot.state {
+                let strong = node.strong.get() as usize;
+                if strong > incoming[index] {
+                    let detail = match &node.data {
+                        NodeData::Object(object) => match &object.payload {
+                            ObjectPayload::NativeFunction { data, .. } => {
+                                let native = format!("{data:?}");
+                                format!("{:?}:{}", object.kind, &native[..native.len().min(120)])
+                            }
+                            ObjectPayload::BytecodeFunction { bytecode, .. } => {
+                                let name = bytecode_names
+                                    .get(&(bytecode.index as usize))
+                                    .cloned()
+                                    .unwrap_or_default();
+                                format!("BytecodeFunction#{}:{name}", bytecode.index)
+                            }
+                            _ => format!("{:?}", object.kind),
+                        },
+                        NodeData::FunctionBytecode(data) => match &data.func_name {
+                            Some(name) => format!("bytecode:{}", name.to_utf8_lossy()),
+                            None => "bytecode:<anon>".to_string(),
+                        },
+                        NodeData::String(text) => {
+                            text.to_utf8_lossy().chars().take(60).collect::<String>()
+                        }
+                        _ => String::new(),
+                    };
+                    roots.push((
+                        node.data.kind(),
+                        index,
+                        (strong - incoming[index]) as u32,
+                        detail,
+                    ));
+                }
+            }
+        }
+        roots
+    }
+}

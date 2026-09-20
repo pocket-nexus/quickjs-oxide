@@ -44,24 +44,55 @@ impl Runtime {
     }
 
     #[inline]
+    #[track_caller]
     fn release_or_defer(&self, operation: DeferredRefOp) {
         let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
             state.apply_deferred_operation(operation)
         } else {
+            #[cfg(debug_assertions)]
+            if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+                eprintln!(
+                    "[defer] {operation:?} at {}",
+                    std::panic::Location::caller()
+                );
+            }
             self.0.deferred_references.push_back(operation);
             // The state is still borrowed. The next existing operation boundary
             // (or a successful release) drains this work after the borrow ends.
             return;
         };
-        debug_assert!(
-            result.is_ok(),
-            "invalid root release {operation:?}: {result:?}"
-        );
+        if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
+            if let Err(error) = &result {
+                eprintln!("[release] invalid root release {operation:?}: {error:?}");
+                if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+                    eprintln!(
+                        "[release-invalid-backtrace]\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
+            }
+        } else {
+            debug_assert!(
+                result.is_ok(),
+                "invalid root release {operation:?}: {result:?}"
+            );
+        }
         let drain = self.drain_deferred_references();
-        debug_assert!(drain.is_ok(), "deferred root release failed: {drain:?}");
+        if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
+            if let Err(error) = &drain {
+                eprintln!("[release] deferred root release failed: {error:?}");
+            }
+        } else {
+            debug_assert!(drain.is_ok(), "deferred root release failed: {drain:?}");
+        }
     }
 
+    #[track_caller]
     pub(crate) fn retain_object_handle(&self, id: ObjectId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            eprintln!("[retain] {id:?} at {}", std::panic::Location::caller());
+        }
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_object(id);
         }
@@ -74,7 +105,12 @@ impl Runtime {
         state.heap.retain_object_shared(id)
     }
 
+    #[track_caller]
     pub(crate) fn release_object_handle(&self, id: ObjectId) {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            eprintln!("[release] {id:?} at {}", std::panic::Location::caller());
+        }
         self.release_or_defer(DeferredRefOp::Object(id));
     }
 
@@ -161,7 +197,22 @@ impl Runtime {
         }
     }
 
+    #[track_caller]
     pub(crate) fn retain_string_handle(&self, id: StringId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            eprintln!("[retain-s] {id:?} at {}", std::panic::Location::caller());
+            if std::env::var("QJS_TRACE_STRING_ID")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                == Some(id.index)
+            {
+                eprintln!(
+                    "[retain-s-backtrace]\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_string(id);
         }
@@ -171,7 +222,22 @@ impl Runtime {
         state.heap.retain_string_shared(id)
     }
 
+    #[track_caller]
     pub(crate) fn release_string_handle(&self, id: StringId) {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            eprintln!("[release-s] {id:?} at {}", std::panic::Location::caller());
+            if std::env::var("QJS_TRACE_STRING_ID")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                == Some(id.index)
+            {
+                eprintln!(
+                    "[release-s-backtrace]\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
         self.release_or_defer(DeferredRefOp::String(id));
     }
 

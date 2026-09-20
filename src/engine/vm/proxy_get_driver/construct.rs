@@ -22,6 +22,11 @@ pub(super) fn start(
     arguments: Vec<JsValue>,
     resume: Resume,
 ) -> Result<Step, Error> {
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[ctor] start roots={:?}",
+        runtime.0.state.borrow().heap.debug_external_roots()
+    );
     let normalized = match runtime
         .normalize_constructor(realm, constructor, new_target, arguments)
         .map_err(runtime_error_to_vm_error)?
@@ -51,6 +56,11 @@ pub(super) fn prepared(
     normalized: NormalizedConstructor,
     resume: Resume,
 ) -> Result<Step, Error> {
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[ctor] prepared-entry roots={:?}",
+        runtime.0.state.borrow().heap.debug_external_roots()
+    );
     let NormalizedConstructor {
         target,
         new_target,

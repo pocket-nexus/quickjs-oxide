@@ -620,11 +620,23 @@ impl Drop for RuntimeInner {
                 state.release_atom_indices(atom_indices)
             });
         debug_assert!(result.is_ok(), "runtime teardown failed: {result:?}");
-        debug_assert_eq!(
-            state.heap.counts().live,
-            0,
-            "runtime teardown left live heap nodes"
-        );
+        #[cfg(debug_assertions)]
+        {
+            let live = state.heap.counts().live;
+            if live != 0 && std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
+                let roots = state.heap.debug_external_roots();
+                let shown = roots.len().min(6);
+                eprintln!(
+                    "[teardown] thread={:?} live={live} shown={}/{} {:?}",
+                    std::thread::current().name(),
+                    roots.len(),
+                    shown,
+                    &roots[..shown]
+                );
+            } else {
+                debug_assert_eq!(live, 0, "runtime teardown left live heap nodes");
+            }
+        }
     }
 }
 

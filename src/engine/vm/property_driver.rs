@@ -772,12 +772,19 @@ fn read_pending(
     };
     let frame = execution.frames.current_mut(id)?;
     for _ in 0..consume {
-        execution.slots.pop(&mut frame.cold.window)?;
+        let operand = execution.slots.pop(&mut frame.cold.window)?;
+        runtime
+            .release_jsvalue(operand)
+            .map_err(runtime_error_to_vm_error)?;
     }
     if keep_receiver {
         execution
             .slots
             .push(&mut frame.cold.window, preserved_receiver)?;
+    } else {
+        runtime
+            .release_jsvalue(preserved_receiver)
+            .map_err(runtime_error_to_vm_error)?;
     }
     if let Some(key) = retained_key {
         execution.slots.push(&mut frame.cold.window, key)?;

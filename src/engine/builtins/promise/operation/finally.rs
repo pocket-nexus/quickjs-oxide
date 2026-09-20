@@ -171,6 +171,7 @@ pub(super) fn resume(
             JsValue::Undefined => handlers(runtime, realm, receiver, callback, None),
             JsValue::Object(constructor_id) => Ok({
                 let constructor = ObjectRef::from_borrowed_handle(runtime.clone(), constructor_id)?;
+                runtime.release_jsvalue(JsValue::Object(constructor_id))?;
                 let __pending_field_receiver = JsValue::Object(constructor.into_handle());
                 let __pending_field_key =
                     PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
@@ -182,7 +183,10 @@ pub(super) fn resume(
                     __pending_field_resume,
                 )
             }),
-            _ => capability::error(runtime, realm, "not an object"),
+            value => {
+                runtime.release_jsvalue(value)?;
+                capability::error(runtime, realm, "not an object")
+            }
         },
         Phase::Species { receiver, callback } => {
             let constructor = match value {
