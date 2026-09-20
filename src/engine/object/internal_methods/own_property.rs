@@ -64,7 +64,6 @@ enum Phase {
     },
     Extensible {
         rooted: RootedProxy,
-        result: JsValue,
         target: Descriptor,
     },
     Converted {
@@ -95,7 +94,7 @@ fn method(
 ) -> Result<ProxyOwnStep, RuntimeError> {
     Ok(match step {
         MethodStep::Throw(value) => ProxyOwnStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value)?,
+            runtime.root_and_release_jsvalue(value.take())?,
         )),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
@@ -106,15 +105,14 @@ fn method(
                     rooted.target.clone(),
                     key,
                     ProxyOwnResume(Box::new(ProxyOwnResumeState {
-                        pending_effect: ProxyOwnStepPending::default(),
+                        pending_effect: ProxyOwnStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Forward { _rooted: rooted },
                     })),
                 ),
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
-                    let receiver =
-                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
                     let arguments = [Value::Object(rooted.target.clone()), key_value]
                         .into_iter()
                         .map(|value| runtime.into_jsvalue(value))
@@ -124,7 +122,7 @@ fn method(
                         receiver,
                         arguments,
                         ProxyOwnResume(Box::new(ProxyOwnResumeState {
-                            pending_effect: ProxyOwnStepPending::default(),
+                            pending_effect: ProxyOwnStepPending::new(runtime.clone()),
                             realm,
                             phase: Phase::Trap { rooted, key },
                         })),
@@ -141,7 +139,7 @@ fn method(
                 method_key,
                 receiver,
                 ProxyOwnResume(Box::new(ProxyOwnResumeState {
-                    pending_effect: ProxyOwnStepPending::default(),
+                    pending_effect: ProxyOwnStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Method { resume, key },
                 })),
@@ -182,7 +180,7 @@ impl ProxyOwnResume {
                     rooted.target.clone(),
                     key,
                     Self(Box::new(ProxyOwnResumeState {
-                        pending_effect: ProxyOwnStepPending::default(),
+                        pending_effect: ProxyOwnStepPending::new(runtime.clone()),
                         realm: self.0.realm,
                         phase: Phase::Target {
                             rooted,
@@ -225,16 +223,14 @@ impl ProxyOwnResume {
                 }
                 // QuickJS queries target extensibility before reading any
                 // fields from the descriptor returned by the trap.
+                let mut pending = ProxyOwnStepPending::new(runtime.clone());
+                pending.extensible_result = Some(runtime.into_jsvalue(result)?);
                 Ok(ProxyOwnStep::request_extensible(
                     rooted.target.clone(),
                     Self(Box::new(ProxyOwnResumeState {
-                        pending_effect: ProxyOwnStepPending::default(),
+                        pending_effect: pending,
                         realm: self.0.realm,
-                        phase: Phase::Extensible {
-                            rooted,
-                            result: runtime.into_jsvalue(result)?,
-                            target,
-                        },
+                        phase: Phase::Extensible { rooted, target },
                     })),
                 ))
             }
@@ -248,16 +244,19 @@ impl ProxyOwnResume {
         self,
         result: NativeConversion<bool>,
     ) -> Result<ProxyOwnStep, RuntimeError> {
-        let Phase::Extensible {
-            rooted,
-            result: value,
-            target,
-        } = self.0.phase
-        else {
+        let mut state = self.0;
+        let value = state
+            .pending_effect
+            .extensible_result
+            .take()
+            .expect("ProxyOwnStep Extensible result");
+        let realm = state.realm;
+        let Phase::Extensible { rooted, target } = state.phase else {
             return Err(RuntimeError::Invariant(
                 "Proxy descriptor continuation received an extensibility reply",
             ));
         };
+        let runtime = rooted.proxy.runtime().clone();
         match result {
             NativeConversion::Throw(value) => {
                 Ok(ProxyOwnStep::Complete(NativeConversion::Throw(value)))
@@ -265,8 +264,8 @@ impl ProxyOwnResume {
             NativeConversion::Value(extensible) => Ok(ProxyOwnStep::request_convert(
                 value,
                 Self(Box::new(ProxyOwnResumeState {
-                    pending_effect: ProxyOwnStepPending::default(),
-                    realm: self.0.realm,
+                    pending_effect: ProxyOwnStepPending::new(runtime),
+                    realm,
                     phase: Phase::Converted {
                         _rooted: rooted,
                         target,
@@ -322,8 +321,8 @@ impl ProxyOwnResume {
     }
 }
 
-#[derive(Default)]
 struct ProxyOwnStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
@@ -333,7 +332,50 @@ struct ProxyOwnStepPending {
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
     extensible_object: Option<ObjectRef>,
+    extensible_result: Option<JsValue>,
     convert_value: Option<JsValue>,
+}
+impl ProxyOwnStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            descriptor_object: None,
+            descriptor_key: None,
+            extensible_object: None,
+            extensible_result: None,
+            convert_value: None,
+        }
+    }
+}
+impl Drop for ProxyOwnStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(value) = self.extensible_result.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.convert_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ProxyOwnStep {
     pub(crate) fn request_read(

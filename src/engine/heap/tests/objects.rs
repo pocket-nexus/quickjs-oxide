@@ -76,12 +76,10 @@ fn proxy_revocation_releases_only_the_one_shot_closure_capture() {
     assert!(heap.proxy_snapshot(proxy).unwrap().is_revoked);
     assert_eq!(heap.object_strong_count(target), Ok(2));
     assert_eq!(heap.object_strong_count(handler), Ok(2));
-    assert!(
-        matches!(
-            heap.native_internal_callable(revoker),
-            Ok(Some(InternalCallableData::ProxyRevoke { proxy: None }))
-        )
-    );
+    assert!(matches!(
+        heap.native_internal_callable(revoker),
+        Ok(Some(InternalCallableData::ProxyRevoke { proxy: None }))
+    ));
 
     let (revoked_again, cleanup) = heap.revoke_proxy_from_callable(revoker).unwrap();
     assert!(!revoked_again);
@@ -417,22 +415,18 @@ fn regexp_payload_is_branded_edge_free_and_structurally_validated() {
     let ordinary = heap
         .allocate_object(ObjectData::ordinary(shape, Vec::new()))
         .unwrap();
-    assert!(
-        matches!(
-            heap.regexp_data(ordinary),
-            Err(HeapError::Invariant(
-                "RegExp data requested for an object with the wrong class"
-            ))
-        )
-    );
-    assert!(
-        matches!(
-            heap.replace_regexp_data(ordinary, RegExpObjectData::Uninitialized),
-            Err(HeapError::Invariant(
-                "RegExp data update reached an object with the wrong class"
-            ))
-        )
-    );
+    assert!(matches!(
+        heap.regexp_data(ordinary),
+        Err(HeapError::Invariant(
+            "RegExp data requested for an object with the wrong class"
+        ))
+    ));
+    assert!(matches!(
+        heap.replace_regexp_data(ordinary, RegExpObjectData::Uninitialized),
+        Err(HeapError::Invariant(
+            "RegExp data update reached an object with the wrong class"
+        ))
+    ));
 
     heap.release_object(ordinary).unwrap();
     heap.release_object(regexp).unwrap();

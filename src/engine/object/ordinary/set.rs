@@ -61,9 +61,53 @@ pub(crate) struct SetResumeState {
     phase: Phase,
     request_object: Option<ObjectRef>,
     request_key: Option<PropertyKey>,
-    request_value: Option<JsValue>,
-    request_receiver: Option<JsValue>,
+    request: SetRequestEdges,
     request_descriptor: Option<OrdinaryPropertyDescriptor>,
+}
+
+/// The request value/receiver edges with the runtime that must release any
+/// leftover owner when a phase is abandoned. Keeping the pair in one field
+/// lets the surrounding resume state stay movable.
+struct SetRequestEdges {
+    runtime: Runtime,
+    value: Option<JsValue>,
+    receiver: Option<JsValue>,
+}
+
+impl SetRequestEdges {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            value: None,
+            receiver: None,
+        }
+    }
+
+    fn set(&mut self, value: JsValue, receiver: JsValue) {
+        self.value = Some(value);
+        self.receiver = Some(receiver);
+    }
+
+    fn take_value(&mut self) -> JsValue {
+        self.value.take().expect("selected Set request field")
+    }
+
+    fn take_receiver(&mut self) -> JsValue {
+        self.receiver.take().expect("selected Set request field")
+    }
+}
+
+impl Drop for SetRequestEdges {
+    /// `take_*` transfers ownership first, so completed transitions drop empty
+    /// options; releases are defer-safe and never run JavaScript.
+    fn drop(&mut self) {
+        for value in [self.value.take(), self.receiver.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 enum Phase {
     Walk(ObjectRef),
@@ -269,7 +313,8 @@ impl SetStep {
                     if !matches!(
                         resume
                             .0
-                            .request_value
+                            .request
+                            .value
                             .as_ref()
                             .expect("selected Set request field"),
                         JsValue::Object(_)
@@ -309,7 +354,8 @@ impl SetStep {
                     if !matches!(
                         resume
                             .0
-                            .request_value
+                            .request
+                            .value
                             .as_ref()
                             .expect("selected Set request field"),
                         JsValue::Object(_)
@@ -928,8 +974,7 @@ impl State {
             phase: Phase::Forward,
             request_object: None,
             request_key: None,
-            request_value: None,
-            request_receiver: None,
+            request: SetRequestEdges::new(runtime),
             request_descriptor: None,
         }))
         .publish_selected(runtime, selected)
@@ -963,33 +1008,28 @@ impl SetResume {
             SelectedSet::Proxy(object) => {
                 self.0.request_object = Some(object);
                 self.0.request_key = Some(clone_set_key(&self.0.state.key));
-                self.0.request_value = Some(runtime.into_jsvalue(clone_set_value(
-                    &self.0.state.value,
-                ))?);
-                self.0.request_receiver = Some(runtime.into_jsvalue(clone_set_value(
-                    &self.0.state.receiver,
-                ))?);
+                self.0.request.set(
+                    runtime.into_jsvalue(clone_set_value(&self.0.state.value))?,
+                    runtime.into_jsvalue(clone_set_value(&self.0.state.receiver))?,
+                );
                 self.0.phase = Phase::Forward;
                 Ok(SetStep::Proxy { resume: self })
             }
             SelectedSet::Special(object) => {
                 self.0.request_object = Some(clone_set_object(&object));
                 self.0.request_key = Some(clone_set_key(&self.0.state.key));
-                self.0.request_value = Some(runtime.into_jsvalue(clone_set_value(
-                    &self.0.state.value,
-                ))?);
-                self.0.request_receiver = Some(runtime.into_jsvalue(clone_set_value(
-                    &self.0.state.receiver,
-                ))?);
+                self.0.request.set(
+                    runtime.into_jsvalue(clone_set_value(&self.0.state.value))?,
+                    runtime.into_jsvalue(clone_set_value(&self.0.state.receiver))?,
+                );
                 self.0.phase = Phase::Special(object);
                 Ok(SetStep::Special { resume: self })
             }
             SelectedSet::ArrayLength(object) => {
                 self.0.request_object = Some(object);
                 self.0.request_key = Some(clone_set_key(&self.0.state.key));
-                self.0.request_value = Some(runtime.into_jsvalue(clone_set_value(
-                    &self.0.state.value,
-                ))?);
+                self.0.request.value =
+                    Some(runtime.into_jsvalue(clone_set_value(&self.0.state.value))?);
                 self.0.phase = Phase::Forward;
                 Ok(SetStep::ArrayLength { resume: self })
             }
@@ -1021,16 +1061,10 @@ impl SetResume {
             .expect("selected Set request field")
     }
     pub(crate) fn take_value(&mut self) -> JsValue {
-        self.0
-            .request_value
-            .take()
-            .expect("selected Set request field")
+        self.0.request.take_value()
     }
     pub(crate) fn take_receiver(&mut self) -> JsValue {
-        self.0
-            .request_receiver
-            .take()
-            .expect("selected Set request field")
+        self.0.request.take_receiver()
     }
     pub(crate) fn take_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
         self.0
@@ -1180,9 +1214,7 @@ impl Runtime {
             NativeConversion::Value(InternalSetResult::Rejected(
                 PropertySetRejection::NotObject,
             )) => Err(Error::new(ErrorKind::Type, "not an object").into()),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(
-                self.unroot_value(&value)?,
-            )),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(self.unroot_value(&value)?)),
         }
     }
 }

@@ -264,12 +264,10 @@ fn parsing_abort_tombstones_or_retains_a_hidden_stable_identity() {
     );
     assert_eq!(heap.loaded_module_is_live(unreferenced), Ok(false));
     assert!(heap.loaded_module(unreferenced).is_err());
-    assert!(
-        matches!(
-            heap.first_loaded_module(realm, &JsString::from_static("unreferenced.js")),
-            Ok(None)
-        )
-    );
+    assert!(matches!(
+        heap.first_loaded_module(realm, &JsString::from_static("unreferenced.js")),
+        Ok(None)
+    ));
 
     let direct_abort = heap
         .publish_loaded_module(
@@ -290,24 +288,20 @@ fn parsing_abort_tombstones_or_retains_a_hidden_stable_identity() {
         ))
     );
     assert_eq!(heap.loaded_module_is_live(direct_abort), Ok(true));
-    assert!(
-        matches!(
-            heap.first_loaded_module(realm, &JsString::from_static("direct-abort.js")),
-            Ok(Some(found)) if found.cache == direct_abort.cache
-                && found.module == direct_abort.module
-        )
-    );
+    assert!(matches!(
+        heap.first_loaded_module(realm, &JsString::from_static("direct-abort.js")),
+        Ok(Some(found)) if found.cache == direct_abort.cache
+            && found.module == direct_abort.module
+    ));
     assert_eq!(
         heap.abort_parsing_loaded_module(direct_abort),
         Ok(HeapCleanup::default())
     );
     assert_eq!(heap.loaded_module_is_live(direct_abort), Ok(false));
-    assert!(
-        matches!(
-            heap.first_loaded_module(realm, &JsString::from_static("direct-abort.js")),
-            Ok(None)
-        )
-    );
+    assert!(matches!(
+        heap.first_loaded_module(realm, &JsString::from_static("direct-abort.js")),
+        Ok(None)
+    ));
 
     let first = heap
         .publish_loaded_module(
@@ -342,12 +336,10 @@ fn parsing_abort_tombstones_or_retains_a_hidden_stable_identity() {
         heap.loaded_module(first).unwrap().body,
         RawModuleRecordBody::Aborted
     ));
-    assert!(
-        matches!(
-            heap.first_loaded_module(realm, &JsString::from_static("same.js")),
-            Ok(Some(found)) if found.cache == second.cache && found.module == second.module
-        )
-    );
+    assert!(matches!(
+        heap.first_loaded_module(realm, &JsString::from_static("same.js")),
+        Ok(Some(found)) if found.cache == second.cache && found.module == second.module
+    ));
     assert_eq!(
         heap.loaded_modules(realm)
             .unwrap()

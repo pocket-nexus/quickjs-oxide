@@ -175,7 +175,7 @@ impl Runtime {
     pub(super) fn allocate_async_generator_object(
         &self,
         prototype: &ObjectRef,
-        activation: EncodedVmActivation,
+        mut activation: EncodedVmActivation,
     ) -> Result<ObjectRef, RuntimeError> {
         let atoms = {
             let state = self.0.state.borrow();
@@ -225,14 +225,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        AsyncGeneratorStep::start(
-            self,
-            realm,
-            NativeFunctionId::AsyncGeneratorPrototypeResume(kind),
-            &invocation,
-            arguments,
-        )?
-        .finish(self)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            AsyncGeneratorStep::start(
+                self,
+                realm,
+                NativeFunctionId::AsyncGeneratorPrototypeResume(kind),
+                invocation,
+                arguments,
+            )?
+            .finish(self)
+        })
     }
 
     fn enqueue_async_generator_request(
@@ -271,7 +273,7 @@ impl Runtime {
         generator: &ObjectRef,
         generator_state: AsyncGeneratorState,
         resume_realm: Option<ContextId>,
-        activation: &EncodedVmActivation,
+        activation: &mut EncodedVmActivation,
     ) -> Result<(), RuntimeError> {
         let atoms = {
             let state = self.0.state.borrow();
@@ -328,14 +330,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        AsyncGeneratorStep::start(
-            self,
-            realm,
-            NativeFunctionId::AsyncGeneratorResume(target_kind),
-            &invocation,
-            arguments,
-        )?
-        .finish(self)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            AsyncGeneratorStep::start(
+                self,
+                realm,
+                NativeFunctionId::AsyncGeneratorResume(target_kind),
+                invocation,
+                arguments,
+            )?
+            .finish(self)
+        })
     }
 
     fn root_front_async_generator_request(

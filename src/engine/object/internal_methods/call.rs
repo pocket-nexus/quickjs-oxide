@@ -96,9 +96,9 @@ impl Search {
             ))?;
         if data.is_revoked {
             return match runtime.proxy_revoked_throw(self.realm)? {
-                NativeConversion::Throw(value) => Ok(ProxyCallStep::Complete(
-                    Completion::Throw(runtime.unroot_value(&value)?),
-                )),
+                NativeConversion::Throw(value) => Ok(ProxyCallStep::Complete(Completion::Throw(
+                    runtime.unroot_value(&value)?,
+                ))),
                 NativeConversion::Value(()) => Err(RuntimeError::Invariant(
                     "revoked Proxy call returned a value",
                 )),
@@ -111,7 +111,7 @@ impl Search {
             self.key.clone(),
             read_receiver,
             ProxyCallResume(Box::new(ProxyCallResumeState {
-                pending_effect: ProxyCallStepPending::default(),
+                pending_effect: ProxyCallStepPending::new(runtime.clone()),
                 phase: Phase::Method {
                     rooted,
                     search: self,
@@ -139,10 +139,15 @@ impl ProxyCallResume {
         // Pinned callability validation occurs after the observable trap Get.
         if !rooted.data.is_callable {
             return Ok(ProxyCallStep::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(search.realm, NativeErrorKind::Type, "not a function")?,
+                runtime.new_native_error_jsvalue(
+                    search.realm,
+                    NativeErrorKind::Type,
+                    "not a function",
+                )?,
             )));
         }
-        let (target, receiver, arguments) = if matches!(method, JsValue::Undefined | JsValue::Null) {
+        let (target, receiver, arguments) = if matches!(method, JsValue::Undefined | JsValue::Null)
+        {
             if runtime.is_proxy_object(&rooted.target)? {
                 search.depth = search.depth.saturating_add(1);
                 return search.read(runtime, rooted.target);
@@ -188,7 +193,7 @@ impl ProxyCallResume {
             receiver,
             arguments,
             Self(Box::new(ProxyCallResumeState {
-                pending_effect: ProxyCallStepPending::default(),
+                pending_effect: ProxyCallStepPending::new(runtime.clone()),
                 phase: Phase::Result {
                     _rooted: rooted,
                     _guard: search.guard,
@@ -259,14 +264,45 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct ProxyCallStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
     call_receiver: Option<JsValue>,
     call_arguments: Option<Vec<JsValue>>,
+}
+impl ProxyCallStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+        }
+    }
+}
+impl Drop for ProxyCallStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl ProxyCallStep {
     pub(crate) fn request_read(

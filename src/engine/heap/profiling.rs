@@ -117,11 +117,9 @@ impl Heap {
         let mut shared_buffers = logical("shared_array_buffer_wrappers", 0);
         shared_buffers.basis = "wrapper-count-only; shared backing bytes unavailable";
         let mut string_nodes = logical("string_nodes", 0);
-        string_nodes.basis =
-            "node-count-only; payloads are Rc-owned outside the arena accounting";
+        string_nodes.basis = "node-count-only; payloads are Rc-owned outside the arena accounting";
         let mut bigint_nodes = logical("bigint_nodes", 0);
-        bigint_nodes.basis =
-            "node-count-only; payloads are Rc-owned outside the arena accounting";
+        bigint_nodes.basis = "node-count-only; payloads are Rc-owned outside the arena accounting";
         let mut code = storage("bytecode_instructions", 0, 0, 1);
         code.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers and nested operands";
         let mut seen_code = HashSet::new();

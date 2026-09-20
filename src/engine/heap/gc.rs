@@ -6,15 +6,14 @@
 
 use super::Edges;
 use super::{
-    AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BytecodeConstant, ContextData,
+    AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BigIntId, BytecodeConstant, ContextData,
     ContextId, FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId,
     GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError,
     InternalCallableData, NativeErrorKind, Node, NodeData, ObjectData, ObjectId, ObjectPayload,
     PrimitiveKind, PrimitiveObjectData, PromiseCapabilityData, PromiseReaction, PropertySlot,
-    RawId, RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState,
-    RawModuleRecord, RawModuleRecordBody, RawValue, Shape, ShapeId, SlotState, StringId, BigIntId,
-    TypedArrayElementKind, VarRefData, VarRefId, VecDeque, WeakCollectionKey,
-    is_map_storable_value,
+    RawId, RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord,
+    RawModuleRecordBody, RawValue, Shape, ShapeId, SlotState, StringId, TypedArrayElementKind,
+    VarRefData, VarRefId, VecDeque, WeakCollectionKey, is_map_storable_value,
 };
 
 /// Resources finalized by a release, mutation, or collection operation.
@@ -2024,8 +2023,8 @@ fn internal_callable_atoms(internal: &InternalCallableData) -> Vec<AtomIdx> {
 pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx> + '_ {
     let payload = match &object.payload {
         ObjectPayload::Primitive(PrimitiveObjectData::Symbol(atom)) => {
-                vec![AtomIdx::from_raw(atom.raw())]
-            }
+            vec![AtomIdx::from_raw(atom.raw())]
+        }
         ObjectPayload::Primitive(
             PrimitiveObjectData::Number(_)
             | PrimitiveObjectData::String(_)
@@ -2133,13 +2132,11 @@ pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx>
         | ObjectPayload::NativeFunction { .. }
         | ObjectPayload::BytecodeFunction { .. } => Vec::new(),
     };
-    object_slot_atoms(object)
-        .chain(payload)
-        .chain(
-            object
-                .private_brand_home
-                .map(|atom| AtomIdx::from_raw(atom.raw())),
-        )
+    object_slot_atoms(object).chain(payload).chain(
+        object
+            .private_brand_home
+            .map(|atom| AtomIdx::from_raw(atom.raw())),
+    )
 }
 
 pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -> Vec<AtomIdx> {
@@ -2208,7 +2205,9 @@ fn context_atoms(context: &ContextData) -> impl Iterator<Item = AtomIdx> + '_ {
     )
 }
 
-pub(super) fn raw_module_record_atoms(record: &RawModuleRecord) -> impl Iterator<Item = AtomIdx> + '_ {
+pub(super) fn raw_module_record_atoms(
+    record: &RawModuleRecord,
+) -> impl Iterator<Item = AtomIdx> + '_ {
     let body = match &record.body {
         RawModuleRecordBody::Json { default_value } => raw_value_atom(default_value),
         RawModuleRecordBody::Parsing

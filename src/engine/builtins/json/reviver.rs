@@ -82,9 +82,31 @@ impl std::ops::DerefMut for ParseResume {
 }
 const _: () = assert!(std::mem::size_of::<ParseResume>() <= 8);
 pub(crate) struct ParseResumeState {
+    runtime: Runtime,
     pending_effect: ParseStepPending,
     state: State,
     phase: Phase,
+}
+impl Drop for ParseResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.string_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 enum Phase {
     Source(Value),
@@ -131,6 +153,7 @@ impl ParseStep {
         Ok(Self::request_string(source, {
             let phase = Phase::Source(reviver);
             let mut owner = Box::new(ParseResumeState {
+                runtime: runtime.clone(),
                 pending_effect: Default::default(),
                 phase: Phase::Read,
                 state: State {
@@ -170,7 +193,11 @@ impl ParseResumeState {
         }
         if self.frames.try_reserve(1).is_err() {
             return Ok(ParseStep::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(self.realm, NativeErrorKind::Internal, "out of memory")?,
+                runtime.new_native_error_jsvalue(
+                    self.realm,
+                    NativeErrorKind::Internal,
+                    "out of memory",
+                )?,
             )));
         }
         self.frames.push(Node {
@@ -221,14 +248,15 @@ impl ParseResumeState {
             return self.enter(runtime, object, key, record);
         }
         let receiver = runtime.into_jsvalue(Value::Object(node.holder.clone()))?;
-        let name = runtime.into_jsvalue(Value::String(
-            runtime
-                .0
-                .state
-                .borrow()
-                .atoms
-                .to_js_string(node.key.atom())?,
-        ))?;
+        // End the state borrow before the conversion: `into_jsvalue` allocates
+        // a string node and must re-borrow the runtime state.
+        let name = runtime
+            .0
+            .state
+            .borrow()
+            .atoms
+            .to_js_string(node.key.atom())?;
+        let name = runtime.into_jsvalue(Value::String(name))?;
         let context = node
             .context
             .clone()
@@ -236,7 +264,11 @@ impl ParseResumeState {
         let mut arguments = Vec::new();
         if arguments.try_reserve_exact(3).is_err() {
             return Ok(ParseStep::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(realm, NativeErrorKind::Internal, "out of memory")?,
+                runtime.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Internal,
+                    "out of memory",
+                )?,
             )));
         }
         arguments.push(name);
@@ -306,7 +338,7 @@ impl ParseResume {
                 return Ok(ParseStep::Complete(Completion::Throw(
                     runtime.into_jsvalue(value)?,
                 )));
-                                }
+            }
         };
         let Phase::Source(reviver) = std::mem::replace(&mut self.0.phase, Phase::Read) else {
             return Err(RuntimeError::Invariant(
@@ -332,7 +364,7 @@ impl ParseResume {
                     return Ok(ParseStep::Complete(Completion::Throw(
                         runtime.into_jsvalue(value)?,
                     )));
-                                }
+                }
             };
         let Some(root) = root else {
             return Ok(ParseStep::Complete(Completion::Return(
@@ -383,7 +415,7 @@ impl ParseResume {
                                 return Ok(ParseStep::Complete(Completion::Throw(
                                     runtime.into_jsvalue(value)?,
                                 )));
-                                }
+                            }
                         };
                     if array {
                         Ok(ParseStep::request_read(
@@ -433,15 +465,12 @@ impl ParseResume {
                     self.0.next(runtime)
                 }
             }
-            Phase::Length => Ok(ParseStep::request_number(
-                runtime.into_jsvalue(value)?,
-                {
-                    let phase = Phase::Number;
-                    let mut owner = self.0;
-                    owner.phase = phase;
-                    ParseResume(owner)
-                },
-            )),
+            Phase::Length => Ok(ParseStep::request_number(runtime.into_jsvalue(value)?, {
+                let phase = Phase::Number;
+                let mut owner = self.0;
+                owner.phase = phase;
+                ParseResume(owner)
+            })),
             Phase::Revived => {
                 let node = self
                     .0
@@ -497,7 +526,7 @@ impl ParseResume {
                 return Ok(ParseStep::Complete(Completion::Throw(
                     runtime.into_jsvalue(value)?,
                 )));
-                                }
+            }
         };
         self.0.top()?.children = Children::Array {
             index: 0,
@@ -535,7 +564,7 @@ impl ParseResume {
                 return Ok(ParseStep::Complete(Completion::Throw(
                     runtime.into_jsvalue(value)?,
                 )));
-                                }
+            }
         };
         match std::mem::replace(&mut self.0.phase, Phase::Read) {
             Phase::Enumerable {
@@ -576,7 +605,8 @@ fn finish(
                 let value = resume.take_string_value();
                 resume.string(
                     runtime,
-                    runtime.native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
+                    runtime
+                        .native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
                 )?
             }
             ParseStep::Number { mut resume } => {
@@ -713,9 +743,7 @@ mod ownership_tests {
             actual_arg_count: 2,
             readable: vec![
                 runtime
-                    .into_jsvalue(Value::String(JsString::from_static(
-                        "{\"a\":{},\"b\":{}}",
-                    )))
+                    .into_jsvalue(Value::String(JsString::from_static("{\"a\":{},\"b\":{}}")))
                     .unwrap(),
                 runtime.into_jsvalue(callback).unwrap(),
             ],
@@ -732,7 +760,9 @@ mod ownership_tests {
             panic!("expected payload");
         };
         let resident_owner = (&*resume.0) as *const ParseResumeState;
-        drop(arguments);
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
         let step = until_call(
             &runtime,
             context.realm,
@@ -748,7 +778,7 @@ mod ownership_tests {
         let receiver = resume.take_call_receiver();
         assert_eq!(resident_owner, (&*resume.0) as *const ParseResumeState);
         drop(callable);
-        drop(receiver);
+        runtime.release_jsvalue(receiver).unwrap();
         assert_eq!(
             runtime
                 .root_value(&arguments[0])
@@ -758,10 +788,13 @@ mod ownership_tests {
                 .to_utf8_lossy(),
             "a"
         );
-        let JsValue::Object(first_id) = arguments[1] else {
+        let JsValue::Object(first_id) = &arguments[1] else {
             panic!("expected first child");
         };
-        drop(arguments);
+        let first_id = *first_id;
+        for value in arguments {
+            runtime.release_jsvalue(value).unwrap();
+        }
         let step = until_call(
             &runtime,
             context.realm,
@@ -817,14 +850,20 @@ mod ownership_tests {
             callback_id,
         ];
         for id in ids {
-            assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+            assert!(
+                runtime.0.state.borrow().heap.object(id).is_ok(),
+                "pre-abandonment missing {id:?}"
+            );
         }
         drop(step);
         runtime.run_gc().unwrap();
-        for id in ids {
+        for (label, id) in ["first", "second", "root", "holder", "context", "callback"]
+            .into_iter()
+            .zip(ids)
+        {
             assert!(
                 runtime.0.state.borrow().heap.object(id).is_err(),
-                "abandoned reviver retained {id:?}"
+                "abandoned reviver retained {label}"
             );
         }
         drop(context);

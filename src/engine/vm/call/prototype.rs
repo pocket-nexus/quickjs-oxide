@@ -57,9 +57,9 @@ impl ProtoSourceResume {
         reply: Completion,
     ) -> Result<ProtoSourceStep, RuntimeError> {
         let result = match reply {
-            Completion::Throw(value) => NativeConversion::Throw(
-                runtime.root_and_release_jsvalue(value)?,
-            ),
+            Completion::Throw(value) => {
+                NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?)
+            }
             Completion::Return(JsValue::Object(prototype)) => {
                 NativeConversion::Value(ConstructorPrototypeSource::Explicit(
                     ObjectRef::from_owned_handle(runtime.clone(), prototype),

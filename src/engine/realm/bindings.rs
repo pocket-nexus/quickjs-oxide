@@ -25,7 +25,9 @@ impl Runtime {
             let lexical_shape = state.heap.shape(lexical.shape)?;
             let global = state.heap.object(context.global_object)?;
             let global_shape = state.heap.shape(global.shape)?;
-            let lexical_exists = lexical_shape.find(AtomIdx::from_raw(key.atom().raw())).is_some();
+            let lexical_exists = lexical_shape
+                .find(AtomIdx::from_raw(key.atom().raw()))
+                .is_some();
             let fixed_global_exists = global_shape
                 .find(AtomIdx::from_raw(key.atom().raw()))
                 .and_then(|index| global_shape.entries().get(index as usize))
@@ -52,9 +54,16 @@ impl Runtime {
             let lexical_shape = state.heap.shape(lexical.shape)?;
             let global = state.heap.object(context.global_object)?;
             let global_shape = state.heap.shape(global.shape)?;
-            if global_shape.find(AtomIdx::from_raw(key.atom().raw())).is_none() && !global.extensible {
+            if global_shape
+                .find(AtomIdx::from_raw(key.atom().raw()))
+                .is_none()
+                && !global.extensible
+            {
                 Some(ErrorKind::Type)
-            } else if lexical_shape.find(AtomIdx::from_raw(key.atom().raw())).is_some() {
+            } else if lexical_shape
+                .find(AtomIdx::from_raw(key.atom().raw()))
+                .is_some()
+            {
                 Some(ErrorKind::Syntax)
             } else {
                 None
@@ -112,7 +121,10 @@ impl Runtime {
                     };
                 if cannot_define {
                     Some(ErrorKind::Type)
-                } else if lexical_shape.find(AtomIdx::from_raw(key.atom().raw())).is_some() {
+                } else if lexical_shape
+                    .find(AtomIdx::from_raw(key.atom().raw()))
+                    .is_some()
+                {
                     Some(ErrorKind::Syntax)
                 } else {
                     None
@@ -259,16 +271,20 @@ impl Runtime {
                 let state = self.0.state.borrow();
                 let object = state.heap.object(global_object.object_id())?;
                 let shape = state.heap.shape(object.shape)?;
-                let index = shape.find(AtomIdx::from_raw(key.atom().raw())).ok_or(RuntimeError::Invariant(
-                    "global VarRef disappeared during lexical creation",
-                ))? as usize;
+                let index = shape.find(AtomIdx::from_raw(key.atom().raw())).ok_or(
+                    RuntimeError::Invariant("global VarRef disappeared during lexical creation"),
+                )? as usize;
                 let flags = shape.entries()[index].flags;
                 let value = state.heap.var_ref(root.id())?.value.clone();
                 (flags, value)
             };
             let value = self.root_raw_value(&value)?;
-            let replacement =
-                self.new_var_ref_rooted(value, false, !flags.writable, ClosureVariableKind::Normal)?;
+            let replacement = self.new_var_ref_rooted(
+                value,
+                false,
+                !flags.writable,
+                ClosureVariableKind::Normal,
+            )?;
             self.store_property_slot(
                 &global_object,
                 key,
@@ -420,9 +436,11 @@ impl Runtime {
             let state = self.0.state.borrow();
             let object = state.heap.object(global_object.object_id())?;
             let shape = state.heap.shape(object.shape)?;
-            let index = usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).ok_or(RuntimeError::Invariant(
-                "global function property disappeared after declaration creation",
-            ))?)
+            let index = usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).ok_or(
+                RuntimeError::Invariant(
+                    "global function property disappeared after declaration creation",
+                ),
+            )?)
             .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
             let flags = shape
                 .entries()

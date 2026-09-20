@@ -3,8 +3,8 @@ use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::PrimitiveKind,
     heap::ContextId,
-    object::PropertyKey,
     object::ObjectRef,
+    object::PropertyKey,
     value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
@@ -50,14 +50,9 @@ impl PrimitiveConstructorStep {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let argument = runtime.dup_jsvalue(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "primitive constructor argv was not padded",
-                ))?,
-        )?;
+        let argument = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("primitive constructor argv was not padded"),
+        )?)?;
         let NativeInvocation::Construct { new_target } = invocation else {
             return Err(RuntimeError::Invariant(
                 "primitive constructor requires constructor-or-function invocation",
@@ -67,12 +62,12 @@ impl PrimitiveConstructorStep {
         if matches!(kind, PrimitiveKind::Symbol | PrimitiveKind::BigInt)
             && !matches!(new_target_value, JsValue::Undefined)
         {
-            return Ok(Self::Complete(Completion::Throw(
-                runtime.into_jsvalue(runtime.new_not_constructor_error(
+            return Ok(Self::Complete(Completion::Throw(runtime.into_jsvalue(
+                runtime.new_not_constructor_error(
                     realm,
                     &runtime.root_and_release_jsvalue(new_target_value)?,
-                )?)?,
-            )));
+                )?,
+            )?)));
         }
         let resume = PrimitiveConstructorResume(Box::new(PrimitiveConstructorResumeState {
             pending_effect: PrimitiveConstructorStepPending::default(),
@@ -84,17 +79,17 @@ impl PrimitiveConstructorStep {
         }));
         match kind {
             PrimitiveKind::Boolean => {
-                resume.converted(runtime, JsValue::Bool(runtime.value_to_boolean_jsvalue(&argument)?))
+                let value = JsValue::Bool(runtime.value_to_boolean_jsvalue(&argument)?);
+                runtime.release_jsvalue(argument)?;
+                resume.converted(runtime, value)
             }
             PrimitiveKind::Number if arguments.actual_arg_count == 0 => {
                 resume.converted(runtime, JsValue::Int(0))
             }
-            PrimitiveKind::String if arguments.actual_arg_count == 0 => {
-                resume.converted(
-                    runtime,
-                    runtime.into_jsvalue(Value::String(JsString::from_static("")))?,
-                )
-            }
+            PrimitiveKind::String if arguments.actual_arg_count == 0 => resume.converted(
+                runtime,
+                runtime.into_jsvalue(Value::String(JsString::from_static("")))?,
+            ),
             PrimitiveKind::Symbol if matches!(argument, JsValue::Undefined) => {
                 let symbol = runtime.new_symbol(None)?;
                 Ok(Self::Complete(Completion::Return(
@@ -151,9 +146,7 @@ impl PrimitiveConstructorResume {
         let value = match self.0.kind {
             PrimitiveKind::Number => {
                 match runtime.number_constructor_from_primitive(self.0.realm, &value)? {
-                    NativeConversion::Value(value) => {
-                        runtime.into_jsvalue(Value::number(value))?
-                    }
+                    NativeConversion::Value(value) => runtime.into_jsvalue(Value::number(value))?,
                     NativeConversion::Throw(value) => {
                         return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
@@ -163,9 +156,7 @@ impl PrimitiveConstructorResume {
             }
             PrimitiveKind::BigInt => {
                 match runtime.bigint_constructor_from_primitive(self.0.realm, &value)? {
-                    NativeConversion::Value(value) => {
-                        runtime.into_jsvalue(Value::BigInt(value))?
-                    }
+                    NativeConversion::Value(value) => runtime.into_jsvalue(Value::BigInt(value))?,
                     NativeConversion::Throw(value) => {
                         return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
@@ -213,7 +204,9 @@ impl PrimitiveConstructorResume {
         value: JsValue,
     ) -> Result<PrimitiveConstructorStep, RuntimeError> {
         if matches!(self.0.new_target, JsValue::Undefined) {
-            return Ok(PrimitiveConstructorStep::Complete(Completion::Return(value)));
+            return Ok(PrimitiveConstructorStep::Complete(Completion::Return(
+                value,
+            )));
         }
         self.0.value = value;
         self.0.phase = Phase::Prototype;
@@ -236,17 +229,24 @@ impl PrimitiveConstructorResume {
         let result_value = match result {
             Completion::Return(value) => Some(value),
             Completion::Throw(value) => {
+                let new_target = std::mem::replace(&mut self.0.new_target, JsValue::Undefined);
+                runtime.release_jsvalue(new_target)?;
+                let primitive = std::mem::replace(&mut self.0.value, JsValue::Undefined);
+                runtime.release_jsvalue(primitive)?;
                 return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         let prototype = match result_value {
-            Some(JsValue::Object(id)) => ObjectRef::from_owned_handle(runtime.clone(), id),
+            Some(JsValue::Object(id)) => {
+                let new_target = std::mem::replace(&mut self.0.new_target, JsValue::Undefined);
+                runtime.release_jsvalue(new_target)?;
+                ObjectRef::from_owned_handle(runtime.clone(), id)
+            }
             other => {
                 if let Some(value) = other {
                     runtime.release_jsvalue(value)?;
                 }
-                let new_target =
-                    std::mem::replace(&mut self.0.new_target, JsValue::Undefined);
+                let new_target = std::mem::replace(&mut self.0.new_target, JsValue::Undefined);
                 let new_target = runtime.root_and_release_jsvalue(new_target)?;
                 let realm = match runtime.function_realm_from_value(self.0.realm, &new_target)? {
                     NativeConversion::Value(realm) => realm,
@@ -330,9 +330,7 @@ mod local_completion_tests {
             panic!("primitive constructor must complete");
         };
         let value = runtime.root_value(&value).unwrap();
-        assert!(
-            matches!(value, Value::String(value) if value == JsString::from_static("42"))
-        );
+        assert!(matches!(value, Value::String(value) if value == JsString::from_static("42")));
     }
 
     #[test]
@@ -360,7 +358,10 @@ struct PrimitiveConstructorStepPending {
     read_key: Option<PropertyKey>,
 }
 impl PrimitiveConstructorStep {
-    pub(crate) fn request_primitive(value: JsValue, mut resume: PrimitiveConstructorResume) -> Self {
+    pub(crate) fn request_primitive(
+        value: JsValue,
+        mut resume: PrimitiveConstructorResume,
+    ) -> Self {
         resume.0.pending_effect.primitive_value = Some(value);
         Self::Primitive { resume }
     }

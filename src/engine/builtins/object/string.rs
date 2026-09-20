@@ -84,10 +84,9 @@ impl ObjectStringStep {
                     JsValue::Null => return tag_string(runtime, JsString::from_static("Null")),
                     _ => {}
                 }
-                let object = match runtime.native_to_object(
-                    realm,
-                    runtime.root_and_release_jsvalue(this_value)?,
-                )? {
+                let object = match runtime
+                    .native_to_object(realm, runtime.root_and_release_jsvalue(this_value)?)?
+                {
                     NativeConversion::Value(object) => object,
                     NativeConversion::Throw(value) => {
                         return Ok(Self::Complete(Completion::Throw(

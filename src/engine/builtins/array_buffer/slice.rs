@@ -74,7 +74,9 @@ impl BufferSliceStep {
         let this_value = runtime.root_value(this_value)?;
         let source = match kind {
             BufferSliceKind::Array => runtime.array_buffer_slice_source(realm, this_value)?,
-            BufferSliceKind::Shared => runtime.shared_array_buffer_slice_source(realm, this_value)?,
+            BufferSliceKind::Shared => {
+                runtime.shared_array_buffer_slice_source(realm, this_value)?
+            }
         };
         let (source, length) = match source {
             NativeConversion::Value(value) => value,

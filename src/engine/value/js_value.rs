@@ -25,15 +25,18 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomIdx;
-use crate::engine::heap::{BigIntId, ObjectId, StringId};
 use crate::engine::heap::RawValue;
+use crate::engine::heap::{BigIntId, ObjectId, StringId};
 use crate::engine::value::Value;
 
 /// Engine-internal value: scalars inline, heap kinds as generational handles.
 ///
 /// See the module documentation for the ownership contract.  A `JsValue` is
 /// 16 bytes (compile-time asserted below), half the public [`Value`].
-#[derive(PartialEq)]
+///
+/// It deliberately does not derive `PartialEq`: handle identity is not value
+/// equality (two distinct string nodes can hold equal text), so equality must
+/// go through the heap-aware helpers instead.
 pub enum JsValue {
     Undefined,
     Null,
@@ -48,6 +51,27 @@ pub enum JsValue {
 
 const _: () = assert!(std::mem::size_of::<JsValue>() == 16);
 const _: () = assert!(std::mem::size_of::<AtomIdx>() == 4);
+
+#[cfg(test)]
+impl PartialEq for JsValue {
+    /// Test-only representation equality: scalars by value, heap kinds by
+    /// handle id. Production equality must go through the heap-aware helpers
+    /// (D2.6: id equality is not content equality), so this impl exists only
+    /// for unit tests that assert exact internal representations.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Undefined, Self::Undefined) | (Self::Null, Self::Null) => true,
+            (Self::Bool(left), Self::Bool(right)) => left == right,
+            (Self::Int(left), Self::Int(right)) => left == right,
+            (Self::Float(left), Self::Float(right)) => left == right,
+            (Self::String(left), Self::String(right)) => left == right,
+            (Self::BigInt(left), Self::BigInt(right)) => left == right,
+            (Self::Symbol(left), Self::Symbol(right)) => left == right,
+            (Self::Object(left), Self::Object(right)) => left == right,
+            _ => false,
+        }
+    }
+}
 
 impl JsValue {
     /// Representation-only `typeof` tag, matching [`Value::type_of`].
@@ -67,12 +91,16 @@ impl JsValue {
 
     /// Representation-only `Number` projection; never performs ToNumber.
     #[must_use]
-    pub(crate) fn as_number_repr(&self) -> Option<crate::engine::value::number::operations::Number> {
+    pub(crate) fn as_number_repr(
+        &self,
+    ) -> Option<crate::engine::value::number::operations::Number> {
         match self {
-            Self::Int(value) => Some(crate::engine::value::number::operations::Number::Int(*value)),
-            Self::Float(value) => {
-                Some(crate::engine::value::number::operations::Number::Float(*value))
-            }
+            Self::Int(value) => Some(crate::engine::value::number::operations::Number::Int(
+                *value,
+            )),
+            Self::Float(value) => Some(crate::engine::value::number::operations::Number::Float(
+                *value,
+            )),
             _ => None,
         }
     }
@@ -114,14 +142,6 @@ impl JsValue {
             Self::Symbol(index) => RawValue::Symbol(*index),
             Self::Object(id) => RawValue::Object(*id),
         }
-    }
-
-    /// Consume into the heap storage payload: the same handle ids, no
-    /// allocation. The payload carries the same edges; the caller decides
-    /// whether the store retains them or the edge was moved in.
-    #[must_use]
-    pub(crate) fn into_raw(self) -> RawValue {
-        self.as_raw()
     }
 
     /// Convert a heap storage payload into an internal value.
@@ -167,10 +187,16 @@ impl std::fmt::Debug for JsValue {
             Self::Null => formatter.write_str("JsValue::Null"),
             Self::Bool(value) => formatter.debug_tuple("JsValue::Bool").field(value).finish(),
             Self::Int(value) => formatter.debug_tuple("JsValue::Int").field(value).finish(),
-            Self::Float(value) => formatter.debug_tuple("JsValue::Float").field(value).finish(),
+            Self::Float(value) => formatter
+                .debug_tuple("JsValue::Float")
+                .field(value)
+                .finish(),
             Self::String(id) => formatter.debug_tuple("JsValue::String").field(id).finish(),
             Self::BigInt(id) => formatter.debug_tuple("JsValue::BigInt").field(id).finish(),
-            Self::Symbol(index) => formatter.debug_tuple("JsValue::Symbol").field(index).finish(),
+            Self::Symbol(index) => formatter
+                .debug_tuple("JsValue::Symbol")
+                .field(index)
+                .finish(),
             Self::Object(id) => formatter.debug_tuple("JsValue::Object").field(id).finish(),
         }
     }
@@ -213,11 +239,21 @@ impl Runtime {
                 JsValue::Symbol(index)
             }
             Value::String(string) => {
-                let id = self.0.state.borrow_mut().heap.allocate_string(string.clone())?;
+                let id = self
+                    .0
+                    .state
+                    .borrow_mut()
+                    .heap
+                    .allocate_string(string.clone())?;
                 JsValue::String(id)
             }
             Value::BigInt(bigint) => {
-                let id = self.0.state.borrow_mut().heap.allocate_bigint(bigint.clone())?;
+                let id = self
+                    .0
+                    .state
+                    .borrow_mut()
+                    .heap
+                    .allocate_bigint(bigint.clone())?;
                 JsValue::BigInt(id)
             }
         })
@@ -233,6 +269,8 @@ impl Runtime {
     ///
     /// Returns [`RuntimeError::WrongRuntime`] for a foreign object/symbol
     /// root, or a heap/atom error when a node cannot be allocated.
+    // `into_` names the consumed `Value` argument; the receiver is the runtime.
+    #[allow(clippy::wrong_self_convention)]
     pub(crate) fn into_jsvalue(&self, value: Value) -> Result<JsValue, RuntimeError> {
         Ok(match value {
             Value::Undefined => JsValue::Undefined,
@@ -350,10 +388,7 @@ impl Runtime {
     /// This is the consuming form of [`Runtime::root_value`] for sub-driver
     /// entry points whose callees consume public roots: the net edge count is
     /// unchanged and both sides' ownership is explicit.
-    pub(crate) fn root_and_release_jsvalue(
-        &self,
-        value: JsValue,
-    ) -> Result<Value, RuntimeError> {
+    pub(crate) fn root_and_release_jsvalue(&self, value: JsValue) -> Result<Value, RuntimeError> {
         let rooted = self.root_value(&value)?;
         self.release_jsvalue(value)?;
         Ok(rooted)
@@ -428,25 +463,49 @@ mod tests {
         let runtime = Runtime::new();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
-        let before = runtime.0.state.borrow().heap.object_strong_count(id).unwrap();
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
 
         let root = Value::Object(object);
         let internal = runtime.unroot_value(&root).unwrap();
         assert_eq!(
-            runtime.0.state.borrow().heap.object_strong_count(id).unwrap(),
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap(),
             before + 1
         );
 
         let dup = runtime.dup_jsvalue(&internal).unwrap();
         assert_eq!(
-            runtime.0.state.borrow().heap.object_strong_count(id).unwrap(),
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap(),
             before + 2
         );
 
         let rooted = runtime.root_value(&internal).unwrap();
         assert!(matches!(rooted, Value::Object(_)));
         assert_eq!(
-            runtime.0.state.borrow().heap.object_strong_count(id).unwrap(),
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap(),
             before + 3
         );
         drop(rooted);
@@ -457,7 +516,15 @@ mod tests {
         let _operation = runtime.operation();
         // The last owned edge is gone: the node was finalized and its slot
         // reclaimed, so the identity now reads as stale.
-        assert!(runtime.0.state.borrow().heap.object_strong_count(id).is_err());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .is_err()
+        );
     }
 
     #[test]
@@ -465,18 +532,38 @@ mod tests {
         let runtime = Runtime::new();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
-        let before = runtime.0.state.borrow().heap.object_strong_count(id).unwrap();
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
 
         let internal = runtime.into_jsvalue(Value::Object(object)).unwrap();
         assert_eq!(
-            runtime.0.state.borrow().heap.object_strong_count(id).unwrap(),
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap(),
             before
         );
 
         runtime.release_jsvalue(internal).unwrap();
         let _operation = runtime.operation();
         // The transferred edge was the only one; the node is reclaimed.
-        assert!(runtime.0.state.borrow().heap.object_strong_count(id).is_err());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .is_err()
+        );
     }
 
     #[test]

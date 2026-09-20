@@ -256,7 +256,11 @@ impl Runtime {
         self.validate_private_receiver(receiver, name)?;
         let state = self.0.state.borrow();
         let object = state.heap.object(receiver.object_id())?;
-        Ok(state.heap.shape(object.shape)?.find(AtomIdx::from_raw(name.atom().raw())).is_some())
+        Ok(state
+            .heap
+            .shape(object.shape)?
+            .find(AtomIdx::from_raw(name.atom().raw()))
+            .is_some())
     }
 
     /// Capture a private-name identity in its dedicated immutable lexical
@@ -601,7 +605,11 @@ impl Runtime {
         let duplicate = {
             let state = self.0.state.borrow();
             let object = state.heap.object(receiver_id)?;
-            state.heap.shape(object.shape)?.find(AtomIdx::from_raw(brand.raw())).is_some()
+            state
+                .heap
+                .shape(object.shape)?
+                .find(AtomIdx::from_raw(brand.raw()))
+                .is_some()
         };
         if duplicate {
             return Err(RuntimeError::Engine(Error::new(
@@ -652,7 +660,11 @@ impl Runtime {
         let brand = self.private_method_brand_atom(method, kind)?;
         let state = self.0.state.borrow();
         let object = state.heap.object(receiver.object_id())?;
-        Ok(state.heap.shape(object.shape)?.find(AtomIdx::from_raw(brand.raw())).is_some())
+        Ok(state
+            .heap
+            .shape(object.shape)?
+            .find(AtomIdx::from_raw(brand.raw()))
+            .is_some())
     }
 
     /// Validate that the method's HomeObject already owns a class-side brand.

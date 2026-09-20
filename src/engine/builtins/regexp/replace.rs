@@ -390,6 +390,7 @@ impl std::ops::DerefMut for RegExpReplaceResume {
 }
 const _: () = assert!(std::mem::size_of::<RegExpReplaceResume>() <= 8);
 pub(crate) struct RegExpReplaceResumeState {
+    runtime: Runtime,
     step_pending: RegExpReplaceStepPending,
     realm: ContextId,
     phase: ReplacePhase,
@@ -397,6 +398,30 @@ pub(crate) struct RegExpReplaceResumeState {
     result: Option<ResultCursor>,
     matched: Option<MatchCursor>,
     named: Option<NamedCursor>,
+}
+impl Drop for RegExpReplaceResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.step_pending.value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.step_pending.receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.step_pending.arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(value) = self.step_pending.regexp.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.step_pending.input.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 struct ReplaceState {
     regexp: ObjectRef,
@@ -503,22 +528,12 @@ impl RegExpReplaceStep {
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        let mut input = runtime.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "RegExp @@replace input argv was not padded",
-                ))?,
-        )?;
-        let mut replacement = runtime.root_value(
-            arguments
-                .readable
-                .get(1)
-                .ok_or(RuntimeError::Invariant(
-                    "RegExp @@replace replacement argv was not padded",
-                ))?,
-        )?;
+        let mut input = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("RegExp @@replace input argv was not padded"),
+        )?)?;
+        let mut replacement = runtime.root_value(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("RegExp @@replace replacement argv was not padded"),
+        )?)?;
         // Preserve the outer buffer reservation/error latch even when the
         // standard kernel subsequently uses its own second buffer.
         let output = ReplacementStringBuffer::new(0);
@@ -558,6 +573,7 @@ impl RegExpReplaceStep {
             "regexpreplace_resident_allocated",
         );
         RegExpReplaceResume(Box::new(RegExpReplaceResumeState {
+            runtime: runtime.clone(),
             step_pending: RegExpReplaceStepPending::default(),
             realm,
             phase: ReplacePhase::Input,
@@ -1043,7 +1059,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 let replacement = self
                     .0
@@ -1075,7 +1091,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 });
                 self.prepared(runtime)
             }
@@ -1089,7 +1105,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 self.0.state.global = flags.utf16_units().any(|unit| unit == u16::from(b'g'));
                 self.0.state.unicode = self.0.state.global
@@ -1140,7 +1156,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 if matched.is_empty() {
                     Ok(self.read(
@@ -1171,7 +1187,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 let next = advance_string_index(self.source(), current, self.0.state.unicode);
                 self.set_index(runtime, Value::number(next as f64), false)
@@ -1191,7 +1207,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 self.0
                     .matched
@@ -1219,7 +1235,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 self.0
                     .matched
@@ -1247,7 +1263,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 let state = self
                     .0
@@ -1280,7 +1296,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 self.capture(runtime, Value::String(capture))
             }
@@ -1339,7 +1355,7 @@ impl RegExpReplaceResume {
                                 return Ok(ReplaceAction::Complete(Completion::Throw(
                                     runtime.into_jsvalue(value)?,
                                 )));
-                }
+                            }
                         }
                     };
                     self.0.named = Some(NamedCursor {
@@ -1360,7 +1376,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 self.append_result(runtime, text)
             }
@@ -1386,7 +1402,7 @@ impl RegExpReplaceResume {
                         return Ok(ReplaceAction::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
-                }
+                    }
                 };
                 let named = self
                     .0
@@ -1599,8 +1615,7 @@ mod tests {
         ));
         // Consuming the already-selected intrinsic must not probe flags again.
         context.eval("Object.defineProperty(coldReplace, 'flags', { get() { throw 'repeated flags'; } });").unwrap();
-        let Completion::Return(value) =
-            finish_replace(&runtime, context.realm, step).unwrap()
+        let Completion::Return(value) = finish_replace(&runtime, context.realm, step).unwrap()
         else {
             panic!("standard replace did not return")
         };
@@ -1646,11 +1661,18 @@ mod tests {
         else {
             panic!("expected exec request")
         };
-        drop(resume.take_exec_regexp());
-        drop(resume.take_exec_input());
+        runtime.release_jsvalue(resume.take_exec_regexp()).unwrap();
+        runtime.release_jsvalue(resume.take_exec_input()).unwrap();
         let resident_address = &*resume.0 as *const RegExpReplaceResumeState;
-        drop(invocation);
-        drop(arguments);
+        {
+            let NativeInvocation::Call { this_value } = invocation else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(this_value).unwrap();
+            for value in arguments.readable {
+                runtime.release_jsvalue(value).unwrap();
+            }
+        }
         let Value::Object(result) = context.eval("({get length(){return 1;}})").unwrap() else {
             panic!("result object")
         };

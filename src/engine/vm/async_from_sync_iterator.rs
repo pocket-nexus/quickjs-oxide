@@ -202,6 +202,7 @@ impl Runtime {
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn new_async_from_sync_iterator(
         &self,
         realm: ContextId,
@@ -275,14 +276,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        FromSyncStep::start(
-            self,
-            realm,
-            NativeFunctionId::AsyncFromSyncIteratorResume(kind),
-            &invocation,
-            arguments,
-        )?
-        .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            FromSyncStep::start(
+                self,
+                realm,
+                NativeFunctionId::AsyncFromSyncIteratorResume(kind),
+                invocation,
+                arguments,
+            )?
+            .finish(self, realm)
+        })
     }
 
     pub(crate) fn call_async_from_sync_iterator_unwrap(
@@ -291,11 +294,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Async-from-Sync unwrap did not receive a call invocation",
             ));
         };
+        invocation.release(self)?;
         let active = self.active_function()?;
         let internal = self
             .0
@@ -332,14 +337,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        FromSyncStep::start(
-            self,
-            realm,
-            NativeFunctionId::AsyncFromSyncIteratorClose,
-            &invocation,
-            arguments,
-        )?
-        .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            FromSyncStep::start(
+                self,
+                realm,
+                NativeFunctionId::AsyncFromSyncIteratorClose,
+                invocation,
+                arguments,
+            )?
+            .finish(self, realm)
+        })
     }
 }
 

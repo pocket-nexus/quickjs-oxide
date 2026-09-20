@@ -9,8 +9,8 @@ use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
 #[cfg(test)]
 use crate::engine::value::JsString;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{
@@ -241,9 +241,7 @@ impl Runtime {
                     let mut bound_values = Vec::new();
                     bound_values
                         .try_reserve_exact(bound_arguments.len())
-                        .map_err(|_| {
-                            RuntimeError::Invariant("bound argument allocation failed")
-                        })?;
+                        .map_err(|_| RuntimeError::Invariant("bound argument allocation failed"))?;
                     for value in bound_arguments {
                         bound_values.push(self.root_and_release_jsvalue(value)?);
                     }
@@ -288,17 +286,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        super::function::invoke::finish(
-            self,
-            realm,
-            super::function::invoke::InvokeStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            super::function::invoke::finish(
                 self,
                 realm,
-                super::function::invoke::InvokeKind::Call,
-                &invocation,
-                arguments,
-            )?,
-        )
+                super::function::invoke::InvokeStep::start(
+                    self,
+                    realm,
+                    super::function::invoke::InvokeKind::Call,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     /// Validate the active native frame and adapt the public call shape to the
@@ -416,15 +416,13 @@ impl Runtime {
             ) => invocation,
             (
                 NativeCProto::Getter | NativeCProto::GetterMagic,
-                invocation @ (NativeInvocation::Call { .. }
-                | NativeInvocation::Construct { .. }),
+                invocation @ (NativeInvocation::Call { .. } | NativeInvocation::Construct { .. }),
             ) => NativeInvocation::Getter {
                 this_value: native_invocation_input(invocation),
             },
             (
                 NativeCProto::Setter | NativeCProto::SetterMagic,
-                invocation @ (NativeInvocation::Call { .. }
-                | NativeInvocation::Construct { .. }),
+                invocation @ (NativeInvocation::Call { .. } | NativeInvocation::Construct { .. }),
             ) => NativeInvocation::Setter {
                 this_value: native_invocation_input(invocation),
             },
@@ -626,11 +624,9 @@ impl Runtime {
             | NativeFunctionId::ConstructorProbe
             | NativeFunctionId::ConstructorOrFunctionProbe => {
                 if matches!(arguments.readable.first(), Some(JsValue::Bool(false))) {
-                    return Ok(Completion::Throw(
-                        self.unroot_value(&Value::String(JsString::from_static(
-                            "native probe throw",
-                        )))?,
-                    ));
+                    return Ok(Completion::Throw(self.unroot_value(&Value::String(
+                        JsString::from_static("native probe throw"),
+                    ))?));
                 }
                 if matches!(arguments.readable.first(), Some(JsValue::Bool(true))) {
                     return Err(RuntimeError::Invariant("native probe engine error"));
@@ -674,6 +670,21 @@ impl Runtime {
             )),
         }
     }
+    /// Run one handler that only borrows its invocation, then release the
+    /// owned invocation edge. A handler error keeps precedence over a release
+    /// error, and the edge is released on both the success and error paths.
+    pub(crate) fn dispatch_borrowed_invocation<T>(
+        &self,
+        invocation: NativeInvocation,
+        handler: impl FnOnce(&NativeInvocation) -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        let result = handler(&invocation);
+        match (result, invocation.release(self)) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
     pub(crate) fn dispatch_adapted_native_function(
         &self,
         callable: &crate::engine::object::CallableRef,
@@ -696,9 +707,10 @@ impl Runtime {
             NativeFunctionId::ArrayConstructor => {
                 self.call_array_constructor(realm, invocation, arguments)
             }
-            NativeFunctionId::ArrayIsArray => {
-                self.call_array_is_array(realm, &invocation, arguments)
-            }
+            NativeFunctionId::ArrayIsArray => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_array_is_array(realm, invocation, arguments)
+                }),
             NativeFunctionId::ArrayFrom => self.call_array_from(realm, invocation, arguments),
             NativeFunctionId::ArrayOf => self.call_array_of(realm, invocation, arguments),
             NativeFunctionId::ArraySpeciesGetter => self.call_array_species_getter(invocation),
@@ -762,9 +774,10 @@ impl Runtime {
             NativeFunctionId::ArrayPrototypeToSpliced => {
                 self.call_array_prototype_to_spliced(realm, invocation, arguments)
             }
-            NativeFunctionId::ArrayPrototypeIterator(kind) => {
-                self.call_array_prototype_iterator(realm, kind, &invocation)
-            }
+            NativeFunctionId::ArrayPrototypeIterator(kind) => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_array_prototype_iterator(realm, kind, invocation)
+                }),
             NativeFunctionId::ArrayIteratorNext => self.call_array_iterator_next(realm, invocation),
             NativeFunctionId::Map(kind) => self.call_map_native(realm, kind, invocation, arguments),
             NativeFunctionId::MapIteratorNext => self.call_map_iterator_next(realm, invocation),
@@ -776,11 +789,14 @@ impl Runtime {
             NativeFunctionId::WeakSet(kind) => {
                 self.call_weak_set_native(realm, kind, invocation, arguments)
             }
-            NativeFunctionId::WeakRef(kind) => {
-                self.call_weak_ref_native(realm, kind, &invocation, arguments)
-            }
+            NativeFunctionId::WeakRef(kind) => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_weak_ref_native(realm, kind, invocation, arguments)
+                }),
             NativeFunctionId::FinalizationRegistry(kind) => {
-                self.call_finalization_registry_native(realm, kind, &invocation, arguments)
+                self.dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_finalization_registry_native(realm, kind, invocation, arguments)
+                })
             }
             NativeFunctionId::ArrayBuffer(kind) => {
                 self.call_array_buffer_native(realm, kind, invocation, arguments)
@@ -842,9 +858,10 @@ impl Runtime {
             NativeFunctionId::DynamicImportHandler(kind) => {
                 self.call_dynamic_import_handler(realm, kind, invocation, arguments)
             }
-            NativeFunctionId::ThrowTypeError => {
-                self.call_throw_type_error(realm, &invocation, arguments)
-            }
+            NativeFunctionId::ThrowTypeError => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_throw_type_error(realm, invocation, arguments)
+                }),
             NativeFunctionId::FunctionPrototypeCall => {
                 self.call_function_prototype_call(realm, invocation, arguments)
             }
@@ -860,12 +877,14 @@ impl Runtime {
             NativeFunctionId::FunctionPrototypeHasInstance => {
                 self.call_function_prototype_has_instance(realm, invocation, arguments)
             }
-            NativeFunctionId::FunctionPrototypeFileName => {
-                self.call_function_prototype_file_name(&invocation)
-            }
-            NativeFunctionId::FunctionPrototypePosition(selector) => {
-                self.call_function_prototype_position(&invocation, selector)
-            }
+            NativeFunctionId::FunctionPrototypeFileName => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_function_prototype_file_name(invocation)
+                }),
+            NativeFunctionId::FunctionPrototypePosition(selector) => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_function_prototype_position(invocation, selector)
+                }),
             NativeFunctionId::ObjectConstructor => {
                 self.call_object_constructor(realm, invocation, arguments)
             }
@@ -964,19 +983,29 @@ impl Runtime {
                 self.call_string_code_point_range(realm, invocation, arguments)
             }
             #[cfg(feature = "test262-host")]
-            NativeFunctionId::Test262DetachArrayBuffer => {
-                self.call_test262_detach_array_buffer(&invocation, arguments)
-            }
+            NativeFunctionId::Test262DetachArrayBuffer => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_test262_detach_array_buffer(invocation, arguments)
+                }),
             #[cfg(feature = "test262-host")]
             NativeFunctionId::Test262EvalScript => {
                 self.call_test262_eval_script(realm, invocation, arguments)
             }
             #[cfg(feature = "test262-host")]
-            NativeFunctionId::Test262CreateRealm => self.call_test262_create_realm(&invocation),
+            NativeFunctionId::Test262CreateRealm => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_test262_create_realm(invocation)
+                }),
             #[cfg(feature = "test262-host")]
-            NativeFunctionId::Test262IsHtmlDda => self.call_test262_is_html_dda(&invocation),
+            NativeFunctionId::Test262IsHtmlDda => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_test262_is_html_dda(invocation)
+                }),
             #[cfg(feature = "test262-host")]
-            NativeFunctionId::Test262Gc => self.call_test262_gc(&invocation),
+            NativeFunctionId::Test262Gc => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_test262_gc(invocation)
+                }),
             #[cfg(feature = "test262-host")]
             NativeFunctionId::Test262Agent(kind) => {
                 self.call_test262_agent(realm, kind, invocation, arguments)
@@ -987,9 +1016,10 @@ impl Runtime {
             NativeFunctionId::PrimitivePrototypeToString(kind) => {
                 self.call_primitive_prototype_to_string(realm, kind, invocation, arguments)
             }
-            NativeFunctionId::PrimitivePrototypeValueOf(kind) => {
-                self.call_primitive_prototype_value_of(realm, kind, &invocation)
-            }
+            NativeFunctionId::PrimitivePrototypeValueOf(kind) => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_primitive_prototype_value_of(realm, kind, invocation)
+                }),
             NativeFunctionId::StringPrototypeCharAt(selector) => {
                 self.call_string_prototype_char_at(realm, selector, invocation, arguments)
             }
@@ -1036,7 +1066,10 @@ impl Runtime {
                 self.call_math_binary(realm, kind, invocation, arguments)
             }
             NativeFunctionId::MathHypot => self.call_math_hypot(realm, invocation, arguments),
-            NativeFunctionId::MathRandom => self.call_math_random(realm, &invocation),
+            NativeFunctionId::MathRandom => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_math_random(realm, invocation)
+                }),
             NativeFunctionId::MathImul => self.call_math_imul(realm, invocation, arguments),
             NativeFunctionId::MathClz32 => self.call_math_clz32(realm, invocation, arguments),
             NativeFunctionId::MathSumPrecise => {
@@ -1100,12 +1133,14 @@ impl Runtime {
             NativeFunctionId::IteratorConcatReturn => {
                 self.call_iterator_concat_return(realm, invocation)
             }
-            NativeFunctionId::IteratorPrototypeIterator => {
-                self.call_iterator_prototype_iterator(&invocation)
-            }
-            NativeFunctionId::IteratorPrototypeToStringTagGetter => {
-                self.call_iterator_prototype_to_string_tag_getter(&invocation)
-            }
+            NativeFunctionId::IteratorPrototypeIterator => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_iterator_prototype_iterator(invocation)
+                }),
+            NativeFunctionId::IteratorPrototypeToStringTagGetter => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_iterator_prototype_to_string_tag_getter(invocation)
+                }),
             NativeFunctionId::IteratorPrototypeToStringTagSetter => {
                 self.call_iterator_prototype_to_string_tag_setter(realm, invocation, arguments)
             }
@@ -1118,12 +1153,14 @@ impl Runtime {
             NativeFunctionId::RegExpStringIteratorNext => {
                 self.call_regexp_string_iterator_next(realm, invocation)
             }
-            NativeFunctionId::SymbolRegistry(kind) => {
-                self.call_symbol_registry(realm, kind, &invocation, arguments)
-            }
-            NativeFunctionId::SymbolPrototypeDescription => {
-                self.call_symbol_prototype_description(realm, &invocation)
-            }
+            NativeFunctionId::SymbolRegistry(kind) => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_symbol_registry(realm, kind, invocation, arguments)
+                }),
+            NativeFunctionId::SymbolPrototypeDescription => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_symbol_prototype_description(realm, invocation)
+                }),
             NativeFunctionId::BigIntAsN(kind) => {
                 self.call_bigint_as_n(realm, kind, invocation, arguments)
             }
@@ -1137,9 +1174,10 @@ impl Runtime {
             NativeFunctionId::GlobalUriCodec(kind) => {
                 self.call_global_uri_codec(realm, kind, invocation, arguments)
             }
-            NativeFunctionId::NumberPredicate(kind) => {
-                self.call_number_predicate(kind, &invocation, arguments)
-            }
+            NativeFunctionId::NumberPredicate(kind) => self
+                .dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.call_number_predicate(kind, invocation, arguments)
+                }),
             NativeFunctionId::NumberPrototypeFormat(kind) => {
                 self.call_number_prototype_format(realm, kind, invocation, arguments)
             }
@@ -1164,11 +1202,9 @@ impl Runtime {
             | NativeFunctionId::ConstructorProbe
             | NativeFunctionId::ConstructorOrFunctionProbe => {
                 if matches!(arguments.readable.first(), Some(JsValue::Bool(false))) {
-                    return Ok(Completion::Throw(
-                        self.unroot_value(&Value::String(JsString::from_static(
-                            "native probe throw",
-                        )))?,
-                    ));
+                    return Ok(Completion::Throw(self.unroot_value(&Value::String(
+                        JsString::from_static("native probe throw"),
+                    ))?));
                 }
                 if matches!(arguments.readable.first(), Some(JsValue::Bool(true))) {
                     return Err(RuntimeError::Invariant("native probe engine error"));

@@ -33,8 +33,7 @@ impl ObjectConstructorStep {
             ));
         };
         let active = runtime.active_function()?;
-        let is_active =
-            matches!(new_target, JsValue::Object(id) if *id == active.object_id());
+        let is_active = matches!(new_target, JsValue::Object(id) if *id == active.object_id());
         if !matches!(new_target, JsValue::Undefined) && !is_active {
             return Ok(Self::Prototype {
                 new_target: runtime.dup_jsvalue(new_target)?,
@@ -55,9 +54,7 @@ impl ObjectConstructorStep {
                 NativeConversion::Value(object) => {
                     Completion::Return(JsValue::Object(object.into_handle()))
                 }
-                NativeConversion::Throw(value) => {
-                    Completion::Throw(runtime.into_jsvalue(value)?)
-                }
+                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
             },
         ))
     }

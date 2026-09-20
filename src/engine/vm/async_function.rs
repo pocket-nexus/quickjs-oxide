@@ -178,7 +178,7 @@ impl Runtime {
     fn store_async_function_activation(
         &self,
         state_object: &ObjectRef,
-        activation: &EncodedVmActivation,
+        activation: &mut EncodedVmActivation,
     ) -> Result<(), RuntimeError> {
         let atoms = {
             let state = self.0.state.borrow();
@@ -235,11 +235,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<AsyncStep, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "AsyncFunction resume callback received a constructor invocation",
             ));
         };
+        invocation.release(self)?;
         let argument = arguments
             .readable
             .first()

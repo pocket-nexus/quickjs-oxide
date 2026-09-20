@@ -156,16 +156,17 @@ impl NextResume {
         let realm = self.0.realm;
         match self.0.phase {
             NextPhase::Result => {
-                let JsValue::Object(id) = value else {
-                    return Ok(NextStep::Complete(ObjectIteratorStep::Throw(
-                        runtime.new_native_error_jsvalue(
-                            realm,
-                            NativeErrorKind::Type,
-                            "iterator must return an object",
-                        )?,
-                    )));
+                let JsValue::Object(id) = &value else {
+                    let error = runtime.new_native_error_jsvalue(
+                        realm,
+                        NativeErrorKind::Type,
+                        "iterator must return an object",
+                    )?;
+                    runtime.release_jsvalue(value)?;
+                    return Ok(NextStep::Complete(ObjectIteratorStep::Throw(error)));
                 };
-                let object = ObjectRef::from_borrowed_handle(runtime.clone(), id)?;
+                let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
+                runtime.release_jsvalue(value)?;
                 Ok(NextStep::Read {
                     object: object.clone(),
                     key: runtime
@@ -177,7 +178,9 @@ impl NextResume {
                 })
             }
             NextPhase::Done(object) => {
-                if runtime.value_to_boolean_jsvalue(&value)? {
+                let done = runtime.value_to_boolean_jsvalue(&value)?;
+                runtime.release_jsvalue(value)?;
+                if done {
                     return Ok(NextStep::Complete(ObjectIteratorStep::Done));
                 }
                 Ok(NextStep::Read {
@@ -295,25 +298,25 @@ impl CloseResume {
         let value = match reply {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(CloseStep::Complete(if preserving {
-                    self.0.completion
-                } else {
-                    Completion::Throw(value)
-                }));
+                if preserving {
+                    runtime.release_jsvalue(value)?;
+                    return Ok(CloseStep::Complete(self.0.completion));
+                }
+                return Ok(CloseStep::Complete(Completion::Throw(value)));
             }
         };
         if self.0.called {
-            return Ok(CloseStep::Complete(
-                if preserving || matches!(value, JsValue::Object(_)) {
-                    self.0.completion
-                } else {
-                    Completion::Throw(runtime.new_native_error_jsvalue(
-                        self.0.realm,
-                        NativeErrorKind::Type,
-                        "not an object",
-                    )?)
-                },
-            ));
+            let valid = preserving || matches!(value, JsValue::Object(_));
+            runtime.release_jsvalue(value)?;
+            return Ok(CloseStep::Complete(if valid {
+                self.0.completion
+            } else {
+                Completion::Throw(runtime.new_native_error_jsvalue(
+                    self.0.realm,
+                    NativeErrorKind::Type,
+                    "not an object",
+                )?)
+            }));
         }
         if matches!(value, JsValue::Undefined | JsValue::Null) {
             return Ok(CloseStep::Complete(self.0.completion));
@@ -325,6 +328,7 @@ impl CloseResume {
             }
             _ => None,
         };
+        runtime.release_jsvalue(value)?;
         let Some(callable) = callable else {
             return Ok(CloseStep::Complete(if preserving {
                 self.0.completion

@@ -111,14 +111,13 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let iterator = context.eval("globalThis.readCount=0;Array.prototype.values.call({get length(){readCount++;return 1;},0:4})").unwrap();
-        let step = crate::engine::builtins::ArrayNextStep::start(
-            &runtime,
-            context.realm,
-            &NativeInvocation::Call {
-                this_value: runtime.unroot_value(&iterator).unwrap(),
-            },
-        )
-        .unwrap();
+        let invocation = NativeInvocation::Call {
+            this_value: runtime.unroot_value(&iterator).unwrap(),
+        };
+        let step =
+            crate::engine::builtins::ArrayNextStep::start(&runtime, context.realm, &invocation)
+                .unwrap();
+        invocation.release(&runtime).unwrap();
         let mut delivered = None;
         assert!(
             deliver(step, &mut |step| {

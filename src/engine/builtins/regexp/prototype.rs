@@ -224,18 +224,16 @@ impl Runtime {
         realm: ContextId,
         this_value: &Value,
     ) -> Result<Completion, RuntimeError> {
-        finish_presentation(
-            self,
-            realm,
-            RegExpPresentationStep::start(
+        let invocation = NativeInvocation::Getter {
+            this_value: self.unroot_value(this_value)?,
+        };
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish_presentation(
                 self,
                 realm,
-                RegExpNativeKind::Flags,
-                &NativeInvocation::Getter {
-                    this_value: self.unroot_value(this_value)?,
-                },
-            )?,
-        )
+                RegExpPresentationStep::start(self, realm, RegExpNativeKind::Flags, invocation)?,
+            )
+        })
     }
 }
 
@@ -381,9 +379,11 @@ impl RegExpPresentationStep {
             ));
         }
         if let RegExpNativeKind::Flag(flag) = kind {
-            return Ok(Self::Complete(
-                runtime.call_regexp_flag(realm, &this_value, flag)?,
-            ));
+            return Ok(Self::Complete(runtime.call_regexp_flag(
+                realm,
+                &this_value,
+                flag,
+            )?));
         }
         let Value::Object(object) = this_value else {
             return Ok(Self::Complete(Completion::Throw(
@@ -495,9 +495,7 @@ impl RegExpPresentationResume {
                 let index = index + 1;
                 if index == FLAG_PROPERTIES.len() {
                     return Ok(RegExpPresentationStep::Complete(Completion::Return(
-                        runtime.into_jsvalue(Value::String(JsString::try_from_utf8(
-                            &output,
-                        )?))?,
+                        runtime.into_jsvalue(Value::String(JsString::try_from_utf8(&output)?))?,
                     )));
                 }
                 Ok(RegExpPresentationStep::Read {

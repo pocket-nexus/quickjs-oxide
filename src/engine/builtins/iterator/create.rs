@@ -69,14 +69,9 @@ impl CreateStep {
                 )));
             }
         };
-        let argument = runtime.dup_jsvalue(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "Iterator helper argument was not padded",
-                ))?,
-        )?;
+        let argument = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Iterator helper argument was not padded"),
+        )?)?;
         let mut resume = CreateResume(Box::new(CreateResumeState {
             realm,
             source,
@@ -94,7 +89,7 @@ impl CreateStep {
         if let NativeConversion::Throw(value) =
             runtime.iterator_callable_value(realm, &argument_value)?
         {
-            return Ok(resume.close(runtime, value)?);
+            return resume.close(runtime, value);
         }
         resume.callback = argument_value;
         resume.read(runtime)
@@ -121,7 +116,7 @@ impl CreateResume {
     ) -> Result<CreateStep, RuntimeError> {
         let number = match reply {
             NativeConversion::Value(number) => number,
-            NativeConversion::Throw(value) => return Ok(self.close(runtime, value)?),
+            NativeConversion::Throw(value) => return self.close(runtime, value),
         };
         let count = if number == f64::INFINITY {
             (1_i64 << 53) - 1
@@ -143,7 +138,11 @@ impl CreateResume {
         _reply: Completion,
     ) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Complete(Completion::Throw(
-            runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Range, "must be positive")?,
+            runtime.new_native_error_jsvalue(
+                self.0.realm,
+                NativeErrorKind::Range,
+                "must be positive",
+            )?,
         )))
     }
     pub(crate) fn resume(
@@ -152,19 +151,21 @@ impl CreateResume {
         reply: Completion,
     ) -> Result<CreateStep, RuntimeError> {
         match reply {
-            Completion::Throw(value) => self.close(runtime, runtime.root_and_release_jsvalue(value)?),
+            Completion::Throw(value) => {
+                self.close(runtime, runtime.root_and_release_jsvalue(value)?)
+            }
             Completion::Return(next) => {
                 let next = runtime.root_and_release_jsvalue(next)?;
-                Ok(CreateStep::Complete(Completion::Return(runtime.into_jsvalue(
-                    Value::Object(runtime.new_iterator_helper(
+                Ok(CreateStep::Complete(Completion::Return(
+                    runtime.into_jsvalue(Value::Object(runtime.new_iterator_helper(
                         self.0.realm,
                         &self.0.source,
                         &next,
                         &self.0.callback,
                         self.0.count,
                         self.0.kind,
-                    )?),
-                )?)))
+                    )?))?,
+                )))
             }
         }
     }

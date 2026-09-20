@@ -1,5 +1,5 @@
 //! Mechanical adapters for object builtins domain requests.
-use super::{DirectCallTarget, JsValue, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step};
 
 impl From<crate::engine::builtins::BuiltinPrototypeStep> for Step {
     fn from(step: crate::engine::builtins::BuiltinPrototypeStep) -> Self {

@@ -339,11 +339,13 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        constructor::finish(
-            self,
-            realm,
-            constructor::ConstructorStep::start(self, realm, &invocation)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            constructor::finish(
+                self,
+                realm,
+                constructor::ConstructorStep::start(self, realm, invocation)?,
+            )
+        })
     }
 
     pub(crate) fn call_iterator_constructor_accessor(
@@ -353,11 +355,15 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        constructor::finish(
-            self,
-            realm,
-            constructor::ConstructorStep::accessor(self, realm, callable, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            constructor::finish(
+                self,
+                realm,
+                constructor::ConstructorStep::accessor(
+                    self, realm, callable, invocation, arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_iterator_from(
@@ -366,11 +372,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        from::finish(
-            self,
-            realm,
-            from::FromStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            from::finish(
+                self,
+                realm,
+                from::FromStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 
     pub(crate) fn iterator_callable_value(
@@ -408,7 +416,10 @@ impl Runtime {
         // The conversions allocated string/BigInt nodes with producer edges;
         // the object retains its own copy edges, so the producer edges are
         // released on every exit below.
-        let conversion_edges = [raw_source.conversion_node_edge(), raw_next.conversion_node_edge()];
+        let conversion_edges = [
+            raw_source.conversion_node_edge(),
+            raw_next.conversion_node_edge(),
+        ];
         let mut state = self.0.state.borrow_mut();
         let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
         let retained_atoms = match state.retain_raw_value_atoms([&raw_source, &raw_next]) {
@@ -456,11 +467,13 @@ impl Runtime {
         kind: IteratorResumeKind,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        wrap::finish(
-            self,
-            realm,
-            wrap::WrapStep::start(self, realm, kind, &invocation)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            wrap::finish(
+                self,
+                realm,
+                wrap::WrapStep::start(self, realm, kind, invocation)?,
+            )
+        })
     }
 
     pub(crate) fn call_iterator_create_helper(
@@ -470,11 +483,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        create::finish(
-            self,
-            realm,
-            create::CreateStep::start(self, realm, kind, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            create::finish(
+                self,
+                realm,
+                create::CreateStep::start(self, realm, kind, invocation, arguments)?,
+            )
+        })
     }
 
     fn new_iterator_helper(
@@ -493,7 +508,10 @@ impl Runtime {
         // The conversions allocated string/BigInt nodes with producer edges;
         // the object retains its own copy edges, so the producer edges are
         // released on every exit below.
-        let conversion_edges = [raw_next.conversion_node_edge(), raw_callback.conversion_node_edge()];
+        let conversion_edges = [
+            raw_next.conversion_node_edge(),
+            raw_callback.conversion_node_edge(),
+        ];
         let data = IteratorHelperData {
             source: source.object_id(),
             next: raw_next,
@@ -544,17 +562,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        consume::finish(
-            self,
-            realm,
-            consume::ConsumeStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            consume::finish(
                 self,
                 realm,
-                consume::ConsumeKind::Predicate(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                consume::ConsumeStep::start(
+                    self,
+                    realm,
+                    consume::ConsumeKind::Predicate(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_iterator_reduce(
@@ -563,17 +583,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        consume::finish(
-            self,
-            realm,
-            consume::ConsumeStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            consume::finish(
                 self,
                 realm,
-                consume::ConsumeKind::Reduce,
-                &invocation,
-                arguments,
-            )?,
-        )
+                consume::ConsumeStep::start(
+                    self,
+                    realm,
+                    consume::ConsumeKind::Reduce,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_iterator_to_array(
@@ -581,20 +603,22 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        consume::finish(
-            self,
-            realm,
-            consume::ConsumeStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            consume::finish(
                 self,
                 realm,
-                consume::ConsumeKind::Array,
-                &invocation,
-                &NativeArguments {
-                    actual_arg_count: 0,
-                    readable: Vec::new(),
-                },
-            )?,
-        )
+                consume::ConsumeStep::start(
+                    self,
+                    realm,
+                    consume::ConsumeKind::Array,
+                    invocation,
+                    &NativeArguments {
+                        actual_arg_count: 0,
+                        readable: Vec::new(),
+                    },
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_iterator_helper_resume(
@@ -603,11 +627,13 @@ impl Runtime {
         mode: IteratorResumeKind,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        helper::finish(
-            self,
-            realm,
-            helper::HelperResumeStep::start(self, realm, mode, &invocation)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            helper::finish(
+                self,
+                realm,
+                helper::HelperResumeStep::start(self, realm, mode, invocation)?,
+            )
+        })
     }
 
     fn set_helper_count(&self, helper: &ObjectRef, count: i64) -> Result<(), RuntimeError> {

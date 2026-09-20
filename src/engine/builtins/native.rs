@@ -1213,7 +1213,6 @@ pub enum NativeFunctionId {
     ActiveFrameProbe,
 }
 
-
 /// Typed equivalent of QuickJS's magic selector shared by the dynamic
 /// Function-family constructors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

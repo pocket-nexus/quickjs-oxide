@@ -50,7 +50,6 @@ impl Runtime {
         skip_first_frame: bool,
         explicit_location: Option<ExplicitBacktraceLocation>,
     ) -> Result<(), RuntimeError> {
-
         let stack_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Stack)?;
         let needs_backtrace = {
             let state = self.0.state.borrow();

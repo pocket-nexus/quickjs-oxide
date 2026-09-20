@@ -1,5 +1,5 @@
 //! Mechanical adapters for function domain requests.
-use super::{DirectCallTarget, JsValue, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step};
 
 impl From<crate::engine::builtins::ArgumentsStep> for Step {
     fn from(step: crate::engine::builtins::ArgumentsStep) -> Self {

@@ -283,6 +283,8 @@ impl AsyncGeneratorResume {
             "async generator operation has no generator",
         ))
     }
+    // Consume the suspended resume box here, keeping its payload out of the step transport.
+    #[allow(clippy::boxed_local)]
     fn finish(mut self: Box<Self>) -> Result<AsyncGeneratorStep, RuntimeError> {
         self.cleanup = Cleanup::None;
         let output = std::mem::replace(&mut self.output, JsValue::Undefined);
@@ -485,7 +487,10 @@ impl AsyncGeneratorResume {
                 };
                 self.settle(settlement, true)
             }
-            VmRunOutcome::Suspend { value, activation } => match activation.kind {
+            VmRunOutcome::Suspend {
+                value,
+                mut activation,
+            } => match activation.kind {
                 VmSuspendKind::Yield | VmSuspendKind::AsyncYieldStar => {
                     let state = if activation.kind == VmSuspendKind::Yield {
                         AsyncGeneratorState::SuspendedYield
@@ -496,7 +501,7 @@ impl AsyncGeneratorResume {
                         self.generator()?,
                         state,
                         None,
-                        &activation,
+                        &mut activation,
                     )?;
                     self.cleanup = Cleanup::None;
                     // Keep the encoded owner alive through the raw-edge publication.
@@ -545,7 +550,7 @@ impl AsyncGeneratorResume {
                     self.finish()
                 }
             }
-            Phase::Await(activation) => {
+            Phase::Await(mut activation) => {
                 let promise = match completion {
                     Completion::Return(value) => {
                         let Value::Object(promise) =
@@ -593,7 +598,7 @@ impl AsyncGeneratorResume {
                     generator,
                     AsyncGeneratorState::Executing,
                     Some(self.realm),
-                    &activation,
+                    &mut activation,
                 )?;
                 self.runtime.perform_promise_then_without_capability(
                     self.realm, &promise, &fulfill, &reject,

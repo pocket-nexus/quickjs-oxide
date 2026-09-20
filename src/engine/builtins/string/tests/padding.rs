@@ -133,10 +133,7 @@ fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
                     context.realm,
                     StringPadKind::Start,
                     NativeInvocation::Call {
-                        this_value: js(
-                            &runtime,
-                            Value::String(JsString::from_static("a")),
-                        ),
+                        this_value: js(&runtime, Value::String(JsString::from_static("a")),),
                     },
                     &NativeArguments {
                         actual_arg_count: 2,
@@ -161,10 +158,7 @@ fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
                     context.realm,
                     StringPadKind::End,
                     NativeInvocation::Call {
-                        this_value: js(
-                            &runtime,
-                            Value::String(JsString::from_static("a")),
-                        ),
+                        this_value: js(&runtime, Value::String(JsString::from_static("a")),),
                     },
                     &NativeArguments {
                         actual_arg_count: 1,

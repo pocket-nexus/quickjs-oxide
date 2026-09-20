@@ -184,7 +184,7 @@ impl TypedCreateStep {
         Ok(Self::request_prototype(
             runtime.dup_jsvalue(new_target)?,
             TypedCreateResume(Box::new(TypedCreateResumeState {
-                pending_effect: TypedCreateStepPending::default(),
+                pending_effect: TypedCreateStepPending::new(runtime.clone()),
                 realm,
                 phase: Phase::Prototype { element, purpose },
             })),
@@ -214,7 +214,11 @@ impl TypedCreateStep {
             };
             let Some(callable) = callable else {
                 return Ok(Self::Complete(Completion::Throw(
-                    runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+                    runtime.new_native_error_jsvalue(
+                        realm,
+                        NativeErrorKind::Type,
+                        "not a function",
+                    )?,
                 )));
             };
             Some(callable)
@@ -296,7 +300,7 @@ impl TypedCreateResume {
         Ok(TypedCreateStep::request_method(
             runtime.into_jsvalue(source.clone())?,
             Self(Box::new(TypedCreateResumeState {
-                pending_effect: TypedCreateStepPending::default(),
+                pending_effect: TypedCreateStepPending::new(runtime.clone()),
                 realm,
                 phase: Phase::Iterator { source, factory },
             })),
@@ -330,7 +334,7 @@ impl TypedCreateResume {
                 method,
                 element,
                 Self(Box::new(TypedCreateResumeState {
-                    pending_effect: TypedCreateStepPending::default(),
+                    pending_effect: TypedCreateStepPending::new(runtime.clone()),
                     realm: self.0.realm,
                     phase: Phase::Collect(factory),
                 })),
@@ -348,7 +352,7 @@ impl TypedCreateResume {
                 JsValue::Object(source.clone().into_handle()),
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 Self(Box::new(TypedCreateResumeState {
-                    pending_effect: TypedCreateStepPending::default(),
+                    pending_effect: TypedCreateStepPending::new(runtime.clone()),
                     realm: self.0.realm,
                     phase: Phase::Length { source, factory },
                 })),
@@ -378,22 +382,23 @@ impl TypedCreateResume {
             }
         };
         match purpose {
-            ProtoPurpose::Length(length) => complete_object(runtime, runtime.new_typed_array_for_length(
-                self.0.realm,
-                &prototype,
-                element,
-                length,
-            )?),
+            ProtoPurpose::Length(length) => complete_object(
+                runtime,
+                runtime.new_typed_array_for_length(self.0.realm, &prototype, element, length)?,
+            ),
             ProtoPurpose::Typed { source, length } => {
                 let snapshot = runtime.typed_array_snapshot(&source)?;
-                complete_object(runtime, runtime.typed_array_copy_into_new(
-                    self.0.realm,
-                    &prototype,
-                    element,
-                    &source,
-                    snapshot,
-                    length,
-                )?)
+                complete_object(
+                    runtime,
+                    runtime.typed_array_copy_into_new(
+                        self.0.realm,
+                        &prototype,
+                        element,
+                        &source,
+                        snapshot,
+                        length,
+                    )?,
+                )
             }
             ProtoPurpose::Object(source) => Self::iterator(
                 runtime,
@@ -411,7 +416,7 @@ impl TypedCreateResume {
                 length,
             } => {
                 let resume = Self(Box::new(TypedCreateResumeState {
-                    pending_effect: TypedCreateStepPending::default(),
+                    pending_effect: TypedCreateStepPending::new(runtime.clone()),
                     realm: self.0.realm,
                     phase: Phase::Offset {
                         prototype,
@@ -490,14 +495,18 @@ impl TypedCreateResume {
             Allocation::Static(constructor) => {
                 if !matches!(constructor, Value::Object(_)) {
                     return Ok(TypedCreateStep::Complete(Completion::Throw(
-                        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+                        runtime.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not a function",
+                        )?,
                     )));
                 }
                 Ok(TypedCreateStep::request_create(
                     runtime.into_jsvalue(constructor.clone())?,
                     length,
                     Self(Box::new(TypedCreateResumeState {
-                        pending_effect: TypedCreateStepPending::default(),
+                        pending_effect: TypedCreateStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Create {
                             source,
@@ -603,7 +612,7 @@ impl TypedCreateResume {
                     Ok(TypedCreateStep::request_primitive(
                         runtime.into_jsvalue(value)?,
                         Self(Box::new(TypedCreateResumeState {
-                            pending_effect: TypedCreateStepPending::default(),
+                            pending_effect: TypedCreateStepPending::new(runtime.clone()),
                             realm: self.0.realm,
                             phase: Phase::BufferLength {
                                 prototype,
@@ -614,14 +623,17 @@ impl TypedCreateResume {
                         })),
                     ))
                 } else {
-                    complete_object(runtime, runtime.new_typed_array_constructor_view_from_coerced(
-                        self.0.realm,
-                        &prototype,
-                        element,
-                        &source,
-                        offset,
-                        None,
-                    )?)
+                    complete_object(
+                        runtime,
+                        runtime.new_typed_array_constructor_view_from_coerced(
+                            self.0.realm,
+                            &prototype,
+                            element,
+                            &source,
+                            offset,
+                            None,
+                        )?,
+                    )
                 }
             }
             Phase::BufferLength {
@@ -638,19 +650,22 @@ impl TypedCreateResume {
                         )));
                     }
                 };
-                complete_object(runtime, runtime.new_typed_array_constructor_view_from_coerced(
-                    self.0.realm,
-                    &prototype,
-                    element,
-                    &source,
-                    offset,
-                    Some(length),
-                )?)
+                complete_object(
+                    runtime,
+                    runtime.new_typed_array_constructor_view_from_coerced(
+                        self.0.realm,
+                        &prototype,
+                        element,
+                        &source,
+                        offset,
+                        Some(length),
+                    )?,
+                )
             }
             Phase::Length { source, factory } => Ok(TypedCreateStep::request_primitive(
                 runtime.into_jsvalue(value)?,
                 Self(Box::new(TypedCreateResumeState {
-                    pending_effect: TypedCreateStepPending::default(),
+                    pending_effect: TypedCreateStepPending::new(runtime.clone()),
                     realm: self.0.realm,
                     phase: Phase::LengthPrimitive { source, factory },
                 })),
@@ -692,7 +707,7 @@ impl Population {
                 JsValue::Object(source.clone().into_handle()),
                 runtime.property_key_for_index(self.index)?,
                 TypedCreateResume(Box::new(TypedCreateResumeState {
-                    pending_effect: TypedCreateStepPending::default(),
+                    pending_effect: TypedCreateStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Index(self),
                 })),
@@ -727,7 +742,7 @@ impl Population {
                     .map(|value| runtime.into_jsvalue(value))
                     .collect::<Result<Vec<_>, _>>()?,
                 TypedCreateResume(Box::new(TypedCreateResumeState {
-                    pending_effect: TypedCreateStepPending::default(),
+                    pending_effect: TypedCreateStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Mapped(self),
                 })),
@@ -747,7 +762,7 @@ impl Population {
             element,
             runtime.into_jsvalue(value)?,
             TypedCreateResume(Box::new(TypedCreateResumeState {
-                pending_effect: TypedCreateStepPending::default(),
+                pending_effect: TypedCreateStepPending::new(runtime.clone()),
                 realm,
                 phase: Phase::Element(self),
             })),
@@ -790,7 +805,8 @@ pub(super) fn finish(
                 }
             }
             TypedCreateStep::Prototype { mut resume } => {
-                let new_target = runtime.root_and_release_jsvalue(resume.take_prototype_new_target())?;
+                let new_target =
+                    runtime.root_and_release_jsvalue(resume.take_prototype_new_target())?;
                 resume.prototype(
                     runtime,
                     finish_source(
@@ -919,8 +935,8 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct TypedCreateStepPending {
+    runtime: Runtime,
     primitive_value: Option<JsValue>,
     prototype_new_target: Option<JsValue>,
     read_receiver: Option<JsValue>,
@@ -936,6 +952,55 @@ struct TypedCreateStepPending {
     call_arguments: Option<Vec<JsValue>>,
     element_element: Option<TypedArrayElementKind>,
     element_value: Option<JsValue>,
+}
+impl TypedCreateStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            primitive_value: None,
+            prototype_new_target: None,
+            read_receiver: None,
+            read_key: None,
+            method_source: None,
+            collect_source: None,
+            collect_method: None,
+            collect_element: None,
+            create_constructor: None,
+            create_length: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            element_element: None,
+            element_value: None,
+        }
+    }
+}
+impl Drop for TypedCreateStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow.
+    fn drop(&mut self) {
+        for value in [
+            self.primitive_value.take(),
+            self.prototype_new_target.take(),
+            self.read_receiver.take(),
+            self.method_source.take(),
+            self.collect_source.take(),
+            self.create_constructor.take(),
+            self.call_receiver.take(),
+            self.element_value.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl TypedCreateStep {
     pub(crate) fn request_primitive(value: JsValue, mut resume: TypedCreateResume) -> Self {

@@ -33,8 +33,14 @@ impl GlobalKind {
 }
 pub(crate) enum GlobalStep {
     Complete(Completion),
-    String { value: JsValue, resume: GlobalResume },
-    Number { value: JsValue, resume: GlobalResume },
+    String {
+        value: JsValue,
+        resume: GlobalResume,
+    },
+    Number {
+        value: JsValue,
+        resume: GlobalResume,
+    },
 }
 pub(crate) struct GlobalResume(Box<GlobalResumeState>);
 impl std::ops::Deref for GlobalResume {

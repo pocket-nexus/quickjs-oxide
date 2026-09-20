@@ -19,8 +19,8 @@ use super::frame::FrameId;
 use super::run::RunExit;
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 
 #[inline(never)]
 pub(super) fn pure(
@@ -309,7 +309,7 @@ pub(super) fn close_captured(
 
 #[inline(never)]
 pub(super) fn catch(
-    _runtime: &Runtime,
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
     exit: RunExit,
@@ -361,7 +361,10 @@ pub(super) fn catch(
             prepare_captured_reuse(frame, &execution.slots)?;
             let value = execution.slots.pop(&mut frame.window)?;
             while execution.slots.depth(&frame.window) > stack_depth {
-                drop(execution.slots.pop(&mut frame.window)?);
+                let discarded = execution.slots.pop(&mut frame.window)?;
+                runtime
+                    .release_jsvalue(discarded)
+                    .map_err(runtime_error_to_vm_error)?;
             }
             execution.slots.push(&mut frame.window, value)?;
         }

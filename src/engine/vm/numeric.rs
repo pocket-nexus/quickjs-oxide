@@ -1,7 +1,7 @@
 pub(super) mod operation;
 use crate::engine::{
-    api::{Error, ErrorKind},
     api::runtime::Runtime,
+    api::{Error, ErrorKind},
     heap::{BigIntId, StringId},
     value::{
         JsString, JsValue,
@@ -96,9 +96,14 @@ pub(in crate::engine::vm) fn to_number_jsvalue(
         }
         JsValue::Int(value) => f64::from(*value),
         JsValue::Float(value) => *value,
-        JsValue::String(id) => crate::engine::value::string_to_number(&string_payload(runtime, *id)?),
+        JsValue::String(id) => {
+            crate::engine::value::string_to_number(&string_payload(runtime, *id)?)
+        }
         JsValue::BigInt(_) => {
-            return Err(Error::new(ErrorKind::Type, "cannot convert bigint to number"));
+            return Err(Error::new(
+                ErrorKind::Type,
+                "cannot convert bigint to number",
+            ));
         }
         JsValue::Symbol(_) => {
             return Err(Error::new(
@@ -115,18 +120,38 @@ pub(in crate::engine::vm) fn to_number_jsvalue(
 }
 
 /// Primitive `ToString` payload for internal values (no object conversion).
-pub(crate) fn to_js_string_jsvalue(
-    runtime: &Runtime,
-    value: &JsValue,
-) -> Result<JsString, Error> {
+pub(crate) fn to_js_string_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<JsString, Error> {
     Ok(match value {
         JsValue::String(id) => string_payload(runtime, *id)?,
         JsValue::Undefined => JsString::from_static("undefined"),
         JsValue::Null => JsString::from_static("null"),
         JsValue::Bool(true) => JsString::from_static("true"),
         JsValue::Bool(false) => JsString::from_static("false"),
-        value => crate::engine::value::Value::number(to_number_jsvalue(runtime, value)?)
-            .to_js_string()?,
+        JsValue::Int(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
+        JsValue::Float(value) => {
+            JsString::from_owned_latin1(crate::engine::value::number_to_string(*value).into_bytes())
+        }
+        JsValue::BigInt(id) => {
+            let bigint = bigint_payload(runtime, *id)?;
+            if bigint.exceeds_allocation_limit() {
+                return Err(Error::new(
+                    ErrorKind::Range,
+                    "BigInt is too large to allocate",
+                ));
+            }
+            JsString::from_owned_latin1(bigint.to_string().into_bytes())
+        }
+        JsValue::Symbol(_) => {
+            return Err(Error::new(
+                ErrorKind::Type,
+                "cannot convert symbol to string",
+            ));
+        }
+        JsValue::Object(_) => {
+            return Err(Error::internal(
+                "object ToPrimitive requires an execution context",
+            ));
+        }
     })
 }
 
@@ -165,7 +190,9 @@ pub(in crate::engine::vm) fn number_to_uint32(value: f64) -> u32 {
 
 /// Compact a numeric payload into the internal number representation.
 pub(in crate::engine::vm) fn jsvalue_number(value: f64) -> JsValue {
-    jsvalue_from_number(crate::engine::value::number::operations::Number::compact(value))
+    jsvalue_from_number(crate::engine::value::number::operations::Number::compact(
+        value,
+    ))
 }
 
 /// Project an already-compacted numeric representation without recompacting.
@@ -231,18 +258,28 @@ pub(in crate::engine::vm) fn add_primitives(
     left: JsValue,
     right: JsValue,
 ) -> Result<JsValue, Error> {
-    if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
-        let left = match left {
-            JsValue::String(id) => string_payload(runtime, id)?,
-            value => to_js_string_jsvalue(runtime, &value)?,
+    let result = if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
+        let left = match &left {
+            JsValue::String(id) => string_payload(runtime, *id)?,
+            value => to_js_string_jsvalue(runtime, value)?,
         };
-        let right = match right {
-            JsValue::String(id) => string_payload(runtime, id)?,
-            value => to_js_string_jsvalue(runtime, &value)?,
+        let right = match &right {
+            JsValue::String(id) => string_payload(runtime, *id)?,
+            value => to_js_string_jsvalue(runtime, value)?,
         };
-        return allocate_string_jsvalue(runtime, left.concat_owned(&right)?);
-    }
-    add_primitives_ref(runtime, &left, &right)
+        allocate_string_jsvalue(runtime, left.concat_owned(&right)?)
+    } else {
+        add_primitives_ref(runtime, &left, &right)
+    };
+    release_primitive_operand(runtime, left)?;
+    release_primitive_operand(runtime, right)?;
+    result
+}
+
+fn release_primitive_operand(runtime: &Runtime, value: JsValue) -> Result<(), Error> {
+    runtime
+        .release_jsvalue(value)
+        .map_err(|error| Error::internal(error.to_string()))
 }
 
 /// Same primitive kernel with owners retained by the caller. No user code can

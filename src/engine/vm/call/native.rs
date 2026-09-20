@@ -17,8 +17,9 @@ pub(in crate::engine::vm) struct PreparedNativeCall {
 }
 
 pub(in crate::engine::vm) struct NativeActivation {
+    runtime: Runtime,
     // Retire the non-owning diagnostic descriptor before callable roots on unwind.
-    active_frame: ActiveFrameGuard,
+    active_frame: Option<ActiveFrameGuard>,
     pub callable: CallableRef,
     pub realm: ContextId,
     pub target: NativeFunctionId,
@@ -163,6 +164,7 @@ impl Runtime {
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
         Ok(PreparedNativeCall {
             activation: NativeActivation {
+                runtime: self.clone(),
                 callable,
                 realm,
                 target,
@@ -171,7 +173,7 @@ impl Runtime {
                     actual_arg_count: 0,
                     readable: Vec::new(),
                 },
-                active_frame,
+                active_frame: Some(active_frame),
             },
             invocation,
         })
@@ -280,8 +282,8 @@ impl Runtime {
         #[cfg(feature = "profiling")]
         {
             use crate::engine::api::profiling::{
-                record_call_buffer_capacity, record_call_buffer_copies,
-                record_call_buffer_initialized, record_call_buffer_observed,
+                record_call_buffer_capacity, record_call_buffer_initialized,
+                record_call_buffer_js_value_copies, record_call_buffer_observed,
             };
             record_call_buffer_capacity(
                 "native.readable",
@@ -290,7 +292,10 @@ impl Runtime {
                 size_of::<Value>(),
             );
             if _copied {
-                record_call_buffer_copies("native.readable", &readable[..actual_arg_count]);
+                record_call_buffer_js_value_copies(
+                    "native.readable",
+                    &readable[..actual_arg_count],
+                );
             } else {
                 record_call_buffer_observed("native.incoming_argv", _before, size_of::<Value>());
                 // Moving Vec ownership into NativeArguments does not move elements.
@@ -316,22 +321,39 @@ impl Runtime {
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
         Ok(PreparedNativeCall {
             activation: NativeActivation {
+                runtime: self.clone(),
                 callable: callable_input.into_owned(),
                 realm,
                 target,
                 mode,
                 arguments,
-                active_frame,
+                active_frame: Some(active_frame),
             },
             invocation,
         })
     }
 }
 
+impl Drop for NativeActivation {
+    /// Release every readable argument edge still owned when the activation is
+    /// abandoned without `finish`. `finish` takes the buffer first, so a
+    /// completed activation drops an empty vector. Releases are defer-safe and
+    /// never run JavaScript.
+    fn drop(&mut self) {
+        let runtime = self.runtime.clone();
+        for value in self.arguments.readable.drain(..) {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
+}
+
 impl NativeActivation {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
-        self.active_frame.mark_native_continuation()
+        self.active_frame
+            .as_mut()
+            .expect("native activation lost its active frame")
+            .mark_native_continuation()
     }
 
     /// Allocate JS engine errors while this native frame and its selected realm
@@ -362,11 +384,11 @@ impl NativeActivation {
     }
 
     fn finish_reusing_with<T>(
-        self,
+        mut self,
         result: Result<T, RuntimeError>,
         throw: impl FnOnce(JsValue) -> T,
     ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
-        let runtime = &self.active_frame.runtime;
+        let runtime = self.runtime.clone();
         let result = (|| match result {
             Err(RuntimeError::Engine(error))
                 if NativeErrorKind::from_javascript_error(error.kind()).is_some() =>
@@ -379,12 +401,20 @@ impl NativeActivation {
             }
             result => result,
         })();
-        let result = self.active_frame.finish().and(result);
-        // Keep the original field cleanup order: the active-frame roots and
-        // callable owner are released before readable argument owners.
-        drop(self.callable);
-        let mut readable = self.arguments.readable;
-        readable.clear();
+        let result = self
+            .active_frame
+            .take()
+            .expect("native activation lost its active frame")
+            .finish()
+            .and(result);
+        // Keep the original field cleanup order: the callable owner is released
+        // before the readable argument owners. Taking the buffer first leaves
+        // the activation Drop with nothing to release.
+        let mut readable = std::mem::take(&mut self.arguments.readable);
+        drop(self);
+        for value in readable.drain(..) {
+            let _ = runtime.release_jsvalue(value);
+        }
         (result, readable)
     }
 }
@@ -793,7 +823,7 @@ mod tests {
         ];
         let mut errors = Vec::new();
         for owned in [false, true] {
-            let prepared = if owned {
+            let rejected = if owned {
                 runtime.prepare_native_invocation_owned(
                     callable.clone(),
                     realm,
@@ -817,18 +847,8 @@ mod tests {
                     &arguments,
                     NativeInvokeMode::Ordinary,
                 )
-            }
-            .unwrap();
-            let result = runtime
-                .dispatch_native_function(
-                    &prepared.activation.callable,
-                    target,
-                    realm,
-                    prepared.invocation,
-                    &prepared.activation.arguments,
-                )
-                .map(NativeInvokeOutcome::Completion);
-            let error = match prepared.activation.finish(result) {
+            };
+            let error = match rejected {
                 Err(error) => error,
                 Ok(_) => panic!("foreign argument accepted"),
             };

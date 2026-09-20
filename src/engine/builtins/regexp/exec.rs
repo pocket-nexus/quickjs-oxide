@@ -208,14 +208,9 @@ impl RegExpExecStep {
                 "RegExp exec/test did not receive a generic invocation",
             ));
         };
-        let input = runtime.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "RegExp exec/test input argv was not padded",
-                ))?,
-        )?;
+        let input = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("RegExp exec/test input argv was not padded"),
+        )?)?;
         let this_value = runtime.root_value(this_value)?;
         match kind {
             RegExpNativeKind::Exec => RegExpExecResume(Box::new(RegExpExecResumeState {
@@ -227,9 +222,7 @@ impl RegExpExecStep {
                 phase: ExecPhase::Input,
             }))
             .builtin(runtime),
-            RegExpNativeKind::Test => {
-                Self::abstract_start(runtime, realm, this_value, input, true)
-            }
+            RegExpNativeKind::Test => Self::abstract_start(runtime, realm, this_value, input, true),
             _ => Err(RuntimeError::Invariant(
                 "non-exec RegExp selector reached exec dispatch",
             )),
@@ -292,11 +285,13 @@ impl RegExpExecResume {
         if !matches!(&self.0.regexp, Value::Object(_))
             || runtime.genuine_regexp(&self.0.regexp)?.is_none()
         {
-            return Ok(self.complete(Completion::Throw(runtime.new_native_error_jsvalue(
-                self.0.realm,
-                NativeErrorKind::Type,
-                "RegExp object expected",
-            )?)));
+            return Ok(
+                self.complete(Completion::Throw(runtime.new_native_error_jsvalue(
+                    self.0.realm,
+                    NativeErrorKind::Type,
+                    "RegExp object expected",
+                )?)),
+            );
         }
         let input = self.0.input.clone();
         let resume = {
@@ -334,11 +329,13 @@ impl RegExpExecResume {
                 };
                 let mut arguments = Vec::new();
                 if arguments.try_reserve_exact(1).is_err() {
-                    return Ok(self.complete(Completion::Throw(runtime.new_native_error_jsvalue(
-                        self.0.realm,
-                        NativeErrorKind::Internal,
-                        "out of memory",
-                    )?)));
+                    return Ok(self.complete(Completion::Throw(
+                        runtime.new_native_error_jsvalue(
+                            self.0.realm,
+                            NativeErrorKind::Internal,
+                            "out of memory",
+                        )?,
+                    )));
                 }
                 arguments.push(runtime.unroot_value(&self.0.input)?);
                 Ok(RegExpExecStep::make_call(
@@ -356,11 +353,13 @@ impl RegExpExecResume {
                 if matches!(value, Value::Object(_) | Value::Null) {
                     Ok(self.complete(Completion::Return(runtime.into_jsvalue(value)?)))
                 } else {
-                    Ok(self.complete(Completion::Throw(runtime.new_native_error_jsvalue(
-                        self.0.realm,
-                        NativeErrorKind::Type,
-                        "RegExp exec method must return an object or null",
-                    )?)))
+                    Ok(
+                        self.complete(Completion::Throw(runtime.new_native_error_jsvalue(
+                            self.0.realm,
+                            NativeErrorKind::Type,
+                            "RegExp exec method must return an object or null",
+                        )?)),
+                    )
                 }
             }
             ExecPhase::Input => {
@@ -372,9 +371,7 @@ impl RegExpExecResume {
                 let input = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(input) => input,
                     NativeConversion::Throw(value) => {
-                        return Ok(self.complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(self.complete(Completion::Throw(runtime.into_jsvalue(value)?)));
                     }
                 };
                 let Value::Object(object) = &self.0.regexp else {

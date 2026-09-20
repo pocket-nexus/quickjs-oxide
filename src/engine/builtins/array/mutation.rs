@@ -134,7 +134,14 @@ impl MutationStep {
                 .map(|value| runtime.root_value(value))
                 .collect::<Result<Vec<_>, _>>()?
         };
-        Self::start_arguments(runtime, realm, kind, runtime.root_value(this_value)?, values, inline)
+        Self::start_arguments(
+            runtime,
+            realm,
+            kind,
+            runtime.root_value(this_value)?,
+            values,
+            inline,
+        )
     }
     pub(crate) fn start_values(
         runtime: &Runtime,
@@ -757,16 +764,11 @@ mod tests {
         ] {
             let array = runtime.new_array(context.realm).unwrap();
             let invocation = NativeInvocation::Call {
-                this_value: runtime
-                    .unroot_value(&Value::Object(array.clone()))
-                    .unwrap(),
+                this_value: runtime.unroot_value(&Value::Object(array.clone())).unwrap(),
             };
             let arguments = NativeArguments {
                 actual_arg_count: 1,
-                readable: vec![
-                    runtime.unroot_value(&value).unwrap(),
-                    JsValue::Undefined,
-                ],
+                readable: vec![runtime.unroot_value(&value).unwrap(), JsValue::Undefined],
             };
             let step = MutationStep::start(
                 &runtime,
@@ -785,16 +787,16 @@ mod tests {
             else {
                 panic!("element read threw")
             };
-            assert!(runtime
-                .root_value(&actual)
-                .unwrap()
-                .same_quickjs_representation(&value));
+            assert!(
+                runtime
+                    .root_value(&actual)
+                    .unwrap()
+                    .same_quickjs_representation(&value)
+            );
         }
         let array = runtime.new_array(context.realm).unwrap();
         let invocation = NativeInvocation::Call {
-            this_value: runtime
-                .unroot_value(&Value::Object(array))
-                .unwrap(),
+            this_value: runtime.unroot_value(&Value::Object(array)).unwrap(),
         };
         let arguments = NativeArguments {
             actual_arg_count: 0,

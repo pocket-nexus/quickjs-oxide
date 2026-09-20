@@ -166,7 +166,7 @@ fn decode_generator_frame_binding(
 pub(crate) struct EncodedVmActivation {
     pub(crate) kind: VmSuspendKind,
     pub(crate) data: GeneratorActivationData,
-    _entry: super::frame::FrameEntry,
+    _entry: EncodedActivationEntry,
 }
 
 impl EncodedVmActivation {
@@ -210,7 +210,7 @@ impl EncodedVmActivation {
     /// Release the caller-owned string/BigInt producer edge carried by every
     /// boundary-converted raw value, once the heap owner has retained its own
     /// copies (or immediately when the activation is never stored).
-    pub(crate) fn release_conversion_edges(&self, runtime: &Runtime) {
+    pub(crate) fn release_conversion_edges(&mut self, runtime: &Runtime) {
         let vm = &self.data.vm;
         for value in vm
             .stack
@@ -227,6 +227,35 @@ impl EncodedVmActivation {
                 runtime.release_converted_value_edge(value);
             }
         }
+    }
+}
+
+/// Owns the source frame entry across heap publication and releases the
+/// remaining caller-owned object/symbol/binding edges when the activation is
+/// finally abandoned. Direct String/BigInt edges are the boundary-conversion
+/// producer edges already released through `release_conversion_edges`, so the
+/// storage release skips them. The drop runs after any state borrow has been
+/// released, keeping releases nothrow.
+struct EncodedActivationEntry {
+    runtime: Runtime,
+    entry: Option<super::frame::FrameEntry>,
+}
+
+impl Drop for EncodedActivationEntry {
+    fn drop(&mut self) {
+        let Some(mut entry) = self.entry.take() else {
+            return;
+        };
+        let storage = std::mem::replace(
+            &mut entry.storage,
+            super::stack::FrameStorage {
+                original_arguments: Vec::new(),
+                parameters: Vec::new(),
+                locals: Vec::new(),
+                operands: Vec::new(),
+            },
+        );
+        super::stack::release_unconverted_frame_storage(&self.runtime, storage);
     }
 }
 
@@ -393,7 +422,10 @@ pub(super) fn freeze_entry(
             locals,
             reusable_captured_locals: entry.cold.reusable_captured_locals.clone(),
         },
-        _entry: entry,
+        _entry: EncodedActivationEntry {
+            runtime: runtime.clone(),
+            entry: Some(entry),
+        },
     })
 }
 
@@ -458,45 +490,69 @@ pub(crate) fn thaw(
             "resumable closure slot count disagrees with bytecode metadata",
         ));
     }
-    let original_arguments = data
-        .original_arguments
-        .iter()
-        .map(|value| decode_raw_jsvalue(&runtime, value))
-        .collect::<Result<Vec<_>, _>>()?;
-    let arguments = data
-        .arguments
-        .iter()
-        .enumerate()
-        .map(|(index, binding)| {
-            decode_generator_frame_binding(&runtime, binding, argument_definitions.get(index))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let locals = data
-        .locals
-        .iter()
-        .zip(local_definitions.iter())
-        .map(|(binding, definition)| {
-            decode_generator_frame_binding(&runtime, binding, Some(definition))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let callee_global = ObjectRef::from_borrowed_handle(runtime.clone(), data.vm.callee_global)?;
-    let operands = data
-        .vm
-        .stack
-        .iter()
-        .map(|value| decode_raw_jsvalue(&runtime, value))
-        .collect::<Result<Vec<_>, _>>()?;
-    if kind != VmSuspendKind::Initial && !matches!(operands.last(), Some(JsValue::Undefined)) {
+    // Decode incrementally into an owning guard: a later rejection releases
+    // every root already reconstructed instead of leaking the partial frame.
+    let mut roots = super::stack::FrameStorageGuard::new(
+        &runtime,
+        super::stack::FrameStorage {
+            original_arguments: Vec::new(),
+            parameters: Vec::new(),
+            locals: Vec::new(),
+            operands: Vec::new(),
+        },
+    );
+    {
+        let storage = roots.storage_mut();
+        for value in &data.original_arguments {
+            storage
+                .original_arguments
+                .push(decode_raw_jsvalue(&runtime, value)?);
+        }
+        for (index, binding) in data.arguments.iter().enumerate() {
+            storage.parameters.push(decode_generator_frame_binding(
+                &runtime,
+                binding,
+                argument_definitions.get(index),
+            )?);
+        }
+        for (binding, definition) in data.locals.iter().zip(local_definitions.iter()) {
+            storage.locals.push(decode_generator_frame_binding(
+                &runtime,
+                binding,
+                Some(definition),
+            )?);
+        }
+        for value in &data.vm.stack {
+            storage.operands.push(decode_raw_jsvalue(&runtime, value)?);
+        }
+    }
+    if kind != VmSuspendKind::Initial
+        && !matches!(
+            roots.storage_mut().operands.last(),
+            Some(JsValue::Undefined)
+        )
+    {
         return Err(RuntimeError::Invariant(
             "dormant suspension output was not cleared",
         ));
     }
-    let input = super::CallInput::new(
-        &runtime,
-        decode_raw_jsvalue(&runtime, &data.vm.this_value)?,
-        decode_raw_jsvalue(&runtime, &data.vm.new_target)?,
-        Some(callee_global),
-    );
+    let this_value = decode_raw_jsvalue(&runtime, &data.vm.this_value)?;
+    let new_target = match decode_raw_jsvalue(&runtime, &data.vm.new_target) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = runtime.release_jsvalue(this_value);
+            return Err(error);
+        }
+    };
+    let input = super::CallInput::new(&runtime, this_value, new_target, Some(callee_global));
+    let normalized_this = data
+        .vm
+        .normalized_this
+        .as_ref()
+        .map(|value| runtime.root_raw_value(value))
+        .transpose()?;
+    let storage = roots.take();
     let mut entry = super::frame::FrameEntry {
         initialize_bindings: false,
         property_generation: 0,
@@ -513,20 +569,10 @@ pub(crate) fn thaw(
             reusable_captured_locals: data.reusable_captured_locals.clone(),
             input: input.into(),
         }),
-        storage: super::stack::FrameStorage {
-            original_arguments,
-            parameters: arguments,
-            locals,
-            operands,
-        },
+        storage,
     };
     entry.cold.regions = data.vm.regions.clone();
-    entry.cold.normalized_this = data
-        .vm
-        .normalized_this
-        .as_ref()
-        .map(|value| runtime.root_raw_value(value))
-        .transpose()?;
+    entry.cold.normalized_this = normalized_this;
     Ok(RootedVmActivation {
         entry,
         kind,

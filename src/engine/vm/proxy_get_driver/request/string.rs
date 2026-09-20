@@ -1,5 +1,5 @@
 //! Mechanical adapters for string domain requests.
-use super::{JsValue, Resume, Step, Value};
+use super::{JsValue, Resume, Step};
 
 impl From<crate::engine::builtins::StringReplaceStep> for Step {
     fn from(step: crate::engine::builtins::StringReplaceStep) -> Self {

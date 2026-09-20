@@ -64,7 +64,6 @@ enum Phase {
     },
     Invariant {
         _rooted: RootedProxy,
-        result: JsValue,
     },
 }
 
@@ -103,7 +102,7 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyGetStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyGetStep::Complete(Completion::Throw(value)),
+        MethodStep::Throw(value) => ProxyGetStep::Complete(Completion::Throw(value.take())),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -114,7 +113,7 @@ fn method(
                     key,
                     runtime.into_jsvalue(receiver)?,
                     ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
-                        pending_effect: ProxyGetStepPending::default(),
+                        pending_effect: ProxyGetStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Forward { _rooted: rooted },
                     })),
@@ -122,8 +121,7 @@ fn method(
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
                     arguments.extend([Value::Object(rooted.target.clone()), key_value, receiver]);
-                    let receiver = runtime
-                        .into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
                     let arguments = arguments
                         .into_iter()
                         .map(|value| runtime.into_jsvalue(value))
@@ -133,7 +131,7 @@ fn method(
                         receiver,
                         arguments,
                         ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
-                            pending_effect: ProxyGetStepPending::default(),
+                            pending_effect: ProxyGetStepPending::new(runtime.clone()),
                             realm,
                             phase: Phase::Trap { rooted, key },
                         })),
@@ -150,7 +148,7 @@ fn method(
                 method_key,
                 method_receiver,
                 ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
-                    pending_effect: ProxyGetStepPending::default(),
+                    pending_effect: ProxyGetStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Method {
                         resume,
@@ -196,16 +194,15 @@ impl ProxyGetResume {
                 // descriptor round. A Proxy target may re-enter JavaScript and
                 // keeps the descriptor round.
                 if runtime.is_proxy_object(&rooted.target)? {
+                    let mut pending = ProxyGetStepPending::new(runtime.clone());
+                    pending.invariant_result = Some(value);
                     return Ok(ProxyGetStep::request_descriptor(
                         rooted.target.clone(),
                         key,
                         Self(super::reuse::PooledBox::new(ProxyGetResumeState {
-                            pending_effect: ProxyGetStepPending::default(),
+                            pending_effect: pending,
                             realm,
-                            phase: Phase::Invariant {
-                                _rooted: rooted,
-                                result: value,
-                            },
+                            phase: Phase::Invariant { _rooted: rooted },
                         })),
                     ));
                 }
@@ -224,12 +221,17 @@ impl ProxyGetResume {
         runtime: &Runtime,
         descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<ProxyGetStep, RuntimeError> {
-        let state = self.0.into_inner();
-        let Phase::Invariant { _rooted, result } = state.phase else {
+        let mut state = self.0.into_inner();
+        let Phase::Invariant { _rooted } = state.phase else {
             return Err(RuntimeError::Invariant(
                 "Proxy Get value continuation received a descriptor reply",
             ));
         };
+        let result = state
+            .pending_effect
+            .invariant_result
+            .take()
+            .expect("ProxyGetStep Invariant result");
         complete_get_invariant(runtime, state.realm, result, descriptor)
     }
 }
@@ -266,22 +268,24 @@ fn complete_get_invariant(
     let descriptor = match descriptor {
         NativeConversion::Value(descriptor) => descriptor,
         NativeConversion::Throw(value) => {
+            let _ = runtime.release_jsvalue(result);
             return Ok(ProxyGetStep::Complete(Completion::Throw(
                 runtime.unroot_value(&value)?,
             )));
         }
     };
-    Ok(ProxyGetStep::Complete(
-        if get_invariant_violation(&runtime.root_value(&result)?, &descriptor) {
-            Completion::Throw(runtime.new_native_error_jsvalue(
+    if get_invariant_violation(&runtime.root_value(&result)?, &descriptor) {
+        let _ = runtime.release_jsvalue(result);
+        Ok(ProxyGetStep::Complete(Completion::Throw(
+            runtime.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "proxy: inconsistent get",
-            )?)
-        } else {
-            Completion::Return(result)
-        },
-    ))
+            )?,
+        )))
+    } else {
+        Ok(ProxyGetStep::Complete(Completion::Return(result)))
+    }
 }
 
 #[cfg(test)]
@@ -359,8 +363,8 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct ProxyGetStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
@@ -369,6 +373,44 @@ struct ProxyGetStepPending {
     call_arguments: Option<Vec<JsValue>>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
+    invariant_result: Option<JsValue>,
+}
+impl ProxyGetStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            descriptor_object: None,
+            descriptor_key: None,
+            invariant_result: None,
+        }
+    }
+}
+impl Drop for ProxyGetStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(value) = self.invariant_result.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ProxyGetStep {
     pub(crate) fn request_read(

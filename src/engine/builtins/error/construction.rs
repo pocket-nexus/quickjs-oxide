@@ -106,22 +106,6 @@ impl Runtime {
         Ok(value)
     }
 
-    /// `JS_ThrowError2(..., add_backtrace = FALSE)` construction path used by
-    /// parser diagnostics, which prepend their explicit filename location
-    /// before adding the active frame chain.
-    pub(crate) fn new_native_error_without_backtrace_from_error_jsvalue(
-        &self,
-        realm: ContextId,
-        kind: NativeErrorKind,
-        error: &Error,
-    ) -> Result<JsValue, RuntimeError> {
-        let message = error
-            .native_message()
-            .cloned()
-            .unwrap_or_else(|| NativeErrorMessage::from_utf8(error.message()));
-        self.new_native_error_without_backtrace_from_message_jsvalue(realm, kind, message)
-    }
-
     pub(crate) fn new_native_error_without_backtrace_from_error(
         &self,
         realm: ContextId,

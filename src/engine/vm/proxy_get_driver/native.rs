@@ -52,8 +52,12 @@ pub(super) fn finish_result(
             }
             (_, result) => Ok(result),
         });
+    let invocation = call.invocation;
     let (result, arguments) = call.activation.finish_reusing(result);
     slots.recycle_native_argument_buffer(arguments);
+    invocation
+        .release(runtime)
+        .map_err(runtime_error_to_vm_error)?;
     result.map_err(runtime_error_to_vm_error)
 }
 
@@ -151,13 +155,20 @@ pub(super) fn begin_synchronous(
             &call.activation.arguments,
         )? {
             super::super::call::NativeInvocationAdaptation::Complete(result) => result,
-            super::super::call::NativeInvocationAdaptation::Invoke(invocation) => kind.start(
-                runtime,
-                native_realm,
-                &invocation,
-                &call.activation.arguments,
-                &call.activation.callable,
-            )?,
+            super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
+                // `start` only borrows the adapted invocation; release the
+                // duplicate this adapter owns once the step has captured its
+                // own edges.
+                let started = kind.start(
+                    runtime,
+                    native_realm,
+                    &invocation,
+                    &call.activation.arguments,
+                    &call.activation.callable,
+                );
+                let _ = invocation.release(runtime);
+                started?
+            }
         };
         Ok(result)
     })();
@@ -171,8 +182,12 @@ pub(super) fn begin_synchronous(
     // This ABI can only produce a Completion. It has no raw iterator variant
     // and therefore requires neither the generic outcome wrapper nor an
     // identity resume adapter. Error capture and owner cleanup stay shared.
+    let invocation = call.invocation;
     let (result, arguments) = call.activation.finish_completion_reusing(result);
     slots.recycle_native_argument_buffer(arguments);
+    invocation
+        .release(runtime)
+        .map_err(runtime_error_to_vm_error)?;
     result.map_err(runtime_error_to_vm_error)
 }
 
@@ -406,8 +421,11 @@ pub(super) fn begin_local(
         super::super::call::NativeInvocationAdaptation::Complete(result) => {
             Ok(Some(NativeInvokeOutcome::Completion(result)))
         }
-        super::super::call::NativeInvocationAdaptation::Invoke(invocation) => kind
-            .start_into(
+        super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
+            // `start_into` only borrows the adapted invocation; release the
+            // duplicate this adapter owns once the step has captured its own
+            // edges.
+            let started = kind.start_into(
                 runtime,
                 native_realm,
                 &invocation,
@@ -425,8 +443,10 @@ pub(super) fn begin_local(
                     Ok(result) => transported_completion = result,
                     Err(error) => pending_error = Some(error),
                 },
-            )
-            .map_err(runtime_error_to_vm_error),
+            );
+            let _ = invocation.release(runtime);
+            started.map_err(runtime_error_to_vm_error)
+        }
     })();
     let immediate = match started {
         Ok(Some(result)) => Some(Ok(result)),
@@ -703,7 +723,7 @@ pub(super) fn begin_selected_into(
             };
             // Known Array-next calls keep every activation and ABI check above,
             // but need not enter the generic native dispatcher's wide frame.
-            match kind {
+            let started = match kind {
                 crate::engine::builtins::continuation::NativeOperation::ArrayNext => {
                     crate::engine::builtins::continuation::start_array_next_into(
                         runtime,
@@ -720,8 +740,11 @@ pub(super) fn begin_selected_into(
                     &call.activation.callable,
                     &mut waiting,
                 ),
-            }
-            .map_err(runtime_error_to_vm_error)
+            };
+            // The adapted invocation owns a duplicated edge; the started step
+            // captured its own copy, so release this one.
+            let _ = invocation.release(runtime);
+            started.map_err(runtime_error_to_vm_error)
         }
     })();
     let immediate = match prepared {
@@ -786,7 +809,7 @@ pub(super) fn compact_array_next_into(
             Ok(Some(NativeInvokeOutcome::Completion(result)))
         }
         super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
-            crate::engine::builtins::continuation::start_array_next_into(
+            let started = crate::engine::builtins::continuation::start_array_next_into(
                 runtime,
                 realm,
                 &invocation,
@@ -794,7 +817,9 @@ pub(super) fn compact_array_next_into(
                     *output = step.into();
                     waiting_written = true;
                 },
-            )
+            );
+            let _ = invocation.release(runtime);
+            started
         }
     })()
     .map_err(runtime_error_to_vm_error);

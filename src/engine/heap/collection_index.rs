@@ -121,6 +121,7 @@ impl CollectionIndex {
             })
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn insert(&mut self, heap: &Heap, key: &RawValue, index: usize) -> u64 {
         let hash = self.hash(heap, key);
         self.insert_hashed(hash, index);
@@ -174,7 +175,11 @@ impl CollectionIndex {
     }
 
     /// Publication validation; never run this full scan on an ordinary lookup.
-    pub(super) fn validate(&self, heap: &Heap, records: &CollectionRecords) -> Result<(), HeapError> {
+    pub(super) fn validate(
+        &self,
+        heap: &Heap,
+        records: &CollectionRecords,
+    ) -> Result<(), HeapError> {
         let mut seen = std::collections::HashSet::new();
         for (&hash, indices) in &self.buckets {
             if indices.is_empty() {
@@ -222,10 +227,13 @@ mod tests {
         let mut records = CollectionRecords::default();
         for key in values {
             let id = records.next_id();
-            records.insert(heap, MapRecord {
-                key,
-                value: RawValue::Undefined,
-            });
+            records.insert(
+                heap,
+                MapRecord {
+                    key,
+                    value: RawValue::Undefined,
+                },
+            );
             assert_eq!(id + 1, records.next_id());
         }
         records

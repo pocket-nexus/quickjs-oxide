@@ -56,9 +56,7 @@ impl Runtime {
         strict: bool,
     ) -> Result<Completion, RuntimeError> {
         match result {
-            NativeConversion::Throw(value) => {
-                Ok(Completion::Throw(self.unroot_value(&value)?))
-            }
+            NativeConversion::Throw(value) => Ok(Completion::Throw(self.unroot_value(&value)?)),
             NativeConversion::Value(false) if strict => Err(RuntimeError::Engine(
                 crate::engine::api::Error::new(ErrorKind::Type, "could not delete property"),
             )),
@@ -104,9 +102,7 @@ impl Runtime {
         if key == &length {
             let length = i32::try_from(string.len())
                 .map(crate::engine::value::JsValue::Int)
-                .unwrap_or_else(|_| {
-                    crate::engine::value::JsValue::Float(string.len() as f64)
-                });
+                .unwrap_or_else(|_| crate::engine::value::JsValue::Float(string.len() as f64));
             return Ok(OrdinaryRead::Complete(Some(length)));
         }
         let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::String)?;
@@ -211,9 +207,7 @@ impl Runtime {
                 Some(value) => self.unroot_value(&value)?,
                 None => JsValue::Undefined,
             }),
-            NativeConversion::Throw(value) => {
-                Completion::Throw(self.unroot_value(&value)?)
-            }
+            NativeConversion::Throw(value) => Completion::Throw(self.unroot_value(&value)?),
         })
     }
 
@@ -246,9 +240,7 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match self.prepare_value_property_read_completion(realm, receiver, key)? {
             NativeConversion::Value(read) => self.finish_value_property_read(realm, key, read),
-            NativeConversion::Throw(reason) => {
-                Ok(Completion::Throw(self.unroot_value(&reason)?))
-            }
+            NativeConversion::Throw(reason) => Ok(Completion::Throw(self.unroot_value(&reason)?)),
         }
     }
 

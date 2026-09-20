@@ -905,11 +905,7 @@ impl DataViewAccessResume {
                     }
                 };
                 Ok(DataViewAccessStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(data_view_decode(
-                        self.0.element,
-                        bytes,
-                        little_endian,
-                    ))?,
+                    runtime.into_jsvalue(data_view_decode(self.0.element, bytes, little_endian))?,
                 )))
             }
             AccessPhase::SetValue(position) => {
@@ -1017,15 +1013,14 @@ impl DataViewConstructorStep {
         let buffer_value = runtime.root_value(arguments.readable.first().ok_or(
             RuntimeError::Invariant("DataView buffer argument was not padded"),
         )?)?;
-        let buffer =
-            match runtime.require_data_view_array_buffer(realm, &buffer_value)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
-                }
-            };
+        let buffer = match runtime.require_data_view_array_buffer(realm, &buffer_value)? {
+            NativeConversion::Value(value) => value,
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
+        };
         let length = if arguments.actual_arg_count > 2
             && !matches!(arguments.readable.get(2), Some(JsValue::Undefined))
         {

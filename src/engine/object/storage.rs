@@ -144,10 +144,11 @@ impl Runtime {
 
     /// Internal-value form of [`Runtime::value_to_boolean`].
     pub(crate) fn value_to_boolean_jsvalue(&self, value: &JsValue) -> Result<bool, RuntimeError> {
-        if let JsValue::Object(id) = value {
-            Ok(!self.0.state.borrow().heap.object(*id)?.is_html_dda)
-        } else {
-            Ok(value.to_boolean_primitive())
+        match value {
+            JsValue::Object(id) => Ok(!self.0.state.borrow().heap.object(*id)?.is_html_dda),
+            JsValue::String(id) => Ok(!self.0.state.borrow().heap.string(*id)?.is_empty()),
+            JsValue::BigInt(id) => Ok(!self.0.state.borrow().heap.bigint(*id)?.is_zero()),
+            _ => Ok(value.to_boolean_primitive()),
         }
     }
 
@@ -544,7 +545,13 @@ impl RuntimeState {
             );
         }
         if existing.is_none() && !dictionary {
-            let target = state.append_transition(shape_id, ShapeEntry { atom: AtomIdx::from_raw(atom.raw()), flags })?;
+            let target = state.append_transition(
+                shape_id,
+                ShapeEntry {
+                    atom: AtomIdx::from_raw(atom.raw()),
+                    flags,
+                },
+            )?;
             let mut slots = state.heap.object(object_id)?.slots.clone();
             slots.push(replacement);
             return state.replace_layout_with_owned_shape(object_id, target, slots);
@@ -565,7 +572,10 @@ impl RuntimeState {
             entries[index].flags = flags;
             slots[index] = replacement;
         } else {
-            entries.push(ShapeEntry { atom: AtomIdx::from_raw(atom.raw()), flags });
+            entries.push(ShapeEntry {
+                atom: AtomIdx::from_raw(atom.raw()),
+                flags,
+            });
             slots.push(replacement);
         }
         state.replace_layout(object_id, prototype, &entries, slots)
@@ -590,7 +600,14 @@ mod selected_append_tests {
         let mut state = runtime.0.state.borrow_mut();
         let shape = state.heap.object(owner.object_id()).unwrap().shape;
         assert_eq!(state.heap.shape_strong_count(shape), Ok(1));
-        assert!(state.heap.shape(shape).unwrap().find(AtomIdx::from_raw(key.atom().raw())).is_none());
+        assert!(
+            state
+                .heap
+                .shape(shape)
+                .unwrap()
+                .find(AtomIdx::from_raw(key.atom().raw()))
+                .is_none()
+        );
         let before_atoms = state.atoms.resolve(key.atom()).unwrap().ref_count;
         let fingerprint = state.shape_fingerprints.get(&shape).unwrap().clone();
         let selected = SelectedMissingAppend {

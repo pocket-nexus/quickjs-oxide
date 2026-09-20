@@ -1046,10 +1046,7 @@ impl Resume {
             Self::PrototypeGetReply(resume) => {
                 let result = match completion {
                     Completion::Return(JsValue::Object(object)) => {
-                        match runtime
-                            .root_and_release_jsvalue(JsValue::Object(object))
-                            .map_err(crate::engine::api::runtime_error::RuntimeError::from)?
-                        {
+                        match runtime.root_and_release_jsvalue(JsValue::Object(object))? {
                             Value::Object(object) => NativeConversion::Value(Some(object)),
                             _ => {
                                 return Err(

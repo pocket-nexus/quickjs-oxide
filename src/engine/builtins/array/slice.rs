@@ -283,9 +283,7 @@ impl SliceResume {
                     self.result()?,
                     runtime.property_key_for_index(self.0.cursor)?,
                     OrdinaryPropertyDescriptor {
-                        value: DescriptorField::Present(
-                            runtime.root_and_release_jsvalue(value)?,
-                        ),
+                        value: DescriptorField::Present(runtime.root_and_release_jsvalue(value)?),
                         writable: DescriptorField::Present(true),
                         enumerable: DescriptorField::Present(true),
                         configurable: DescriptorField::Present(true),

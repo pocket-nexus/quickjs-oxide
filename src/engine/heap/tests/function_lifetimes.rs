@@ -55,9 +55,10 @@ fn two_closures_share_one_mutable_var_ref_cell() {
         heap.replace_var_ref_value(cell, RawValue::Int(9)).unwrap(),
         HeapCleanup::default()
     );
-    assert!(
-        matches!(heap.var_ref(cell).unwrap().value, RawValue::Int(9))
-    );
+    assert!(matches!(
+        heap.var_ref(cell).unwrap().value,
+        RawValue::Int(9)
+    ));
 
     assert_eq!(heap.release_var_ref(cell).unwrap(), HeapCleanup::default());
     assert_eq!(heap.release_object(first).unwrap().finalized_objects, 1);
@@ -549,9 +550,7 @@ fn async_function_intrinsic_root_is_a_function_prototype_child() {
             "AsyncFunction prototype does not inherit from Function.prototype"
         ))
     );
-    assert!(
-        matches!(heap.context(realm).unwrap().async_function, None)
-    );
+    assert!(matches!(heap.context(realm).unwrap().async_function, None));
 
     let roots = AsyncFunctionRealmData {
         function_prototype: async_function_prototype,
@@ -681,14 +680,12 @@ fn async_function_state_traces_callbacks_and_transfers_await_activation() {
         heap.async_function_state_snapshot(state).unwrap().phase,
         AsyncFunctionPhase::Executing
     );
-    assert!(
-        matches!(
-            heap.begin_async_function_resume(state),
-            Err(HeapError::Invariant(
-                "AsyncFunction resume began outside an awaiting phase"
-            ))
-        )
-    );
+    assert!(matches!(
+        heap.begin_async_function_resume(state),
+        Err(HeapError::Invariant(
+            "AsyncFunction resume began outside an awaiting phase"
+        ))
+    ));
 
     let callback = heap
         .allocate_object(ObjectData::bound_internal_native_function(
@@ -830,7 +827,10 @@ fn async_function_state_traces_callbacks_and_transfers_await_activation() {
     assert!(matches!(resumed.vm.new_target, RawValue::Undefined));
     assert_eq!(resumed.vm.strict, activation.vm.strict);
     assert_eq!(resumed.vm.callee_global, activation.vm.callee_global);
-    assert_eq!(resumed.actual_argument_count, activation.actual_argument_count);
+    assert_eq!(
+        resumed.actual_argument_count,
+        activation.actual_argument_count
+    );
     assert_eq!(cleanup.atoms, [awaited_index]);
     assert_eq!(
         heap.async_function_state_snapshot(state).unwrap().phase,

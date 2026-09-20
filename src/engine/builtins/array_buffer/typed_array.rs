@@ -539,11 +539,9 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         match kind {
-            TypedArrayNativeKind::BaseConstructor => Ok(Completion::Throw(self.new_native_error_jsvalue(
-                realm,
-                NativeErrorKind::Type,
-                "cannot be called",
-            )?)),
+            TypedArrayNativeKind::BaseConstructor => Ok(Completion::Throw(
+                self.new_native_error_jsvalue(realm, NativeErrorKind::Type, "cannot be called")?,
+            )),
             TypedArrayNativeKind::Constructor(element) => {
                 self.call_typed_array_constructor(realm, element, invocation, arguments)
             }
@@ -786,14 +784,14 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        match self.typed_array_validated_length(realm, &object)? {
+        match self.typed_array_validated_length(realm, object)? {
             NativeConversion::Value(_) => {}
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         }
         Ok(Completion::Return(self.into_jsvalue(Value::Object(
-            self.new_array_iterator(realm, &object, kind)?,
+            self.new_array_iterator(realm, object, kind)?,
         ))?))
     }
 
@@ -1331,7 +1329,8 @@ impl Runtime {
         element: TypedArrayElementKind,
         value: &Value,
     ) -> Result<NativeConversion<[u8; 8]>, RuntimeError> {
-        element::ElementStep::start(self, realm, element, self.unroot_value(value)?)?.finish_sync(self, realm)
+        element::ElementStep::start(self, realm, element, self.unroot_value(value)?)?
+            .finish_sync(self, realm)
     }
 
     /// Convert a primitive descriptor value for the public context-free

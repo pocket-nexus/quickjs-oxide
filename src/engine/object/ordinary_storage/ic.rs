@@ -1,7 +1,7 @@
 //! Promote a location-cache hit without draining runtime cleanup or invoking JS.
-use crate::engine::atom::AtomIdx;
 use super::{LinkedNativeSelection, linked_field_atom};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
+use crate::engine::atom::AtomIdx;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::{ObjectPayload, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
@@ -296,9 +296,7 @@ impl Runtime {
                 return Err(error);
             }
         };
-        let appended = state
-            .heap
-            .replace_array_dense_value(*object, index, raw);
+        let appended = state.heap.replace_array_dense_value(*object, index, raw);
         match appended {
             Ok(cleanup) => {
                 state.apply_cleanup(cleanup)?;
@@ -410,7 +408,11 @@ impl Runtime {
     ) -> Result<bool, RuntimeError> {
         if !matches!(
             value,
-            JsValue::Undefined | JsValue::Null | JsValue::Bool(_) | JsValue::Int(_) | JsValue::Float(_)
+            JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
         ) || self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready
         {
             return Ok(false);
@@ -470,7 +472,11 @@ impl Runtime {
     ) -> Result<bool, RuntimeError> {
         if !matches!(
             value,
-            JsValue::Undefined | JsValue::Null | JsValue::Bool(_) | JsValue::Int(_) | JsValue::Float(_)
+            JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
         ) || self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready
         {
             return Ok(false);

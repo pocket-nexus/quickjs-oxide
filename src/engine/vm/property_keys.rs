@@ -19,8 +19,8 @@ pub(super) fn canonical(
                 .atoms
                 .brand(*index)
                 .map_err(|error| Error::internal(error.to_string()))?;
-            return PropertyKey::from_borrowed_atom(runtime.clone(), atom)
-                .map_err(|error| Error::internal(error.to_string()));
+            PropertyKey::from_borrowed_atom(runtime.clone(), atom)
+                .map_err(|error| Error::internal(error.to_string()))
         }
         crate::engine::value::JsValue::String(id) => {
             let string = runtime
@@ -31,9 +31,9 @@ pub(super) fn canonical(
                 .string(*id)
                 .map_err(|error| Error::internal(error.to_string()))?
                 .clone();
-            return runtime
+            runtime
                 .intern_property_key_js_string(&string)
-                .map_err(|error| Error::internal(error.to_string()));
+                .map_err(|error| Error::internal(error.to_string()))
         }
         value => {
             let rooted = runtime

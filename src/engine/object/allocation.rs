@@ -589,9 +589,7 @@ impl Runtime {
                 .map(|context| context.function_prototype)
                 .map_err(RuntimeError::from)
             {
-                Ok(prototype) => state
-                    .get_or_create_shape(Some(prototype), &[])
-                    .map_err(RuntimeError::from),
+                Ok(prototype) => state.get_or_create_shape(Some(prototype), &[]),
                 Err(error) => Err(error),
             };
             match created {
@@ -775,12 +773,7 @@ impl Runtime {
         object: crate::engine::heap::ObjectId,
     ) -> Result<bool, RuntimeError> {
         Ok(matches!(
-            self.0
-                .state
-                .borrow()
-                .heap
-                .object(object)?
-                .payload,
+            self.0.state.borrow().heap.object(object)?.payload,
             crate::engine::heap::ObjectPayload::NativeFunction { .. }
                 | crate::engine::heap::ObjectPayload::BoundFunction { .. }
                 | crate::engine::heap::ObjectPayload::BytecodeFunction { .. }

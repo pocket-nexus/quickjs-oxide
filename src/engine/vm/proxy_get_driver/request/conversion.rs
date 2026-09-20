@@ -1,6 +1,6 @@
 //! Mechanical adapters for conversion domain requests.
 use super::JsValue;
-use super::{DirectCallTarget, NumberStep, Resume, Step, Value};
+use super::{DirectCallTarget, NumberStep, Resume, Step};
 
 impl From<NumberStep> for Step {
     fn from(step: NumberStep) -> Self {

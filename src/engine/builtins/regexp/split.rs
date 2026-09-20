@@ -142,7 +142,9 @@ struct SplitState {
 }
 impl SplitState {
     fn complete(self) -> RegExpSplitStep {
-        RegExpSplitStep::Complete(Completion::Return(JsValue::Object(self.result.into_handle())))
+        RegExpSplitStep::Complete(Completion::Return(JsValue::Object(
+            self.result.into_handle(),
+        )))
     }
     fn append(&mut self, runtime: &Runtime, value: Value) -> Result<(), RuntimeError> {
         runtime.append_regexp_split_value(&self.result, &mut self.length, value)
@@ -249,22 +251,12 @@ impl RegExpSplitStep {
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        let input = runtime.dup_jsvalue(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "RegExp @@split input argv was not padded",
-                ))?,
-        )?;
-        let limit = runtime.root_value(
-            arguments
-                .readable
-                .get(1)
-                .ok_or(RuntimeError::Invariant(
-                    "RegExp @@split limit argv was not padded",
-                ))?,
-        )?;
+        let input = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("RegExp @@split input argv was not padded"),
+        )?)?;
+        let limit = runtime.root_value(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("RegExp @@split limit argv was not padded"),
+        )?)?;
         Ok(Self::make_primitive(
             input,
             ToPrimitiveHint::String,
@@ -291,7 +283,7 @@ impl RegExpSplitResume {
                 return Ok(RegExpSplitStep::Complete(Completion::Throw(
                     runtime.into_jsvalue(value)?,
                 )));
-                    }
+            }
         };
         let Phase::Species {
             regexp,

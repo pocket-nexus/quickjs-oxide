@@ -166,13 +166,13 @@ impl WrapResume {
         match self.0.phase {
             Phase::ReturnMethod => {
                 if matches!(value, Value::Undefined | Value::Null) {
-                    return Ok(WrapStep::Complete(Completion::Return(runtime.into_jsvalue(
-                        Value::Object(runtime.new_iterator_result(
+                    return Ok(WrapStep::Complete(Completion::Return(
+                        runtime.into_jsvalue(Value::Object(runtime.new_iterator_result(
                             self.0.realm,
                             Value::Undefined,
                             true,
-                        )?),
-                    )?)));
+                        )?))?,
+                    )));
                 }
                 let callable = match runtime.iterator_callable_value(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
@@ -185,8 +185,7 @@ impl WrapResume {
                 self.0.phase = Phase::ReturnResult;
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver =
-                        runtime.into_jsvalue(self.0.source.clone())?;
+                    let __pending_field_receiver = runtime.into_jsvalue(self.0.source.clone())?;
                     let __pending_field_resume = self;
                     WrapStep::request_call(
                         __pending_field_callable,
@@ -224,9 +223,13 @@ impl WrapResume {
             ObjectIteratorStep::Yield(value) => (runtime.root_and_release_jsvalue(value)?, false),
             ObjectIteratorStep::Done => (Value::Undefined, true),
         };
-        Ok(WrapStep::Complete(Completion::Return(runtime.into_jsvalue(
-            Value::Object(runtime.new_iterator_result(self.0.realm, value, done)?),
-        )?)))
+        Ok(WrapStep::Complete(Completion::Return(
+            runtime.into_jsvalue(Value::Object(runtime.new_iterator_result(
+                self.0.realm,
+                value,
+                done,
+            )?))?,
+        )))
     }
 }
 pub(crate) fn finish(
@@ -291,7 +294,11 @@ struct WrapStepPending {
     parse_result: Option<Completion>,
 }
 impl WrapStep {
-    pub(crate) fn request_read(receiver: JsValue, key: PropertyKey, mut resume: WrapResume) -> Self {
+    pub(crate) fn request_read(
+        receiver: JsValue,
+        key: PropertyKey,
+        mut resume: WrapResume,
+    ) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
@@ -305,7 +312,11 @@ impl WrapStep {
         resume.0.pending_effect.call_receiver = Some(receiver);
         Self::Call { resume }
     }
-    pub(crate) fn request_next(iterator: ObjectRef, method: JsValue, mut resume: WrapResume) -> Self {
+    pub(crate) fn request_next(
+        iterator: ObjectRef,
+        method: JsValue,
+        mut resume: WrapResume,
+    ) -> Self {
         resume.0.pending_effect.next_iterator = Some(iterator);
         resume.0.pending_effect.next_method = Some(method);
         Self::Next { resume }

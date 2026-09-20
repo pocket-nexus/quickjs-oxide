@@ -147,7 +147,7 @@ impl Runtime {
     pub(super) fn allocate_generator_object(
         &self,
         prototype: &ObjectRef,
-        activation: EncodedVmActivation,
+        mut activation: EncodedVmActivation,
     ) -> Result<ObjectRef, RuntimeError> {
         let atoms = {
             let state = self.0.state.borrow();
@@ -392,7 +392,7 @@ impl Runtime {
             }
             VmRunOutcome::Suspend {
                 value: yielded,
-                activation,
+                mut activation,
             } => {
                 let state = match activation.kind {
                     VmSuspendKind::Yield => GeneratorState::SuspendedYield,
@@ -414,7 +414,7 @@ impl Runtime {
                         "yield* suspension did not retain an iterator-result object",
                     ));
                 }
-                if let Err(error) = self.store_generator_suspension(generator, &activation) {
+                if let Err(error) = self.store_generator_suspension(generator, &mut activation) {
                     let _ = self.complete_executing_generator(generator);
                     return Err(error);
                 }
@@ -462,7 +462,7 @@ impl Runtime {
     fn store_generator_suspension(
         &self,
         generator: &ObjectRef,
-        activation: &EncodedVmActivation,
+        activation: &mut EncodedVmActivation,
     ) -> Result<(), RuntimeError> {
         let generator_state = match activation.kind {
             VmSuspendKind::Yield => GeneratorState::SuspendedYield,

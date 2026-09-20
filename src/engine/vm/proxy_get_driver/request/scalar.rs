@@ -1,6 +1,6 @@
 //! Mechanical adapters for scalar domain requests.
 use super::JsValue;
-use super::{DirectCallTarget, Resume, Step, ToPrimitiveHint, Value};
+use super::{DirectCallTarget, Resume, Step, ToPrimitiveHint};
 
 impl From<crate::engine::builtins::MathStep> for Step {
     fn from(step: crate::engine::builtins::MathStep) -> Self {

@@ -50,8 +50,8 @@ use crate::engine::builtins::native::{RegExpFlagKind, RegExpNativeKind};
 use crate::engine::heap::RegExpRealmData;
 
 use crate::engine::{
-    atom::AtomIdx,
     api::{runtime::Runtime, runtime_error::RuntimeError},
+    atom::AtomIdx,
     builtins::native::NativeFunctionId,
     heap::ContextId,
     object::{

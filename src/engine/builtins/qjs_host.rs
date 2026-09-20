@@ -34,11 +34,13 @@ impl Runtime {
                 ));
             }
         };
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "qjs output helper received a constructor invocation",
             ));
         };
+        invocation.release(self)?;
 
         let mut line = Vec::new();
         for (index, argument) in arguments.readable[..arguments.actual_arg_count]

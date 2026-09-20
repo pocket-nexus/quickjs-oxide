@@ -470,7 +470,9 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.call_weak_map_native_borrowed(realm, kind, &invocation, arguments)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            self.call_weak_map_native_borrowed(realm, kind, invocation, arguments)
+        })
     }
     pub(crate) fn call_weak_map_native_borrowed(
         &self,
@@ -520,9 +522,7 @@ impl Runtime {
                         .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?,
                 )?;
                 self.set_weak_map_record(&map, key, value)?;
-                Ok(Completion::Return(
-                    self.into_jsvalue(Value::Object(map))?,
-                ))
+                Ok(Completion::Return(self.into_jsvalue(Value::Object(map))?))
             }
             WeakMapNativeKind::Get => {
                 let value = match key {
@@ -576,7 +576,9 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.call_weak_set_native_borrowed(realm, kind, &invocation, arguments)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            self.call_weak_set_native_borrowed(realm, kind, invocation, arguments)
+        })
     }
     pub(crate) fn call_weak_set_native_borrowed(
         &self,
@@ -612,9 +614,7 @@ impl Runtime {
                     return self.invalid_weak_key(realm, WeakCollectionKind::Set);
                 };
                 self.insert_weak_set_record(&set, key)?;
-                Ok(Completion::Return(
-                    self.into_jsvalue(Value::Object(set))?,
-                ))
+                Ok(Completion::Return(self.into_jsvalue(Value::Object(set))?))
             }
             WeakSetNativeKind::Has => Ok(Completion::Return(JsValue::Bool(match key {
                 Some(key) => self.has_weak_set_record(&set, key)?,

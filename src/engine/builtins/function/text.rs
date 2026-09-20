@@ -109,9 +109,9 @@ impl FunctionTextStep {
             )));
         }
         if let Some(source) = source {
-            return Ok(Self::Complete(Completion::Return(
-                runtime.unroot_value(&Value::String(JsString::try_from_bytes(&source)?))?,
-            )));
+            return Ok(Self::Complete(Completion::Return(runtime.unroot_value(
+                &Value::String(JsString::try_from_bytes(&source)?),
+            )?)));
         }
 
         Ok({

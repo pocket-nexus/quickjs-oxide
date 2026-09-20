@@ -33,7 +33,8 @@ fn global_json_is_realm_aware_lazy_and_reserves_the_pinned_table_order() {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(global.object_id()).unwrap();
         let shape = state.heap.shape(object.shape).unwrap();
-        let slot = usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
+        let slot =
+            usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
         assert_eq!(
             shape.entries()[slot].flags,
             PropertyFlags::data(true, false, true),
@@ -64,7 +65,8 @@ fn global_json_is_realm_aware_lazy_and_reserves_the_pinned_table_order() {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(json.object_id()).unwrap();
         let shape = state.heap.shape(object.shape).unwrap();
-        let slot = usize::try_from(shape.find(AtomIdx::from_raw(method.atom().raw())).unwrap()).unwrap();
+        let slot =
+            usize::try_from(shape.find(AtomIdx::from_raw(method.atom().raw())).unwrap()).unwrap();
         assert_eq!(
             shape.entries()[slot].flags,
             PropertyFlags::data(true, false, true),

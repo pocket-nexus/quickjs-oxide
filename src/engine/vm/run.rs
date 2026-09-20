@@ -223,30 +223,27 @@ trait ReleaseDropped {
 }
 
 impl ReleaseDropped for JsValue {
-    fn release_dropped(
-        self,
-        runtime: &crate::engine::api::runtime::Runtime,
-    ) -> Result<(), Error> {
-        runtime.release_jsvalue(self).map_err(runtime_error_to_vm_error)
+    fn release_dropped(self, runtime: &crate::engine::api::runtime::Runtime) -> Result<(), Error> {
+        runtime
+            .release_jsvalue(self)
+            .map_err(runtime_error_to_vm_error)
     }
 }
 
 impl ReleaseDropped for FrameBinding {
-    fn release_dropped(
-        self,
-        runtime: &crate::engine::api::runtime::Runtime,
-    ) -> Result<(), Error> {
+    fn release_dropped(self, runtime: &crate::engine::api::runtime::Runtime) -> Result<(), Error> {
         super::bindings::release_frame_binding(runtime, self)
     }
 }
 
 impl ReleaseDropped for (JsValue, JsValue) {
-    fn release_dropped(
-        self,
-        runtime: &crate::engine::api::runtime::Runtime,
-    ) -> Result<(), Error> {
-        runtime.release_jsvalue(self.0).map_err(runtime_error_to_vm_error)?;
-        runtime.release_jsvalue(self.1).map_err(runtime_error_to_vm_error)
+    fn release_dropped(self, runtime: &crate::engine::api::runtime::Runtime) -> Result<(), Error> {
+        runtime
+            .release_jsvalue(self.0)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(self.1)
+            .map_err(runtime_error_to_vm_error)
     }
 }
 
@@ -613,7 +610,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::PushActiveFunction => {
                 let id = cold.function.object_id();
-                runtime.retain_object_handle(id).map_err(heap_error_to_vm_error)?;
+                runtime
+                    .retain_object_handle(id)
+                    .map_err(heap_error_to_vm_error)?;
                 slots.push(JsValue::Object(id))?;
                 #[cfg(feature = "profiling")]
                 cold::storage(crate::engine::api::profiling::OwnedStorageEvent::Copy {
@@ -1753,7 +1752,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         .map_err(runtime_error_to_vm_error)?
                         != negate;
                     let observable = (0..2).any(|offset| {
-                        matches!(slots.peek(offset), Ok(JsValue::Object(_) | JsValue::Symbol(_)))
+                        matches!(
+                            slots.peek(offset),
+                            Ok(JsValue::Object(_) | JsValue::Symbol(_))
+                        )
                     });
                     if observable {
                         release_outside_slots!({

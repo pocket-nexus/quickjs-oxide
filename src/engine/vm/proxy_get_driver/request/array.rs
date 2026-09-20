@@ -1,5 +1,5 @@
 //! Mechanical adapters for array domain requests.
-use super::{DirectCallTarget, JsValue, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step};
 
 impl From<crate::engine::builtins::ArrayMutationStep> for Step {
     fn from(step: crate::engine::builtins::ArrayMutationStep) -> Self {

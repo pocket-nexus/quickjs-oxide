@@ -4,7 +4,7 @@ use super::{
     Completion, DescriptorStep, DirectCallTarget, Error, NativeConversion, Next, OrdinaryRead,
     PreparedHas, ProxyBooleanKind, ProxyBooleanStep, ProxyGetStep, ProxyOwnStep,
     ProxyPrototypeKind, ProxyPrototypeStep, Query, Resume, ReturnOwner, RunningExecution, Runtime,
-    Step, Value, overflow, runtime_error_to_vm_error,
+    Step, overflow, runtime_error_to_vm_error,
 };
 
 #[inline(never)]

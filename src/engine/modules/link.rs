@@ -289,7 +289,9 @@ pub(crate) fn resume_reply(
                 .ok_or(RuntimeError::Invariant(
                     "module link exception has no pending value",
                 ))?;
-            Ok(LinkStep::Complete(Completion::Throw(runtime.into_jsvalue(reason)?)))
+            Ok(LinkStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(reason)?,
+            )))
         }
         result => result,
     }

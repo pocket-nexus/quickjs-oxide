@@ -1,7 +1,10 @@
 //! Producer-local temporary buffer diagnostics. Counts are cumulative; Value
 //! copies, rooted promotions and raw edges are separate, never additive totals.
 use super::current;
-use crate::engine::{heap::RawValue, value::Value};
+use crate::engine::{
+    heap::RawValue,
+    value::{JsValue, Value},
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallBufferCost {
@@ -130,6 +133,26 @@ pub(crate) fn record_call_buffer_copies(name: &'static str, values: &[Value]) {
     }
 }
 
+/// Internal-handle copy accounting: object/symbol handles own one edge, string
+/// and BigInt handles own one payload edge, and the rest are immediates.
+pub(crate) fn record_call_buffer_js_value_copies(name: &'static str, values: &[JsValue]) {
+    let Some(collector) = current() else {
+        return;
+    };
+    let mut costs = collector.borrow_mut();
+    let cost = costs.call_buffers.entry(name).or_default();
+    cost.values_copied = cost.values_copied.saturating_add(values.len() as u64);
+    cost.slots_initialized = cost.slots_initialized.saturating_add(values.len() as u64);
+    for value in values {
+        let counter = match value {
+            JsValue::Object(_) | JsValue::Symbol(_) => &mut cost.heap_root_copies,
+            JsValue::String(_) | JsValue::BigInt(_) => &mut cost.primitive_rc_copies,
+            _ => &mut cost.immediate_copies,
+        };
+        *counter = counter.saturating_add(1);
+    }
+}
+
 pub(crate) fn record_call_buffer_moves(name: &'static str, count: usize) {
     let Some(collector) = current() else {
         return;
@@ -155,7 +178,7 @@ pub(crate) fn record_call_raw_buffer_copies(name: &'static str, values: &[RawVal
             RawValue::String(_) => {
                 cost.raw_primitive_rc_copies = cost.raw_primitive_rc_copies.saturating_add(1);
             }
-            RawValue::BigInt(value) if value.as_i64().is_none() => {
+            RawValue::BigInt(_) => {
                 cost.raw_primitive_rc_copies = cost.raw_primitive_rc_copies.saturating_add(1);
             }
             _ => {}

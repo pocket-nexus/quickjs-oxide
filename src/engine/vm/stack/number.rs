@@ -140,7 +140,9 @@ mod tests {
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         slots.push(&mut window, JsValue::Int(3)).unwrap();
-        slots.push(&mut window, JsValue::Object(object.into_handle())).unwrap();
+        slots
+            .push(&mut window, JsValue::Object(object.into_handle()))
+            .unwrap();
         assert_eq!(
             slots
                 .run_window(&mut window)
@@ -152,10 +154,10 @@ mod tests {
             None
         );
         assert_eq!(window.depth, 2);
-        assert!(
-            matches!(slots.peek(&window, 0).unwrap(), JsValue::Object(value) if *value==id)
-        );
-        runtime.release_jsvalue(slots.pop(&mut window).unwrap()).unwrap();
+        assert!(matches!(slots.peek(&window, 0).unwrap(), JsValue::Object(value) if *value==id));
+        runtime
+            .release_jsvalue(slots.pop(&mut window).unwrap())
+            .unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
         slots.push(&mut window, JsValue::Int(7)).unwrap();
         assert_eq!(

@@ -12,8 +12,14 @@ use crate::engine::{
 };
 pub(crate) enum AtomicsStep {
     Complete(Completion),
-    Primitive { value: JsValue, resume: AtomicsResume },
-    Number { value: JsValue, resume: AtomicsResume },
+    Primitive {
+        value: JsValue,
+        resume: AtomicsResume,
+    },
+    Number {
+        value: JsValue,
+        resume: AtomicsResume,
+    },
 }
 enum Phase {
     Index,
@@ -86,8 +92,7 @@ impl AtomicsStep {
             NativeConversion::Throw(value) => return resume.abrupt(runtime, value),
         });
         Ok(Self::Primitive {
-            value: runtime
-                .into_jsvalue(resume.argument(1, "Atomics index was not readable")?)?,
+            value: runtime.into_jsvalue(resume.argument(1, "Atomics index was not readable")?)?,
             resume,
         })
     }
@@ -263,8 +268,9 @@ impl AtomicsResume {
                     AtomicsNativeKind::Wait => {
                         self.0.phase = Phase::Timeout;
                         Ok(AtomicsStep::Number {
-                            value: runtime
-                                .into_jsvalue(self.argument(3, "Atomics.wait timeout was not readable")?)?,
+                            value: runtime.into_jsvalue(
+                                self.argument(3, "Atomics.wait timeout was not readable")?,
+                            )?,
                             resume: self,
                         })
                     }

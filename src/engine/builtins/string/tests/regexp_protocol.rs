@@ -52,13 +52,36 @@ fn match_match_all_search_and_split_entries_preserve_pinned_cproto_and_order() {
         let state = runtime.0.state.borrow();
         let string_object = state.heap.object(string_prototype.object_id()).unwrap();
         let string_shape = state.heap.shape(string_object.shape).unwrap();
-        let starts_with = usize::try_from(string_shape.find(AtomIdx::from_raw(starts_with.atom().raw())).unwrap()).unwrap();
-        let match_position =
-            usize::try_from(string_shape.find(AtomIdx::from_raw(string_match.atom().raw())).unwrap()).unwrap();
-        let match_all =
-            usize::try_from(string_shape.find(AtomIdx::from_raw(string_match_all.atom().raw())).unwrap()).unwrap();
-        let search = usize::try_from(string_shape.find(AtomIdx::from_raw(string_search.atom().raw())).unwrap()).unwrap();
-        let split = usize::try_from(string_shape.find(AtomIdx::from_raw(split.atom().raw())).unwrap()).unwrap();
+        let starts_with = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(starts_with.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let match_position = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(string_match.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let match_all = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(string_match_all.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let search = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(string_search.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let split = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(split.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(match_position, starts_with + 1);
         assert_eq!(match_all, match_position + 1);
         assert_eq!(search, match_all + 1);
@@ -108,12 +131,30 @@ fn match_match_all_search_and_split_entries_preserve_pinned_cproto_and_order() {
 
         let regexp_object = state.heap.object(regexp_prototype.object_id()).unwrap();
         let regexp_shape = state.heap.shape(regexp_object.shape).unwrap();
-        let match_position =
-            usize::try_from(regexp_shape.find(AtomIdx::from_raw(symbol_match.atom().raw())).unwrap()).unwrap();
-        let match_all =
-            usize::try_from(regexp_shape.find(AtomIdx::from_raw(symbol_match_all.atom().raw())).unwrap()).unwrap();
-        let search = usize::try_from(regexp_shape.find(AtomIdx::from_raw(symbol_search.atom().raw())).unwrap()).unwrap();
-        let split = usize::try_from(regexp_shape.find(AtomIdx::from_raw(symbol_split.atom().raw())).unwrap()).unwrap();
+        let match_position = usize::try_from(
+            regexp_shape
+                .find(AtomIdx::from_raw(symbol_match.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let match_all = usize::try_from(
+            regexp_shape
+                .find(AtomIdx::from_raw(symbol_match_all.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let search = usize::try_from(
+            regexp_shape
+                .find(AtomIdx::from_raw(symbol_search.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let split = usize::try_from(
+            regexp_shape
+                .find(AtomIdx::from_raw(symbol_split.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(match_all, match_position + 1);
         assert_eq!(search, match_all + 1);
         assert_eq!(split, search + 1);
@@ -356,11 +397,30 @@ fn replace_entries_preserve_pinned_cproto_autoinit_and_table_order() {
         let state = runtime.0.state.borrow();
         let string_object = state.heap.object(string_prototype.object_id()).unwrap();
         let string_shape = state.heap.shape(string_object.shape).unwrap();
-        let repeat = usize::try_from(string_shape.find(AtomIdx::from_raw(repeat_key.atom().raw())).unwrap()).unwrap();
-        let replace = usize::try_from(string_shape.find(AtomIdx::from_raw(replace_key.atom().raw())).unwrap()).unwrap();
-        let replace_all =
-            usize::try_from(string_shape.find(AtomIdx::from_raw(replace_all_key.atom().raw())).unwrap()).unwrap();
-        let pad_end = usize::try_from(string_shape.find(AtomIdx::from_raw(pad_end_key.atom().raw())).unwrap()).unwrap();
+        let repeat = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(repeat_key.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let replace = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(replace_key.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let replace_all = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(replace_all_key.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let pad_end = usize::try_from(
+            string_shape
+                .find(AtomIdx::from_raw(pad_end_key.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(replace, repeat + 1);
         assert_eq!(replace_all, replace + 1);
         assert_eq!(pad_end, replace_all + 1);
@@ -396,9 +456,18 @@ fn replace_entries_preserve_pinned_cproto_autoinit_and_table_order() {
 
         let regexp_object = state.heap.object(regexp_prototype.object_id()).unwrap();
         let regexp_shape = state.heap.shape(regexp_object.shape).unwrap();
-        let replace = usize::try_from(regexp_shape.find(AtomIdx::from_raw(symbol_replace.atom().raw())).unwrap()).unwrap();
-        let match_position =
-            usize::try_from(regexp_shape.find(AtomIdx::from_raw(symbol_match.atom().raw())).unwrap()).unwrap();
+        let replace = usize::try_from(
+            regexp_shape
+                .find(AtomIdx::from_raw(symbol_replace.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
+        let match_position = usize::try_from(
+            regexp_shape
+                .find(AtomIdx::from_raw(symbol_match.atom().raw()))
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(match_position, replace + 1);
         assert_eq!(
             regexp_shape.entries()[replace].flags,

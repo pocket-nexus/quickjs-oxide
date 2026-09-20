@@ -37,6 +37,7 @@ impl std::ops::DerefMut for StringReplaceResume {
 }
 const _: () = assert!(std::mem::size_of::<StringReplaceResume>() <= 8);
 pub(crate) struct StringReplaceResumeState {
+    runtime: Runtime,
     step_pending: StringReplaceStepPending,
     realm: ContextId,
     selector: StringReplaceKind,
@@ -60,6 +61,24 @@ enum Phase {
     Replacement,
     Callback { position: usize },
     CallbackString { position: usize },
+}
+impl Drop for StringReplaceResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.step_pending.value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.step_pending.receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.step_pending.arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 struct ReplaceLoop {
     output: ReplacementStringBuffer,
@@ -109,23 +128,14 @@ impl StringReplaceStep {
                 )?,
             )));
         }
-        let search_value = runtime.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "String replace search argv was not padded",
-                ))?,
-        )?;
-        let replace_value = runtime.root_value(
-            arguments
-                .readable
-                .get(1)
-                .ok_or(RuntimeError::Invariant(
-                    "String replace replacement argv was not padded",
-                ))?,
-        )?;
+        let search_value = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("String replace search argv was not padded"),
+        )?)?;
+        let replace_value = runtime.root_value(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("String replace replacement argv was not padded"),
+        )?)?;
         let mut resume = StringReplaceResumeState {
+            runtime: runtime.clone(),
             step_pending: StringReplaceStepPending::default(),
             realm,
             selector,
@@ -345,7 +355,11 @@ impl StringReplaceResumeState {
                 };
                 let Some(callable) = callable else {
                     return Ok(StringReplaceAction::Complete(Completion::Throw(
-                        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+                        runtime.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not a function",
+                        )?,
                     )));
                 };
                 let mut arguments = Vec::new();
@@ -565,11 +579,9 @@ impl StringReplaceResumeState {
                         NativeConversion::Value(_) => Err(RuntimeError::Invariant(
                             "failed replacement buffer unexpectedly completed",
                         )),
-                        NativeConversion::Throw(value) => {
-                            Ok(StringReplaceAction::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )))
-                        }
+                        NativeConversion::Throw(value) => Ok(StringReplaceAction::Complete(
+                            Completion::Throw(runtime.into_jsvalue(value)?),
+                        )),
                     };
                 }
                 Err(value) => {
@@ -623,58 +635,61 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let mut step = StringReplaceStep::start(self, realm, selector, &invocation, arguments)?;
-        loop {
-            step = match step {
-                StringReplaceStep::Complete(result) => return Ok(result),
-                StringReplaceStep::PreparedRead { mut resume } => {
-                    let read = resume.take_preparedread_read();
-                    let key = resume.take_preparedread_key();
-                    {
-                        let result = match self.finish_prepared_read(realm, &key, read)? {
-                            NativeConversion::Value(value) => Completion::Return(
-                                self.into_jsvalue(value.unwrap_or(Value::Undefined))?,
-                            ),
-                            NativeConversion::Throw(value) => {
-                                Completion::Throw(self.into_jsvalue(value)?)
-                            }
-                        };
-                        resume.resume(self, result)?
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let mut step = StringReplaceStep::start(self, realm, selector, invocation, arguments)?;
+            loop {
+                step = match step {
+                    StringReplaceStep::Complete(result) => return Ok(result),
+                    StringReplaceStep::PreparedRead { mut resume } => {
+                        let read = resume.take_preparedread_read();
+                        let key = resume.take_preparedread_key();
+                        {
+                            let result = match self.finish_prepared_read(realm, &key, read)? {
+                                NativeConversion::Value(value) => Completion::Return(
+                                    self.into_jsvalue(value.unwrap_or(Value::Undefined))?,
+                                ),
+                                NativeConversion::Throw(value) => {
+                                    Completion::Throw(self.into_jsvalue(value)?)
+                                }
+                            };
+                            resume.resume(self, result)?
+                        }
                     }
-                }
-                StringReplaceStep::Primitive { mut resume } => {
-                    let value = resume.take_primitive_value();
-                    {
-                        let result = if matches!(value, JsValue::Object(_)) {
-                            self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)?
-                        } else {
-                            Completion::Return(value)
-                        };
-                        resume.resume(self, result)?
+                    StringReplaceStep::Primitive { mut resume } => {
+                        let value = resume.take_primitive_value();
+                        {
+                            let result = if matches!(value, JsValue::Object(_)) {
+                                self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)?
+                            } else {
+                                Completion::Return(value)
+                            };
+                            resume.resume(self, result)?
+                        }
                     }
-                }
-                StringReplaceStep::Call { mut resume } => {
-                    let target = resume.take_call_target();
-                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|value| self.root_and_release_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    {
-                        let DirectCallTarget::Callable(callable) = target else {
-                            return Err(RuntimeError::Invariant(
-                                "String replacement requested an invalid call target",
-                            ));
-                        };
-                        resume.resume(
-                            self,
-                            self.call_internal(realm, &callable, receiver, &arguments)?,
-                        )?
+                    StringReplaceStep::Call { mut resume } => {
+                        let target = resume.take_call_target();
+                        let receiver =
+                            self.root_and_release_jsvalue(resume.take_call_receiver())?;
+                        let arguments = resume
+                            .take_call_arguments()
+                            .into_iter()
+                            .map(|value| self.root_and_release_jsvalue(value))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        {
+                            let DirectCallTarget::Callable(callable) = target else {
+                                return Err(RuntimeError::Invariant(
+                                    "String replacement requested an invalid call target",
+                                ));
+                            };
+                            resume.resume(
+                                self,
+                                self.call_internal(realm, &callable, receiver, &arguments)?,
+                            )?
+                        }
                     }
-                }
-            };
-        }
+                };
+            }
+        })
     }
 }
 
@@ -762,10 +777,19 @@ mod tests {
         .unwrap() else {
             panic!("expected source conversion")
         };
-        drop(resume.take_primitive_value());
+        runtime
+            .release_jsvalue(resume.take_primitive_value())
+            .unwrap();
         let address = (&*resume.0) as *const StringReplaceResumeState;
-        drop(invocation);
-        drop(arguments);
+        {
+            let NativeInvocation::Call { this_value } = invocation else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(this_value).unwrap();
+            for value in arguments.readable {
+                runtime.release_jsvalue(value).unwrap();
+            }
+        }
         // Source is a real Object conversion wait. Its primitive reply now
         // advances search conversion locally to the actual replacer callback.
         let StringReplaceStep::Call { mut resume } = resume
@@ -782,8 +806,12 @@ mod tests {
             panic!("expected replacer call")
         };
         drop(resume.take_call_target());
-        drop(resume.take_call_receiver());
-        drop(resume.take_call_arguments());
+        runtime
+            .release_jsvalue(resume.take_call_receiver())
+            .unwrap();
+        for value in resume.take_call_arguments() {
+            runtime.release_jsvalue(value).unwrap();
+        }
         assert_eq!((&*resume.0) as *const StringReplaceResumeState, address);
         runtime.run_gc().unwrap();
         for id in [receiver_id, callback_id] {

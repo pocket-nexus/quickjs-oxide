@@ -55,6 +55,7 @@ impl std::ops::DerefMut for AggregateResume {
 }
 const _: () = assert!(std::mem::size_of::<AggregateResume>() <= 8);
 pub(crate) struct AggregateResumeState {
+    runtime: Runtime,
     realm: ContextId,
     phase: Phase,
     iterable: JsValue,
@@ -62,6 +63,21 @@ pub(crate) struct AggregateResumeState {
     next: JsValue,
     result: Option<ObjectRef>,
     index: u64,
+}
+impl Drop for AggregateResumeState {
+    /// Release the internal edges still owned when the request is abandoned.
+    /// Consumption goes through `std::mem::replace` or a duplicate, so drained
+    /// fields are `Undefined` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if !matches!(self.iterable, JsValue::Undefined) {
+            let iterable = std::mem::replace(&mut self.iterable, JsValue::Undefined);
+            let _ = self.runtime.release_jsvalue(iterable);
+        }
+        if !matches!(self.next, JsValue::Undefined) {
+            let next = std::mem::replace(&mut self.next, JsValue::Undefined);
+            let _ = self.runtime.release_jsvalue(next);
+        }
+    }
 }
 impl AggregateStep {
     pub(crate) fn start(
@@ -90,6 +106,7 @@ impl AggregateStep {
             receiver: runtime.dup_jsvalue(&iterable)?,
             key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
             resume: AggregateResume(Box::new(AggregateResumeState {
+                runtime: runtime.clone(),
                 realm,
                 phase: Phase::Method,
                 iterable,
@@ -145,7 +162,8 @@ impl AggregateResume {
                         )?,
                     )));
                 };
-                self.0.iterable = JsValue::Undefined;
+                let iterable = std::mem::replace(&mut self.0.iterable, JsValue::Undefined);
+                runtime.release_jsvalue(iterable)?;
                 self.0.iterator = Some(iterator.clone());
                 self.0.phase = Phase::NextMethod;
                 Ok(AggregateStep::Read {
@@ -158,14 +176,14 @@ impl AggregateResume {
             Phase::NextMethod => {
                 self.0.next = runtime.into_jsvalue(value)?;
                 self.0.result = Some(runtime.new_array(self.0.realm)?);
-                self.next()
+                self.next(runtime)
             }
             _ => Err(RuntimeError::Invariant(
                 "AggregateError value phase mismatch",
             )),
         }
     }
-    fn next(mut self) -> Result<AggregateStep, RuntimeError> {
+    fn next(mut self, runtime: &Runtime) -> Result<AggregateStep, RuntimeError> {
         self.0.phase = Phase::Next;
         Ok(AggregateStep::Next {
             iterator: self
@@ -173,7 +191,7 @@ impl AggregateResume {
                 .iterator
                 .clone()
                 .ok_or(RuntimeError::Invariant("AggregateError iterator missing"))?,
-            next: std::mem::replace(&mut self.0.next, JsValue::Undefined),
+            next: runtime.dup_jsvalue(&self.0.next)?,
             resume: self,
         })
     }
@@ -183,6 +201,7 @@ impl AggregateResume {
             iterator: self
                 .0
                 .iterator
+                .clone()
                 .ok_or(RuntimeError::Invariant("AggregateError iterator missing"))?,
             completion: Completion::Throw(value),
         })
@@ -203,6 +222,7 @@ impl AggregateResume {
                 let result = self
                     .0
                     .result
+                    .clone()
                     .ok_or(RuntimeError::Invariant("AggregateError result missing"))?;
                 return Ok(AggregateStep::Complete(Completion::Return(
                     JsValue::Object(result.into_handle()),
@@ -239,7 +259,7 @@ impl AggregateResume {
         self.0.index = self.0.index.checked_add(1).ok_or(RuntimeError::Invariant(
             "AggregateError iterable exceeded Uint64 indices",
         ))?;
-        self.next()
+        self.next(runtime)
     }
 }
 pub(crate) fn finish(

@@ -33,15 +33,6 @@ impl Value {
         number::operations::Number::compact(value).into()
     }
 
-    /// Representation-only Number projection; never performs ToNumber.
-    pub(crate) fn as_number_repr(&self) -> Option<number::operations::Number> {
-        match self {
-            Self::Int(value) => Some(number::operations::Number::Int(*value)),
-            Self::Float(value) => Some(number::operations::Number::Float(*value)),
-            _ => None,
-        }
-    }
-
     /// Match QuickJS's representation-only `JSValue` comparison. This is
     /// narrower than JavaScript equality: heap-backed primitives must retain
     /// the same cell and floating-point payload bits must match exactly.

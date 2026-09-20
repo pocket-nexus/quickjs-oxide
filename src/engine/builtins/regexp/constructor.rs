@@ -5,10 +5,10 @@
 //! pattern conversion precedes the derived `.prototype` lookup, and flags are
 //! converted only after the branded object has been allocated.
 
-use crate::engine::atom::AtomIdx;
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::atom::AtomIdx;
 
 use crate::engine::heap::{
     ContextId, ObjectData, ObjectPayload, PropertySlot, RawValue, RegExpObjectData, RegExpRealmData,
@@ -668,14 +668,22 @@ mod tests {
                 runtime.into_jsvalue(Value::Object(flags)).unwrap(),
             ],
         };
-        let RegExpConstructorStep::Primitive { resume, .. } =
+        let RegExpConstructorStep::Primitive { value, resume } =
             RegExpConstructorStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()
         else {
             panic!("expected pattern conversion")
         };
-        drop(invocation);
-        drop(arguments);
-        let RegExpConstructorStep::Prototype { resume, .. } = resume
+        runtime.release_jsvalue(value).unwrap();
+        {
+            let NativeInvocation::Construct { new_target } = invocation else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(new_target).unwrap();
+            for value in arguments.readable {
+                runtime.release_jsvalue(value).unwrap();
+            }
+        }
+        let RegExpConstructorStep::Prototype { new_target, resume } = resume
             .resume(
                 &runtime,
                 Completion::Return(
@@ -688,9 +696,10 @@ mod tests {
         else {
             panic!("expected prototype request")
         };
+        runtime.release_jsvalue(new_target).unwrap();
         let prototype = runtime.new_object(None).unwrap();
         let prototype_id = prototype.object_id();
-        let RegExpConstructorStep::Primitive { resume, .. } = resume
+        let RegExpConstructorStep::Primitive { value, resume } = resume
             .prototype(
                 &runtime,
                 NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)),
@@ -699,6 +708,7 @@ mod tests {
         else {
             panic!("expected flags conversion")
         };
+        runtime.release_jsvalue(value).unwrap();
         let RegExpConstructorPhase::Flags { object, .. } = &resume.phase else {
             panic!("expected unpublished result")
         };

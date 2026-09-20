@@ -337,7 +337,9 @@ impl Runtime {
                     WeakCollectionKey::Object(object) => RawValue::Object(object),
                     // The branded key atom was already validated by the heap
                     // lookup above, so it can be narrowed without re-branding.
-                    WeakCollectionKey::Symbol(atom) => RawValue::Symbol(AtomIdx::from_raw(atom.raw())),
+                    WeakCollectionKey::Symbol(atom) => {
+                        RawValue::Symbol(AtomIdx::from_raw(atom.raw()))
+                    }
                 };
                 Ok(Completion::Return(
                     self.into_jsvalue(self.root_raw_value(&raw)?)?,
@@ -426,18 +428,15 @@ impl Runtime {
                     return self.invalid_weak_target(realm, "invalid target");
                 };
                 let held_value = self.root_value(arguments.readable.get(1).ok_or(
-                    RuntimeError::Invariant(
-                        "FinalizationRegistry held value argv was not padded",
-                    ),
+                    RuntimeError::Invariant("FinalizationRegistry held value argv was not padded"),
                 )?)?;
                 if first.same_value(&held_value) {
                     return self.invalid_weak_target(realm, "held value cannot be the target");
                 }
-                let token_value = self.root_value(arguments.readable.get(2).ok_or(
-                    RuntimeError::Invariant(
+                let token_value =
+                    self.root_value(arguments.readable.get(2).ok_or(RuntimeError::Invariant(
                         "FinalizationRegistry unregister token argv was not padded",
-                    ),
-                )?)?;
+                    ))?)?;
                 let unregister_token = if matches!(token_value, Value::Undefined) {
                     None
                 } else {

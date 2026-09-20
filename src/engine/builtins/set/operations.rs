@@ -126,10 +126,7 @@ impl SetStep {
         }
         let genuine_size = if let JsValue::Object(id) = target_ref {
             let state = runtime.0.state.borrow();
-            if matches!(
-                state.heap.object(*id)?.payload,
-                ObjectPayload::Set { .. }
-            ) {
+            if matches!(state.heap.object(*id)?.payload, ObjectPayload::Set { .. }) {
                 Some(state.heap.set_size(*id)?)
             } else {
                 None
@@ -198,7 +195,9 @@ impl SetResume {
         if matches!(self.0.kind, SetOperation::Subset) && size > self.0.size
             || matches!(self.0.kind, SetOperation::Superset) && size < self.0.size
         {
-            return Ok(SetStep::Complete(Completion::Return(self.0.runtime.into_jsvalue(Value::Bool(false))?)));
+            return Ok(SetStep::Complete(Completion::Return(
+                self.0.runtime.into_jsvalue(Value::Bool(false))?,
+            )));
         }
         let own = match self.0.kind {
             SetOperation::Subset => true,
@@ -262,15 +261,18 @@ impl SetResume {
     }
     fn next_step(mut self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
         let callable = match &self.0.next {
-            JsValue::Object(id) => runtime.as_callable(&ObjectRef::from_borrowed_handle(
-                runtime.clone(),
-                *id,
-            )?)?,
+            JsValue::Object(id) => {
+                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+            }
             _ => None,
         };
         let Some(callable) = callable else {
             return Ok(SetStep::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Type, "not a function")?,
+                runtime.new_native_error_jsvalue(
+                    self.0.realm,
+                    NativeErrorKind::Type,
+                    "not a function",
+                )?,
             )));
         };
         self.0.phase = Phase::NextCall;
@@ -298,7 +300,9 @@ impl SetResume {
         if matches!(self.0.phase, Phase::CloseCall)
             || matches!(self.0.phase, Phase::CloseMethod) && matches!(reply, Completion::Throw(_))
         {
-            return Ok(SetStep::Complete(Completion::Return(self.0.runtime.into_jsvalue(Value::Bool(false))?)));
+            return Ok(SetStep::Complete(Completion::Return(
+                self.0.runtime.into_jsvalue(Value::Bool(false))?,
+            )));
         }
         let value = match reply {
             Completion::Return(value) => value,
@@ -322,10 +326,8 @@ impl SetResume {
                     )));
                 }
                 let callable = match &value {
-                    JsValue::Object(id) => runtime.as_callable(&ObjectRef::from_borrowed_handle(
-                        runtime.clone(),
-                        *id,
-                    )?)?,
+                    JsValue::Object(id) => runtime
+                        .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
                     _ => None,
                 };
                 let Some(callable) = callable else {
@@ -421,10 +423,8 @@ impl SetResume {
             }
             Phase::CloseMethod => {
                 let callable = match &value {
-                    JsValue::Object(id) => runtime.as_callable(&ObjectRef::from_borrowed_handle(
-                        runtime.clone(),
-                        *id,
-                    )?)?,
+                    JsValue::Object(id) => runtime
+                        .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
                     _ => None,
                 };
                 let Some(callable) = callable else {
@@ -503,7 +503,7 @@ impl SetResume {
         match self.0.kind {
             SetOperation::Disjoint | SetOperation::Superset => {
                 let present = runtime.find_set_record(&self.0.set, &value)?.is_some();
-                drop(value);
+                runtime.release_jsvalue(value)?;
                 if present == matches!(self.0.kind, SetOperation::Disjoint) {
                     self.0.phase = Phase::CloseMethod;
                     return Ok(SetStep::request_read(

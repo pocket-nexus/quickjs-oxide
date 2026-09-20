@@ -1,7 +1,7 @@
-use crate::engine::atom::AtomIdx;
 use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeFunctionId;
 
 use crate::engine::code::function::metadata::{ConstructorKind, FunctionKind, FunctionMetadata};

@@ -40,9 +40,9 @@ pub(in crate::engine::vm) fn release_frame_binding(
     binding: FrameBinding,
 ) -> Result<(), Error> {
     match binding {
-        FrameBinding::Direct(value) => {
-            runtime.release_jsvalue(value).map_err(runtime_error_to_vm_error)
-        }
+        FrameBinding::Direct(value) => runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error),
         FrameBinding::Private(_)
         | FrameBinding::PrivateCallable(_)
         | FrameBinding::Uninitialized
@@ -806,10 +806,7 @@ mod immediate_cell_tests {
             .into_jsvalue(Value::Object(runtime.new_object(None).unwrap()))
             .unwrap();
         assert!(!try_write_immediate_cell(
-            &runtime,
-            &root,
-            &object,
-            metadata
+            &runtime, &root, &object, metadata
         ));
         runtime.release_jsvalue(object).unwrap();
         assert_eq!(runtime.read_var_ref_rooted(&root).unwrap(), Value::Int(2));
@@ -848,7 +845,10 @@ mod immediate_cell_tests {
             &JsValue::Int(3),
             None
         ));
-        assert_eq!(runtime.read_var_ref_rooted(&constant).unwrap(), Value::Int(1));
+        assert_eq!(
+            runtime.read_var_ref_rooted(&constant).unwrap(),
+            Value::Int(1)
+        );
     }
 
     #[test]
@@ -869,19 +869,17 @@ mod immediate_cell_tests {
             None
         ));
         assert!(runtime.0.deferred_references.has_pending());
-        assert!(
-            matches!(
-                runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .var_ref(root.id())
-                    .unwrap()
-                    .value,
-                RawValue::Int(1)
-            )
-        );
+        assert!(matches!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .var_ref(root.id())
+                .unwrap()
+                .value,
+            RawValue::Int(1)
+        ));
         runtime.drain_deferred_references().unwrap();
         assert!(try_write_immediate_cell(
             &runtime,

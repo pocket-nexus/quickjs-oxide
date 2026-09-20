@@ -47,9 +47,14 @@ fn date_argument(
     arguments: &NativeArguments,
     index: usize,
 ) -> Result<Value, RuntimeError> {
-    runtime.root_value(arguments.readable.get(index).ok_or(RuntimeError::Invariant(
-        "Date native argument vector was not padded to readable arity",
-    ))?)
+    runtime.root_value(
+        arguments
+            .readable
+            .get(index)
+            .ok_or(RuntimeError::Invariant(
+                "Date native argument vector was not padded to readable arity",
+            ))?,
+    )
 }
 
 impl Runtime {
@@ -177,7 +182,9 @@ impl Runtime {
             .borrow_mut()
             .heap
             .set_date_value(object.object_id(), value)?;
-        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(value).into()))
+        Ok(Completion::Return(
+            crate::engine::value::number::operations::Number::compact(value).into(),
+        ))
     }
 
     fn call_date_time_value(
@@ -187,9 +194,13 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
-        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(value).into()))
+        Ok(Completion::Return(
+            crate::engine::value::number::operations::Number::compact(value).into(),
+        ))
     }
 
     /// `toGMTString` is not a ninth formatter native. The installer must
@@ -204,7 +215,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let kind = date_format_kind(method);
         let fields = get_date_fields(value, kind.uses_local_time(), false, |instant| {
@@ -233,18 +246,24 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let Some(fields) = get_date_fields(value, field.uses_local_time(), false, |instant| {
             self.date_timezone_offset_minutes(instant)
         }) else {
-            return Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(f64::NAN).into()));
+            return Ok(Completion::Return(
+                crate::engine::value::number::operations::Number::compact(f64::NAN).into(),
+            ));
         };
         let mut value = fields[usize::from(field.field_index())];
         if field.is_legacy_year() {
             value -= 1900.0;
         }
-        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(value).into()))
+        Ok(Completion::Return(
+            crate::engine::value::number::operations::Number::compact(value).into(),
+        ))
     }
 
     fn call_date_timezone_offset(
@@ -254,13 +273,19 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         if value.is_nan() {
-            return Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(f64::NAN).into()));
+            return Ok(Completion::Return(
+                crate::engine::value::number::operations::Number::compact(f64::NAN).into(),
+            ));
         }
         let offset = self.date_timezone_offset_minutes(value.trunc() as i64);
-        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(f64::from(offset)).into()))
+        Ok(Completion::Return(
+            crate::engine::value::number::operations::Number::compact(f64::from(offset)).into(),
+        ))
     }
 
     fn call_date_set_time(
@@ -269,19 +294,20 @@ impl Runtime {
         this_value: &Value,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::finish(
-            self,
-            realm,
-            operation::DatePrototypeStep::start(
-                self,
-                realm,
-                DateNativeKind::SetTime,
-                &NativeInvocation::Call {
-                    this_value: self.unroot_value(this_value)?,
-                },
-                arguments,
-            )?,
-        )
+        operation::finish(self, realm, {
+            let invocation = NativeInvocation::Call {
+                this_value: self.unroot_value(this_value)?,
+            };
+            self.dispatch_borrowed_invocation(invocation, |invocation| {
+                operation::DatePrototypeStep::start(
+                    self,
+                    realm,
+                    DateNativeKind::SetTime,
+                    invocation,
+                    arguments,
+                )
+            })?
+        })
     }
 
     fn call_date_set_field(
@@ -291,19 +317,20 @@ impl Runtime {
         field: DateSetFieldKind,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::finish(
-            self,
-            realm,
-            operation::DatePrototypeStep::start(
-                self,
-                realm,
-                DateNativeKind::SetField(field),
-                &NativeInvocation::Call {
-                    this_value: self.unroot_value(this_value)?,
-                },
-                arguments,
-            )?,
-        )
+        operation::finish(self, realm, {
+            let invocation = NativeInvocation::Call {
+                this_value: self.unroot_value(this_value)?,
+            };
+            self.dispatch_borrowed_invocation(invocation, |invocation| {
+                operation::DatePrototypeStep::start(
+                    self,
+                    realm,
+                    DateNativeKind::SetField(field),
+                    invocation,
+                    arguments,
+                )
+            })?
+        })
     }
 
     fn finish_date_set_year(
@@ -343,19 +370,20 @@ impl Runtime {
         this_value: &Value,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::finish(
-            self,
-            realm,
-            operation::DatePrototypeStep::start(
-                self,
-                realm,
-                DateNativeKind::SetYear,
-                &NativeInvocation::Call {
-                    this_value: self.unroot_value(this_value)?,
-                },
-                arguments,
-            )?,
-        )
+        operation::finish(self, realm, {
+            let invocation = NativeInvocation::Call {
+                this_value: self.unroot_value(this_value)?,
+            };
+            self.dispatch_borrowed_invocation(invocation, |invocation| {
+                operation::DatePrototypeStep::start(
+                    self,
+                    realm,
+                    DateNativeKind::SetYear,
+                    invocation,
+                    arguments,
+                )
+            })?
+        })
     }
 
     fn call_date_to_primitive(
@@ -364,19 +392,20 @@ impl Runtime {
         this_value: Value,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::finish(
-            self,
-            realm,
-            operation::DatePrototypeStep::start(
-                self,
-                realm,
-                DateNativeKind::ToPrimitive,
-                &NativeInvocation::Call {
-                    this_value: self.unroot_value(&this_value)?,
-                },
-                arguments,
-            )?,
-        )
+        operation::finish(self, realm, {
+            let invocation = NativeInvocation::Call {
+                this_value: self.unroot_value(&this_value)?,
+            };
+            self.dispatch_borrowed_invocation(invocation, |invocation| {
+                operation::DatePrototypeStep::start(
+                    self,
+                    realm,
+                    DateNativeKind::ToPrimitive,
+                    invocation,
+                    arguments,
+                )
+            })?
+        })
     }
 
     fn call_date_to_json(
@@ -388,19 +417,20 @@ impl Runtime {
             readable: Vec::new(),
             actual_arg_count: 0,
         };
-        operation::finish(
-            self,
-            realm,
-            operation::DatePrototypeStep::start(
-                self,
-                realm,
-                DateNativeKind::ToJson,
-                &NativeInvocation::Call {
-                    this_value: self.unroot_value(&this_value)?,
-                },
-                &arguments,
-            )?,
-        )
+        operation::finish(self, realm, {
+            let invocation = NativeInvocation::Call {
+                this_value: self.unroot_value(&this_value)?,
+            };
+            self.dispatch_borrowed_invocation(invocation, |invocation| {
+                operation::DatePrototypeStep::start(
+                    self,
+                    realm,
+                    DateNativeKind::ToJson,
+                    invocation,
+                    &arguments,
+                )
+            })?
+        })
     }
 }
 

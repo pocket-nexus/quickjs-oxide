@@ -13,8 +13,33 @@ use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(super) enum MethodStep {
     Complete { resume: MethodResume },
-    Throw(JsValue),
+    Throw(MethodThrow),
     Read { resume: MethodResume },
+}
+
+/// Owns the error thrown by method lookup. Abandoned lookups release the edge
+/// through `Drop`; every consumer drains it with [`MethodThrow::take`].
+pub(super) struct MethodThrow {
+    runtime: Runtime,
+    value: Option<JsValue>,
+}
+impl MethodThrow {
+    fn new(runtime: Runtime, value: JsValue) -> Self {
+        Self {
+            runtime,
+            value: Some(value),
+        }
+    }
+    pub(super) fn take(mut self) -> JsValue {
+        self.value.take().expect("MethodStep Throw value")
+    }
+}
+impl Drop for MethodThrow {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 
 pub(super) struct MethodResume(super::reuse::PooledBox<MethodResumeState>);
@@ -85,11 +110,10 @@ impl MethodStep {
 }
 
 fn overflow(runtime: &Runtime, realm: ContextId) -> Result<MethodStep, RuntimeError> {
-    Ok(MethodStep::Throw(runtime.new_native_error_jsvalue(
-        realm,
-        NativeErrorKind::Internal,
-        "stack overflow",
-    )?))
+    Ok(MethodStep::Throw(MethodThrow::new(
+        runtime.clone(),
+        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Internal, "stack overflow")?,
+    )))
 }
 
 impl Search {
@@ -107,7 +131,10 @@ impl Search {
             else {
                 unreachable!("revoked proxy throws")
             };
-            return Ok(MethodStep::Throw(runtime.unroot_value(&value)?));
+            return Ok(MethodStep::Throw(MethodThrow::new(
+                runtime.clone(),
+                runtime.unroot_value(&value)?,
+            )));
         }
         // A cached data-slot location skips the dynamic `handler[name]` read.
         // The value is always read from today's slot, so a same-shape overwrite
@@ -118,7 +145,7 @@ impl Search {
         {
             let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
             let resume = MethodResume(super::reuse::PooledBox::new(MethodResumeState {
-                pending_effect: MethodStepPending::default(),
+                pending_effect: MethodStepPending::new(runtime.clone()),
                 rooted: Some(rooted),
                 selected: None,
                 search: self,
@@ -132,7 +159,7 @@ impl Search {
             self.key.clone(),
             receiver,
             MethodResume(super::reuse::PooledBox::new(MethodResumeState {
-                pending_effect: MethodStepPending::default(),
+                pending_effect: MethodStepPending::new(runtime.clone()),
                 rooted: Some(rooted),
                 selected: None,
                 search: self,
@@ -154,7 +181,9 @@ impl MethodResume {
         completion: Completion,
     ) -> Result<MethodStep, RuntimeError> {
         let mut value = match completion {
-            Completion::Throw(value) => return Ok(MethodStep::Throw(value)),
+            Completion::Throw(value) => {
+                return Ok(MethodStep::Throw(MethodThrow::new(runtime.clone(), value)));
+            }
             Completion::Return(value) => value,
         };
         // Undefined/Null keeps walking the target Proxy chain iteratively; every
@@ -183,7 +212,10 @@ impl MethodResume {
                     else {
                         unreachable!("revoked proxy throws")
                     };
-                    return Ok(MethodStep::Throw(runtime.unroot_value(&value)?));
+                    return Ok(MethodStep::Throw(MethodThrow::new(
+                        runtime.clone(),
+                        runtime.unroot_value(&value)?,
+                    )));
                 }
                 let next = runtime.root_proxy_snapshot(&target, data)?;
                 let cached = runtime.proxy_trap_read(
@@ -217,11 +249,12 @@ impl MethodResume {
             let method = match runtime.direct_call_target_from_jsvalue(value) {
                 Ok(method) => method,
                 Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
-                    return Ok(MethodStep::Throw(runtime.new_native_error_from_error_jsvalue(
+                    let value = runtime.new_native_error_from_error_jsvalue(
                         self.0.search.realm,
                         NativeErrorKind::Type,
                         &error,
-                    )?));
+                    )?;
+                    return Ok(MethodStep::Throw(MethodThrow::new(runtime.clone(), value)));
                 }
                 Err(error) => return Err(error),
             };
@@ -231,11 +264,30 @@ impl MethodResume {
     }
 }
 
-#[derive(Default)]
 struct MethodStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
+}
+impl MethodStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+        }
+    }
+}
+impl Drop for MethodStepPending {
+    /// Release the internal read edge still held when the request is
+    /// abandoned. Consumption goes through `Option::take`.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl MethodStep {
     pub(crate) fn request_read(

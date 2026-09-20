@@ -89,11 +89,13 @@ impl Runtime {
         arguments: &NativeArguments,
         protocol: StringProtocolKind,
     ) -> Result<Completion, RuntimeError> {
-        finish(
-            self,
-            realm,
-            StringProtocolStep::start(self, realm, protocol, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish(
+                self,
+                realm,
+                StringProtocolStep::start(self, realm, protocol, invocation, arguments)?,
+            )
+        })
     }
 }
 
@@ -224,7 +226,11 @@ impl StringProtocolResume {
         };
         let Some(callable) = callable else {
             return Ok(StringProtocolStep::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Type, "not a function")?,
+                runtime.new_native_error_jsvalue(
+                    self.0.realm,
+                    NativeErrorKind::Type,
+                    "not a function",
+                )?,
             )));
         };
         let mut arguments = Vec::new();
@@ -375,7 +381,8 @@ impl StringProtocolResume {
                 }
                 arguments.push(runtime.unroot_value(&self.0.pattern)?);
                 if all {
-                    arguments.push(runtime.into_jsvalue(Value::String(JsString::from_static("g")))?);
+                    arguments
+                        .push(runtime.into_jsvalue(Value::String(JsString::from_static("g")))?);
                 }
                 Ok(StringProtocolStep::make_construct(
                     ConstructorRef::from_validated_object(constructor),

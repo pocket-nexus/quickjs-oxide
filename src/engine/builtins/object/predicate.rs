@@ -325,9 +325,9 @@ impl PredicateResume {
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => PredicateStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )),
+            NativeConversion::Throw(value) => {
+                PredicateStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
+            }
             NativeConversion::Value(None) => {
                 PredicateStep::Complete(Completion::Return(JsValue::Undefined))
             }
@@ -362,10 +362,7 @@ pub(in crate::engine::builtins) fn finish(
             }
             PredicateStep::Prototype { mut resume } => {
                 let object = resume.take_prototype_object();
-                resume.prototype(
-                    runtime,
-                    runtime.internal_get_prototype_of(realm, &object)?,
-                )?
+                resume.prototype(runtime, runtime.internal_get_prototype_of(realm, &object)?)?
             }
             PredicateStep::Define { mut resume } => {
                 let object = resume.take_define_object();

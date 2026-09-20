@@ -160,7 +160,11 @@ impl BuildStep {
             };
             let Some(callable) = callable else {
                 return Ok(Self::Complete(Completion::Throw(
-                    runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+                    runtime.new_native_error_jsvalue(
+                        realm,
+                        NativeErrorKind::Type,
+                        "not a function",
+                    )?,
                 )));
             };
             Some(callable)
@@ -410,7 +414,10 @@ impl BuildResume {
             }
             Phase::Length => {
                 self.0.phase = Phase::Number;
-                Ok(BuildStep::request_number(runtime.into_jsvalue(value)?, self))
+                Ok(BuildStep::request_number(
+                    runtime.into_jsvalue(value)?,
+                    self,
+                ))
             }
             Phase::Construct => {
                 let Value::Object(result) = value else {

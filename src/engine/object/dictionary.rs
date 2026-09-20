@@ -56,12 +56,10 @@ impl RuntimeState {
         let mut incoming = HashMap::with_capacity(entries.len());
         for (index, entry) in entries.iter().enumerate() {
             if incoming.insert(entry.atom, index).is_some() {
-                return Err(
-                    super::shape::ShapeError::DuplicateAtom(crate::engine::atom::Atom::from_raw(
-                        entry.atom.raw(),
-                    ))
-                    .into(),
-                );
+                return Err(super::shape::ShapeError::DuplicateAtom(
+                    crate::engine::atom::Atom::from_raw(entry.atom.raw()),
+                )
+                .into());
             }
         }
         let mut pairs = entries

@@ -32,11 +32,13 @@ impl EvalScriptStep {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(runtime);
             return Err(RuntimeError::Invariant(
                 "Test262 evalScript received a constructor invocation",
             ));
         };
+        invocation.release(runtime)?;
         let source = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "Test262 evalScript argument was not padded",
         ))?;
@@ -70,17 +72,18 @@ impl EvalScriptResume {
         // UTF-16 code-unit stream. Reject an unpaired surrogate explicitly;
         // lossy replacement would silently evaluate different JavaScript.
         let source_units = source.utf16_units().collect::<Vec<_>>();
-        let source =
-            match String::from_utf16(&source_units) {
-                Ok(source) => source,
-                Err(_) => {
-                    return Ok(EvalScriptStep::Complete(Completion::Throw(runtime.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Internal,
-                    "evalScript source containing a lone UTF-16 surrogate is not implemented",
-                )?)));
-                }
-            };
+        let source = match String::from_utf16(&source_units) {
+            Ok(source) => source,
+            Err(_) => {
+                return Ok(EvalScriptStep::Complete(Completion::Throw(
+                    runtime.new_native_error_jsvalue(
+                        realm,
+                        NativeErrorKind::Internal,
+                        "evalScript source containing a lone UTF-16 surrogate is not implemented",
+                    )?,
+                )));
+            }
+        };
 
         let script = match runtime.compile_in_realm(realm, &source, EVAL_SCRIPT_FILENAME)? {
             Compilation::Published(script) => script,

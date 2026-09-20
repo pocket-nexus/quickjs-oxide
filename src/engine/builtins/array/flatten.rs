@@ -175,7 +175,10 @@ impl FlattenResume {
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(FlattenStep::request_number(runtime.into_jsvalue(value)?, self))
+                Ok(FlattenStep::request_number(
+                    runtime.into_jsvalue(value)?,
+                    self,
+                ))
             }
             Phase::Species => {
                 let Value::Object(target) = value else {
@@ -215,7 +218,10 @@ impl FlattenResume {
             Phase::Mapper => self.visit(runtime, value),
             Phase::NestedLength => {
                 self.0.phase = Phase::NestedNumber;
-                Ok(FlattenStep::request_number(runtime.into_jsvalue(value)?, self))
+                Ok(FlattenStep::request_number(
+                    runtime.into_jsvalue(value)?,
+                    self,
+                ))
             }
             _ => Err(RuntimeError::Invariant(
                 "Array flatten value phase mismatch",
@@ -282,7 +288,11 @@ impl FlattenResume {
     }
     fn overflow(&self, runtime: &Runtime) -> Result<FlattenStep, RuntimeError> {
         Ok(FlattenStep::Complete(Completion::Throw(
-            runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Internal, "stack overflow")?,
+            runtime.new_native_error_jsvalue(
+                self.0.realm,
+                NativeErrorKind::Internal,
+                "stack overflow",
+            )?,
         )))
     }
     fn begin(mut self, runtime: &Runtime) -> Result<FlattenStep, RuntimeError> {
@@ -388,7 +398,11 @@ impl FlattenResume {
         }
         if self.0.target_index >= self.0.target_limit {
             return Ok(FlattenStep::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Type, "Array too long")?,
+                runtime.new_native_error_jsvalue(
+                    self.0.realm,
+                    NativeErrorKind::Type,
+                    "Array too long",
+                )?,
             )));
         }
         self.0.phase = Phase::Define;

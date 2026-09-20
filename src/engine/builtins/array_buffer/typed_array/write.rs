@@ -78,7 +78,12 @@ impl TypedWriteStep {
             ));
         }
         let element = runtime.typed_array_snapshot(object)?.element;
-        let result = super::element::encode_primitive(runtime, realm, element, runtime.unroot_value(value)?)?;
+        let result = super::element::encode_primitive(
+            runtime,
+            realm,
+            element,
+            runtime.unroot_value(value)?,
+        )?;
         finish_element(runtime, object, index, result)
     }
     pub(crate) fn define(
@@ -359,10 +364,11 @@ mod tests {
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
-    fn take_element(step: TypedWriteStep) -> TypedWriteResume {
-        let TypedWriteStep::Element { resume, .. } = step else {
+    fn take_element(runtime: &Runtime, step: TypedWriteStep) -> TypedWriteResume {
+        let TypedWriteStep::Element { value, resume, .. } = step else {
             panic!("expected element conversion")
         };
+        runtime.release_jsvalue(value).unwrap();
         resume
     }
     #[test]
@@ -392,7 +398,7 @@ mod tests {
             } else {
                 TypedWriteStep::set(&runtime, view, Some(0), Value::Object(value)).unwrap()
             };
-            let resume = take_element(step);
+            let resume = take_element(&runtime, step);
             runtime.run_gc().unwrap();
             for id in [view_id, buffer_id, value_id] {
                 assert!(runtime.0.state.borrow().heap.object(id).is_ok());

@@ -81,7 +81,7 @@ fn method(
 ) -> Result<ProxyDefineStep, RuntimeError> {
     Ok(match step {
         MethodStep::Throw(value) => ProxyDefineStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value)?,
+            runtime.root_and_release_jsvalue(value.take())?,
         )),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
@@ -92,7 +92,7 @@ fn method(
                 method_key,
                 receiver,
                 ProxyDefineResume(Box::new(ProxyDefineResumeState {
-                    pending_effect: ProxyDefineStepPending::default(),
+                    pending_effect: ProxyDefineStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Method {
                         resume,
@@ -112,7 +112,7 @@ fn method(
                     key,
                     descriptor,
                     ProxyDefineResume(Box::new(ProxyDefineResumeState {
-                        pending_effect: ProxyDefineStepPending::default(),
+                        pending_effect: ProxyDefineStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Forward { _rooted: rooted },
                     })),
@@ -120,8 +120,7 @@ fn method(
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
                     let descriptor_object = runtime.proxy_descriptor_object(realm, &descriptor)?;
-                    let receiver =
-                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
                     let arguments = [
                         Value::Object(rooted.target.clone()),
                         key_value,
@@ -135,7 +134,7 @@ fn method(
                         receiver,
                         arguments,
                         ProxyDefineResume(Box::new(ProxyDefineResumeState {
-                            pending_effect: ProxyDefineStepPending::default(),
+                            pending_effect: ProxyDefineStepPending::new(runtime.clone()),
                             realm,
                             phase: Phase::Trap {
                                 rooted,
@@ -189,7 +188,7 @@ impl ProxyDefineResume {
                     rooted.target.clone(),
                     key,
                     Self(Box::new(ProxyDefineResumeState {
-                        pending_effect: ProxyDefineStepPending::default(),
+                        pending_effect: ProxyDefineStepPending::new(runtime.clone()),
                         realm: self.0.realm,
                         phase: Phase::Invariant { rooted, descriptor },
                     })),
@@ -241,8 +240,8 @@ impl ProxyDefineResume {
     }
 }
 
-#[derive(Default)]
 struct ProxyDefineStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
@@ -254,6 +253,42 @@ struct ProxyDefineStepPending {
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
+}
+impl ProxyDefineStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            define_object: None,
+            define_key: None,
+            define_descriptor: None,
+            descriptor_object: None,
+            descriptor_key: None,
+        }
+    }
+}
+impl Drop for ProxyDefineStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl ProxyDefineStep {
     pub(crate) fn request_read(

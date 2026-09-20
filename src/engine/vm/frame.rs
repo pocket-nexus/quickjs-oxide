@@ -803,8 +803,11 @@ mod tests {
         {
             let runtime = tracked_runtime("child", &events);
             let context = runtime.new_context();
-            let captured_runtime = tracked_runtime("child-slot", &events);
-            let capture = captured_runtime.new_object(None).unwrap();
+            // Internal frame slots hold raw handles without a runtime owner;
+            // the child frame's cold function root keeps the child runtime
+            // alive until the frame is abandoned. The slot value belongs to
+            // the abandoning execution's runtime so its release is valid.
+            let capture = parent_runtime.new_object(None).unwrap();
             let mut child = entry(&runtime, context.realm);
             child
                 .storage
@@ -822,6 +825,6 @@ mod tests {
         drop(parent_runtime);
         assert!(events.borrow().is_empty());
         drop(execution);
-        assert_eq!(*events.borrow(), ["child-slot", "child", "parent"]);
+        assert_eq!(*events.borrow(), ["child", "parent"]);
     }
 }

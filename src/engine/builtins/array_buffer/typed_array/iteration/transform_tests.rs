@@ -657,8 +657,15 @@ fn pending_map_element_owns_source_target_callback_and_conversion_input() {
     drop(resume.take_species_source());
     let _ = resume.take_species_element();
     let _ = resume.take_species_length();
-    drop(invocation);
-    drop(arguments);
+    {
+        let NativeInvocation::Call { this_value } = invocation else {
+            unreachable!()
+        };
+        runtime.release_jsvalue(this_value).unwrap();
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
+    }
     let Value::Object(mapped) = mapped else {
         unreachable!()
     };
@@ -669,8 +676,12 @@ fn pending_map_element_owns_source_target_callback_and_conversion_input() {
         panic!("expected callback")
     };
     drop(resume.take_call_target());
-    drop(resume.take_call_receiver());
-    drop(resume.take_call_arguments());
+    runtime
+        .release_jsvalue(resume.take_call_receiver())
+        .unwrap();
+    for value in resume.take_call_arguments() {
+        runtime.release_jsvalue(value).unwrap();
+    }
     let conversion = runtime.new_object(None).unwrap();
     let conversion_id = conversion.object_id();
     let step = resume

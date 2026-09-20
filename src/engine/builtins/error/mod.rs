@@ -110,17 +110,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::finish(
-            self,
-            realm,
-            operation::ErrorStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::finish(
                 self,
                 realm,
-                operation::ErrorKind::Constructor(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                operation::ErrorStep::start(
+                    self,
+                    realm,
+                    operation::ErrorKind::Constructor(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     /// Pinned QuickJS's internal `Promise.any` AggregateError path: retain the
@@ -151,21 +153,23 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let arguments = NativeArguments {
-            readable: Vec::new(),
-            actual_arg_count: 0,
-        };
-        operation::finish(
-            self,
-            realm,
-            operation::ErrorStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let arguments = NativeArguments {
+                readable: Vec::new(),
+                actual_arg_count: 0,
+            };
+            operation::finish(
                 self,
                 realm,
-                operation::ErrorKind::ToString,
-                &invocation,
-                &arguments,
-            )?,
-        )
+                operation::ErrorStep::start(
+                    self,
+                    realm,
+                    operation::ErrorKind::ToString,
+                    invocation,
+                    &arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_error_is_error(
@@ -189,6 +193,8 @@ impl Runtime {
             | crate::engine::value::JsValue::String(_)
             | crate::engine::value::JsValue::Symbol(_) => false,
         };
-        Ok(Completion::Return(crate::engine::value::JsValue::Bool(is_error)))
+        Ok(Completion::Return(crate::engine::value::JsValue::Bool(
+            is_error,
+        )))
     }
 }

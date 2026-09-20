@@ -247,10 +247,9 @@ impl Shape {
         &mut self,
         atom: AtomIdx,
     ) -> Result<ShapeEntry, ShapeError> {
-        let index = self
-            .find(atom)
-            .ok_or(ShapeError::MissingAtom(Atom::from_raw(atom.raw())))?
-            as usize;
+        let index =
+            self.find(atom)
+                .ok_or(ShapeError::MissingAtom(Atom::from_raw(atom.raw())))? as usize;
         self.dictionary_order
             .as_mut()
             .expect("dictionary removal requires dictionary metadata")
@@ -331,7 +330,12 @@ impl Shape {
         u32::try_from(self.entries.len()).map_err(|_| ShapeError::PropertyIndexOverflow)
     }
 
-    pub(crate) fn append_unique_property(&mut self, atom: AtomIdx, flags: PropertyFlags, index: u32) {
+    pub(crate) fn append_unique_property(
+        &mut self,
+        atom: AtomIdx,
+        flags: PropertyFlags,
+        index: u32,
+    ) {
         debug_assert_eq!(usize::try_from(index), Ok(self.entries.len()));
         debug_assert!(!atom.is_null() && self.find(atom).is_none());
         self.entries.push(ShapeEntry { atom, flags });
@@ -549,8 +553,7 @@ mod tests {
         let index_2 = key(&mut atoms, "2");
         let noncanonical_index = key(&mut atoms, "01");
         let private = AtomIdx::from_raw(atoms.new_private_symbol(Some("hidden")).unwrap().raw());
-        let global_symbol =
-            AtomIdx::from_raw(atoms.intern_global_symbol("shared").unwrap().raw());
+        let global_symbol = AtomIdx::from_raw(atoms.intern_global_symbol("shared").unwrap().raw());
         let largest_index = key(&mut atoms, "4294967294");
         let excluded_index = key(&mut atoms, "4294967295");
 

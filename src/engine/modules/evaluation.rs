@@ -77,7 +77,6 @@ impl EvaluationStep {
                         .map_err(RuntimeError::from)
                         .and_then(|promise| runtime.into_jsvalue(Value::Object(promise)))
                         .map(|value| Self::Complete(Completion::Return(value)))
-                        .map_err(Into::into)
                 }
                 ModuleEvaluationState::Unevaluated => Err(RuntimeError::Invariant(
                     "module retained an unsettled Promise before evaluation",

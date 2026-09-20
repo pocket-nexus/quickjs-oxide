@@ -39,13 +39,4 @@ impl Heap {
             )),
         }
     }
-
-    /// Trusted shared read for a live `BigIntId` held by an owning edge.
-    #[inline]
-    pub(crate) fn bigint_fast(&self, id: BigIntId) -> &JsBigInt {
-        match &self.live_node_fast(RawId::BigInt(id)).data {
-            NodeData::BigInt(value) => value,
-            _ => unreachable!("trusted bigint handle reached another node payload"),
-        }
-    }
 }

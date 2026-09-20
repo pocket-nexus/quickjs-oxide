@@ -156,7 +156,6 @@ impl Runtime {
         }
         Ok(atomics)
     }
-
     pub(crate) fn call_atomics_native(
         &self,
         realm: ContextId,
@@ -164,11 +163,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Atomics method did not receive a generic invocation",
             ));
         };
+        invocation.release(self)?;
         match kind {
             AtomicsNativeKind::Operation(operation) => {
                 self.call_atomics_operation(realm, operation, arguments)

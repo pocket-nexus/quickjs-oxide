@@ -403,11 +403,6 @@ impl WellKnownSymbol {
 pub struct SymbolRef(AtomOwner);
 
 impl SymbolRef {
-    /// Fallible retain for an owning VM slot, without deferred work or GC.
-    pub(crate) fn try_clone(&self) -> Result<Self, AtomError> {
-        self.0.try_clone().map(Self)
-    }
-
     /// Consume one already-owned, symbol-kind-validated atom reference.
     #[must_use]
     pub(crate) const fn from_owned_atom(runtime: Runtime, atom: Atom) -> Self {

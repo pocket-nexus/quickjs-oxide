@@ -4,8 +4,8 @@ mod local_add;
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::object::{CallableRef, OrdinaryRead};
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::primitive::{PrimitiveResume, PrimitiveStep};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
@@ -35,11 +35,36 @@ enum Finish {
 pub(super) struct ConversionWait(ConversionTask);
 pub(super) struct ConversionTask(Option<Box<ConversionState>>);
 pub(super) struct ConversionState {
+    runtime: Runtime,
     finish: Finish,
     frame: FrameId,
     identity: u64,
     step: Option<PrimitiveStep>,
     resume: Option<PrimitiveResume>,
+}
+impl Drop for ConversionState {
+    /// Release the internal edges the abandoned conversion still owns.
+    /// Consumption uses `Option::take`/`mem::replace`, so a drained slot is
+    /// `Undefined` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        let finish = std::mem::replace(&mut self.finish, Finish::Plus);
+        match finish {
+            Finish::PropertyWrite { base, value } => {
+                let _ = self.runtime.release_jsvalue(base);
+                let _ = self.runtime.release_jsvalue(value);
+            }
+            Finish::PropertyRead { base, .. } => {
+                let _ = self.runtime.release_jsvalue(base);
+            }
+            Finish::AddLeft(value) | Finish::AddRight(value) => {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+            Finish::Predicate(_)
+            | Finish::SuperProperty(_)
+            | Finish::Plus
+            | Finish::PropertyKey => {}
+        }
+    }
 }
 impl std::ops::Deref for ConversionTask {
     type Target = ConversionState;
@@ -281,10 +306,17 @@ pub(super) fn complete_primitives(
 
 impl ConversionTask {
     #[inline(always)]
-    fn new(finish: Finish, frame: FrameId, identity: u64, step: PrimitiveStep) -> Self {
+    fn new(
+        runtime: &Runtime,
+        finish: Finish,
+        frame: FrameId,
+        identity: u64,
+        step: PrimitiveStep,
+    ) -> Self {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("conversion_task_allocated");
         Self(Some(Box::new(ConversionState {
+            runtime: runtime.clone(),
             finish,
             frame,
             identity,
@@ -352,6 +384,7 @@ impl ConversionTask {
             (right, Finish::Plus, ToPrimitiveHint::Number)
         };
         Ok(Self::new(
+            runtime,
             finish,
             frame,
             identity,
@@ -367,8 +400,7 @@ impl ConversionTask {
         input: Box<super::predicate_driver::Input>,
     ) -> Result<Self, Error> {
         let realm = execution.frames.current_mut(frame)?.executable.realm;
-        let step =
-            PrimitiveResume::start(
+        let step = PrimitiveResume::start(
             runtime,
             realm,
             runtime
@@ -377,6 +409,7 @@ impl ConversionTask {
             ToPrimitiveHint::String,
         );
         Ok(Self::new(
+            runtime,
             Finish::Predicate(Some(input)),
             frame,
             identity,
@@ -392,8 +425,7 @@ impl ConversionTask {
         input: Box<super::super_property_driver::Input>,
     ) -> Result<Self, Error> {
         let realm = execution.frames.current_mut(frame)?.executable.realm;
-        let step =
-            PrimitiveResume::start(
+        let step = PrimitiveResume::start(
             runtime,
             realm,
             runtime
@@ -402,6 +434,7 @@ impl ConversionTask {
             ToPrimitiveHint::String,
         );
         Ok(Self::new(
+            runtime,
             Finish::SuperProperty(Some(input)),
             frame,
             identity,
@@ -416,13 +449,11 @@ impl ConversionTask {
         identity: u64,
     ) -> Result<Self, Error> {
         let parent = execution.frames.current_mut(frame)?;
-        for offset in 2..=0 {
-            let _ = execution.slots.peek(&parent.window, offset)?;
-        }
         let value = execution.slots.pop(&mut parent.window)?;
         let key = execution.slots.pop(&mut parent.window)?;
         let base = execution.slots.pop(&mut parent.window)?;
         Ok(Self::new(
+            runtime,
             Finish::PropertyWrite { base, value },
             frame,
             identity,
@@ -449,6 +480,7 @@ impl ConversionTask {
         let key = execution.slots.pop(&mut parent.window)?;
         let base = execution.slots.pop(&mut parent.window)?;
         Ok(Self::new(
+            runtime,
             Finish::PropertyRead {
                 base,
                 keep_receiver,
@@ -614,7 +646,9 @@ impl ConversionTask {
                                         let Some(kind) = crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind()) else { return Err(error); };
                                         Completion::Throw(
                                             runtime
-                                                .new_native_error_from_error_jsvalue(realm, kind, &error)
+                                                .new_native_error_from_error_jsvalue(
+                                                    realm, kind, &error,
+                                                )
                                                 .map_err(runtime_error_to_vm_error)?,
                                         )
                                     }

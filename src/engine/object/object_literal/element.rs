@@ -131,9 +131,7 @@ impl LiteralDefinitionResume {
             NativeConversion::Value(InternalDefineResult::Defined) => {
                 Completion::Return(crate::engine::value::JsValue::Undefined)
             }
-            NativeConversion::Throw(value) => {
-                Completion::Throw(runtime.unroot_value(&value)?)
-            }
+            NativeConversion::Throw(value) => Completion::Throw(runtime.unroot_value(&value)?),
             NativeConversion::Value(InternalDefineResult::RejectedOrdinary(_)) => {
                 return Err(Error::new(ErrorKind::Type, "property is not configurable").into());
             }

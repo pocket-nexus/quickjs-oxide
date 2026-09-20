@@ -61,6 +61,7 @@ impl std::ops::DerefMut for HelperResume {
 }
 const _: () = assert!(std::mem::size_of::<HelperResume>() <= 8);
 pub(crate) struct HelperResumeState {
+    runtime: Runtime,
     pending_effect: HelperResumeStepPending,
     realm: ContextId,
     guard: RunningHelper,
@@ -74,6 +75,24 @@ pub(crate) struct HelperResumeState {
     original_count: i64,
     method: Value,
     phase: Phase,
+}
+impl Drop for HelperResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.next_method.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 enum Phase {
     Method,
@@ -156,6 +175,7 @@ impl HelperResumeStep {
             .map(|inner| ObjectRef::from_borrowed_handle(runtime.clone(), inner))
             .transpose()?;
         let resume = HelperResume(Box::new(HelperResumeState {
+            runtime: runtime.clone(),
             pending_effect: HelperResumeStepPending::default(),
             realm,
             guard,
@@ -201,8 +221,7 @@ impl HelperResume {
             self.0.phase = Phase::CloseOuter;
             return Ok({
                 let __pending_field_iterator = self.0.source.clone();
-                let __pending_field_completion =
-                    Completion::Throw(runtime.into_jsvalue(value)?);
+                let __pending_field_completion = Completion::Throw(runtime.into_jsvalue(value)?);
                 let __pending_field_resume = self;
                 HelperResumeStep::request_close(
                     __pending_field_iterator,
@@ -342,7 +361,8 @@ impl HelperResume {
                 }
             };
         }
-        let Phase::OuterNext { dropping } = self.0.phase else {
+        let Phase::OuterNext { dropping } = std::mem::replace(&mut self.0.phase, Phase::Method)
+        else {
             return Err(RuntimeError::Invariant(
                 "helper iterator reply has wrong phase",
             ));
@@ -368,15 +388,14 @@ impl HelperResume {
         {
             return self.done(runtime, value, false);
         }
-        let callable =
-            match runtime.iterator_callable_value(self.0.realm, &self.0.callback)? {
-                NativeConversion::Value(callback) => callback,
-                NativeConversion::Throw(_) => {
-                    return Err(RuntimeError::Invariant(
-                        "Iterator Helper callback lost its callable brand",
-                    ));
-                }
-            };
+        let callable = match runtime.iterator_callable_value(self.0.realm, &self.0.callback)? {
+            NativeConversion::Value(callback) => callback,
+            NativeConversion::Throw(_) => {
+                return Err(RuntimeError::Invariant(
+                    "Iterator Helper callback lost its callable brand",
+                ));
+            }
+        };
         let index = self.0.count;
         self.0.count = self.0.count.wrapping_add(1);
         runtime.set_helper_count(&self.0.guard.helper, self.0.count)?;
@@ -658,7 +677,12 @@ mod tests {
         drop(source);
         drop(next);
         drop(callback);
-        drop(invocation);
+        {
+            let NativeInvocation::Call { this_value } = invocation else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(this_value).unwrap();
+        }
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(source_id).is_ok());
         drop(step);
@@ -672,15 +696,22 @@ mod tests {
                 .unwrap()
                 .executing
         );
+        let invocation = NativeInvocation::Call {
+            this_value: runtime.into_jsvalue(Value::Object(helper.clone())).unwrap(),
+        };
         let step = HelperResumeStep::start(
             &runtime,
             context.realm,
             IteratorResumeKind::Next,
-            &NativeInvocation::Call {
-                this_value: runtime.into_jsvalue(Value::Object(helper.clone())).unwrap(),
-            },
+            &invocation,
         )
         .unwrap();
+        {
+            let NativeInvocation::Call { this_value } = invocation else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(this_value).unwrap();
+        }
         let Completion::Return(value) = finish(&runtime, context.realm, step).unwrap() else {
             panic!("helper result expected")
         };

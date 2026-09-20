@@ -89,7 +89,9 @@ impl Runtime {
                 }
             }
         }
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(target))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target))?,
+        ))
     }
 
     pub(crate) fn call_typed_array_subarray(
@@ -235,9 +237,9 @@ impl TypedSliceStep {
             RuntimeError::Invariant("TypedArray slice end argv was not padded"),
         )?)?;
         Ok(Self::request_primitive(
-            runtime.dup_jsvalue(arguments.readable.first().ok_or(
-                RuntimeError::Invariant("TypedArray slice start argv was not padded"),
-            )?)?,
+            runtime.dup_jsvalue(arguments.readable.first().ok_or(RuntimeError::Invariant(
+                "TypedArray slice start argv was not padded",
+            ))?)?,
             TypedSliceResume(Box::new(TypedSliceResumeState {
                 pending_effect: TypedSliceStepPending::default(),
                 realm,

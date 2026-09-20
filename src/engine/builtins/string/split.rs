@@ -72,22 +72,12 @@ impl StringSplitStep {
                 )?,
             )));
         }
-        let separator = runtime.dup_jsvalue(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "String split separator argv was not padded",
-                ))?,
-        )?;
-        let limit = runtime.dup_jsvalue(
-            arguments
-                .readable
-                .get(1)
-                .ok_or(RuntimeError::Invariant(
-                    "String split limit argv was not padded",
-                ))?,
-        )?;
+        let separator = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("String split separator argv was not padded"),
+        )?)?;
+        let limit = runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("String split limit argv was not padded"),
+        )?)?;
         let resume = StringSplitResume(Box::new(StringSplitResumeState {
             step_pending: StringSplitStepPending::default(),
             realm,
@@ -164,7 +154,11 @@ impl StringSplitResume {
                 };
                 let Some(callable) = callable else {
                     return Ok(StringSplitStep::Complete(Completion::Throw(
-                        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+                        runtime.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not a function",
+                        )?,
                     )));
                 };
                 let mut arguments = Vec::new();

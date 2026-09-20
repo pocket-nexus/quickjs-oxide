@@ -6,7 +6,9 @@ use crate::engine::{
     builtins::native::ArrayJoinKind,
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey},
-    value::{JsString, JsStringBuilder, JsStringError, JsValue, Value, conversion::NativeConversion},
+    value::{
+        JsString, JsStringBuilder, JsStringError, JsValue, Value, conversion::NativeConversion,
+    },
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},

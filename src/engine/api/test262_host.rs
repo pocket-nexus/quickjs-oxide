@@ -12,8 +12,8 @@ use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::heap::ContextId;
 
 use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
@@ -215,7 +215,9 @@ impl Runtime {
         let mut child = self.new_context();
         let object_262 = child.install_test262_host()?;
         drop(child);
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(object_262))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(object_262))?,
+        ))
     }
 
     pub(crate) fn call_test262_is_html_dda(
