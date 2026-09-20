@@ -451,6 +451,9 @@ impl Runtime {
         }
         loop {
             if !self.is_constructor(constructor.as_object())? {
+                for argument in arguments.drain(..) {
+                    self.release_jsvalue(argument)?;
+                }
                 return Ok(NativeConversion::Throw(self.new_not_constructor_error(
                     caller_realm,
                     &Value::Object(constructor.as_object().clone()),

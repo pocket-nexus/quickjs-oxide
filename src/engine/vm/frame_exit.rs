@@ -40,6 +40,9 @@ pub(super) fn finish(
             .ok_or_else(|| Error::internal("owned completion has no payload"))?,
     };
     execution.slots.clear_frame(runtime, frame.window.take())?;
+    if let Some(mut pending) = frame.cold.iterator_wait.take() {
+        super::iterator_driver::release_wait(runtime, &mut pending)?;
+    }
     if let Some(guard) = guard {
         guard.finish().map_err(runtime_error_to_vm_error)?;
     }

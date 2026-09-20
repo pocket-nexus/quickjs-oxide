@@ -68,20 +68,17 @@ impl Runtime {
     ) -> Result<NativeConversion<Vec<crate::engine::value::JsValue>>, RuntimeError> {
         const MAX_CALL_ARGUMENTS: usize = 65_534;
 
-        let Some(total) = bound_arguments.len().checked_add(call_arguments.len()) else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
+        let overflow = match bound_arguments.len().checked_add(call_arguments.len()) {
+            Some(total) if total <= MAX_CALL_ARGUMENTS => None,
+            _ => Some(self.new_native_error(realm, NativeErrorKind::Internal, "stack overflow")?),
         };
-        if total > MAX_CALL_ARGUMENTS {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
+        if let Some(value) = overflow {
+            for argument in bound_arguments.into_iter().chain(call_arguments) {
+                self.release_jsvalue(argument)?;
+            }
+            return Ok(NativeConversion::Throw(value));
         }
+        let total = bound_arguments.len() + call_arguments.len();
         let mut arguments = Vec::with_capacity(total);
         arguments.extend(bound_arguments);
         arguments.extend(call_arguments);
@@ -393,8 +390,9 @@ impl Runtime {
             ) => invocation,
             (
                 NativeCProto::Constructor | NativeCProto::ConstructorMagic,
-                NativeInvocation::Call { .. },
+                NativeInvocation::Call { this_value },
             ) => {
+                self.release_jsvalue(this_value)?;
                 let exception = self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
@@ -406,10 +404,13 @@ impl Runtime {
             }
             (
                 NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
-                NativeInvocation::Call { .. },
-            ) => NativeInvocation::Construct {
-                new_target: crate::engine::value::JsValue::Undefined,
-            },
+                NativeInvocation::Call { this_value },
+            ) => {
+                self.release_jsvalue(this_value)?;
+                NativeInvocation::Construct {
+                    new_target: crate::engine::value::JsValue::Undefined,
+                }
+            }
             (
                 NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
                 invocation @ NativeInvocation::Construct { .. },
@@ -1202,11 +1203,13 @@ impl Runtime {
             | NativeFunctionId::ConstructorProbe
             | NativeFunctionId::ConstructorOrFunctionProbe => {
                 if matches!(arguments.readable.first(), Some(JsValue::Bool(false))) {
+                    let _ = invocation.release(self);
                     return Ok(Completion::Throw(self.unroot_value(&Value::String(
                         JsString::from_static("native probe throw"),
                     ))?));
                 }
                 if matches!(arguments.readable.first(), Some(JsValue::Bool(true))) {
+                    let _ = invocation.release(self);
                     return Err(RuntimeError::Invariant("native probe engine error"));
                 }
                 let padded_undefined = arguments.readable[arguments.actual_arg_count..]
@@ -1214,19 +1217,19 @@ impl Runtime {
                     .filter(|value| matches!(value, JsValue::Undefined))
                     .count();
                 let active_function = self.active_function()?.object_id();
-                let invocation_target_is_function = match invocation {
+                let invocation_target_is_function = match &invocation {
                     NativeInvocation::Call {
                         this_value: JsValue::Object(object),
-                    } => object == active_function,
+                    } => *object == active_function,
                     NativeInvocation::Construct {
                         new_target: JsValue::Object(object),
-                    } => object == active_function,
+                    } => *object == active_function,
                     NativeInvocation::Getter {
                         this_value: JsValue::Object(object),
-                    } => object == active_function,
+                    } => *object == active_function,
                     NativeInvocation::Setter {
                         this_value: JsValue::Object(object),
-                    } => object == active_function,
+                    } => *object == active_function,
                     NativeInvocation::Call { .. }
                     | NativeInvocation::Construct { .. }
                     | NativeInvocation::Getter { .. }
@@ -1239,6 +1242,7 @@ impl Runtime {
                     padded_undefined,
                     invocation_target_is_function
                 );
+                invocation.release(self)?;
                 Ok(Completion::Return(self.unroot_value(&Value::String(
                     JsString::try_from_utf8(&result)?,
                 ))?))

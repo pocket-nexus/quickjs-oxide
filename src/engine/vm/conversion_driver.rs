@@ -104,10 +104,19 @@ fn property_key_primitive(runtime: &Runtime, value: JsValue) -> Result<JsValue, 
     Ok(match value {
         JsValue::Symbol(_) => value,
         JsValue::String(_) => value,
-        primitive => super::numeric::allocate_string_jsvalue(
-            runtime,
-            super::numeric::to_js_string_jsvalue(runtime, &primitive)?,
-        )?,
+        primitive => {
+            let text = match super::numeric::to_js_string_jsvalue(runtime, &primitive) {
+                Ok(text) => text,
+                Err(error) => {
+                    let _ = runtime.release_jsvalue(primitive);
+                    return Err(error.into());
+                }
+            };
+            runtime
+                .release_jsvalue(primitive)
+                .map_err(runtime_error_to_vm_error)?;
+            super::numeric::allocate_string_jsvalue(runtime, text)?
+        }
     })
 }
 
