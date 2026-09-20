@@ -4,7 +4,8 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomError};
 use crate::engine::heap::runtime::{DeferredRefOp, RuntimeOperation, RuntimeState};
 use crate::engine::heap::{
-    BigIntId, ContextId, FunctionBytecodeId, HeapError, ObjectId, RawId, RawValue, StringId, VarRefId,
+    BigIntId, ContextId, FunctionBytecodeId, HeapError, ObjectId, RawId, RawValue, StringId,
+    VarRefId,
 };
 
 impl Runtime {
@@ -98,9 +99,10 @@ impl Runtime {
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_context(id);
         }
-        let state = self.0.state.try_borrow().map_err(|_| {
-            HeapError::Invariant("context retained during a runtime state borrow")
-        })?;
+        let state =
+            self.0.state.try_borrow().map_err(|_| {
+                HeapError::Invariant("context retained during a runtime state borrow")
+            })?;
         state.heap.retain_context_shared(id)
     }
 
@@ -116,9 +118,10 @@ impl Runtime {
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_var_ref(id);
         }
-        let state = self.0.state.try_borrow().map_err(|_| {
-            HeapError::Invariant("VarRef retained during a runtime state borrow")
-        })?;
+        let state =
+            self.0.state.try_borrow().map_err(|_| {
+                HeapError::Invariant("VarRef retained during a runtime state borrow")
+            })?;
         state.heap.retain_var_ref_shared(id)
     }
 

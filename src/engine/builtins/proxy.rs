@@ -13,8 +13,8 @@ use crate::engine::builtins::native::NativeFunctionId;
 
 use crate::engine::heap::{ContextId, InternalCallableData, ObjectData, ObjectPayload};
 use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
@@ -25,7 +25,12 @@ fn runtime_value_at(
     index: usize,
     message: &'static str,
 ) -> Result<Value, RuntimeError> {
-    runtime.root_value(arguments.readable.get(index).ok_or(RuntimeError::Invariant(message))?)
+    runtime.root_value(
+        arguments
+            .readable
+            .get(index)
+            .ok_or(RuntimeError::Invariant(message))?,
+    )
 }
 
 impl Runtime {
@@ -137,20 +142,20 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Construct { .. } = invocation else {
+        let NativeInvocation::Construct { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Proxy constructor did not receive a constructor invocation",
             ));
         };
+        invocation.release(self)?;
         let target = runtime_value_at(self, arguments, 0, "Proxy target argv was not padded")?;
         let handler = runtime_value_at(self, arguments, 1, "Proxy handler argv was not padded")?;
         match self.new_proxy(realm, target, handler)? {
             NativeConversion::Value(proxy) => {
                 Ok(Completion::Return(JsValue::Object(proxy.into_handle())))
             }
-            NativeConversion::Throw(value) => {
-                Ok(Completion::Throw(self.into_jsvalue(value)?))
-            }
+            NativeConversion::Throw(value) => Ok(Completion::Throw(self.into_jsvalue(value)?)),
         }
     }
 
@@ -161,11 +166,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Proxy.revocable did not receive a call invocation",
             ));
         };
+        invocation.release(self)?;
         let target = runtime_value_at(
             self,
             arguments,
@@ -226,11 +233,13 @@ impl Runtime {
         &self,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Proxy revoke function did not receive a call invocation",
             ));
         };
+        invocation.release(self)?;
         let active = self.active_function()?;
         let mut state = self.0.state.borrow_mut();
         let (_, cleanup) = state.heap.revoke_proxy_from_callable(active.object_id())?;

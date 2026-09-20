@@ -5,9 +5,9 @@
 //! module owns the class shape, cached realm intrinsics, representation state,
 //! and the mapped `[[DefineOwnProperty]]` transitions.
 
-use crate::engine::atom::AtomIdx;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::atom::AtomIdx;
 use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::heap::{ContextId, ObjectData, ObjectPayload, PropertySlot, RawValue};

@@ -51,8 +51,10 @@ impl ConstructorStep {
                 )?,
             )));
         };
-        let new_target =
-            crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *new_target_id)?;
+        let new_target = crate::engine::object::ObjectRef::from_borrowed_handle(
+            runtime.clone(),
+            *new_target_id,
+        )?;
         let native_iterator = {
             let state = runtime.0.state.borrow();
             matches!(&state.heap.object(new_target.object_id())?.payload, ObjectPayload::NativeFunction { data, .. } if data.target == NativeFunctionId::IteratorConstructor)
@@ -104,7 +106,10 @@ impl ConstructorStep {
         if arguments.actual_arg_count == 0 {
             let constructor = runtime.iterator_realm_data(defining_realm)?.constructor;
             return Ok(Self::Complete(Completion::Return(runtime.into_jsvalue(
-                Value::Object(ObjectRef::from_borrowed_handle(runtime.clone(), constructor)?),
+                Value::Object(ObjectRef::from_borrowed_handle(
+                    runtime.clone(),
+                    constructor,
+                )?),
             )?)));
         }
         let Some(JsValue::Object(value_id)) = arguments.readable.first() else {
@@ -164,9 +169,9 @@ impl ConstructorResume {
                 ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?
             }
         };
-        Ok(ConstructorStep::Complete(Completion::Return(runtime.into_jsvalue(
-            Value::Object(runtime.new_iterator_object(&prototype)?),
-        )?)))
+        Ok(ConstructorStep::Complete(Completion::Return(
+            runtime.into_jsvalue(Value::Object(runtime.new_iterator_object(&prototype)?))?,
+        )))
     }
 }
 pub(crate) fn finish(

@@ -283,7 +283,9 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.call_map_native_borrowed(realm, kind, &invocation, arguments)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            self.call_map_native_borrowed(realm, kind, invocation, arguments)
+        })
     }
     pub(crate) fn call_map_native_borrowed(
         &self,
@@ -390,7 +392,7 @@ impl Runtime {
 
     pub(in crate::engine::builtins) fn normalized_map_key(value: JsValue) -> JsValue {
         match value {
-            JsValue::Float(value) if value == 0.0 => JsValue::Int(0),
+            JsValue::Float(0.0) => JsValue::Int(0),
             value => value,
         }
     }
@@ -481,7 +483,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let key = self.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("Map.prototype.set key argv was not padded"),
@@ -501,7 +505,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let key = Self::normalized_map_key(self.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("Map.prototype.get key argv was not padded"),
@@ -522,7 +528,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let key = Self::normalized_map_key(self.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("Map.prototype.has key argv was not padded"),
@@ -540,7 +548,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let key = self.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("Map.prototype.delete key argv was not padded"),
@@ -557,7 +567,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let mut state = self.0.state.borrow_mut();
         let cleanup = state.heap.map_clear(map.object_id())?;
@@ -572,7 +584,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, true)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let size = self.0.state.borrow().heap.map_size(map.object_id())?;
         Ok(Completion::Return(JsValue::Int(size as i32)))
@@ -654,7 +668,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         Ok(Completion::Return(self.into_jsvalue(Value::Object(
             self.new_map_iterator(realm, &map, kind)?,

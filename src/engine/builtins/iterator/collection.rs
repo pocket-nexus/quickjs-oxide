@@ -62,6 +62,7 @@ impl std::ops::DerefMut for CollectionResume {
 }
 const _: () = assert!(std::mem::size_of::<CollectionResume>() <= 8);
 pub(crate) struct CollectionResumeState {
+    runtime: Runtime,
     pending_effect: CollectionStepPending,
     realm: ContextId,
     kind: CollectionKind,
@@ -72,6 +73,29 @@ pub(crate) struct CollectionResumeState {
     adder: Option<CallableRef>,
     phase: Phase,
     closing: bool,
+}
+impl Drop for CollectionResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        for value in [
+            self.pending_effect.prototype_new_target.take(),
+            self.pending_effect.read_receiver.take(),
+            self.pending_effect.call_receiver.take(),
+            self.pending_effect.next_method.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 enum Phase {
     Prototype,
@@ -100,6 +124,7 @@ impl CollectionStep {
         Ok({
             let __pending_field_new_target = runtime.dup_jsvalue(new_target)?;
             let __pending_field_resume = CollectionResume(Box::new(CollectionResumeState {
+                runtime: runtime.clone(),
                 pending_effect: CollectionStepPending::default(),
                 realm,
                 kind,
@@ -107,11 +132,9 @@ impl CollectionStep {
                 iterable: if arguments.actual_arg_count == 0 {
                     None
                 } else {
-                    Some(
-                        runtime.root_value(arguments.readable.first().ok_or(
-                            RuntimeError::Invariant("collection iterable argv was not padded"),
-                        )?)?,
-                    )
+                    Some(runtime.root_value(arguments.readable.first().ok_or(
+                        RuntimeError::Invariant("collection iterable argv was not padded"),
+                    )?)?)
                 },
                 iterator: None,
                 next: Value::Undefined,
@@ -136,11 +159,7 @@ impl CollectionResume {
             .clone()
             .ok_or(RuntimeError::Invariant("collection iterator missing"))
     }
-    fn abrupt(
-        mut self,
-        runtime: &Runtime,
-        value: Value,
-    ) -> Result<CollectionStep, RuntimeError> {
+    fn abrupt(mut self, runtime: &Runtime, value: Value) -> Result<CollectionStep, RuntimeError> {
         if matches!(
             self.0.phase,
             Phase::Key(_) | Phase::Value { .. } | Phase::Add(_)
@@ -227,9 +246,9 @@ impl CollectionResume {
             .as_ref()
             .is_none_or(|value| matches!(value, Value::Null | Value::Undefined))
         {
-            return Ok(CollectionStep::Complete(Completion::Return(runtime.into_jsvalue(
-                Value::Object(collection),
-            )?)));
+            return Ok(CollectionStep::Complete(Completion::Return(
+                runtime.into_jsvalue(Value::Object(collection))?,
+            )));
         }
         self.0.phase = Phase::Adder;
         Ok({
@@ -429,11 +448,8 @@ impl CollectionResume {
             return self.add(runtime, vec![runtime.into_jsvalue(item)?]);
         }
         let Value::Object(item) = item else {
-            let error = runtime.new_native_error(
-                self.0.realm,
-                NativeErrorKind::Type,
-                "not an object",
-            )?;
+            let error =
+                runtime.new_native_error(self.0.realm, NativeErrorKind::Type, "not an object")?;
             drop(item);
             self.0.phase = Phase::Add(None);
             return self.abrupt(runtime, error);

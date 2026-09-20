@@ -96,9 +96,11 @@ impl MathStep {
                     // The native activation owns original argv. A suspended
                     // continuation needs only the not-yet-converted suffix.
                     let mut remaining = Vec::new();
-                    remaining.try_reserve_exact(values.len() - index).map_err(|_| {
-                        RuntimeError::Invariant("Math remaining argv allocation failed")
-                    })?;
+                    remaining
+                        .try_reserve_exact(values.len() - index)
+                        .map_err(|_| {
+                            RuntimeError::Invariant("Math remaining argv allocation failed")
+                        })?;
                     for remaining_value in &values[index..] {
                         remaining.push(runtime.dup_jsvalue(remaining_value)?);
                     }

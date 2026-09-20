@@ -6,10 +6,7 @@ use crate::engine::value::{JsValue, Value};
 impl Runtime {
     /// Internal-value form of [`Runtime::set_pending_exception`]: consumes the
     /// value's edges after the pending-exception root has retained its copy.
-    pub(crate) fn set_pending_exception_jsvalue(
-        &self,
-        value: JsValue,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn set_pending_exception_jsvalue(&self, value: JsValue) -> Result<(), RuntimeError> {
         let _operation = self.operation();
         let raw = value.as_raw();
         {
@@ -77,7 +74,9 @@ pub(in crate::engine::vm) fn runtime_error_to_vm_error(error: RuntimeError) -> E
 
 /// Heap retain/release failures at trusted VM sites carry the same internal
 /// diagnostic policy as every other runtime failure.
-pub(in crate::engine::vm) fn heap_error_to_vm_error(error: crate::engine::heap::HeapError) -> Error {
+pub(in crate::engine::vm) fn heap_error_to_vm_error(
+    error: crate::engine::heap::HeapError,
+) -> Error {
     runtime_error_to_vm_error(RuntimeError::from(error))
 }
 

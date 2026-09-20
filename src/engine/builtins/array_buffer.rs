@@ -299,7 +299,9 @@ impl Runtime {
                 "out of memory",
             )?));
         };
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(object))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(object))?,
+        ))
     }
 
     pub(in crate::engine::builtins) fn call_array_buffer_is_view(
@@ -580,7 +582,9 @@ impl Runtime {
             start,
             new_length_usize,
         )?;
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(target))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target))?,
+        ))
     }
 
     fn call_array_buffer_transfer(

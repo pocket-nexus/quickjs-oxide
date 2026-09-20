@@ -217,7 +217,11 @@ struct FromStepPending {
     instance_value: Option<JsValue>,
 }
 impl FromStep {
-    pub(crate) fn request_read(receiver: JsValue, key: PropertyKey, mut resume: FromResume) -> Self {
+    pub(crate) fn request_read(
+        receiver: JsValue,
+        key: PropertyKey,
+        mut resume: FromResume,
+    ) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }

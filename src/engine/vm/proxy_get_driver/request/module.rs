@@ -1,5 +1,5 @@
 //! Mechanical adapters for module domain operations.
-use super::{DirectCallTarget, JsValue, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step};
 use crate::engine::modules::import::ImportStep;
 impl From<ImportStep> for Step {
     fn from(step: ImportStep) -> Self {

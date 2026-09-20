@@ -983,9 +983,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
             root, root, root, root, root, root, root, root,
         ))
         .unwrap();
-    assert!(
-        matches!(heap.context(realm).unwrap().weak_ref, None)
-    );
+    assert!(matches!(heap.context(realm).unwrap().weak_ref, None));
 
     let intrinsic_shape = heap
         .allocate_shape(Shape::new(Some(root), []).unwrap())
@@ -1017,9 +1015,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
             "WeakRef and FinalizationRegistry prototypes share one identity",
         ))
     );
-    assert!(
-        matches!(heap.context(realm).unwrap().weak_ref, None)
-    );
+    assert!(matches!(heap.context(realm).unwrap().weak_ref, None));
 
     assert_eq!(
         heap.attach_weak_ref_intrinsics(
@@ -1033,9 +1029,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
             "WeakRef prototype is not an ordinary child of Object.prototype",
         ))
     );
-    assert!(
-        matches!(heap.context(realm).unwrap().weak_ref, None)
-    );
+    assert!(matches!(heap.context(realm).unwrap().weak_ref, None));
     assert_eq!(
         heap.object_strong_count(weak_ref_prototype),
         Ok(weak_ref_strong)
@@ -1055,9 +1049,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(
-        matches!(heap.context(realm).unwrap().weak_ref, None)
-    );
+    assert!(matches!(heap.context(realm).unwrap().weak_ref, None));
     assert_eq!(
         heap.object_strong_count(weak_ref_prototype),
         Ok(weak_ref_strong)

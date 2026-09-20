@@ -1,5 +1,5 @@
 //! Mechanical adapters for native domain requests.
-use super::{Completion, JsValue, Resume, Step, Value};
+use super::{Resume, Step, Value};
 
 impl From<crate::engine::builtins::continuation::NativeStep> for Step {
     fn from(step: crate::engine::builtins::continuation::NativeStep) -> Self {

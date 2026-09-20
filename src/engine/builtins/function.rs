@@ -41,10 +41,8 @@ impl Runtime {
         let sloppy_legacy_get = if arguments.actual_arg_count == 0 {
             match this_value {
                 JsValue::Object(id) => {
-                    let object = crate::engine::object::ObjectRef::from_borrowed_handle(
-                        self.clone(),
-                        *id,
-                    )?;
+                    let object =
+                        crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *id)?;
                     let state = self.0.state.borrow();
                     let object = state.heap.object(object.object_id())?;
                     match object.payload {
@@ -121,11 +119,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        dynamic::finish(
-            self,
-            realm,
-            dynamic::DynamicFunctionStep::start(self, realm, kind, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            dynamic::finish(
+                self,
+                realm,
+                dynamic::DynamicFunctionStep::start(self, realm, kind, invocation, arguments)?,
+            )
+        })
     }
 
     pub(crate) fn call_function_prototype_apply(
@@ -134,17 +134,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        super::function::invoke::finish(
-            self,
-            realm,
-            super::function::invoke::InvokeStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            super::function::invoke::finish(
                 self,
                 realm,
-                super::function::invoke::InvokeKind::Apply,
-                &invocation,
-                arguments,
-            )?,
-        )
+                super::function::invoke::InvokeStep::start(
+                    self,
+                    realm,
+                    super::function::invoke::InvokeKind::Apply,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_function_prototype_bind(
@@ -153,11 +155,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        bind::finish(
-            self,
-            realm,
-            bind::BindStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            bind::finish(
+                self,
+                realm,
+                bind::BindStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 
     pub(crate) fn call_function_prototype_to_string(
@@ -165,11 +169,13 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        text::finish(
-            self,
-            realm,
-            text::FunctionTextStep::start(self, realm, &invocation)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            text::finish(
+                self,
+                realm,
+                text::FunctionTextStep::start(self, realm, invocation)?,
+            )
+        })
     }
 
     pub(crate) fn call_function_prototype_file_name(
@@ -255,11 +261,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        instance::finish(
-            self,
-            realm,
-            instance::InstanceStep::native(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            instance::finish(
+                self,
+                realm,
+                instance::InstanceStep::native(self, realm, invocation, arguments)?,
+            )
+        })
     }
     pub(crate) fn ordinary_is_instance_of(
         &self,

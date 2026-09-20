@@ -70,7 +70,9 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         }
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(target))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target))?,
+        ))
     }
 
     pub(crate) fn call_typed_array_to_reversed(
@@ -122,7 +124,9 @@ impl Runtime {
                 }
             })?;
         }
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(target))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target))?,
+        ))
     }
 
     /// QuickJS's internal same-class TypedArray constructor used by copying

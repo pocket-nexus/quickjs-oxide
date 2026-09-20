@@ -1,13 +1,12 @@
 //! Numeric operators retain ordered conversion operands across JavaScript callbacks.
 use super::{
     NumericValue, add_primitives, bigint_error, bigint_payload, compare_bigint_number,
-    jsvalue_number, mixed_numeric_type_error, number_to_int32, number_to_uint32,
-    string_payload, string_to_bigint, to_number_jsvalue, to_numeric_primitive,
-    unary_plus_primitive,
+    jsvalue_number, mixed_numeric_type_error, number_to_int32, number_to_uint32, string_payload,
+    string_to_bigint, to_number_jsvalue, to_numeric_primitive, unary_plus_primitive,
 };
 use crate::engine::{
-    api::{Error, ErrorKind},
     api::runtime::Runtime,
+    api::{Error, ErrorKind},
     code::bytecode::Instruction,
     value::JsValue,
     vm::{Completion, ToPrimitiveHint},
@@ -302,11 +301,7 @@ impl NumericResume {
         }
     }
 }
-fn unary(
-    runtime: &Runtime,
-    kind: NumericKind,
-    value: JsValue,
-) -> Result<NumericStep, Error> {
+fn unary(runtime: &Runtime, kind: NumericKind, value: JsValue) -> Result<NumericStep, Error> {
     unary_output(runtime, kind, value).map(NumericOutput::into_step)
 }
 fn unary_output(
@@ -343,12 +338,14 @@ fn unary_output(
         ));
     }
     if kind == NumericKind::BitNot {
-        return Ok(NumericOutput::value(match to_numeric_primitive(runtime, &value)? {
-            NumericValue::BigInt(value) => {
-                super::allocate_bigint_jsvalue(runtime, value.bit_not().map_err(bigint_error)?)?
-            }
-            NumericValue::Number(value) => JsValue::Int(!number_to_int32(value)),
-        }));
+        return Ok(NumericOutput::value(
+            match to_numeric_primitive(runtime, &value)? {
+                NumericValue::BigInt(value) => {
+                    super::allocate_bigint_jsvalue(runtime, value.bit_not().map_err(bigint_error)?)?
+                }
+                NumericValue::Number(value) => JsValue::Int(!number_to_int32(value)),
+            },
+        ));
     }
     let increment = matches!(kind, NumericKind::Inc | NumericKind::PostInc);
     let postfix = matches!(kind, NumericKind::PostInc | NumericKind::PostDec);
@@ -399,50 +396,50 @@ fn binary(
         )));
     }
     Ok(match (left, right) {
-        (NumericValue::BigInt(left), NumericValue::BigInt(right)) => super::allocate_bigint_jsvalue(
-            runtime,
-            match kind {
-                NumericKind::Sub => left.sub(&right),
-                NumericKind::Mul => left.mul(&right),
-                NumericKind::Div => left.div(&right),
-                NumericKind::Mod => left.rem(&right),
-                NumericKind::Pow => left.pow(&right),
-                NumericKind::Shl => left.shl(&right),
-                NumericKind::Sar => left.shr(&right),
-                NumericKind::BitAnd => left.bit_and(&right),
-                NumericKind::BitOr => left.bit_or(&right),
-                NumericKind::BitXor => left.bit_xor(&right),
-                _ => {
-                    return Err(Error::internal(
-                        "non-arithmetic operator entered binary Numeric",
-                    ));
+        (NumericValue::BigInt(left), NumericValue::BigInt(right)) => {
+            super::allocate_bigint_jsvalue(
+                runtime,
+                match kind {
+                    NumericKind::Sub => left.sub(&right),
+                    NumericKind::Mul => left.mul(&right),
+                    NumericKind::Div => left.div(&right),
+                    NumericKind::Mod => left.rem(&right),
+                    NumericKind::Pow => left.pow(&right),
+                    NumericKind::Shl => left.shl(&right),
+                    NumericKind::Sar => left.shr(&right),
+                    NumericKind::BitAnd => left.bit_and(&right),
+                    NumericKind::BitOr => left.bit_or(&right),
+                    NumericKind::BitXor => left.bit_xor(&right),
+                    _ => {
+                        return Err(Error::internal(
+                            "non-arithmetic operator entered binary Numeric",
+                        ));
+                    }
                 }
-            }
-            .map_err(bigint_error)?,
-        )?,
-        (NumericValue::Number(left), NumericValue::Number(right)) => {
-            jsvalue_number(match kind {
-                NumericKind::Sub => left - right,
-                NumericKind::Mul => left * right,
-                NumericKind::Div => left / right,
-                NumericKind::Mod => left % right,
-                NumericKind::Pow => crate::engine::value::number::pow(left, right),
-                NumericKind::Shl => {
-                    f64::from(number_to_int32(left).wrapping_shl(number_to_uint32(right) & 0x1f))
-                }
-                NumericKind::Sar => {
-                    f64::from(number_to_int32(left) >> (number_to_uint32(right) & 0x1f))
-                }
-                NumericKind::BitAnd => f64::from(number_to_int32(left) & number_to_int32(right)),
-                NumericKind::BitOr => f64::from(number_to_int32(left) | number_to_int32(right)),
-                NumericKind::BitXor => f64::from(number_to_int32(left) ^ number_to_int32(right)),
-                _ => {
-                    return Err(Error::internal(
-                        "non-arithmetic operator entered binary Numeric",
-                    ));
-                }
-            })
+                .map_err(bigint_error)?,
+            )?
         }
+        (NumericValue::Number(left), NumericValue::Number(right)) => jsvalue_number(match kind {
+            NumericKind::Sub => left - right,
+            NumericKind::Mul => left * right,
+            NumericKind::Div => left / right,
+            NumericKind::Mod => left % right,
+            NumericKind::Pow => crate::engine::value::number::pow(left, right),
+            NumericKind::Shl => {
+                f64::from(number_to_int32(left).wrapping_shl(number_to_uint32(right) & 0x1f))
+            }
+            NumericKind::Sar => {
+                f64::from(number_to_int32(left) >> (number_to_uint32(right) & 0x1f))
+            }
+            NumericKind::BitAnd => f64::from(number_to_int32(left) & number_to_int32(right)),
+            NumericKind::BitOr => f64::from(number_to_int32(left) | number_to_int32(right)),
+            NumericKind::BitXor => f64::from(number_to_int32(left) ^ number_to_int32(right)),
+            _ => {
+                return Err(Error::internal(
+                    "non-arithmetic operator entered binary Numeric",
+                ));
+            }
+        }),
         _ => return Err(mixed_numeric_type_error()),
     })
 }
@@ -596,10 +593,10 @@ fn equality(
             (
                 JsValue::Object(_),
                 JsValue::Int(_)
-                    | JsValue::Float(_)
-                    | JsValue::BigInt(_)
-                    | JsValue::String(_)
-                    | JsValue::Symbol(_),
+                | JsValue::Float(_)
+                | JsValue::BigInt(_)
+                | JsValue::String(_)
+                | JsValue::Symbol(_),
             ) => {
                 return primitive(
                     runtime,
@@ -613,10 +610,10 @@ fn equality(
             }
             (
                 JsValue::Int(_)
-                    | JsValue::Float(_)
-                    | JsValue::BigInt(_)
-                    | JsValue::String(_)
-                    | JsValue::Symbol(_),
+                | JsValue::Float(_)
+                | JsValue::BigInt(_)
+                | JsValue::String(_)
+                | JsValue::Symbol(_),
                 JsValue::Object(_),
             ) => {
                 return primitive(

@@ -1486,7 +1486,11 @@ impl Runtime {
         }
         let state = self.0.state.borrow();
         let object = state.heap.object(object.object_id())?;
-        Ok(state.heap.shape(object.shape)?.find(AtomIdx::from_raw(key.atom().raw())).is_some())
+        Ok(state
+            .heap
+            .shape(object.shape)?
+            .find(AtomIdx::from_raw(key.atom().raw()))
+            .is_some())
     }
 
     /// Read an own property's enumerable bit without materializing autoinit

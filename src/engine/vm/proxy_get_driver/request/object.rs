@@ -2,7 +2,7 @@
 use super::JsValue;
 use super::{
     ArrayLengthStep, DescriptorStep, ProxyBooleanStep, ProxyDefineStep, ProxyGetStep, ProxyOwnStep,
-    ProxyPrototypeStep, ProxySetStep, Resume, SetStep, Step, Value, set_completion,
+    ProxyPrototypeStep, ProxySetStep, Resume, SetStep, Step, set_completion,
 };
 
 impl From<ProxyGetStep> for Step {

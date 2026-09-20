@@ -3,8 +3,8 @@
 //! use the same owned property query as other Get operations.
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::driver::{CallStep, push_frame};
@@ -239,6 +239,15 @@ pub(super) fn initializer(
                     "authenticated class initializer is not ordinary bytecode",
                 ));
             }
+            if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
+                runtime
+                    .release_jsvalue(receiver)
+                    .map_err(runtime_error_to_vm_error)?;
+                return runtime
+                    .bytecode_stack_overflow_completion(realm, &bytecode)
+                    .map(CallStep::Complete)
+                    .map_err(runtime_error_to_vm_error);
+            }
             Some(BytecodeCallRequest {
                 callable,
                 receiver,
@@ -255,22 +264,20 @@ pub(super) fn initializer(
                 },
             })
         } else {
+            runtime
+                .release_jsvalue(receiver)
+                .map_err(runtime_error_to_vm_error)?;
             None
         };
-        if let Some(request) = &request {
-            if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
-                return runtime
-                    .bytecode_stack_overflow_completion(realm, &request.bytecode)
-                    .map(CallStep::Complete)
-                    .map_err(runtime_error_to_vm_error);
-            }
-        }
         let frame = execution.frames.current_mut(id)?;
-        execution.slots.pop(&mut frame.window)?;
+        let discarded = execution.slots.pop(&mut frame.window)?;
         frame.resume_pc = frame
             .fault_pc
             .checked_add(1)
             .ok_or_else(|| Error::internal("initializer resume PC overflow"))?;
+        runtime
+            .release_jsvalue(discarded)
+            .map_err(runtime_error_to_vm_error)?;
         if let Some(request) = request {
             let entry = request.prepare(runtime, &mut execution.call_storage)?;
             push_frame(execution, entry)?;
@@ -318,14 +325,15 @@ pub(super) fn define_class(
     // The bytecode node owns the constant-pool edge for this string, so the
     // trusted read clones the payload Rc without retaining the arena node.
     let name = runtime.0.state.borrow().heap.string_fast(*name_id).clone();
-    if has_heritage
-        && let JsValue::Object(parent) = parent
-    {
+    if has_heritage && let JsValue::Object(parent) = parent {
         let pending = PendingClass {
             frame: id,
             realm,
-            parent: crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *parent)
-                .map_err(super::exception::heap_error_to_vm_error)?,
+            parent: crate::engine::object::ObjectRef::from_borrowed_handle(
+                runtime.clone(),
+                *parent,
+            )
+            .map_err(super::exception::heap_error_to_vm_error)?,
             constructor: runtime
                 .dup_jsvalue(execution.slots.peek(&frame.window, 0)?)
                 .map_err(runtime_error_to_vm_error)?,
@@ -502,8 +510,9 @@ pub(super) fn define_property(
     };
     let depth = execution.slots.depth(&frame.window);
     if method.is_none() {
-        let object = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *object)
-            .map_err(super::exception::heap_error_to_vm_error)?;
+        let object =
+            crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *object)
+                .map_err(super::exception::heap_error_to_vm_error)?;
         let value = execution.slots.pop(&mut frame.window)?;
         if computed {
             let discarded = execution.slots.pop(&mut frame.window)?;
@@ -521,19 +530,17 @@ pub(super) fn define_property(
     let descriptor = match runtime.prepare_object_literal_method(
         &object,
         &key,
-        runtime.root_value(value).map_err(runtime_error_to_vm_error)?,
+        runtime
+            .root_value(value)
+            .map_err(runtime_error_to_vm_error)?,
         kind,
         enumerable,
     ) {
-            Ok(descriptor) => descriptor,
-            Err(error) => {
-                return super::driver::rejected_call(
-                    runtime,
-                    realm,
-                    runtime_error_to_vm_error(error),
-                );
-            }
-        };
+        Ok(descriptor) => descriptor,
+        Err(error) => {
+            return super::driver::rejected_call(runtime, realm, runtime_error_to_vm_error(error));
+        }
+    };
     let discarded = execution.slots.pop(&mut frame.window)?;
     runtime
         .release_jsvalue(discarded)

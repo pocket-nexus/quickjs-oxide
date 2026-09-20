@@ -314,7 +314,8 @@ pub(crate) fn finish(
                 let value = resume.take_string_value();
                 resume.string(
                     runtime,
-                    runtime.native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
+                    runtime
+                        .native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
                 )?
             }
             RegExpIteratorStep::Primitive { mut resume } => {

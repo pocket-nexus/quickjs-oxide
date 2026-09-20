@@ -80,14 +80,16 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::PromiseStep::start(
-            self,
-            realm,
-            NativeFunctionId::PromiseFinallyHandler(kind),
-            &invocation,
-            arguments,
-        )?
-        .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::PromiseStep::start(
+                self,
+                realm,
+                NativeFunctionId::PromiseFinallyHandler(kind),
+                invocation,
+                arguments,
+            )?
+            .finish(self, realm)
+        })
     }
 
     pub(crate) fn call_promise_finally_thunk(
@@ -95,11 +97,13 @@ impl Runtime {
         kind: PromiseReactionKind,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Promise finally thunk received a constructor invocation",
             ));
         };
+        invocation.release(self)?;
         let active = self.active_function()?;
         let internal = self
             .0

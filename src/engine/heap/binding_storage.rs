@@ -175,9 +175,10 @@ mod immediate_write_tests {
                 .try_replace_immediate_var_ref_value(root.id(), RawValue::Int(2), None)
         );
         assert_eq!(state.heap.zero_queue.len(), 1);
-        assert!(
-            matches!(state.heap.var_ref(root.id()).unwrap().value, RawValue::Int(1))
-        );
+        assert!(matches!(
+            state.heap.var_ref(root.id()).unwrap().value,
+            RawValue::Int(1)
+        ));
         let cleanup = state.heap.drain_zero_queue().unwrap();
         state.apply_cleanup(cleanup).unwrap();
         assert!(
@@ -185,8 +186,9 @@ mod immediate_write_tests {
                 .heap
                 .try_replace_immediate_var_ref_value(root.id(), RawValue::Int(2), None)
         );
-        assert!(
-            matches!(state.heap.var_ref(root.id()).unwrap().value, RawValue::Int(2))
-        );
+        assert!(matches!(
+            state.heap.var_ref(root.id()).unwrap().value,
+            RawValue::Int(2)
+        ));
     }
 }

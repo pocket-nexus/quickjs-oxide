@@ -91,11 +91,13 @@ impl CallbackStep {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(runtime);
             return Err(RuntimeError::Invariant(
                 "module evaluation callback received a constructor invocation",
             ));
         };
+        invocation.release(runtime)?;
         let argument = match arguments.readable.first() {
             Some(value) => runtime.root_value(value)?,
             None => {
@@ -136,11 +138,13 @@ impl CallbackStep {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(runtime);
             return Err(RuntimeError::Invariant(
                 "dynamic import handler received a constructor invocation",
             ));
         };
+        invocation.release(runtime)?;
         let argument = match arguments.readable.first() {
             Some(value) => runtime.root_value(value)?,
             None => {
@@ -288,9 +292,9 @@ impl CallbackResume {
         match &mut self.mode {
             Mode::DynamicSettled => {
                 return match completion {
-                    Completion::Return(_) => {
-                        Ok(CallbackStep::Complete(Completion::Return(JsValue::Undefined)))
-                    }
+                    Completion::Return(_) => Ok(CallbackStep::Complete(Completion::Return(
+                        JsValue::Undefined,
+                    ))),
                     Completion::Throw(_) => Err(RuntimeError::Invariant(
                         "intrinsic dynamic import resolving function threw",
                     )),
@@ -374,7 +378,9 @@ impl CallbackResume {
                         resume: self,
                     });
                 }
-                Ok(CallbackStep::Complete(Completion::Return(JsValue::Undefined)))
+                Ok(CallbackStep::Complete(Completion::Return(
+                    JsValue::Undefined,
+                )))
             }
             Mode::Reject {
                 reason,
@@ -455,7 +461,9 @@ impl CallbackResume {
                 // Every ancestor was already errored: no record consumed the
                 // value, so its producer edge dies with this walk.
                 release_conversion_probe(&self.runtime, &mut conversion_probe);
-                Ok(CallbackStep::Complete(Completion::Return(JsValue::Undefined)))
+                Ok(CallbackStep::Complete(Completion::Return(
+                    JsValue::Undefined,
+                )))
             }
         }
     }

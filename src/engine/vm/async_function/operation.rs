@@ -142,7 +142,7 @@ impl AsyncResume {
         match std::mem::replace(&mut self.phase, Phase::Body) {
             Phase::Body => self.body(VmRunOutcome::Complete(completion)),
             Phase::Settled => self.finish(), // Consume either JS completion from the internal resolving pair.
-            Phase::Await(activation) => {
+            Phase::Await(mut activation) => {
                 let promise = match completion {
                     Completion::Throw(reason) => return self.settle(Completion::Throw(reason)),
                     Completion::Return(value) => {
@@ -179,7 +179,7 @@ impl AsyncResume {
                 let fulfill = make_resume(AsyncFunctionResumeKind::Fulfill)?;
                 let reject = make_resume(AsyncFunctionResumeKind::Reject)?;
                 self.runtime
-                    .store_async_function_activation(&self.state, &activation)?;
+                    .store_async_function_activation(&self.state, &mut activation)?;
                 self.runtime
                     .perform_promise_then_without_capability(realm, &promise, &fulfill, &reject)?;
                 self.active = false;
@@ -187,6 +187,8 @@ impl AsyncResume {
             }
         }
     }
+    // Consume the suspended resume box here, keeping its payload out of the step transport.
+    #[allow(clippy::boxed_local)]
     fn finish(mut self: Box<Self>) -> Result<AsyncStep, RuntimeError> {
         let output = std::mem::replace(&mut self.output, JsValue::Undefined);
         Ok(AsyncStep::Complete(Completion::Return(output)))

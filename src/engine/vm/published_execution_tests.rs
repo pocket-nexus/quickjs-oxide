@@ -233,9 +233,7 @@ fn stack_reads_cover_full_depth_range_and_preserve_root_ownership() {
             )
             .unwrap();
         for index in 0..length {
-            slots
-                .push(&mut window, JsValue::Int(index as i32))
-                .unwrap();
+            slots.push(&mut window, JsValue::Int(index as i32)).unwrap();
         }
         for depth in 0..=255 {
             let value = slots.peek(&window, depth);

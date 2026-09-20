@@ -101,7 +101,9 @@ impl TypedSetResume {
         state: SetState,
     ) -> Result<TypedSetStep, RuntimeError> {
         if state.index == state.length {
-            return Ok(TypedSetStep::Complete(Completion::Return(JsValue::Undefined)));
+            return Ok(TypedSetStep::Complete(Completion::Return(
+                JsValue::Undefined,
+            )));
         }
         Ok(TypedSetStep::Read {
             object: state.source.clone(),
@@ -227,7 +229,11 @@ impl TypedSetResume {
                     .is_none_or(|end| end > u64::from(state.target_length))
                 {
                     return Ok(TypedSetStep::Complete(Completion::Throw(
-                        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Range, "out of bound")?,
+                        runtime.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Range,
+                            "out of bound",
+                        )?,
                     )));
                 }
                 Self::next(runtime, realm, state)

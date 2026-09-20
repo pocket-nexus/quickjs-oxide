@@ -371,7 +371,10 @@ fn finish_local(
     match pending.mode {
         Mode::Append => {
             for _ in 0..3 {
-                execution.slots.pop(&mut frame.window)?;
+                let discarded = execution.slots.pop(&mut frame.window)?;
+                runtime
+                    .release_jsvalue(discarded)
+                    .map_err(runtime_error_to_vm_error)?;
             }
             if pending.abrupt.is_none() {
                 let array = pending
@@ -483,6 +486,7 @@ fn finish_local(
         }
         Mode::Close { .. } => {}
     }
+    release_pending_edges(runtime, pending)?;
     if let Some(value) = pending.abrupt.take() {
         return Ok(CallStep::Complete(Completion::Throw(value)));
     }
@@ -493,6 +497,27 @@ fn finish_local(
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
+}
+
+/// Release owned edges the suspended state still holds after its mode-specific
+/// transfer. Fields moved into operand slots are `Undefined` by this point, so
+/// the helper is idempotent across every finish mode.
+fn release_pending_edges(
+    runtime: &Runtime,
+    pending: &mut PendingIteratorState,
+) -> Result<(), Error> {
+    for value in [
+        std::mem::replace(&mut pending.iterable, JsValue::Undefined),
+        std::mem::replace(&mut pending.iterator, JsValue::Undefined),
+        std::mem::replace(&mut pending.next, JsValue::Undefined),
+        std::mem::replace(&mut pending.yielded, JsValue::Undefined),
+        std::mem::replace(&mut pending.argument, JsValue::Undefined),
+    ] {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
+    }
+    Ok(())
 }
 
 fn apply_next(
@@ -1048,15 +1073,18 @@ impl PendingIteratorState {
 }
 
 fn callable(runtime: &Runtime, value: JsValue, message: &str) -> Result<CallableRef, Error> {
-    if let JsValue::Object(object) = value {
-        if let Some(callable) = runtime
-            .as_callable_object(object)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            return Ok(callable);
-        }
+    let callable = match &value {
+        JsValue::Object(object) => runtime
+            .as_callable_object(*object)
+            .map_err(runtime_error_to_vm_error)?,
+        _ => None,
+    };
+    let result = callable.ok_or_else(|| Error::new(ErrorKind::Type, message));
+    match (result, runtime.release_jsvalue(value)) {
+        (Ok(callable), Ok(())) => Ok(callable),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(runtime_error_to_vm_error(error)),
     }
-    Err(Error::new(ErrorKind::Type, message))
 }
 
 #[cfg(all(test, feature = "profiling"))]

@@ -29,17 +29,15 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        constructor::finish(
-            self,
-            realm,
-            constructor::PrimitiveConstructorStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            constructor::finish(
                 self,
                 realm,
-                kind,
-                &invocation,
-                arguments,
-            )?,
-        )
+                constructor::PrimitiveConstructorStep::start(
+                    self, realm, kind, invocation, arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn new_not_constructor_error(
@@ -66,17 +64,6 @@ impl Runtime {
         self.new_native_error_from_message(realm, NativeErrorKind::Type, message)
     }
 
-    /// Internal-value form of [`Runtime::new_not_constructor_error`].
-    pub(crate) fn new_not_constructor_error_jsvalue(
-        &self,
-        realm: ContextId,
-        target: &JsValue,
-    ) -> Result<JsValue, RuntimeError> {
-        let target = self.root_value(target)?;
-        let value = self.new_not_constructor_error(realm, &target)?;
-        self.into_jsvalue(value)
-    }
-
     pub(crate) fn call_global_number_parse(
         &self,
         realm: ContextId,
@@ -84,17 +71,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        globals::finish(
-            self,
-            realm,
-            globals::GlobalStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            globals::finish(
                 self,
                 realm,
-                globals::GlobalKind::Parse(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                globals::GlobalStep::start(
+                    self,
+                    realm,
+                    globals::GlobalKind::Parse(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_global_number_predicate(
@@ -104,17 +93,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        globals::finish(
-            self,
-            realm,
-            globals::GlobalStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            globals::finish(
                 self,
                 realm,
-                globals::GlobalKind::Predicate(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                globals::GlobalStep::start(
+                    self,
+                    realm,
+                    globals::GlobalKind::Predicate(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     fn finish_global_uri_codec(
@@ -155,17 +146,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        globals::finish(
-            self,
-            realm,
-            globals::GlobalStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            globals::finish(
                 self,
                 realm,
-                globals::GlobalKind::Uri(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                globals::GlobalStep::start(
+                    self,
+                    realm,
+                    globals::GlobalKind::Uri(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn primitive_this_value(
@@ -292,17 +285,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        text::finish(
-            self,
-            realm,
-            text::ScalarTextStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            text::finish(
                 self,
                 realm,
-                text::ScalarTextKind::CharAt(selector),
-                &invocation,
-                arguments,
-            )?,
-        )
+                text::ScalarTextStep::start(
+                    self,
+                    realm,
+                    text::ScalarTextKind::CharAt(selector),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_string_prototype_iterator(
@@ -310,21 +305,23 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let arguments = NativeArguments {
-            readable: Vec::new(),
-            actual_arg_count: 0,
-        };
-        text::finish(
-            self,
-            realm,
-            text::ScalarTextStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let arguments = NativeArguments {
+                readable: Vec::new(),
+                actual_arg_count: 0,
+            };
+            text::finish(
                 self,
                 realm,
-                text::ScalarTextKind::Iterator,
-                &invocation,
-                &arguments,
-            )?,
-        )
+                text::ScalarTextStep::start(
+                    self,
+                    realm,
+                    text::ScalarTextKind::Iterator,
+                    invocation,
+                    &arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_string_iterator_next(
@@ -404,17 +401,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        text::finish(
-            self,
-            realm,
-            text::ScalarTextStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            text::finish(
                 self,
                 realm,
-                text::ScalarTextKind::CharCodeAt,
-                &invocation,
-                arguments,
-            )?,
-        )
+                text::ScalarTextStep::start(
+                    self,
+                    realm,
+                    text::ScalarTextKind::CharCodeAt,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_string_prototype_code_point_at(
@@ -423,17 +422,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        text::finish(
-            self,
-            realm,
-            text::ScalarTextStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            text::finish(
                 self,
                 realm,
-                text::ScalarTextKind::CodePointAt,
-                &invocation,
-                arguments,
-            )?,
-        )
+                text::ScalarTextStep::start(
+                    self,
+                    realm,
+                    text::ScalarTextKind::CodePointAt,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_string_prototype_concat(
@@ -442,17 +443,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        text::finish(
-            self,
-            realm,
-            text::ScalarTextStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            text::finish(
                 self,
                 realm,
-                text::ScalarTextKind::Concat,
-                &invocation,
-                arguments,
-            )?,
-        )
+                text::ScalarTextStep::start(
+                    self,
+                    realm,
+                    text::ScalarTextKind::Concat,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_string_prototype_well_formed(
@@ -461,21 +464,23 @@ impl Runtime {
         selector: StringWellFormedKind,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let arguments = NativeArguments {
-            readable: Vec::new(),
-            actual_arg_count: 0,
-        };
-        text::finish(
-            self,
-            realm,
-            text::ScalarTextStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let arguments = NativeArguments {
+                readable: Vec::new(),
+                actual_arg_count: 0,
+            };
+            text::finish(
                 self,
                 realm,
-                text::ScalarTextKind::WellFormed(selector),
-                &invocation,
-                &arguments,
-            )?,
-        )
+                text::ScalarTextStep::start(
+                    self,
+                    realm,
+                    text::ScalarTextKind::WellFormed(selector),
+                    invocation,
+                    &arguments,
+                )?,
+            )
+        })
     }
 
     fn finish_branded_to_string(
@@ -509,21 +514,17 @@ impl Runtime {
                     JsString::from_owned_latin1(formatted.into_bytes()),
                 ))?))
             }
-            (PrimitiveKind::String, Value::String(value)) => {
-                Ok(Completion::Return(
-                    self.unroot_value(&Value::String(value))?,
-                ))
-            }
+            (PrimitiveKind::String, Value::String(value)) => Ok(Completion::Return(
+                self.unroot_value(&Value::String(value))?,
+            )),
             (PrimitiveKind::Boolean, Value::Bool(value)) => {
                 Ok(Completion::Return(self.unroot_value(&Value::String(
                     JsString::from_static(if value { "true" } else { "false" }),
                 ))?))
             }
-            (PrimitiveKind::Symbol, Value::Symbol(value)) => {
-                Ok(Completion::Return(self.unroot_value(&Value::String(
-                    self.symbol_descriptive_string(&value)?,
-                ))?))
-            }
+            (PrimitiveKind::Symbol, Value::Symbol(value)) => Ok(Completion::Return(
+                self.unroot_value(&Value::String(self.symbol_descriptive_string(&value)?))?,
+            )),
             (PrimitiveKind::BigInt, Value::BigInt(value)) => {
                 if value.exceeds_allocation_limit()
                     && (value.is_negative() || !radix.is_power_of_two())
@@ -556,17 +557,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        numeric::finish(
-            self,
-            realm,
-            numeric::NumericStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            numeric::finish(
                 self,
                 realm,
-                numeric::NumericKind::ToString(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                numeric::NumericStep::start(
+                    self,
+                    realm,
+                    numeric::NumericKind::ToString(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn finish_number_format(
@@ -606,17 +609,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        numeric::finish(
-            self,
-            realm,
-            numeric::NumericStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            numeric::finish(
                 self,
                 realm,
-                numeric::NumericKind::Format(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                numeric::NumericStep::start(
+                    self,
+                    realm,
+                    numeric::NumericKind::Format(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_number_predicate(
@@ -653,17 +658,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        numeric::finish(
-            self,
-            realm,
-            numeric::NumericStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            numeric::finish(
                 self,
                 realm,
-                numeric::NumericKind::BigIntAsN(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                numeric::NumericStep::start(
+                    self,
+                    realm,
+                    numeric::NumericKind::BigIntAsN(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_symbol_registry(
@@ -704,12 +711,10 @@ impl Runtime {
                         "not a symbol",
                     )?));
                 };
-                Ok(Completion::Return(
-                    match self.symbol_key_for(&symbol)? {
-                        Some(value) => self.unroot_value(&Value::String(value))?,
-                        None => JsValue::Undefined,
-                    },
-                ))
+                Ok(Completion::Return(match self.symbol_key_for(&symbol)? {
+                    Some(value) => self.unroot_value(&Value::String(value))?,
+                    None => JsValue::Undefined,
+                }))
             }
         }
     }
@@ -725,21 +730,18 @@ impl Runtime {
             ));
         };
         let this_value = self.root_value(this_value)?;
-        let value = match self.primitive_this_value_borrowed(
-            realm,
-            PrimitiveKind::Symbol,
-            &this_value,
-        )? {
-            NativeConversion::Value(Value::Symbol(value)) => value,
-            NativeConversion::Value(_) => {
-                return Err(RuntimeError::Invariant(
-                    "Symbol brand extraction did not return a Symbol",
-                ));
-            }
-            NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
-            }
-        };
+        let value =
+            match self.primitive_this_value_borrowed(realm, PrimitiveKind::Symbol, &this_value)? {
+                NativeConversion::Value(Value::Symbol(value)) => value,
+                NativeConversion::Value(_) => {
+                    return Err(RuntimeError::Invariant(
+                        "Symbol brand extraction did not return a Symbol",
+                    ));
+                }
+                NativeConversion::Throw(value) => {
+                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                }
+            };
         Ok(Completion::Return(
             match self.symbol_description(&value)? {
                 Some(value) => self.unroot_value(&Value::String(value))?,
@@ -761,9 +763,7 @@ impl Runtime {
         };
         let this_value = self.root_value(this_value)?;
         match self.primitive_this_value_borrowed(realm, kind, &this_value)? {
-            NativeConversion::Value(value) => {
-                Ok(Completion::Return(self.into_jsvalue(value)?))
-            }
+            NativeConversion::Value(value) => Ok(Completion::Return(self.into_jsvalue(value)?)),
             NativeConversion::Throw(value) => Ok(Completion::Throw(self.into_jsvalue(value)?)),
         }
     }
@@ -804,14 +804,13 @@ impl Runtime {
                     super::function::invoke::InvokeCall {
                         target: crate::engine::vm::call::DirectCallTarget::Callable(callback),
                         receiver: JsValue::Undefined,
-                        arguments: vec![self
-                            .unroot_value(&Value::Object(active_function))?],
+                        arguments: vec![self.unroot_value(&Value::Object(active_function))?],
                     },
                 )));
             }
-            Some(JsValue::Bool(false)) => Ok(Completion::Throw(self.unroot_value(&Value::String(
-                JsString::from_static("active frame probe throw"),
-            ))?)),
+            Some(JsValue::Bool(false)) => Ok(Completion::Throw(self.unroot_value(
+                &Value::String(JsString::from_static("active frame probe throw")),
+            )?)),
             Some(JsValue::Bool(true)) => {
                 Err(RuntimeError::Invariant("active frame probe engine error"))
             }

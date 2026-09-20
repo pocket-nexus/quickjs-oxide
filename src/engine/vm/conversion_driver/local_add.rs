@@ -71,7 +71,9 @@ pub(in crate::engine::vm) fn complete_local_add(
         let Some(next) = next_operation.checked_add(1) else {
             // Reconstruct canonical operands only on this cold error.
             return Ok::<_, Error>(PreparedAdd::Exhausted(
-                runtime.dup_jsvalue(left).map_err(runtime_error_to_vm_error)?,
+                runtime
+                    .dup_jsvalue(left)
+                    .map_err(runtime_error_to_vm_error)?,
                 runtime
                     .dup_jsvalue(right)
                     .map_err(runtime_error_to_vm_error)?,
@@ -80,10 +82,22 @@ pub(in crate::engine::vm) fn complete_local_add(
         *next_operation = next;
         if let JsValue::String(id) = left {
             let suffix = match right {
-                JsValue::String(right) => {
-                    super::super::numeric::string_payload(runtime, *right)?
-                }
-                value => super::super::numeric::to_js_string_jsvalue(runtime, value)?,
+                JsValue::String(right) => super::super::numeric::string_payload(runtime, *right)?,
+                value => match super::super::numeric::to_js_string_jsvalue(runtime, value) {
+                    Ok(suffix) => suffix,
+                    // A JavaScript-visible ToString failure (for example a
+                    // Symbol operand) must surface as a completion throw after
+                    // the canonical Add PC is published, not as an engine error.
+                    Err(error)
+                        if crate::engine::api::error::NativeErrorKind::from_javascript_error(
+                            error.kind(),
+                        )
+                        .is_some() =>
+                    {
+                        return Ok(PreparedAdd::Result(Err(error)));
+                    }
+                    Err(error) => return Err(error),
+                },
             };
             // A prepend never appends into the shared constant buffer; only an
             // append may extend a uniquely-owned local. The handle form always
@@ -110,9 +124,9 @@ pub(in crate::engine::vm) fn complete_local_add(
                 ),
             ));
         }
-        Ok(PreparedAdd::Result(super::super::numeric::add_primitives_ref(
-            runtime, left, right,
-        )))
+        Ok(PreparedAdd::Result(
+            super::super::numeric::add_primitives_ref(runtime, left, right),
+        ))
     };
     let prepared = match operands {
         Operands::Locals(left, right) => transaction.with_local_add_inputs(left, right, consume)?,

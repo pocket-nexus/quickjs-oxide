@@ -210,11 +210,9 @@ impl InstanceResume {
                     let __pending_field_callable = callable;
                     let __pending_field_receiver =
                         runtime.into_jsvalue(Value::Object(self.0.target.clone()))?;
-                    let __pending_field_arguments = vec![runtime
-                        .into_jsvalue(std::mem::replace(
-                            &mut self.0.candidate,
-                            Value::Undefined,
-                        ))?];
+                    let __pending_field_arguments = vec![runtime.into_jsvalue(
+                        std::mem::replace(&mut self.0.candidate, Value::Undefined),
+                    )?];
                     let __pending_field_delegate = delegate;
                     let __pending_field_resume = {
                         let updated_0 = Phase::Result;
@@ -309,10 +307,7 @@ pub(super) fn finish(
             }
             InstanceStep::Prototype { mut resume } => {
                 let object = resume.take_prototype_object();
-                resume.prototype(
-                    runtime,
-                    runtime.internal_get_prototype_of(realm, &object)?,
-                )?
+                resume.prototype(runtime, runtime.internal_get_prototype_of(realm, &object)?)?
             }
             InstanceStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
@@ -339,17 +334,20 @@ pub(super) fn finish(
                             1usize.max(usize::from(min)),
                         )?);
                         realm = defining_realm;
-                        InstanceStep::native(
-                            runtime,
-                            realm,
-                            &NativeInvocation::Call {
-                                this_value: receiver,
-                            },
-                            &NativeArguments {
-                                actual_arg_count: 1,
-                                readable: arguments,
-                            },
-                        )?
+                        let invocation = NativeInvocation::Call {
+                            this_value: receiver,
+                        };
+                        runtime.dispatch_borrowed_invocation(invocation, |invocation| {
+                            InstanceStep::native(
+                                runtime,
+                                realm,
+                                invocation,
+                                &NativeArguments {
+                                    actual_arg_count: 1,
+                                    readable: arguments,
+                                },
+                            )
+                        })?
                     } else {
                         let receiver = runtime.root_and_release_jsvalue(receiver)?;
                         let arguments = arguments

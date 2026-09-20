@@ -1,6 +1,6 @@
 //! Mechanical adapters for buffer domain requests.
 use super::JsValue;
-use super::{DirectCallTarget, ElementStep, Resume, Step, TypedWriteStep, Value};
+use super::{DirectCallTarget, ElementStep, Resume, Step, TypedWriteStep};
 
 impl From<ElementStep> for Step {
     fn from(step: ElementStep) -> Self {

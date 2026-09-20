@@ -75,6 +75,7 @@ impl std::ops::DerefMut for IterationResume {
 }
 const _: () = assert!(std::mem::size_of::<IterationResume>() <= 8);
 pub(crate) struct IterationResumeState {
+    runtime: Runtime,
     pending_effect: IterationStepPending,
     realm: ContextId,
     kind: IterationKind,
@@ -85,6 +86,33 @@ pub(crate) struct IterationResumeState {
     index: u64,
     limit: u64,
     phase: Phase,
+}
+impl Drop for IterationResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(value) = self.pending_effect.next_method.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.key_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.push_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 enum Phase {
     IteratorMethod(Value),
@@ -179,6 +207,7 @@ impl IterationStep {
             runtime.into_jsvalue(iterable.clone())?,
             PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
             IterationResume(Box::new(IterationResumeState {
+                runtime: runtime.clone(),
                 pending_effect: IterationStepPending::default(),
                 realm,
                 kind,
@@ -205,10 +234,10 @@ impl IterationResume {
             "Object iterator result not allocated",
         ))
     }
-    fn abrupt(self, value: JsValue) -> IterationStep {
+    fn abrupt(mut self, value: JsValue) -> IterationStep {
         let close = matches!(self.0.kind, IterationKind::Entries)
             || matches!(self.0.phase, Phase::Callback(_) | Phase::Key(_));
-        if close && let Some(iterator) = self.0.iterator {
+        if close && let Some(iterator) = self.0.iterator.take() {
             IterationStep::Close {
                 iterator,
                 completion: Completion::Throw(value),
@@ -654,11 +683,15 @@ mod tests {
         .unwrap() else {
             panic!("iterator method read expected")
         };
-        let _ = resume.take_read_receiver();
+        runtime
+            .release_jsvalue(resume.take_read_receiver())
+            .unwrap();
         let _ = resume.take_read_key();
 
         let result_id = resume.result.as_ref().unwrap().object_id();
-        drop(arguments);
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
         runtime.run_gc().unwrap();
         for id in [iterable_id, result_id] {
             assert!(runtime.0.state.borrow().heap.object(id).is_ok());

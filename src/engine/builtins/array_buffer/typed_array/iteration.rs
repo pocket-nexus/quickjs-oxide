@@ -109,17 +109,14 @@ impl TypedIterationStep {
             }
         };
         let callback = runtime.callable_from_value(runtime.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "TypedArray iteration callback argv was not padded",
-                ))?,
+            arguments.readable.first().ok_or(RuntimeError::Invariant(
+                "TypedArray iteration callback argv was not padded",
+            ))?,
         )?)?;
         let this_arg = if arguments.actual_arg_count > 1 {
-            runtime.root_value(arguments.readable.get(1).ok_or(
-                RuntimeError::Invariant("TypedArray iteration thisArg was missing"),
-            )?)?
+            runtime.root_value(arguments.readable.get(1).ok_or(RuntimeError::Invariant(
+                "TypedArray iteration thisArg was missing",
+            ))?)?
         } else {
             Value::Undefined
         };
@@ -141,7 +138,7 @@ impl TypedIterationStep {
                     element,
                     length,
                     TypedIterationResume(Box::new(TypedIterationResumeState {
-                        pending_effect: TypedIterationStepPending::default(),
+                        pending_effect: TypedIterationStepPending::new(runtime.clone()),
                         realm,
                         phase: IterationPhase::MapSpecies(input),
                     })),
@@ -181,7 +178,7 @@ impl TypedIterationResume {
                         state.input.element,
                         length,
                         Self(Box::new(TypedIterationResumeState {
-                            pending_effect: TypedIterationStepPending::default(),
+                            pending_effect: TypedIterationStepPending::new(runtime.clone()),
                             realm,
                             phase: IterationPhase::FilterSpecies(selected),
                         })),
@@ -212,7 +209,7 @@ impl TypedIterationResume {
                 .map(|value| runtime.into_jsvalue(value))
                 .collect::<Result<Vec<_>, _>>()?,
             Self(Box::new(TypedIterationResumeState {
-                pending_effect: TypedIterationStepPending::default(),
+                pending_effect: TypedIterationStepPending::new(runtime.clone()),
                 realm,
                 phase: IterationPhase::Called {
                     state,
@@ -249,7 +246,7 @@ impl TypedIterationResume {
                 target.clone(),
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Set)?,
                 Self(Box::new(TypedIterationResumeState {
-                    pending_effect: TypedIterationStepPending::default(),
+                    pending_effect: TypedIterationStepPending::new(runtime.clone()),
                     realm: self.0.realm,
                     phase: IterationPhase::FilterMethod { target, selected },
                 })),
@@ -318,7 +315,7 @@ impl TypedIterationResume {
                             runtime.typed_array_snapshot(target)?.element,
                             runtime.into_jsvalue(result)?,
                             Self(Box::new(TypedIterationResumeState {
-                                pending_effect: TypedIterationStepPending::default(),
+                                pending_effect: TypedIterationStepPending::new(runtime.clone()),
                                 realm: self.0.realm,
                                 phase: IterationPhase::Mapped { state, index },
                             })),
@@ -365,7 +362,7 @@ impl TypedIterationResume {
                         .map(|value| runtime.into_jsvalue(value))
                         .collect::<Result<Vec<_>, _>>()?,
                     Self(Box::new(TypedIterationResumeState {
-                        pending_effect: TypedIterationStepPending::default(),
+                        pending_effect: TypedIterationStepPending::new(runtime.clone()),
                         realm: self.0.realm,
                         phase: IterationPhase::FilterCalled(target),
                     })),
@@ -445,8 +442,8 @@ impl Runtime {
     }
 }
 
-#[derive(Default)]
 struct TypedIterationStepPending {
+    runtime: Runtime,
     species_source: Option<ObjectRef>,
     species_element: Option<TypedArrayElementKind>,
     species_length: Option<u64>,
@@ -457,6 +454,41 @@ struct TypedIterationStepPending {
     element_value: Option<JsValue>,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
+}
+impl TypedIterationStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            species_source: None,
+            species_element: None,
+            species_length: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            element_element: None,
+            element_value: None,
+            read_object: None,
+            read_key: None,
+        }
+    }
+}
+impl Drop for TypedIterationStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow.
+    fn drop(&mut self) {
+        for value in [self.call_receiver.take(), self.element_value.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl TypedIterationStep {
     pub(crate) fn request_species(

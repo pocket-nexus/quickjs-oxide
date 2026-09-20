@@ -25,8 +25,8 @@ use crate::engine::code::rooted::FunctionBytecodeRef;
 
 use crate::engine::heap::{ContextId, ObjectPayload};
 use crate::engine::object::{CallableRef, ObjectRef};
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 impl Runtime {
@@ -77,16 +77,14 @@ impl Runtime {
                     let to_internal =
                         |raw: &crate::engine::heap::RawValue| -> Result<JsValue, RuntimeError> {
                             let value = JsValue::from_raw(raw.clone()).ok_or(
-                                RuntimeError::Invariant(
-                                    "bound value was an internal sentinel",
-                                ),
+                                RuntimeError::Invariant("bound value was an internal sentinel"),
                             )?;
                             self.dup_jsvalue(&value)
                         };
                     let this_value = to_internal(&this_value)?;
                     let arguments = arguments
                         .iter()
-                        .map(|argument| to_internal(argument))
+                        .map(to_internal)
                         .collect::<Result<Vec<_>, _>>()?;
                     #[cfg(feature = "profiling")]
                     {
@@ -95,7 +93,7 @@ impl Runtime {
                             arguments.capacity(),
                             size_of::<Value>(),
                         );
-                        crate::engine::api::profiling::record_call_buffer_copies(
+                        crate::engine::api::profiling::record_call_buffer_js_value_copies(
                             "bound.rooted_snapshot",
                             &arguments,
                         );
@@ -477,13 +475,16 @@ impl Runtime {
                     // The bound payload roots transfer into internal values
                     // without a retain/release pair; the accumulated argument
                     // edges move into the merged buffer.
-                    arguments =
-                        match self.concatenate_bound_arguments_jsvalue(caller_realm, bound, arguments)? {
-                            NativeConversion::Value(arguments) => arguments,
-                            NativeConversion::Throw(value) => {
-                                return Ok(NativeConversion::Throw(value));
-                            }
-                        };
+                    arguments = match self.concatenate_bound_arguments_jsvalue(
+                        caller_realm,
+                        bound,
+                        arguments,
+                    )? {
+                        NativeConversion::Value(arguments) => arguments,
+                        NativeConversion::Throw(value) => {
+                            return Ok(NativeConversion::Throw(value));
+                        }
+                    };
                     new_target.retarget_bound_identity(&constructor, &target);
                     constructor = ConstructorRef::from_validated_callable(&target);
                 }
@@ -594,9 +595,9 @@ impl Runtime {
                             closure_slots,
                         )?;
                         return match completion {
-                            Completion::Return(value @ crate::engine::value::JsValue::Object(_)) => {
-                                Ok(Completion::Return(value))
-                            }
+                            Completion::Return(
+                                value @ crate::engine::value::JsValue::Object(_),
+                            ) => Ok(Completion::Return(value)),
                             Completion::Throw(value) => Ok(Completion::Throw(value)),
                             Completion::Return(_) => Err(RuntimeError::Invariant(
                                 "derived constructor bytecode returned an unvalidated primitive",
@@ -605,8 +606,7 @@ impl Runtime {
                     }
                     ConstructorKind::Base => {}
                 }
-                let raw_new_target =
-                    self.root_and_release_jsvalue(new_target.into_value())?;
+                let raw_new_target = self.root_and_release_jsvalue(new_target.into_value())?;
                 let this_value =
                     match self.create_from_constructor_value(caller_realm, &raw_new_target)? {
                         Completion::Return(value) => value,
@@ -835,6 +835,22 @@ pub(crate) enum NativeInvocation {
 }
 
 impl NativeInvocation {
+    /// Release the internal edge this invocation owns. Boundary adapters that
+    /// duplicate an invocation through [`NativeInvocation::dup`] must release
+    /// their own copy once the borrowed step has captured its own edges.
+    pub(crate) fn release(
+        self,
+        runtime: &crate::engine::api::runtime::Runtime,
+    ) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
+        let value = match self {
+            Self::Call { this_value }
+            | Self::Getter { this_value }
+            | Self::Setter { this_value } => this_value,
+            Self::Construct { new_target } => new_target,
+        };
+        runtime.release_jsvalue(value)
+    }
+
     /// Duplicate the invocation's internal value edges. There is no automatic
     /// `Clone` because duplicating a handle needs the owning runtime.
     pub(crate) fn dup(

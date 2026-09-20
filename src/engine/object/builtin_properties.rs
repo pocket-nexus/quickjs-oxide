@@ -1,10 +1,10 @@
 //! Batch installation of named lazy builtin methods at explicit bootstrap boundaries.
 
-use crate::engine::atom::AtomIdx;
 use super::ObjectRef;
 use super::shape::{PropertyFlags, PropertyStorageKind, ShapeEntry};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::heap::{AutoInitProperty, ContextId, HeapError, ObjectPayload, PropertySlot};
 use std::collections::HashSet;

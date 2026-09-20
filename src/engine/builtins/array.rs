@@ -1,9 +1,9 @@
 //! Array constructor, prototype, iterator, and sorting intrinsics.
 
-use crate::engine::atom::AtomIdx;
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::atom::AtomIdx;
 
 use crate::engine::builtins::native::{
     ArrayFindKind, ArrayFlattenKind, ArrayIterationKind, ArrayIteratorKind, ArrayJoinKind,
@@ -556,11 +556,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        constructor::finish(
-            self,
-            realm,
-            constructor::ConstructorStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            constructor::finish(
+                self,
+                realm,
+                constructor::ConstructorStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 
     fn array_constructor_length(
@@ -726,11 +728,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        build::finish(
-            self,
-            realm,
-            build::BuildStep::start(self, realm, build::BuildKind::From, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            build::finish(
+                self,
+                realm,
+                build::BuildStep::start(
+                    self,
+                    realm,
+                    build::BuildKind::From,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     fn new_array_with_length(
@@ -767,9 +777,7 @@ impl Runtime {
                 }
             }
         }
-        Ok(Completion::Return(
-            self.into_jsvalue(Value::Object(array))?,
-        ))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(array))?))
     }
 
     pub(crate) fn call_array_of(
@@ -778,11 +786,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        build::finish(
-            self,
-            realm,
-            build::BuildStep::start(self, realm, build::BuildKind::Of, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            build::finish(
+                self,
+                realm,
+                build::BuildStep::start(self, realm, build::BuildKind::Of, invocation, arguments)?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_at(
@@ -791,17 +801,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        indexed::finish(
-            self,
-            realm,
-            indexed::IndexedStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            indexed::finish(
                 self,
                 realm,
-                indexed::IndexedKind::At,
-                &invocation,
-                arguments,
-            )?,
-        )
+                indexed::IndexedStep::start(
+                    self,
+                    realm,
+                    indexed::IndexedKind::At,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     fn native_allocate_fast_array_values(
@@ -834,17 +846,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        indexed::finish(
-            self,
-            realm,
-            indexed::IndexedStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            indexed::finish(
                 self,
                 realm,
-                indexed::IndexedKind::With,
-                &invocation,
-                arguments,
-            )?,
-        )
+                indexed::IndexedStep::start(
+                    self,
+                    realm,
+                    indexed::IndexedKind::With,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_concat(
@@ -853,11 +867,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        concat::finish(
-            self,
-            realm,
-            concat::ConcatStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            concat::finish(
+                self,
+                realm,
+                concat::ConcatStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_fill(
@@ -866,17 +882,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        indexed::finish(
-            self,
-            realm,
-            indexed::IndexedStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            indexed::finish(
                 self,
                 realm,
-                indexed::IndexedKind::Fill,
-                &invocation,
-                arguments,
-            )?,
-        )
+                indexed::IndexedStep::start(
+                    self,
+                    realm,
+                    indexed::IndexedKind::Fill,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_iteration(
@@ -886,17 +904,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        callback::finish(
-            self,
-            realm,
-            callback::CallbackStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            callback::finish(
                 self,
                 realm,
-                callback::CallbackKind::Iteration(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                callback::CallbackStep::start(
+                    self,
+                    realm,
+                    callback::CallbackKind::Iteration(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_reduce(
@@ -906,17 +926,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        callback::finish(
-            self,
-            realm,
-            callback::CallbackStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            callback::finish(
                 self,
                 realm,
-                callback::CallbackKind::Reduce(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                callback::CallbackStep::start(
+                    self,
+                    realm,
+                    callback::CallbackKind::Reduce(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_find(
@@ -926,17 +948,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        callback::finish(
-            self,
-            realm,
-            callback::CallbackStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            callback::finish(
                 self,
                 realm,
-                callback::CallbackKind::Find(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                callback::CallbackStep::start(
+                    self,
+                    realm,
+                    callback::CallbackKind::Find(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_copy_within(
@@ -945,17 +969,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        indexed::finish(
-            self,
-            realm,
-            indexed::IndexedStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            indexed::finish(
                 self,
                 realm,
-                indexed::IndexedKind::CopyWithin,
-                &invocation,
-                arguments,
-            )?,
-        )
+                indexed::IndexedStep::start(
+                    self,
+                    realm,
+                    indexed::IndexedKind::CopyWithin,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_flatten(
@@ -965,11 +991,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        flatten::finish(
-            self,
-            realm,
-            flatten::FlattenStep::start(self, realm, kind, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            flatten::finish(
+                self,
+                realm,
+                flatten::FlattenStep::start(self, realm, kind, invocation, arguments)?,
+            )
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1021,17 +1049,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        indexed::finish(
-            self,
-            realm,
-            indexed::IndexedStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            indexed::finish(
                 self,
                 realm,
-                indexed::IndexedKind::Search(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                indexed::IndexedStep::start(
+                    self,
+                    realm,
+                    indexed::IndexedKind::Search(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_join(
@@ -1058,18 +1088,20 @@ impl Runtime {
         arguments: &NativeArguments,
         string_limit: usize,
     ) -> Result<Completion, RuntimeError> {
-        string::finish(
-            self,
-            realm,
-            string::ArrayStringStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            string::finish(
                 self,
                 realm,
-                string::ArrayStringKind::Join(kind),
-                &invocation,
-                arguments,
-                string_limit,
-            )?,
-        )
+                string::ArrayStringStep::start(
+                    self,
+                    realm,
+                    string::ArrayStringKind::Join(kind),
+                    invocation,
+                    arguments,
+                    string_limit,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_to_string(
@@ -1077,22 +1109,24 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let arguments = NativeArguments {
-            readable: Vec::new(),
-            actual_arg_count: 0,
-        };
-        string::finish(
-            self,
-            realm,
-            string::ArrayStringStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let arguments = NativeArguments {
+                readable: Vec::new(),
+                actual_arg_count: 0,
+            };
+            string::finish(
                 self,
                 realm,
-                string::ArrayStringKind::ToString,
-                &invocation,
-                &arguments,
-                JsString::MAX_LEN,
-            )?,
-        )
+                string::ArrayStringStep::start(
+                    self,
+                    realm,
+                    string::ArrayStringKind::ToString,
+                    invocation,
+                    &arguments,
+                    JsString::MAX_LEN,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_pop(
@@ -1101,21 +1135,23 @@ impl Runtime {
         kind: ArrayPopKind,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let arguments = NativeArguments {
-            readable: Vec::new(),
-            actual_arg_count: 0,
-        };
-        mutation::finish(
-            self,
-            realm,
-            mutation::MutationStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let arguments = NativeArguments {
+                readable: Vec::new(),
+                actual_arg_count: 0,
+            };
+            mutation::finish(
                 self,
                 realm,
-                mutation::MutationKind::Pop(kind),
-                &invocation,
-                &arguments,
-            )?,
-        )
+                mutation::MutationStep::start(
+                    self,
+                    realm,
+                    mutation::MutationKind::Pop(kind),
+                    invocation,
+                    &arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_push(
@@ -1125,17 +1161,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        mutation::finish(
-            self,
-            realm,
-            mutation::MutationStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            mutation::finish(
                 self,
                 realm,
-                mutation::MutationKind::Push(kind),
-                &invocation,
-                arguments,
-            )?,
-        )
+                mutation::MutationStep::start(
+                    self,
+                    realm,
+                    mutation::MutationKind::Push(kind),
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_reverse(
@@ -1143,11 +1181,13 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        reverse::finish(
-            self,
-            realm,
-            reverse::ReverseStep::start(self, realm, &invocation)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            reverse::finish(
+                self,
+                realm,
+                reverse::ReverseStep::start(self, realm, invocation)?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_to_reversed(
@@ -1155,21 +1195,23 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let arguments = NativeArguments {
-            readable: Vec::new(),
-            actual_arg_count: 0,
-        };
-        indexed::finish(
-            self,
-            realm,
-            indexed::IndexedStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let arguments = NativeArguments {
+                readable: Vec::new(),
+                actual_arg_count: 0,
+            };
+            indexed::finish(
                 self,
                 realm,
-                indexed::IndexedKind::ToReversed,
-                &invocation,
-                &arguments,
-            )?,
-        )
+                indexed::IndexedStep::start(
+                    self,
+                    realm,
+                    indexed::IndexedKind::ToReversed,
+                    invocation,
+                    &arguments,
+                )?,
+            )
+        })
     }
 
     pub(in crate::engine::builtins) fn native_sort_comparator(
@@ -1252,11 +1294,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        sort::finish(
-            self,
-            realm,
-            sort::SortStep::start(self, realm, false, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            sort::finish(
+                self,
+                realm,
+                sort::SortStep::start(self, realm, false, invocation, arguments)?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_to_sorted(
@@ -1265,11 +1309,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        sort::finish(
-            self,
-            realm,
-            sort::SortStep::start(self, realm, true, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            sort::finish(
+                self,
+                realm,
+                sort::SortStep::start(self, realm, true, invocation, arguments)?,
+            )
+        })
     }
 
     /// Shared Rust port of QuickJS `js_array_slice`. The upstream `splice`
@@ -1283,20 +1329,22 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        slice::finish(
-            self,
-            realm,
-            slice::SliceStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            slice::finish(
                 self,
                 realm,
-                match kind {
-                    ArraySliceKind::Slice => slice::SliceKind::Slice,
-                    ArraySliceKind::Splice => slice::SliceKind::Splice,
-                },
-                &invocation,
-                arguments,
-            )?,
-        )
+                slice::SliceStep::start(
+                    self,
+                    realm,
+                    match kind {
+                        ArraySliceKind::Slice => slice::SliceKind::Slice,
+                        ArraySliceKind::Splice => slice::SliceKind::Splice,
+                    },
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     /// QuickJS `js_array_toSpliced`: allocate a defining-realm dense base
@@ -1308,17 +1356,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        slice::finish(
-            self,
-            realm,
-            slice::SliceStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            slice::finish(
                 self,
                 realm,
-                slice::SliceKind::ToSpliced,
-                &invocation,
-                arguments,
-            )?,
-        )
+                slice::SliceStep::start(
+                    self,
+                    realm,
+                    slice::SliceKind::ToSpliced,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     pub(crate) fn call_array_prototype_iterator(
@@ -1333,10 +1383,9 @@ impl Runtime {
             ));
         };
         let object = match this_value {
-            JsValue::Object(id) => std::borrow::Cow::Owned(ObjectRef::from_borrowed_handle(
-                self.clone(),
-                *id,
-            )?),
+            JsValue::Object(id) => {
+                std::borrow::Cow::Owned(ObjectRef::from_borrowed_handle(self.clone(), *id)?)
+            }
             value => match self.native_to_object_jsvalue(realm, self.dup_jsvalue(value)?)? {
                 NativeConversion::Value(object) => std::borrow::Cow::Owned(object),
                 NativeConversion::Throw(value) => {
@@ -1370,11 +1419,15 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        super::iterator::array::finish(
-            self,
-            realm,
-            super::iterator::array::ArrayNextStep::start(self, realm, &invocation)?,
-        )
+        let step = match super::iterator::array::ArrayNextStep::start(self, realm, &invocation) {
+            Ok(step) => step,
+            Err(error) => {
+                let _ = invocation.release(self);
+                return Err(error);
+            }
+        };
+        invocation.release(self)?;
+        super::iterator::array::finish(self, realm, step)
     }
 }
 

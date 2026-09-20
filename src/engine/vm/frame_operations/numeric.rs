@@ -88,15 +88,14 @@ pub(in crate::engine::vm) fn try_complete_primitive(
                 .map(|step| Some(NumericProgress::Deferred(step))),
         };
     }
-    let output = match crate::engine::vm::numeric::operation::primitive_output(
-        runtime, kind, left, right,
-    ) {
-        Ok(output) => output,
-        Err(error) => {
-            return crate::engine::vm::property_driver::throw_error(runtime, realm, error)
-                .map(|step| Some(NumericProgress::Deferred(step)));
-        }
-    };
+    let output =
+        match crate::engine::vm::numeric::operation::primitive_output(runtime, kind, left, right) {
+            Ok(output) => output,
+            Err(error) => {
+                return crate::engine::vm::property_driver::throw_error(runtime, realm, error)
+                    .map(|step| Some(NumericProgress::Deferred(step)));
+            }
+        };
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("numeric_completed_without_query");
     let mut value = Some(output.value);
@@ -251,7 +250,14 @@ mod tests {
         let fault = frame.fault_pc;
         let resume = frame.resume_pc;
         assert!(
-            commit_output(&mut execution, id, JsValue::Int(99), Some(JsValue::Int(41)), 0).is_err()
+            commit_output(
+                &mut execution,
+                id,
+                JsValue::Int(99),
+                Some(JsValue::Int(41)),
+                0
+            )
+            .is_err()
         );
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(
@@ -403,8 +409,13 @@ mod tests {
             )))
         ));
         let object = runtime.new_object(None).unwrap();
-        let step =
-            NumericStep::start(&runtime, NumericKind::Plus, JsValue::Object(object.clone().into_handle()), None).unwrap();
+        let step = NumericStep::start(
+            &runtime,
+            NumericKind::Plus,
+            JsValue::Object(object.clone().into_handle()),
+            None,
+        )
+        .unwrap();
         assert!(
             crate::engine::vm::proxy_get_driver::start_numeric(
                 &runtime,
@@ -434,14 +445,16 @@ mod tests {
             id,
             JsValue::Object(foreign.new_object(None).unwrap().into_handle()),
         );
-        identity = u64::MAX;
-        let error = complete_primitives(&runtime, &mut execution, id, false, &mut identity)
-            .err()
-            .expect("foreign conversion operand must fail before identity issue");
-        assert!(error.to_string().contains("conversion operand"));
-        assert_eq!(identity, u64::MAX);
+        identity = 10;
+        assert!(matches!(
+            complete_primitives(&runtime, &mut execution, id, false, &mut identity).unwrap(),
+            PrimitiveCompletion::Declined
+        ));
+        assert_eq!(identity, 11);
         let frame = execution.frames.current_mut(id).unwrap();
-        assert_eq!(execution.slots.depth(&frame.window), 1);
+        let pending = execution.slots.pop(&mut frame.window).unwrap();
+        foreign.release_jsvalue(pending).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 0);
     }
 
     #[test]
@@ -481,8 +494,16 @@ mod tests {
             .current_mut(id)
             .unwrap()
             .property_generation = u64::MAX;
-        push(&mut execution, id, JsValue::Object(target.clone().into_handle()));
-        push(&mut execution, id, runtime.into_jsvalue(source.clone()).unwrap());
+        push(
+            &mut execution,
+            id,
+            JsValue::Object(target.clone().into_handle()),
+        );
+        push(
+            &mut execution,
+            id,
+            runtime.into_jsvalue(source.clone()).unwrap(),
+        );
         let result = crate::engine::vm::proxy_get_driver::start_object_copy(
             &runtime,
             &mut execution,

@@ -177,12 +177,10 @@ fn map_record_ids_preserve_readd_order_and_live_iterator_sees_appends() {
         .unwrap();
     heap.map_insert_record(map, RawValue::Int(2), RawValue::String(first))
         .unwrap();
-    assert!(
-        matches!(
-            heap.map_records(map).unwrap().get(1).unwrap().key,
-            RawValue::Int(2)
-        )
-    );
+    assert!(matches!(
+        heap.map_records(map).unwrap().get(1).unwrap().key,
+        RawValue::Int(2)
+    ));
     heap.map_delete_record(map, 1).unwrap();
     let second = heap
         .allocate_string(JsString::from_static("second"))
@@ -338,11 +336,9 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
         .set(iterator_strong);
 
     heap.attach_map_intrinsics(realm, map).unwrap();
-    assert!(
-        matches!(heap.context(realm).unwrap().map, Some(attached)
+    assert!(matches!(heap.context(realm).unwrap().map, Some(attached)
             if attached.prototype == map.prototype
-                && attached.iterator_prototype == map.iterator_prototype)
-    );
+                && attached.iterator_prototype == map.iterator_prototype));
     assert_eq!(
         heap.object_strong_count(prototype),
         Ok(prototype_strong + 1)
@@ -605,10 +601,13 @@ fn set_layout_and_iterator_source_are_structurally_validated() {
         payload: ObjectPayload::Set {
             records: {
                 let mut records = CollectionRecords::default();
-                records.insert(&heap, MapRecord {
-                    key: RawValue::Int(1),
-                    value: RawValue::Int(2),
-                });
+                records.insert(
+                    &heap,
+                    MapRecord {
+                        key: RawValue::Int(1),
+                        value: RawValue::Int(2),
+                    },
+                );
                 records
             },
         },
@@ -709,11 +708,9 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
         .set(iterator_strong);
 
     heap.attach_set_intrinsics(realm, set).unwrap();
-    assert!(
-        matches!(heap.context(realm).unwrap().set, Some(attached)
+    assert!(matches!(heap.context(realm).unwrap().set, Some(attached)
             if attached.prototype == set.prototype
-                && attached.iterator_prototype == set.iterator_prototype)
-    );
+                && attached.iterator_prototype == set.iterator_prototype));
     assert_eq!(
         heap.object_strong_count(prototype),
         Ok(prototype_strong + 1)
@@ -826,13 +823,11 @@ fn for_in_iterator_advances_snapshots_and_transfers_current_edges() {
         ),
         "unexpected candidate: {candidate:?}"
     );
-    assert!(
-        matches!(
-            heap.next_for_in_candidate(iterator),
-            Ok(ForInCandidate::BaseComplete { object, fast_array })
-                if object == source && !fast_array
-        )
-    );
+    assert!(matches!(
+        heap.next_for_in_candidate(iterator),
+        Ok(ForInCandidate::BaseComplete { object, fast_array })
+            if object == source && !fast_array
+    ));
     heap.enter_for_in_prototype_chain(iterator, None).unwrap();
 
     let prototype = leaf(&mut heap, shape);
@@ -849,29 +844,23 @@ fn for_in_iterator_advances_snapshots_and_transfers_current_edges() {
     assert_eq!(cleanup.finalized_objects, 1);
     assert!(matches!(heap.object(source), Err(HeapError::Stale { .. })));
     heap.release_object(prototype).unwrap();
-    assert!(
-        matches!(
-            heap.next_for_in_candidate(iterator),
-            Ok(ForInCandidate::Property { object, ref name })
-                if object == prototype && name == &JsString::from_static("b")
-        )
-    );
-    assert!(
-        matches!(
-            heap.next_for_in_candidate(iterator),
-            Ok(ForInCandidate::LevelComplete(object)) if object == prototype
-        )
-    );
+    assert!(matches!(
+        heap.next_for_in_candidate(iterator),
+        Ok(ForInCandidate::Property { object, ref name })
+            if object == prototype && name == &JsString::from_static("b")
+    ));
+    assert!(matches!(
+        heap.next_for_in_candidate(iterator),
+        Ok(ForInCandidate::LevelComplete(object)) if object == prototype
+    ));
     let cleanup = heap
         .replace_for_in_level(iterator, None, Vec::new())
         .unwrap();
     assert_eq!(cleanup.finalized_objects, 1);
-    assert!(
-        matches!(
-            heap.next_for_in_candidate(iterator),
-            Ok(ForInCandidate::Done)
-        )
-    );
+    assert!(matches!(
+        heap.next_for_in_candidate(iterator),
+        Ok(ForInCandidate::Done)
+    ));
 
     heap.release_object(iterator).unwrap();
     heap.release_shape(shape).unwrap();

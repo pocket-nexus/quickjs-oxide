@@ -128,9 +128,9 @@ fn builtin_batch_rejects_entire_invalid_table_without_leaking_keys() {
         .define_native_builtin_auto_init_batch(&object, context.realm, [])
         .unwrap();
     assert_eq!(
-            layout_summary(&layout(&runtime, &object)),
-            layout_summary(&original)
-        );
+        layout_summary(&layout(&runtime, &object)),
+        layout_summary(&original)
+    );
     runtime.prevent_extensions(&object).unwrap();
     assert!(
         runtime
@@ -138,9 +138,9 @@ fn builtin_batch_rejects_entire_invalid_table_without_leaking_keys() {
             .is_err()
     );
     assert_eq!(
-            layout_summary(&layout(&runtime, &object)),
-            layout_summary(&original)
-        );
+        layout_summary(&layout(&runtime, &object)),
+        layout_summary(&original)
+    );
 }
 
 #[test]
@@ -171,9 +171,9 @@ fn builtin_batch_validates_receiver_domain_and_realm_lifetime() {
             .is_err()
     );
     assert_eq!(
-            layout_summary(&layout(&runtime, &object)),
-            layout_summary(&original)
-        );
+        layout_summary(&layout(&runtime, &object)),
+        layout_summary(&original)
+    );
     assert_eq!(runtime.test_atom_count(), atoms);
 }
 
@@ -214,9 +214,9 @@ fn builtin_batch_rolls_back_shape_and_realm_edges_on_retain_overflow() {
     }
     assert!(result.is_err());
     assert_eq!(
-            layout_summary(&layout(&runtime, &object)),
-            layout_summary(&original)
-        );
+        layout_summary(&layout(&runtime, &object)),
+        layout_summary(&original)
+    );
     assert_eq!(runtime.test_atom_count(), atoms);
 }
 

@@ -17,16 +17,18 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        match finish(
-            self,
-            realm,
-            ConcatStep::start(self, realm, ConcatKind::Create, &invocation, arguments)?,
-        )? {
-            NativeInvokeOutcome::Completion(result) => Ok(result),
-            NativeInvokeOutcome::IteratorNextRaw { .. } => {
-                Err(RuntimeError::Invariant("concat creation returned raw next"))
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            match finish(
+                self,
+                realm,
+                ConcatStep::start(self, realm, ConcatKind::Create, invocation, arguments)?,
+            )? {
+                NativeInvokeOutcome::Completion(result) => Ok(result),
+                NativeInvokeOutcome::IteratorNextRaw { .. } => {
+                    Err(RuntimeError::Invariant("concat creation returned raw next"))
+                }
             }
-        }
+        })
     }
 
     fn new_iterator_concat(
@@ -223,25 +225,27 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        match finish(
-            self,
-            realm,
-            ConcatStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            match finish(
                 self,
                 realm,
-                ConcatKind::Return,
-                &invocation,
-                &NativeArguments {
-                    actual_arg_count: 0,
-                    readable: Vec::new(),
-                },
-            )?,
-        )? {
-            NativeInvokeOutcome::Completion(result) => Ok(result),
-            NativeInvokeOutcome::IteratorNextRaw { .. } => {
-                Err(RuntimeError::Invariant("concat return returned raw next"))
+                ConcatStep::start(
+                    self,
+                    realm,
+                    ConcatKind::Return,
+                    invocation,
+                    &NativeArguments {
+                        actual_arg_count: 0,
+                        readable: Vec::new(),
+                    },
+                )?,
+            )? {
+                NativeInvokeOutcome::Completion(result) => Ok(result),
+                NativeInvokeOutcome::IteratorNextRaw { .. } => {
+                    Err(RuntimeError::Invariant("concat return returned raw next"))
+                }
             }
-        }
+        })
     }
 }
 
@@ -419,9 +423,11 @@ impl ConcatResume {
     ) -> Result<ConcatStep, RuntimeError> {
         let Some(input) = remaining.next() else {
             return Ok(ConcatStep::Complete(NativeInvokeOutcome::Completion(
-                Completion::Return(runtime.into_jsvalue(Value::Object(
-                    runtime.new_iterator_concat(realm, &inputs)?,
-                ))?),
+                Completion::Return(
+                    runtime.into_jsvalue(Value::Object(
+                        runtime.new_iterator_concat(realm, &inputs)?,
+                    ))?,
+                ),
             )));
         };
         let Value::Object(current) = input else {

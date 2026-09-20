@@ -96,7 +96,8 @@ impl Runtime {
                     );
                 }
                 for (entry, slot) in shape.entries().iter().zip(&object_data.slots) {
-                    let Some(index) = state.atoms.array_index(state.atoms.brand(entry.atom)?)? else {
+                    let Some(index) = state.atoms.array_index(state.atoms.brand(entry.atom)?)?
+                    else {
                         continue;
                     };
                     if index >= expected_len {
@@ -316,11 +317,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Reflect method did not receive a generic invocation",
             ));
         };
+        invocation.release(self)?;
         match kind {
             ReflectKind::Apply => self.call_reflect_apply(realm, arguments),
             ReflectKind::Construct => self.call_reflect_construct(realm, arguments),

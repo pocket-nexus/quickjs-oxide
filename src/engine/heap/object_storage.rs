@@ -755,23 +755,23 @@ impl Heap {
                 "in-place property append reached a shared shape",
             ));
         }
-        let index =
-            self.shape(shape_id)?
-                .unique_append_index(AtomIdx::from_raw(atom.raw()))
-                .map_err(|error| match error {
-                    ShapeError::NullAtom => {
-                        HeapError::Invariant("in-place property append used a null atom")
-                    }
-                    ShapeError::DuplicateAtom(_) => {
-                        HeapError::Invariant("in-place property append duplicated a shape atom")
-                    }
-                    ShapeError::MissingAtom(_) => HeapError::Invariant(
-                        "in-place property append reported an impossible missing atom",
-                    ),
-                    ShapeError::PropertyIndexOverflow => HeapError::Overflow {
-                        operation: "appending an in-place shape property",
-                    },
-                })?;
+        let index = self
+            .shape(shape_id)?
+            .unique_append_index(AtomIdx::from_raw(atom.raw()))
+            .map_err(|error| match error {
+                ShapeError::NullAtom => {
+                    HeapError::Invariant("in-place property append used a null atom")
+                }
+                ShapeError::DuplicateAtom(_) => {
+                    HeapError::Invariant("in-place property append duplicated a shape atom")
+                }
+                ShapeError::MissingAtom(_) => HeapError::Invariant(
+                    "in-place property append reported an impossible missing atom",
+                ),
+                ShapeError::PropertyIndexOverflow => HeapError::Overflow {
+                    operation: "appending an in-place shape property",
+                },
+            })?;
         self.append_unique_object_property_at_index(
             id,
             shape_id,
@@ -1706,7 +1706,8 @@ impl Heap {
         }
         if let ObjectPayload::Promise(data) = &object.payload {
             if !is_promise_storable_value(&data.result)
-                || (data.state == PromiseState::Pending && !matches!(data.result, RawValue::Undefined))
+                || (data.state == PromiseState::Pending
+                    && !matches!(data.result, RawValue::Undefined))
                 || (data.state != PromiseState::Pending
                     && (!data.fulfill_reactions.is_empty() || !data.reject_reactions.is_empty()))
                 || data

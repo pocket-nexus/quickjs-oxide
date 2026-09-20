@@ -299,7 +299,9 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.call_set_native_borrowed(realm, kind, &invocation, arguments)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            self.call_set_native_borrowed(realm, kind, invocation, arguments)
+        })
     }
     pub(crate) fn call_set_native_borrowed(
         &self,
@@ -414,12 +416,16 @@ impl Runtime {
 
     fn normalized_set_key(value: JsValue) -> JsValue {
         match value {
-            JsValue::Float(value) if value == 0.0 => JsValue::Int(0),
+            JsValue::Float(0.0) => JsValue::Int(0),
             value => value,
         }
     }
 
-    fn find_set_record(&self, set: &ObjectRef, key: &JsValue) -> Result<Option<usize>, RuntimeError> {
+    fn find_set_record(
+        &self,
+        set: &ObjectRef,
+        key: &JsValue,
+    ) -> Result<Option<usize>, RuntimeError> {
         let raw_key = key.as_raw();
         Ok(self
             .0
@@ -490,7 +496,10 @@ impl Runtime {
         *index = record_index
             .checked_add(1)
             .ok_or(RuntimeError::Invariant("Set record index overflowed"))?;
-        Ok(Some((record_index, self.into_jsvalue(self.root_raw_value(&key)?)?)))
+        Ok(Some((
+            record_index,
+            self.into_jsvalue(self.root_raw_value(&key)?)?,
+        )))
     }
 
     fn next_live_set_value(
@@ -515,14 +524,9 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        let value = self.dup_jsvalue(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "Set.prototype.add value argv was not padded",
-                ))?,
-        )?;
+        let value = self.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Set.prototype.add value argv was not padded"),
+        )?)?;
         self.insert_set_record(&set, value)?;
         Ok(Completion::Return(self.into_jsvalue(Value::Object(set))?))
     }
@@ -539,9 +543,10 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        let value = Self::normalized_set_key(self.dup_jsvalue(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Set.prototype.has value argv was not padded"),
-        )?)?);
+        let value =
+            Self::normalized_set_key(self.dup_jsvalue(arguments.readable.first().ok_or(
+                RuntimeError::Invariant("Set.prototype.has value argv was not padded"),
+            )?)?);
         let has = self.find_set_record(&set, &value)?.is_some();
         self.release_jsvalue(value)?;
         Ok(Completion::Return(JsValue::Bool(has)))
@@ -596,7 +601,7 @@ impl Runtime {
             }
         };
         Ok(Completion::Return(JsValue::Int(
-            self.set_size_value(&set)? as i32,
+            self.set_size_value(&set)? as i32
         )))
     }
 

@@ -158,7 +158,10 @@ impl IndexedResume {
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(IndexedStep::request_number(runtime.into_jsvalue(value)?, self))
+                Ok(IndexedStep::request_number(
+                    runtime.into_jsvalue(value)?,
+                    self,
+                ))
             }
             Phase::Read => match self.0.kind {
                 IndexedKind::At => Ok(IndexedStep::Complete(Completion::Return(
@@ -274,7 +277,10 @@ impl IndexedResume {
                 return self.bound(runtime, index + 1);
             }
             self.0.phase = Phase::Bound(index);
-            return Ok(IndexedStep::request_number(runtime.into_jsvalue(value)?, self));
+            return Ok(IndexedStep::request_number(
+                runtime.into_jsvalue(value)?,
+                self,
+            ));
         }
         self.0.index = self.0.bounds[0];
         self.0.end = self.0.length;

@@ -60,41 +60,50 @@ impl Runtime {
     }
 
     /// Internal-value form of [`Runtime::property_key_from_primitive`].
+    ///
+    /// Consumes one owned internal value edge and releases it on every path.
     pub(crate) fn property_key_from_primitive_jsvalue(
         &self,
         realm: ContextId,
         value: crate::engine::value::JsValue,
     ) -> Result<NativeConversion<PropertyKey>, RuntimeError> {
-        use crate::engine::value::JsValue;
-        if matches!(value, JsValue::Object(_)) {
-            return Err(RuntimeError::Invariant(
-                "property key conversion received an object",
-            ));
-        }
-        if let Some(key) = self.immediate_numeric_property_key_jsvalue(&value) {
-            return Ok(NativeConversion::Value(key));
-        }
-        if let JsValue::Symbol(index) = value {
-            let atom = self.0.state.borrow().atoms.brand(index)?;
-            return Ok(NativeConversion::Value(PropertyKey::from_borrowed_atom(
-                self.clone(),
-                atom,
-            )?));
-        }
-        let string = match crate::engine::vm::to_js_string_jsvalue(self, &value) {
-            Ok(string) => string,
-            Err(error) => {
-                let Some(kind) = NativeErrorKind::from_javascript_error(error.kind()) else {
-                    return Err(RuntimeError::Engine(error));
-                };
-                return Ok(NativeConversion::Throw(
-                    self.new_native_error_from_error(realm, kind, &error)?,
+        let result = (|| {
+            use crate::engine::value::JsValue;
+            if matches!(value, JsValue::Object(_)) {
+                return Err(RuntimeError::Invariant(
+                    "property key conversion received an object",
                 ));
             }
-        };
-        Ok(NativeConversion::Value(
-            self.intern_property_key_js_string(&string)?,
-        ))
+            if let Some(key) = self.immediate_numeric_property_key_jsvalue(&value) {
+                return Ok(NativeConversion::Value(key));
+            }
+            if let JsValue::Symbol(index) = &value {
+                let atom = self.0.state.borrow().atoms.brand(*index)?;
+                return Ok(NativeConversion::Value(PropertyKey::from_borrowed_atom(
+                    self.clone(),
+                    atom,
+                )?));
+            }
+            let string = match crate::engine::vm::to_js_string_jsvalue(self, &value) {
+                Ok(string) => string,
+                Err(error) => {
+                    let Some(kind) = NativeErrorKind::from_javascript_error(error.kind()) else {
+                        return Err(RuntimeError::Engine(error));
+                    };
+                    return Ok(NativeConversion::Throw(
+                        self.new_native_error_from_error(realm, kind, &error)?,
+                    ));
+                }
+            };
+            Ok(NativeConversion::Value(
+                self.intern_property_key_js_string(&string)?,
+            ))
+        })();
+        match (result, self.release_jsvalue(value)) {
+            (Ok(conversion), Ok(())) => Ok(conversion),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
     }
 
     /// Finish ToPropertyKey after the domain continuation has obtained a primitive.

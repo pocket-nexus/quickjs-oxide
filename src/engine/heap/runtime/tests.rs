@@ -14,6 +14,7 @@ use crate::engine::code::debug::{DebugInfoMode, Pc2LineEntry, Pc2LineTable};
 use crate::engine::code::dynamic_source::DynamicSourceBuilder;
 use crate::source::LineColumn;
 
+use crate::engine::atom::AtomIdx;
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName, ConstructorKind,
     EvalKind, FunctionKind, FunctionMetadata,
@@ -30,7 +31,6 @@ use crate::engine::heap::{
     BytecodeConstant, HeapError, ObjectPayload, PrimitiveObjectData, PropertySlot, RawValue,
 };
 use crate::engine::object::shape::PropertyFlags;
-use crate::engine::atom::AtomIdx;
 use crate::engine::object::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField,
     OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,

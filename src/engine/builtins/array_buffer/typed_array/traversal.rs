@@ -91,17 +91,14 @@ impl TypedTraversalStep {
             }
         };
         let callback = runtime.callable_from_value(runtime.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "TypedArray traversal callback argv was not padded",
-                ))?,
+            arguments.readable.first().ok_or(RuntimeError::Invariant(
+                "TypedArray traversal callback argv was not padded",
+            ))?,
         )?)?;
         let second = if arguments.actual_arg_count > 1 {
-            runtime.root_value(arguments.readable.get(1).ok_or(
-                RuntimeError::Invariant("TypedArray traversal second argument was missing"),
-            )?)?
+            runtime.root_value(arguments.readable.get(1).ok_or(RuntimeError::Invariant(
+                "TypedArray traversal second argument was missing",
+            ))?)?
         } else {
             Value::Undefined
         };

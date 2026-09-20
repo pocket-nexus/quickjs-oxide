@@ -3,7 +3,7 @@ use super::JsValue;
 use super::{
     CallStep, Completion, DirectCallTarget, Error, Finish, IteratorProgress, Next, OperationTarget,
     Progress, Query, ReturnOwner, ReturnTarget, ReturnValue, RunningExecution, Runtime, Step,
-    Value, construct, continue_iterator, native_scope, overflow, runtime_error_to_vm_error,
+    construct, continue_iterator, native_scope, overflow, runtime_error_to_vm_error,
 };
 
 #[inline(never)]

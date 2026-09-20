@@ -66,11 +66,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "global eval used an unexpected native invocation protocol",
             ));
         };
+        invocation.release(self)?;
         let input = match arguments.readable.first() {
             Some(value) => self.root_and_release_jsvalue(self.dup_jsvalue(value)?)?,
             None => Value::Undefined,

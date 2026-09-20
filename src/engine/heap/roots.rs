@@ -1,6 +1,6 @@
-use crate::engine::atom::AtomIdx;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::atom::AtomIdx;
 
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
 use crate::engine::heap::{HeapError, RawValue, VarRefData, VarRefId};
@@ -160,6 +160,7 @@ impl Runtime {
     }
 
     /// Public-root boundary form of [`Runtime::read_var_ref`].
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn read_var_ref_rooted(
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -208,19 +209,6 @@ impl Runtime {
         Ok(Some(JsValue::from_raw(raw).ok_or(
             RuntimeError::Invariant("internal value sentinel occupied a captured cell"),
         )?))
-    }
-
-    /// Public-root boundary form of [`Runtime::try_read_owned_var_ref`].
-    pub(crate) fn try_read_owned_var_ref_rooted(
-        &self,
-        root: &impl crate::engine::heap::roots::VarRefHandle,
-    ) -> Result<Option<Value>, RuntimeError> {
-        let Some(value) = self.try_read_owned_var_ref(root)? else {
-            return Ok(None);
-        };
-        let rooted = self.root_value(&value);
-        self.release_jsvalue(value)?;
-        rooted.map(Some)
     }
 
     /// Trusted shared-borrow read of a proven live captured cell.
@@ -454,6 +442,7 @@ impl Runtime {
     }
 
     /// Public-root boundary form of [`Runtime::write_var_ref`].
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn write_var_ref_rooted(
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -502,37 +491,6 @@ impl Runtime {
             self.release_converted_node_edge(edge);
         }
         converted
-    }
-
-    /// Trusted variant of [`Runtime::take_owned_raw_value`] for a raw payload
-    /// already proven to be one of the public variants which need no heap or
-    /// table lookup: scalars and object edges.
-    ///
-    /// The caller owns one reference for the payload (an object edge or
-    /// primitive backing store). Internal sentinels and heap-resolved kinds
-    /// (string, BigInt, symbol) at a trusted call site are a heap invariant
-    /// violation, so they panic instead of returning an error; use
-    /// [`Runtime::take_owned_raw_value`] for those.
-    #[inline]
-    pub(crate) fn take_owned_raw_value_fast(&self, value: RawValue) -> Value {
-        match value {
-            RawValue::Undefined => Value::Undefined,
-            RawValue::Null => Value::Null,
-            RawValue::Bool(value) => Value::Bool(value),
-            RawValue::Int(value) => Value::Int(value),
-            RawValue::Float(value) => Value::Float(value),
-            RawValue::Object(object) => {
-                Value::Object(ObjectRef::from_owned_handle(self.clone(), object))
-            }
-            RawValue::BigInt(_)
-            | RawValue::String(_)
-            | RawValue::Symbol(_)
-            | RawValue::Private(_)
-            | RawValue::Uninitialized
-            | RawValue::Exception => {
-                unreachable!("trusted raw value conversion received a heap-resolved kind")
-            }
-        }
     }
 
     pub(crate) fn root_raw_value(&self, value: &RawValue) -> Result<Value, RuntimeError> {
@@ -832,12 +790,10 @@ mod owned_cell_tests {
             .set(before);
         assert!(result.is_err());
         assert_eq!(after, u32::MAX);
-        assert!(
-            matches!(
-                runtime.raw_var_ref_value(&root).unwrap(),
-                RawValue::Object(object) if object == id
-            )
-        );
+        assert!(matches!(
+            runtime.raw_var_ref_value(&root).unwrap(),
+            RawValue::Object(object) if object == id
+        ));
     }
 }
 

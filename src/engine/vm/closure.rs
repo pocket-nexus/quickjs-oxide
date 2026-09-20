@@ -54,8 +54,8 @@ impl ClosureSlots {
 mod tests {
     use crate::engine::{
         api::{Runtime, Value},
-        value::JsValue,
         object::CallableRef,
+        value::JsValue,
         vm::call::CallableExecution,
     };
     #[test]

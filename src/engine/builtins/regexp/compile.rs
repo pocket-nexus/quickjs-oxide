@@ -117,7 +117,11 @@ impl RegExpCompileStep {
         let this_value = runtime.root_value(this_value)?;
         let Some(_) = runtime.genuine_regexp(&this_value)? else {
             return Ok(Self::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "RegExp object expected")?,
+                runtime.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    "RegExp object expected",
+                )?,
             )));
         };
         let Value::Object(regexp) = this_value else {

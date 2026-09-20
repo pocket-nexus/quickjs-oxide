@@ -45,11 +45,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        finish_tag(
-            self,
-            realm,
-            TagSetterStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish_tag(
+                self,
+                realm,
+                TagSetterStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 }
 
@@ -98,14 +100,10 @@ impl TagSetterStep {
                 "not an object",
             )));
         };
-        let receiver = crate::engine::object::ObjectRef::from_borrowed_handle(
-            runtime.clone(),
-            *receiver_id,
-        )?;
+        let receiver =
+            crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *receiver_id)?;
         let value = runtime.root_value(arguments.readable.first().ok_or(
-            RuntimeError::Invariant(
-                "Iterator.prototype toStringTag setter argv was not padded",
-            ),
+            RuntimeError::Invariant("Iterator.prototype toStringTag setter argv was not padded"),
         )?)?;
         let iterator_prototype = runtime
             .0

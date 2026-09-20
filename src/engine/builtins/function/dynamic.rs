@@ -198,18 +198,17 @@ impl DynamicFunctionResume {
                 let prototype = if let Value::Object(object) = value {
                     object
                 } else {
-                    let new_target =
-                        std::mem::replace(&mut self.0.new_target, JsValue::Undefined);
+                    let new_target = std::mem::replace(&mut self.0.new_target, JsValue::Undefined);
                     let new_target = runtime.root_and_release_jsvalue(new_target)?;
                     let realm =
                         match runtime.function_realm_from_value(self.0.realm, &new_target)? {
-                        NativeConversion::Value(realm) => realm,
-                        NativeConversion::Throw(value) => {
-                            return Ok(DynamicFunctionStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
-                        }
-                    };
+                            NativeConversion::Value(realm) => realm,
+                            NativeConversion::Throw(value) => {
+                                return Ok(DynamicFunctionStep::Complete(Completion::Throw(
+                                    runtime.into_jsvalue(value)?,
+                                )));
+                            }
+                        };
                     let prototype = {
                         let state = runtime.0.state.borrow();
                         let context = state.heap.context(realm)?;

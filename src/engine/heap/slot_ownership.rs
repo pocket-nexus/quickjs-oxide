@@ -75,6 +75,7 @@ impl Heap {
 }
 
 impl Runtime {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn slot_value_release_readiness(
         &self,
         value: &Value,
@@ -167,6 +168,7 @@ impl Runtime {
     /// proof. No callback or reference decrease can intervene between the
     /// preflight and Drop. Ready consumes the Value; every other outcome leaves
     /// it untouched, so the caller may move it to a pending operation safely.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn try_release_slot_value(&self, value: &mut Value) -> Result<bool, RuntimeError> {
         if self.slot_value_release_readiness(value)? != SlotReleaseReadiness::Ready {
             return Ok(false);
@@ -415,7 +417,11 @@ mod tests {
         let dense_js = runtime.unroot_value(&dense).unwrap();
         let typed_js = runtime.unroot_value(&typed).unwrap();
         assert!(!runtime.try_typed_array_number_write(&typed_js, 0, 17.0));
-        assert!(runtime.try_dense_array_immediate_read(&dense_js, 0).is_none());
+        assert!(
+            runtime
+                .try_dense_array_immediate_read(&dense_js, 0)
+                .is_none()
+        );
         assert!(runtime.try_array_immediate_read(&dense_js, 0).is_none());
         assert!(runtime.try_array_immediate_read(&typed_js, 0).is_none());
         assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);

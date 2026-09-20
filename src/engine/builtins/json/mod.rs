@@ -96,11 +96,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "JSON method did not receive a generic invocation",
             ));
         };
+        invocation.release(self)?;
         match kind {
             JsonNativeKind::IsRawJson => self.call_json_is_raw_json(arguments),
             JsonNativeKind::Parse => self.call_json_parse(realm, arguments),

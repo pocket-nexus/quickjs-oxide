@@ -84,9 +84,9 @@ impl InvokeStep {
                     RuntimeError::Invariant("Reflect.construct newTarget argv was not readable"),
                 )?)?;
                 if !matches!(value, Value::Object(_)) {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(runtime.new_not_constructor_error(realm, &value)?)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(runtime.into_jsvalue(
+                        runtime.new_not_constructor_error(realm, &value)?,
+                    )?)));
                 }
                 Some(match runtime.constructor_from_value(realm, value)? {
                     NativeConversion::Value(target) => ConstructNewTarget::Validated(target),
@@ -147,7 +147,7 @@ impl InvokeStep {
                         forwarded.capacity(),
                         size_of::<JsValue>(),
                     );
-                    crate::engine::api::profiling::record_call_buffer_copies(
+                    crate::engine::api::profiling::record_call_buffer_js_value_copies(
                         "function.call_suffix",
                         &forwarded,
                     );
@@ -171,7 +171,11 @@ impl InvokeStep {
                 };
                 let Some(target) = target else {
                     return Ok(Self::Complete(Completion::Throw(
-                        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+                        runtime.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not a function",
+                        )?,
                     )));
                 };
                 (
@@ -322,7 +326,11 @@ pub(crate) fn finish(
                     finish_arguments(
                         runtime,
                         realm,
-                        ArgumentsStep::start(runtime, realm, runtime.root_and_release_jsvalue(value)?)?,
+                        ArgumentsStep::start(
+                            runtime,
+                            realm,
+                            runtime.root_and_release_jsvalue(value)?,
+                        )?,
                     )?,
                 )?
             }

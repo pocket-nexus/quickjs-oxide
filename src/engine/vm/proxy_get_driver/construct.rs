@@ -2,7 +2,7 @@
 use super::{
     BytecodeCallRequest, CallableExecution, Completion, Error, NativeConversion, Next,
     OperationTarget, Query, Resume, ReturnOwner, ReturnTarget, ReturnValue, RunningExecution,
-    Runtime, Step, Value, overflow, runtime_error_to_vm_error,
+    Runtime, Step, overflow, runtime_error_to_vm_error,
 };
 use crate::engine::value::JsValue;
 use crate::engine::{
@@ -100,7 +100,7 @@ pub(super) fn prepared(
                 .map_err(|error| Error::internal(error.to_string()))?
                 .metadata
                 .constructor_kind;
-            let mut request = Box::new(BytecodeCallRequest {
+            let request = Box::new(BytecodeCallRequest {
                 callable,
                 receiver: JsValue::Undefined,
                 new_target: new_target.into_value(),
@@ -134,10 +134,11 @@ pub(super) fn prepared(
                     )
                 }
                 ConstructorKind::Base => Ok(Step::ReadValue {
-                    receiver: Some(std::mem::replace(
-                        &mut request.new_target,
-                        JsValue::Undefined,
-                    )),
+                    receiver: Some(
+                        runtime
+                            .dup_jsvalue(&request.new_target)
+                            .map_err(runtime_error_to_vm_error)?,
+                    ),
                     key: Some(
                         runtime
                             .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)
@@ -172,6 +173,9 @@ pub(super) fn prototype(
         resume: Some(resume),
     })
 }
+// The selected Step already owns this boxed request; consume it in place instead of
+// moving its payload through the driver stack.
+#[allow(clippy::boxed_local)]
 pub(super) fn ready(
     runtime: &Runtime,
     execution: &mut RunningExecution,

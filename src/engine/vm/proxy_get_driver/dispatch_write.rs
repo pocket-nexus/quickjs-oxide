@@ -659,11 +659,7 @@ mod local_set_tests {
             object: Some(array.clone()),
             key: Some(key.clone()),
             value: Some(JsValue::Int(7)),
-            receiver: Some(
-                runtime
-                    .unroot_value(&Value::Object(array.clone()))
-                    .unwrap(),
-            ),
+            receiver: Some(runtime.unroot_value(&Value::Object(array.clone())).unwrap()),
             resume: Some(Resume::RootSet),
         };
         let mut execution = RunningExecution::new(

@@ -29,8 +29,14 @@ impl NumericKind {
 }
 pub(crate) enum NumericStep {
     Complete(Completion),
-    Number { value: JsValue, resume: NumericResume },
-    Primitive { value: JsValue, resume: NumericResume },
+    Number {
+        value: JsValue,
+        resume: NumericResume,
+    },
+    Primitive {
+        value: JsValue,
+        resume: NumericResume,
+    },
 }
 enum Phase {
     Radix,

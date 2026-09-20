@@ -12,8 +12,8 @@ use crate::engine::object::{
     CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey,
 };
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 
 mod set;
 
@@ -117,9 +117,9 @@ impl Runtime {
             }
             OrdinaryRead::Call { getter, receiver } => {
                 Ok(match self.call_internal(realm, &getter, receiver, &[])? {
-                    Completion::Return(value) => NativeConversion::Value(Some(
-                        self.root_and_release_jsvalue(value)?,
-                    )),
+                    Completion::Return(value) => {
+                        NativeConversion::Value(Some(self.root_and_release_jsvalue(value)?))
+                    }
                     Completion::Throw(value) => {
                         NativeConversion::Throw(self.root_and_release_jsvalue(value)?)
                     }

@@ -62,12 +62,14 @@ impl Runtime {
     }
 
     fn call_date_now(&self) -> Result<Completion, RuntimeError> {
-        Ok(Completion::Return(
-            crate::engine::value::number::operations::Number::compact(
-                self.date_now_millis() as f64,
-            )
-            .into(),
-        ))
+        Ok(
+            Completion::Return(
+                crate::engine::value::number::operations::Number::compact(
+                    self.date_now_millis() as f64
+                )
+                .into(),
+            ),
+        )
     }
 
     fn genuine_date_value(&self, value: &Value) -> Result<Option<f64>, RuntimeError> {

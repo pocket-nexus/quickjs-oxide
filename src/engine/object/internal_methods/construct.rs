@@ -116,7 +116,7 @@ impl Search {
             rooted.handler.clone(),
             self.key.clone(),
             ProxyConstructResume(Box::new(ProxyConstructResumeState {
-                pending_effect: ProxyConstructStepPending::default(),
+                pending_effect: ProxyConstructStepPending::new(runtime.clone()),
                 phase: Phase::Method {
                     rooted,
                     search: self,
@@ -175,7 +175,7 @@ impl ProxyConstructResume {
                     .map(|value| runtime.into_jsvalue(value))
                     .collect::<Result<Vec<_>, _>>()?,
                 Self(Box::new(ProxyConstructResumeState {
-                    pending_effect: ProxyConstructStepPending::default(),
+                    pending_effect: ProxyConstructStepPending::new(runtime.clone()),
                     phase: Phase::Result {
                         realm: search.realm,
                         trap: false,
@@ -210,7 +210,7 @@ impl ProxyConstructResume {
             .into_iter()
             .collect::<Vec<_>>(),
             Self(Box::new(ProxyConstructResumeState {
-                pending_effect: ProxyConstructStepPending::default(),
+                pending_effect: ProxyConstructStepPending::new(runtime.clone()),
                 phase: Phase::Result {
                     realm: search.realm,
                     trap: true,
@@ -276,8 +276,8 @@ pub(super) fn finish(
     }
 }
 
-#[derive(Default)]
 struct ProxyConstructStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     call_target: Option<DirectCallTarget>,
@@ -286,6 +286,44 @@ struct ProxyConstructStepPending {
     construct_target: Option<ConstructorRef>,
     construct_new_target: Option<ConstructNewTarget>,
     construct_arguments: Option<Vec<JsValue>>,
+}
+impl ProxyConstructStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            construct_target: None,
+            construct_new_target: None,
+            construct_arguments: None,
+        }
+    }
+}
+impl Drop for ProxyConstructStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(values) = self.construct_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(new_target) = self.construct_new_target.take() {
+            let _ = self.runtime.release_jsvalue(new_target.into_value());
+        }
+    }
 }
 impl ProxyConstructStep {
     pub(crate) fn request_read(

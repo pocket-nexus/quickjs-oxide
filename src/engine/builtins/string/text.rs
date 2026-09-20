@@ -147,7 +147,12 @@ impl StringTextStep {
     }
 }
 impl StringTextResume {
-    fn convert(mut self, value: JsValue, hint: ToPrimitiveHint, phase: TextPhase) -> StringTextStep {
+    fn convert(
+        mut self,
+        value: JsValue,
+        hint: ToPrimitiveHint,
+        phase: TextPhase,
+    ) -> StringTextStep {
         StringTextStep::Primitive {
             value,
             hint,

@@ -813,9 +813,7 @@ fn data_view_intrinsics_attach_transactionally_once() {
         )),
     );
     assert_eq!(heap.object_strong_count(object_prototype), Ok(root_strong),);
-    assert!(
-        matches!(heap.context(realm).unwrap().data_view, None)
-    );
+    assert!(matches!(heap.context(realm).unwrap().data_view, None));
 
     let prototype_strong = heap.object_strong_count(prototype).unwrap();
     heap.attach_data_view_intrinsics(realm, constructor, DataViewRealmData { prototype })
@@ -875,6 +873,8 @@ fn symbol_atom_ownership_is_returned_on_replace_and_finalize() {
     let shape_cleanup = heap.release_shape(shape).unwrap();
     assert_eq!(
         shape_cleanup.atoms,
-        vec![AtomIdx::from_raw(Atom::from_immediate_integer(0).unwrap().raw())]
+        vec![AtomIdx::from_raw(
+            Atom::from_immediate_integer(0).unwrap().raw()
+        )]
     );
 }

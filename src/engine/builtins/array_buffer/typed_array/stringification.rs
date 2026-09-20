@@ -45,18 +45,20 @@ impl Runtime {
         arguments: &NativeArguments,
         string_limit: usize,
     ) -> Result<Completion, RuntimeError> {
-        finish(
-            self,
-            realm,
-            TypedStringStep::start_with_limit(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish(
                 self,
                 realm,
-                kind,
-                &invocation,
-                arguments,
-                string_limit,
-            )?,
-        )
+                TypedStringStep::start_with_limit(
+                    self,
+                    realm,
+                    kind,
+                    invocation,
+                    arguments,
+                    string_limit,
+                )?,
+            )
+        })
     }
 }
 pub(crate) enum TypedStringStep {
@@ -143,7 +145,7 @@ impl TypedStringStep {
             }
         };
         let state = TypedStringResume(Box::new(TypedStringResumeState {
-            pending_effect: TypedStringStepPending::default(),
+            pending_effect: TypedStringStepPending::new(runtime.clone()),
             realm,
             target,
             kind,
@@ -331,14 +333,49 @@ fn finish(
     }
 }
 
-#[derive(Default)]
 struct TypedStringStepPending {
+    runtime: Runtime,
     primitive_value: Option<JsValue>,
     read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     call_target: Option<DirectCallTarget>,
     call_receiver: Option<JsValue>,
     call_arguments: Option<Vec<JsValue>>,
+}
+impl TypedStringStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            primitive_value: None,
+            read_receiver: None,
+            read_key: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+        }
+    }
+}
+impl Drop for TypedStringStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow.
+    fn drop(&mut self) {
+        for value in [
+            self.primitive_value.take(),
+            self.read_receiver.take(),
+            self.call_receiver.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl TypedStringStep {
     pub(crate) fn request_primitive(value: JsValue, mut resume: TypedStringResume) -> Self {

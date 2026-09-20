@@ -11,8 +11,8 @@ mod buffers;
 pub use buffers::CallBufferCost;
 pub(crate) use buffers::{
     record_call_buffer_capacity, record_call_buffer_copies, record_call_buffer_initialized,
-    record_call_buffer_moves, record_call_buffer_observed, record_call_buffer_share,
-    record_call_raw_buffer_copies,
+    record_call_buffer_js_value_copies, record_call_buffer_moves, record_call_buffer_observed,
+    record_call_buffer_share, record_call_raw_buffer_copies,
 };
 mod phases;
 pub(crate) use phases::{CompilePhase, PhaseTimer};

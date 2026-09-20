@@ -155,8 +155,9 @@ impl ScalarTextResume {
                     StringWellFormedKind::IsWellFormed => {
                         JsValue::Bool(self.0.string.is_well_formed())
                     }
-                    StringWellFormedKind::ToWellFormed => runtime
-                        .unroot_value(&Value::String(self.0.string.to_well_formed()))?,
+                    StringWellFormedKind::ToWellFormed => {
+                        runtime.unroot_value(&Value::String(self.0.string.to_well_formed()))?
+                    }
                 })))
             }
             ScalarTextKind::Iterator => Ok(ScalarTextStep::Complete(Completion::Return(

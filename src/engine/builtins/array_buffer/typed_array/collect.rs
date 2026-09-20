@@ -56,11 +56,13 @@ impl TypedIteratorMethodResume {
                 None,
             )));
         }
-        let callable = match value {
-            JsValue::Object(id) => runtime
-                .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), id)?)?,
+        let callable = match &value {
+            JsValue::Object(id) => {
+                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+            }
             _ => None,
         };
+        runtime.release_jsvalue(value)?;
         Ok(TypedIteratorMethodStep::Complete(match callable {
             Some(value) => NativeConversion::Value(Some(value)),
             None => NativeConversion::Throw(runtime.new_native_error(

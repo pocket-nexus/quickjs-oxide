@@ -88,6 +88,7 @@ impl CollectionRecords {
     }
 
     /// The heap has validated the key, uniqueness and ID capacity before commit.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn insert(&mut self, heap: &Heap, record: MapRecord) -> usize {
         let hash = self.precompute_insert_hash(heap, &record.key);
         self.insert_hashed(record, hash)
@@ -279,18 +280,20 @@ mod tests {
                 .map(|&(key, value)| record(key, value))
                 .collect::<Vec<_>>();
             assert_eq!(actual.len(), expected.len());
-            for ((actual_key, actual_value), expected) in
-                actual.iter().zip(expected.iter())
-            {
+            for ((actual_key, actual_value), expected) in actual.iter().zip(expected.iter()) {
                 assert!(
                     crate::engine::value::collection_key::same_value_zero(
-                        &heap, actual_key, &expected.key
+                        &heap,
+                        actual_key,
+                        &expected.key
                     ),
                     "key mismatch: {actual_key:?}"
                 );
                 assert!(
                     crate::engine::value::collection_key::same_value_zero(
-                        &heap, actual_value, &expected.value
+                        &heap,
+                        actual_value,
+                        &expected.value
                     ),
                     "value mismatch: {actual_value:?}"
                 );

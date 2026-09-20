@@ -33,9 +33,36 @@ impl std::ops::DerefMut for CallbackResume {
 }
 const _: () = assert!(std::mem::size_of::<CallbackResume>() <= 8);
 pub(crate) struct CallbackResumeState {
+    runtime: Runtime,
     pending_effect: CallbackStepPending,
     phase: Phase,
     map: ObjectRef,
+}
+impl Drop for CallbackResumeState {
+    /// Release the internal edges the pending effect and phase still own when
+    /// the request is abandoned. Consumption goes through `Option::take` or
+    /// `mem::replace`, so drained fields are inert here; releases are
+    /// defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        match &mut self.phase {
+            Phase::Each { receiver, .. } => {
+                let value = std::mem::replace(receiver, JsValue::Undefined);
+                let _ = self.runtime.release_jsvalue(value);
+            }
+            Phase::Insert(key) => {
+                let value = std::mem::replace(key, JsValue::Undefined);
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 enum Phase {
     Each {
@@ -63,9 +90,11 @@ impl CallbackStep {
             }
         };
         if let CallbackKind::Insert { computed } = kind {
-            let key = Runtime::normalized_map_key(runtime.dup_jsvalue(arguments.readable.first().ok_or(
-                RuntimeError::Invariant("Map getOrInsert key argv was not padded"),
-            )?)?);
+            let key = Runtime::normalized_map_key(runtime.dup_jsvalue(
+                arguments.readable.first().ok_or(RuntimeError::Invariant(
+                    "Map getOrInsert key argv was not padded",
+                ))?,
+            )?);
             let second = runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
                 RuntimeError::Invariant("Map getOrInsert value argv was not padded"),
             )?)?;
@@ -97,6 +126,7 @@ impl CallbackStep {
                     JsValue::Undefined,
                     vec![call_key],
                     CallbackResume(Box::new(CallbackResumeState {
+                        runtime: runtime.clone(),
                         pending_effect: CallbackStepPending::default(),
                         map: map.clone(),
                         phase: Phase::Insert(key),
@@ -119,6 +149,7 @@ impl CallbackStep {
             }
         };
         CallbackResume(Box::new(CallbackResumeState {
+            runtime: runtime.clone(),
             pending_effect: CallbackStepPending::default(),
             map: map.clone(),
             phase: Phase::Each {
@@ -140,7 +171,9 @@ fn callable(
     value: &JsValue,
 ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
     let result = match value {
-        JsValue::Object(id) => runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
+        JsValue::Object(id) => {
+            runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+        }
         _ => None,
     };
     Ok(match result {
@@ -216,15 +249,17 @@ impl CallbackResume {
                 return Ok(CallbackStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.0.phase {
-            Phase::Insert(key) => {
-                let result = runtime.dup_jsvalue(&value)?;
-                runtime.delete_map_record(&self.0.map, runtime.dup_jsvalue(&key)?)?;
-                runtime.set_map_record(&self.0.map, key, value)?;
-                Ok(CallbackStep::Complete(Completion::Return(result)))
-            }
-            Phase::Each { .. } => self.next(runtime),
+        if matches!(self.0.phase, Phase::Each { .. }) {
+            return self.next(runtime);
         }
+        let key = match &mut self.0.phase {
+            Phase::Insert(key) => std::mem::replace(key, JsValue::Undefined),
+            Phase::Each { .. } => unreachable!("Map callback phase changed during resume"),
+        };
+        let result = runtime.dup_jsvalue(&value)?;
+        runtime.delete_map_record(&self.0.map, runtime.dup_jsvalue(&key)?)?;
+        runtime.set_map_record(&self.0.map, key, value)?;
+        Ok(CallbackStep::Complete(Completion::Return(result)))
     }
 }
 pub(crate) fn finish(
@@ -282,22 +317,24 @@ mod tests {
                     .unwrap(),
             ],
         };
+        let map_invocation = NativeInvocation::Call {
+            this_value: runtime.unroot_value(&Value::Object(map)).unwrap(),
+        };
+        let set_invocation = NativeInvocation::Call {
+            this_value: runtime.unroot_value(&Value::Object(set)).unwrap(),
+        };
         let map_step = CallbackStep::start(
             &runtime,
             context.realm,
             CallbackKind::Each,
-            &NativeInvocation::Call {
-                this_value: runtime.unroot_value(&Value::Object(map)).unwrap(),
-            },
+            &map_invocation,
             &arguments,
         )
         .unwrap();
         let set_step = crate::engine::builtins::set::callback::EachStep::start(
             &runtime,
             context.realm,
-            &NativeInvocation::Call {
-                this_value: runtime.unroot_value(&Value::Object(set)).unwrap(),
-            },
+            &set_invocation,
             &arguments,
         )
         .unwrap();
@@ -306,7 +343,19 @@ mod tests {
             set_step,
             crate::engine::builtins::set::callback::EachStep::Call { .. }
         ));
-        drop(arguments);
+        {
+            let NativeInvocation::Call { this_value } = map_invocation else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(this_value).unwrap();
+            let NativeInvocation::Call { this_value } = set_invocation else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(this_value).unwrap();
+            for value in arguments.readable {
+                runtime.release_jsvalue(value).unwrap();
+            }
+        }
         runtime.run_gc().unwrap();
         {
             let state = runtime.0.state.borrow();

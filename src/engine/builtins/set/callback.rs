@@ -28,12 +28,30 @@ impl std::ops::DerefMut for EachResume {
 }
 const _: () = assert!(std::mem::size_of::<EachResume>() <= 8);
 pub(crate) struct EachResumeState {
+    runtime: Runtime,
     pending_effect: EachStepPending,
     record: Option<ActiveCollectionRecordGuard>,
     set: ObjectRef,
     callback: CallableRef,
     receiver: JsValue,
     index: usize,
+}
+impl Drop for EachResumeState {
+    /// Release the internal edges the pending effect and resident receiver
+    /// still own when the request is abandoned. Consumption goes through
+    /// `Option::take`; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        let receiver = std::mem::replace(&mut self.receiver, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(receiver);
+    }
 }
 impl EachStep {
     pub(crate) fn start(
@@ -65,6 +83,7 @@ impl EachStep {
             )));
         };
         EachResume(Box::new(EachResumeState {
+            runtime: runtime.clone(),
             pending_effect: EachStepPending::default(),
             set: set.clone(),
             callback,

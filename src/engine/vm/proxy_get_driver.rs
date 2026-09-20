@@ -957,9 +957,13 @@ fn start_instruction(
         .ok_or_else(|| Error::internal("instruction operation identity exhausted"))?;
     parent.property_generation = identity;
     let depth = execution.slots.depth(&parent.window);
-    // The request owns every source value before any window owner is released.
+    // The request owns rooted/duplicated source values before any window owner
+    // is released, so releasing the consumed slot owners cannot invalidate it.
     for _ in 0..operand_count {
-        execution.slots.pop(&mut parent.window)?;
+        let owner = execution.slots.pop(&mut parent.window)?;
+        runtime
+            .release_jsvalue(owner)
+            .map_err(runtime_error_to_vm_error)?;
     }
     advance(
         runtime,
@@ -3108,7 +3112,11 @@ pub(super) fn start_object_copy(
             Finish::Discard(depth),
         )
     })();
-    drop(rejected_source);
+    if let Some(source) = rejected_source.take() {
+        runtime
+            .release_jsvalue(source)
+            .map_err(runtime_error_to_vm_error)?;
+    }
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
         Progress::Conversion(_) => Err(Error::internal("object copy returned conversion")),

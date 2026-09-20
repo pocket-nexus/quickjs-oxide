@@ -81,17 +81,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        codec_finish(
-            self,
-            realm,
-            Uint8CodecStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            codec_finish(
                 self,
                 realm,
-                Uint8ArrayCodecKind::FromBase64,
-                &invocation,
-                arguments,
-            )?,
-        )
+                Uint8CodecStep::start(
+                    self,
+                    realm,
+                    Uint8ArrayCodecKind::FromBase64,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     fn call_uint8_array_from_hex(
@@ -100,14 +102,18 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(self);
             return Err(RuntimeError::Invariant(
                 "Uint8Array.fromHex received a constructor invocation",
             ));
         };
+        invocation.release(self)?;
         let source = match self.uint8_codec_input_bytes(realm, arguments, 0)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let output_capacity = source
             .len()
@@ -118,7 +124,9 @@ impl Runtime {
             ))?;
         let mut output = match self.uint8_codec_zeroed_bytes(realm, output_capacity)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let progress = decode_hex(&source, &mut output);
         if progress.invalid {
@@ -131,9 +139,13 @@ impl Runtime {
         output.truncate(progress.written);
         let result = match self.new_uint8_array_from_codec_bytes(realm, &output)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(result))?,
+        ))
     }
 
     fn call_uint8_array_set_from_base64(
@@ -142,17 +154,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        codec_finish(
-            self,
-            realm,
-            Uint8CodecStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            codec_finish(
                 self,
                 realm,
-                Uint8ArrayCodecKind::SetFromBase64,
-                &invocation,
-                arguments,
-            )?,
-        )
+                Uint8CodecStep::start(
+                    self,
+                    realm,
+                    Uint8ArrayCodecKind::SetFromBase64,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     fn call_uint8_array_set_from_hex(
@@ -163,15 +177,21 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let target = match self.require_uint8_array_receiver(realm, invocation)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let source = match self.uint8_codec_input_bytes(realm, arguments, 0)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let state = match self.validated_uint8_codec_state(realm, &target)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let start = typed_array_absolute_byte_offset(state.snapshot, 0)?;
         let length = usize::try_from(state.byte_length)
@@ -195,17 +215,19 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        codec_finish(
-            self,
-            realm,
-            Uint8CodecStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            codec_finish(
                 self,
                 realm,
-                Uint8ArrayCodecKind::ToBase64,
-                &invocation,
-                arguments,
-            )?,
-        )
+                Uint8CodecStep::start(
+                    self,
+                    realm,
+                    Uint8ArrayCodecKind::ToBase64,
+                    invocation,
+                    arguments,
+                )?,
+            )
+        })
     }
 
     fn call_uint8_array_to_hex(
@@ -215,11 +237,15 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let target = match self.require_uint8_array_receiver(realm, invocation)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let state = match self.validated_uint8_codec_state(realm, &target)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let length = usize::try_from(state.byte_length)
             .map_err(|_| RuntimeError::Invariant("Uint8Array byte length overflowed usize"))?;
@@ -235,7 +261,9 @@ impl Runtime {
         }
         let mut output = match self.uint8_codec_zeroed_bytes(realm, output_length)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let start = typed_array_absolute_byte_offset(state.snapshot, 0)?;
         let access = self.snapshot_buffer_access(state.snapshot.buffer)?;
@@ -257,7 +285,7 @@ impl Runtime {
                 "Uint8Array codec received a constructor invocation",
             ));
         };
-        let this_value = self.root_value(&this_value)?;
+        let this_value = self.root_and_release_jsvalue(this_value)?;
         let Value::Object(target) = this_value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
@@ -371,7 +399,9 @@ impl Runtime {
             ))?;
         let mut output = match self.uint8_codec_zeroed_bytes(realm, output_capacity)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let progress = decode_base64(&source, &mut output, alphabet, last_chunk);
         if progress.invalid {
@@ -384,9 +414,13 @@ impl Runtime {
         output.truncate(progress.written);
         let result = match self.new_uint8_array_from_codec_bytes(realm, &output)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(result))?,
+        ))
     }
     fn finish_uint8_array_set_from_base64(
         &self,
@@ -398,7 +432,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let state = match self.validated_uint8_codec_state(realm, &target)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let start = typed_array_absolute_byte_offset(state.snapshot, 0)?;
         let length = usize::try_from(state.byte_length)
@@ -425,7 +461,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let state = match self.validated_uint8_codec_state(realm, &target)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let length = usize::try_from(state.byte_length)
             .map_err(|_| RuntimeError::Invariant("Uint8Array byte length overflowed usize"))?;
@@ -445,7 +483,9 @@ impl Runtime {
         }
         let mut output = match self.uint8_codec_zeroed_bytes(realm, output_length)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let start = typed_array_absolute_byte_offset(state.snapshot, 0)?;
         let access = self.snapshot_buffer_access(state.snapshot.buffer)?;
@@ -618,7 +658,9 @@ impl Runtime {
                 ));
             }
         }
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(result))?,
+        ))
     }
 }
 

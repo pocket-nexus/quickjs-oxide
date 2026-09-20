@@ -87,31 +87,31 @@ impl KeysStep {
         realm: ContextId,
         object: ObjectRef,
     ) -> Result<Self, RuntimeError> {
-        method(runtime, realm, MethodStep::start(runtime, realm, object, "ownKeys")?)
+        method(
+            runtime,
+            realm,
+            MethodStep::start(runtime, realm, object, "ownKeys")?,
+        )
     }
 }
-fn method(
-    runtime: &Runtime,
-    realm: ContextId,
-    step: MethodStep,
-) -> Result<KeysStep, RuntimeError> {
+fn method(runtime: &Runtime, realm: ContextId, step: MethodStep) -> Result<KeysStep, RuntimeError> {
     Ok(match step {
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let key = resume.take_read_key();
-            let _ = resume.take_read_receiver();
+            runtime.release_jsvalue(resume.take_read_receiver())?;
             KeysStep::request_read(
                 runtime.into_jsvalue(Value::Object(object))?,
                 key,
                 KeysResume(Box::new(KeysResumeState {
-                    pending_effect: KeysStepPending::default(),
+                    pending_effect: KeysStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Method(resume),
                 })),
             )
         }
         MethodStep::Throw(value) => KeysStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value)?,
+            runtime.root_and_release_jsvalue(value.take())?,
         )),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
@@ -121,7 +121,7 @@ fn method(
                 None => KeysStep::request_keys(
                     rooted.target.clone(),
                     KeysResume(Box::new(KeysResumeState {
-                        pending_effect: KeysStepPending::default(),
+                        pending_effect: KeysStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Forward(rooted),
                     })),
@@ -131,7 +131,7 @@ fn method(
                     runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
                     vec![runtime.into_jsvalue(Value::Object(rooted.target.clone()))?],
                     KeysResume(Box::new(KeysResumeState {
-                        pending_effect: KeysStepPending::default(),
+                        pending_effect: KeysStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Trap(rooted),
                     })),
@@ -159,7 +159,7 @@ fn items(
             runtime.into_jsvalue(list.clone())?,
             key,
             KeysResume(Box::new(KeysResumeState {
-                pending_effect: KeysStepPending::default(),
+                pending_effect: KeysStepPending::new(runtime.clone()),
                 realm,
                 phase: Phase::Item {
                     rooted,
@@ -183,7 +183,7 @@ fn items(
     Ok(KeysStep::request_extensible(
         rooted.target.clone(),
         KeysResume(Box::new(KeysResumeState {
-            pending_effect: KeysStepPending::default(),
+            pending_effect: KeysStepPending::new(runtime.clone()),
             realm,
             phase: Phase::Extensible {
                 rooted,
@@ -206,7 +206,7 @@ fn check_next(
             state.rooted.target.clone(),
             key.clone(),
             KeysResume(Box::new(KeysResumeState {
-                pending_effect: KeysStepPending::default(),
+                pending_effect: KeysStepPending::new(runtime.clone()),
                 realm,
                 phase: Phase::Descriptor { state, key },
             })),
@@ -237,16 +237,18 @@ impl KeysResume {
         };
         let realm = self.0.realm;
         match self.0.phase {
-            Phase::Method(resume) => {
-                method(runtime, realm, resume.resume(runtime, Completion::Return(value))?)
-            }
+            Phase::Method(resume) => method(
+                runtime,
+                realm,
+                resume.resume(runtime, Completion::Return(value))?,
+            ),
             Phase::Trap(rooted) => {
                 let list = runtime.root_and_release_jsvalue(value)?;
                 Ok(KeysStep::request_read(
                     runtime.into_jsvalue(list.clone())?,
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                     Self(Box::new(KeysResumeState {
-                        pending_effect: KeysStepPending::default(),
+                        pending_effect: KeysStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Length { rooted, list },
                     })),
@@ -255,7 +257,7 @@ impl KeysResume {
             Phase::Length { rooted, list } => Ok(KeysStep::request_number(
                 value,
                 Self(Box::new(KeysResumeState {
-                    pending_effect: KeysStepPending::default(),
+                    pending_effect: KeysStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Number { rooted, list },
                 })),
@@ -333,7 +335,7 @@ impl KeysResume {
         Ok(KeysStep::request_keys(
             rooted.target.clone(),
             Self(Box::new(KeysResumeState {
-                pending_effect: KeysStepPending::default(),
+                pending_effect: KeysStepPending::new(runtime.clone()),
                 realm: self.0.realm,
                 phase: Phase::TargetKeys {
                     rooted,
@@ -585,8 +587,8 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct KeysStepPending {
+    runtime: Runtime,
     read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     call_target: Option<DirectCallTarget>,
@@ -598,8 +600,50 @@ struct KeysStepPending {
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
 }
+impl KeysStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_receiver: None,
+            read_key: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            number_value: None,
+            keys_object: None,
+            extensible_object: None,
+            descriptor_object: None,
+            descriptor_key: None,
+        }
+    }
+}
+impl Drop for KeysStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(value) = self.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
 impl KeysStep {
-    pub(crate) fn request_read(receiver: JsValue, key: PropertyKey, mut resume: KeysResume) -> Self {
+    pub(crate) fn request_read(
+        receiver: JsValue,
+        key: PropertyKey,
+        mut resume: KeysResume,
+    ) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }

@@ -197,8 +197,8 @@ impl CopyResume {
                 match read {
                     crate::engine::object::OrdinaryRead::Complete(value) => {
                         self.0.key = Some(key);
-                        let value =
-                            runtime.root_and_release_jsvalue(value.unwrap_or(JsValue::Undefined))?;
+                        let value = runtime
+                            .root_and_release_jsvalue(value.unwrap_or(JsValue::Undefined))?;
                         self.define_value(runtime, value)?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -259,9 +259,9 @@ impl CopyResume {
         reply: NativeConversion<bool>,
     ) -> Result<CopyStep, RuntimeError> {
         match reply {
-            NativeConversion::Throw(value) => {
-                Ok(CopyStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?)))
-            }
+            NativeConversion::Throw(value) => Ok(CopyStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            ))),
             NativeConversion::Value(false) => self.next(runtime),
             NativeConversion::Value(true) => Ok(CopyStep::Read {
                 object: clone_copy_object(&self.0.source),
@@ -302,9 +302,9 @@ pub(crate) fn finish(
             CopyStep::PreparedRead(prepared) => {
                 let PreparedCopyRead { read, key, resume } = *prepared;
                 let completion = match runtime.finish_prepared_read(realm, &key, read)? {
-                    NativeConversion::Value(value) => Completion::Return(
-                        runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?,
-                    ),
+                    NativeConversion::Value(value) => {
+                        Completion::Return(runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?)
+                    }
                     NativeConversion::Throw(value) => {
                         Completion::Throw(runtime.into_jsvalue(value)?)
                     }

@@ -24,8 +24,8 @@ use crate::engine::object::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
 };
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarget};
@@ -595,9 +595,9 @@ impl Runtime {
                     "GetPrototypeOf completed with an invalid value",
                 )),
             },
-            Completion::Throw(value) => {
-                Ok(NativeConversion::Throw(self.root_and_release_jsvalue(value)?))
-            }
+            Completion::Throw(value) => Ok(NativeConversion::Throw(
+                self.root_and_release_jsvalue(value)?,
+            )),
         }
     }
 
@@ -628,9 +628,9 @@ impl Runtime {
                     "SetPrototypeOf completed with an invalid value",
                 )),
             },
-            Completion::Throw(value) => {
-                Ok(NativeConversion::Throw(self.root_and_release_jsvalue(value)?))
-            }
+            Completion::Throw(value) => Ok(NativeConversion::Throw(
+                self.root_and_release_jsvalue(value)?,
+            )),
         }
     }
 
@@ -768,9 +768,7 @@ impl Runtime {
                     Some(value) => self.unroot_value(&value)?,
                     None => JsValue::Undefined,
                 }),
-                NativeConversion::Throw(value) => {
-                    Completion::Throw(self.unroot_value(&value)?)
-                }
+                NativeConversion::Throw(value) => Completion::Throw(self.unroot_value(&value)?),
             },
         )
     }
@@ -813,9 +811,9 @@ impl Runtime {
         // Proxy Get observes undefined even when its target lookup is missing.
         // Non-Proxy descriptor/prototype work is shared by prepared reads.
         Ok(match self.proxy_get(realm, object, key, receiver)? {
-            Completion::Return(value) => NativeConversion::Value(Some(
-                self.root_and_release_jsvalue(value)?,
-            )),
+            Completion::Return(value) => {
+                NativeConversion::Value(Some(self.root_and_release_jsvalue(value)?))
+            }
             Completion::Throw(value) => {
                 NativeConversion::Throw(self.root_and_release_jsvalue(value)?)
             }

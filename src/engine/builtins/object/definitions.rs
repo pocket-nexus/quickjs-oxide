@@ -103,7 +103,11 @@ impl DefinitionsStep {
                 JsValue::Object(id) => ObjectRef::from_borrowed_handle(runtime.clone(), *id)?,
                 _ => {
                     return Ok(Self::Complete(Completion::Throw(
-                        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
+                        runtime.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not an object",
+                        )?,
                     )));
                 }
             },
@@ -242,7 +246,7 @@ impl DefinitionsResume {
     }
     pub(crate) fn read(
         mut self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         result: Completion,
     ) -> Result<DefinitionsStep, RuntimeError> {
         let Phase::Read { remaining, key } = self.0.phase else {
@@ -252,14 +256,11 @@ impl DefinitionsResume {
         };
         Ok(match result {
             Completion::Throw(value) => DefinitionsStep::Complete(Completion::Throw(value)),
-            Completion::Return(value) => DefinitionsStep::request_convert(
-                value,
-                {
-                    let updated_0 = Phase::Convert { remaining, key };
-                    self.0.phase = updated_0;
-                    self
-                },
-            ),
+            Completion::Return(value) => DefinitionsStep::request_convert(value, {
+                let updated_0 = Phase::Convert { remaining, key };
+                self.0.phase = updated_0;
+                self
+            }),
         })
     }
     pub(crate) fn converted(
@@ -273,9 +274,9 @@ impl DefinitionsResume {
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => DefinitionsStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )),
+            NativeConversion::Throw(value) => {
+                DefinitionsStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
+            }
             NativeConversion::Value(descriptor) => {
                 DefinitionsStep::request_define(self.0.target.clone(), key.clone(), descriptor, {
                     let updated_0 = Phase::Define { remaining, key };
@@ -338,7 +339,10 @@ pub(super) fn finish(
             }
             DefinitionsStep::Convert { mut resume } => {
                 let value = runtime.root_and_release_jsvalue(resume.take_convert_value())?;
-                resume.converted(runtime, runtime.native_to_property_descriptor(realm, value)?)?
+                resume.converted(
+                    runtime,
+                    runtime.native_to_property_descriptor(realm, value)?,
+                )?
             }
             DefinitionsStep::Define { mut resume } => {
                 let object = resume.take_define_object();

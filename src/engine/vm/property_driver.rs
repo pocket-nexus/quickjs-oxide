@@ -575,6 +575,12 @@ fn complete_read(
                 &mut value,
             )?;
             record_read_completion(depth);
+            let _ = slots;
+            if !keep_receiver && let Some(receiver) = preserved_receiver.take() {
+                runtime
+                    .release_jsvalue(receiver)
+                    .map_err(runtime_error_to_vm_error)?;
+            }
             return Ok(());
         }
         discarded
@@ -597,6 +603,12 @@ fn complete_read(
         &mut value,
     )?;
     record_read_completion(depth);
+    let _ = slots;
+    if !keep_receiver && let Some(receiver) = preserved_receiver.take() {
+        runtime
+            .release_jsvalue(receiver)
+            .map_err(runtime_error_to_vm_error)?;
+    }
     Ok(())
 }
 

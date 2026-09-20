@@ -25,12 +25,6 @@ pub struct JsString(Rc<StringRepr>);
 pub struct WeakJsString(Weak<StringRepr>);
 
 impl WeakJsString {
-    /// Weak ownership keeps the allocation identity reserved after payload
-    /// destruction, so address reuse cannot create a false cache hit.
-    pub(crate) fn same_representation(&self, string: &JsString) -> bool {
-        self.0.as_ptr() == Rc::as_ptr(&string.0)
-    }
-
     #[must_use]
     pub fn upgrade(&self) -> Option<JsString> {
         self.0.upgrade().map(JsString)

@@ -165,14 +165,12 @@ mod dense_immediate_tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let iterator = context.eval("Array.prototype.values.call({get length(){return {valueOf(){return 1}}},get 0(){return 7}})").unwrap();
-        let ArrayNextStep::PreparedRead { mut resume } = ArrayNextStep::start(
-            &runtime,
-            context.realm,
-            &NativeInvocation::Call {
-                this_value: runtime.into_jsvalue(iterator).unwrap(),
-            },
-        )
-        .unwrap() else {
+        let invocation = NativeInvocation::Call {
+            this_value: runtime.into_jsvalue(iterator).unwrap(),
+        };
+        let step = ArrayNextStep::start(&runtime, context.realm, &invocation).unwrap();
+        invocation.release(&runtime).unwrap();
+        let ArrayNextStep::PreparedRead { mut resume } = step else {
             panic!("length getter")
         };
         let address = &*resume.0 as *const ArrayNextResumeState;
@@ -184,8 +182,12 @@ mod dense_immediate_tests {
         else {
             panic!("length")
         };
-        let ArrayNextStep::Number { mut resume } =
-            resume.resume(&runtime, Completion::Return(runtime.into_jsvalue(value).unwrap())).unwrap()
+        let ArrayNextStep::Number { mut resume } = resume
+            .resume(
+                &runtime,
+                Completion::Return(runtime.into_jsvalue(value).unwrap()),
+            )
+            .unwrap()
         else {
             panic!("number")
         };
@@ -208,7 +210,12 @@ mod dense_immediate_tests {
             panic!("element")
         };
         assert!(matches!(
-            resume.resume(&runtime, Completion::Return(runtime.into_jsvalue(value).unwrap())).unwrap(),
+            resume
+                .resume(
+                    &runtime,
+                    Completion::Return(runtime.into_jsvalue(value).unwrap())
+                )
+                .unwrap(),
             ArrayNextStep::Complete(NativeInvokeOutcome::IteratorNextRaw {
                 value: JsValue::Int(7),
                 done: false

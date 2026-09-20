@@ -1,6 +1,6 @@
 //! Mechanical adapters for iterator domain requests.
 use super::JsValue;
-use super::{Completion, DirectCallTarget, Resume, Step, Value};
+use super::{Completion, DirectCallTarget, Resume, Step};
 
 impl From<crate::engine::builtins::IteratorCloseStep> for Step {
     fn from(step: crate::engine::builtins::IteratorCloseStep) -> Self {

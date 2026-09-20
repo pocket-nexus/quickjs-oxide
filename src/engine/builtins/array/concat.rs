@@ -127,7 +127,11 @@ impl ConcatResume {
     }
     fn too_long(&self, runtime: &Runtime) -> Result<ConcatStep, RuntimeError> {
         Ok(ConcatStep::Complete(Completion::Throw(
-            runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Type, "Array loo long")?,
+            runtime.new_native_error_jsvalue(
+                self.0.realm,
+                NativeErrorKind::Type,
+                "Array loo long",
+            )?,
         )))
     }
     pub(crate) fn resume(
@@ -176,7 +180,10 @@ impl ConcatResume {
             }
             Phase::Length => {
                 self.0.phase = Phase::Number;
-                Ok(ConcatStep::request_number(runtime.into_jsvalue(value)?, self))
+                Ok(ConcatStep::request_number(
+                    runtime.into_jsvalue(value)?,
+                    self,
+                ))
             }
             Phase::Read => self.define(runtime, value, true),
             _ => Err(RuntimeError::Invariant("Array concat value phase mismatch")),

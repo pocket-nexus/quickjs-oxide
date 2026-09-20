@@ -165,9 +165,7 @@ impl BufferMutationResume {
                         runtime.finish_array_buffer_resize(self.0.realm, self.0.object, length)?
                     }
                 }
-                NativeConversion::Throw(value) => {
-                    Completion::Throw(runtime.into_jsvalue(value)?)
-                }
+                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
             }
         } else {
             match runtime.native_to_index(self.0.realm, &value)? {
@@ -177,9 +175,7 @@ impl BufferMutationResume {
                     length,
                     matches!(self.0.kind, ArrayBufferNativeKind::TransferToFixedLength),
                 )?,
-                NativeConversion::Throw(value) => {
-                    Completion::Throw(runtime.into_jsvalue(value)?)
-                }
+                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
             }
         };
         Ok(BufferMutationStep::Complete(result))

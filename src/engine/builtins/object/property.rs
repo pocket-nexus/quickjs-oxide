@@ -22,7 +22,8 @@ fn js_object_value(runtime: &Runtime, object: &ObjectRef) -> Result<JsValue, Run
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum PropertyKind {    Integrity(ObjectIntegrityKind),
+pub(crate) enum PropertyKind {
+    Integrity(ObjectIntegrityKind),
     Assign,
     Keys,
     Get,
@@ -167,12 +168,9 @@ impl PropertyStep {
         kind: PropertyKind,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let target = arguments
-            .readable
-            .first()
-            .ok_or(RuntimeError::Invariant(
-                "property builtin argv was not padded",
-            ))?;
+        let target = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "property builtin argv was not padded",
+        ))?;
         let object = match (kind, target) {
             (_, JsValue::Object(id)) => ObjectRef::from_borrowed_handle(runtime.clone(), *id)?,
             (PropertyKind::Integrity(kind), value) => {
@@ -189,7 +187,9 @@ impl PropertyStep {
                 return Ok(Self::Complete(Completion::Return(JsValue::Bool(false))));
             }
             (PropertyKind::ObjectPrevent, value) => {
-                return Ok(Self::Complete(Completion::Return(runtime.dup_jsvalue(value)?)));
+                return Ok(Self::Complete(Completion::Return(
+                    runtime.dup_jsvalue(value)?,
+                )));
             }
             (
                 PropertyKind::Assign
@@ -198,24 +198,26 @@ impl PropertyStep {
                 | PropertyKind::ObjectOwnKeys(_)
                 | PropertyKind::ObjectDescriptors,
                 value,
-            ) => {
-                match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(value)?)? {
-                    NativeConversion::Value(object) => object,
-                    NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
+            ) => match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(value)?)? {
+                NativeConversion::Value(object) => object,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
-            }
+            },
             _ => {
                 return Ok(Self::Complete(Completion::Throw(
-                    runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
+                    runtime.new_native_error_jsvalue(
+                        realm,
+                        NativeErrorKind::Type,
+                        "not an object",
+                    )?,
                 )));
             }
         };
         let resume = PropertyResume(Box::new(PropertyResumeState {
-            pending_effect: PropertyStepPending::default(),
+            pending_effect: PropertyStepPending::new(runtime.clone()),
             realm,
             kind,
             object: object.clone(),
@@ -248,12 +250,9 @@ impl PropertyStep {
                 Ok(Self::request_prevent(object, resume))
             }
             _ => {
-                let raw_key = arguments
-                    .readable
-                    .get(1)
-                    .ok_or(RuntimeError::Invariant(
-                        "property builtin key argv was not padded",
-                    ))?;
+                let raw_key = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
+                    "property builtin key argv was not padded",
+                ))?;
                 let receiver_index = if matches!(kind, PropertyKind::Get) {
                     2
                 } else {
@@ -279,6 +278,16 @@ impl PropertyStep {
     }
 }
 impl PropertyResume {
+    /// Release the owned edges of an abandoned pre-key phase. Releases are
+    /// defer-safe and nothrow, matching the pending-effect cleanup contract.
+    fn release_key_phase(&mut self, runtime: &Runtime) {
+        let Phase::Key { value, receiver } = std::mem::replace(&mut self.0.phase, Phase::Result)
+        else {
+            return;
+        };
+        let _ = runtime.release_jsvalue(value);
+        let _ = runtime.release_jsvalue(receiver);
+    }
     pub(crate) fn keys(
         mut self,
         runtime: &Runtime,
@@ -374,14 +383,15 @@ impl PropertyResume {
                         _ => unreachable!(),
                     };
                     if include {
-                        values.push(runtime.into_jsvalue(runtime.object_property_key_value(&key)?)?);
+                        values
+                            .push(runtime.into_jsvalue(runtime.object_property_key_value(&key)?)?);
                     }
                 }
-                Ok(PropertyStep::Complete(Completion::Return(
-                    JsValue::Object(
-                        runtime.new_array_from_values_jsvalue(self.0.realm, values)?.into_handle(),
-                    ),
-                )))
+                Ok(PropertyStep::Complete(Completion::Return(JsValue::Object(
+                    runtime
+                        .new_array_from_values_jsvalue(self.0.realm, values)?
+                        .into_handle(),
+                ))))
             }
             PropertyKind::ObjectKeys(_) | PropertyKind::ObjectDescriptors => {
                 let result = if matches!(self.0.kind, PropertyKind::ObjectDescriptors) {
@@ -571,15 +581,21 @@ impl PropertyResume {
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
+                self.release_key_phase(runtime);
                 return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
         };
-        let key = match runtime.property_key_from_primitive_jsvalue(self.0.realm, value)? {
-            NativeConversion::Value(key) => key,
-            NativeConversion::Throw(value) => {
+        let key = match runtime.property_key_from_primitive_jsvalue(self.0.realm, value) {
+            Ok(NativeConversion::Value(key)) => key,
+            Ok(NativeConversion::Throw(value)) => {
+                self.release_key_phase(runtime);
                 return Ok(PropertyStep::Complete(Completion::Throw(
                     runtime.into_jsvalue(value)?,
                 )));
+            }
+            Err(error) => {
+                self.release_key_phase(runtime);
+                return Err(error);
             }
         };
         let Phase::Key { value, receiver } = self.0.phase else {
@@ -594,14 +610,25 @@ impl PropertyResume {
             self
         };
         Ok(match resume.kind {
-            PropertyKind::Get => PropertyStep::request_read(object, key, receiver, resume),
+            PropertyKind::Get => {
+                let _ = runtime.release_jsvalue(value);
+                PropertyStep::request_read(object, key, receiver, resume)
+            }
             PropertyKind::Set => PropertyStep::request_set(object, key, value, receiver, resume),
-            PropertyKind::Has => PropertyStep::request_has(object, key, resume),
-            PropertyKind::Delete => PropertyStep::request_delete(object, key, resume),
-            PropertyKind::Descriptor | PropertyKind::ObjectDescriptor => {
-                PropertyStep::request_descriptor(object, key, resume)
+            PropertyKind::Has
+            | PropertyKind::Delete
+            | PropertyKind::Descriptor
+            | PropertyKind::ObjectDescriptor => {
+                let _ = runtime.release_jsvalue(value);
+                let _ = runtime.release_jsvalue(receiver);
+                match resume.kind {
+                    PropertyKind::Has => PropertyStep::request_has(object, key, resume),
+                    PropertyKind::Delete => PropertyStep::request_delete(object, key, resume),
+                    _ => PropertyStep::request_descriptor(object, key, resume),
+                }
             }
             PropertyKind::Define | PropertyKind::ObjectDefine => {
+                let _ = runtime.release_jsvalue(receiver);
                 PropertyStep::request_convert(value, {
                     let updated = Phase::Descriptor(key);
                     let mut resident = resume;
@@ -610,6 +637,8 @@ impl PropertyResume {
                 })
             }
             _ => {
+                let _ = runtime.release_jsvalue(value);
+                let _ = runtime.release_jsvalue(receiver);
                 return Err(RuntimeError::Invariant(
                     "property builtin does not accept a key",
                 ));
@@ -672,12 +701,10 @@ impl PropertyResume {
                 }
             } else {
                 match result {
-                    NativeConversion::Value(result) => {
-                        Completion::Return(JsValue::Bool(matches!(
-                            result,
-                            InternalDefineResult::Defined
-                        )))
-                    }
+                    NativeConversion::Value(result) => Completion::Return(JsValue::Bool(matches!(
+                        result,
+                        InternalDefineResult::Defined
+                    ))),
                     NativeConversion::Throw(value) => {
                         Completion::Throw(runtime.into_jsvalue(value)?)
                     }
@@ -849,9 +876,7 @@ impl PropertyResume {
             ));
         }
         Ok(PropertyStep::Complete(match result {
-            NativeConversion::Throw(value) => {
-                Completion::Throw(runtime.into_jsvalue(value)?)
-            }
+            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
             NativeConversion::Value(None) => Completion::Return(JsValue::Undefined),
             NativeConversion::Value(Some(descriptor)) => Completion::Return(JsValue::Object(
                 runtime
@@ -1045,7 +1070,10 @@ pub(in crate::engine::builtins) fn finish(
             PropertyStep::Convert { mut resume } => {
                 let value = resume.take_convert_value();
                 let value = runtime.root_and_release_jsvalue(value)?;
-                resume.converted(runtime, runtime.native_to_property_descriptor(realm, value)?)?
+                resume.converted(
+                    runtime,
+                    runtime.native_to_property_descriptor(realm, value)?,
+                )?
             }
             PropertyStep::Read { mut resume } => {
                 let object = resume.take_read_object();
@@ -1142,7 +1170,9 @@ mod tests {
         };
         let _ = resume.take_keys_object();
 
-        drop(arguments);
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
         let key = runtime.intern_property_key("x").unwrap();
         let PropertyStep::Descriptor { mut resume } = resume
             .keys(&runtime, NativeConversion::Value(vec![key]))
@@ -1169,7 +1199,9 @@ mod tests {
         };
         let _ = resume.take_read_object();
         let _ = resume.take_read_key();
-        let _ = resume.take_read_receiver();
+        runtime
+            .release_jsvalue(resume.take_read_receiver())
+            .unwrap();
 
         let Phase::Entry {
             state,
@@ -1194,8 +1226,8 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct PropertyStepPending {
+    runtime: Runtime,
     keys_object: Option<ObjectRef>,
     key_value: Option<JsValue>,
     convert_value: Option<JsValue>,
@@ -1217,6 +1249,56 @@ struct PropertyStepPending {
     descriptor_key: Option<PropertyKey>,
     extensible_object: Option<ObjectRef>,
     prevent_object: Option<ObjectRef>,
+}
+impl PropertyStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            keys_object: None,
+            key_value: None,
+            convert_value: None,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            set_object: None,
+            set_key: None,
+            set_value: None,
+            set_receiver: None,
+            has_object: None,
+            has_key: None,
+            delete_object: None,
+            delete_key: None,
+            define_object: None,
+            define_key: None,
+            define_descriptor: None,
+            descriptor_object: None,
+            descriptor_key: None,
+            extensible_object: None,
+            prevent_object: None,
+        }
+    }
+}
+impl Drop for PropertyStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.key_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.convert_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.set_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl PropertyStep {
     pub(crate) fn request_keys(object: ObjectRef, mut resume: PropertyResume) -> Self {

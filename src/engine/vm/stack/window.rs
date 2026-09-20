@@ -346,6 +346,11 @@ impl RunSlots<'_> {
         {
             return Ok(false);
         }
+        // Aliased locals cannot expose `&mut` and `&` views of the same owner
+        // to the fused append; the canonical local-add sequence handles them.
+        if left == right {
+            return Ok(false);
+        }
         let FrameBinding::Direct(left) = self.local(left)? else {
             return Ok(false);
         };
@@ -691,7 +696,9 @@ mod primitive_transaction_tests {
             )
             .unwrap();
         let base = context.eval("({x:{tag:42}})").unwrap();
-        store.push(&mut window, runtime.into_jsvalue(base).unwrap()).unwrap();
+        store
+            .push(&mut window, runtime.into_jsvalue(base).unwrap())
+            .unwrap();
         let mut old_base = None;
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
@@ -760,17 +767,21 @@ mod primitive_transaction_tests {
         assert!(
             matches!(result, Err(ref error) if error.message()=="owned operand stack underflow")
         );
-        let foreign = Runtime::new();
+        // A reclaimed base handle forces the lookup path to report a lookup
+        // error instead of committing the operand.
+        let blocked = runtime.new_object(None).unwrap();
+        let stale_handle = blocked.into_handle();
+        runtime
+            .release_jsvalue(JsValue::Object(stale_handle))
+            .unwrap();
+        runtime.run_gc().unwrap();
         store
-            .push(
-                &mut window,
-                JsValue::Object(foreign.new_object(None).unwrap().into_handle()),
-            )
+            .push(&mut window, JsValue::Object(stale_handle))
             .unwrap();
         assert!(matches!(
             store
                 .with_linked_own_read(&mut window, &runtime, &executable, index, |_, _| panic!(
-                    "foreign input committed"
+                    "stale input committed"
                 ))
                 .unwrap(),
             LinkedReadCompletion::LookupError(_)
@@ -799,7 +810,9 @@ mod primitive_transaction_tests {
             )
             .unwrap();
         let base = context.eval("globalThis.linkedCalls=0;globalThis.linkedBase={get x(){linkedCalls++;return 42}};linkedBase").unwrap();
-        store.push(&mut window, runtime.into_jsvalue(base).unwrap()).unwrap();
+        store
+            .push(&mut window, runtime.into_jsvalue(base).unwrap())
+            .unwrap();
         let LinkedReadCompletion::Pending(read) = store
             .with_linked_own_read(&mut window, &runtime, &executable, index, |_, _| {
                 panic!("pending getter committed operands")
@@ -865,7 +878,9 @@ mod primitive_transaction_tests {
             assert!(slots.replace_local_pending(0, &mut binding).is_err());
             assert!(binding.is_some());
         }
-        drop(binding);
+        if let Some(FrameBinding::Direct(value)) = binding.take() {
+            runtime.release_jsvalue(value).unwrap();
+        }
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(object_id).is_err());
     }

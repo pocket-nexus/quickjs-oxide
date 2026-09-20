@@ -81,7 +81,7 @@ fn method(
 ) -> Result<ProxySetStep, RuntimeError> {
     Ok(match step {
         MethodStep::Throw(value) => ProxySetStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value)?,
+            runtime.root_and_release_jsvalue(value.take())?,
         )),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
@@ -92,7 +92,7 @@ fn method(
                 method_key,
                 method_receiver,
                 ProxySetResume(Box::new(ProxySetResumeState {
-                    pending_effect: ProxySetStepPending::default(),
+                    pending_effect: ProxySetStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Method {
                         resume,
@@ -114,7 +114,7 @@ fn method(
                     runtime.into_jsvalue(value)?,
                     runtime.into_jsvalue(receiver)?,
                     ProxySetResume(Box::new(ProxySetResumeState {
-                        pending_effect: ProxySetStepPending::default(),
+                        pending_effect: ProxySetStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Forward { _rooted: rooted },
                     })),
@@ -137,7 +137,7 @@ fn method(
                         call_receiver,
                         arguments,
                         ProxySetResume(Box::new(ProxySetResumeState {
-                            pending_effect: ProxySetStepPending::default(),
+                            pending_effect: ProxySetStepPending::new(runtime.clone()),
                             realm,
                             phase: Phase::Trap { rooted, key, value },
                         })),
@@ -185,7 +185,7 @@ impl ProxySetResume {
                     rooted.target.clone(),
                     key,
                     Self(Box::new(ProxySetResumeState {
-                        pending_effect: ProxySetStepPending::default(),
+                        pending_effect: ProxySetStepPending::new(runtime.clone()),
                         realm: self.0.realm,
                         phase: Phase::Invariant {
                             _rooted: rooted,
@@ -248,8 +248,8 @@ impl ProxySetResume {
     }
 }
 
-#[derive(Default)]
 struct ProxySetStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
@@ -262,6 +262,49 @@ struct ProxySetStepPending {
     set_receiver: Option<JsValue>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
+}
+impl ProxySetStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            set_object: None,
+            set_key: None,
+            set_value: None,
+            set_receiver: None,
+            descriptor_object: None,
+            descriptor_key: None,
+        }
+    }
+}
+impl Drop for ProxySetStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(value) = self.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.set_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ProxySetStep {
     pub(crate) fn request_read(

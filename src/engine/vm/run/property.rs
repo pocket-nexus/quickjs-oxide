@@ -49,6 +49,18 @@ pub(super) fn complete(
             slots.push(base)?;
             slots.push(key)?;
             slots.push(value)?;
+        } else {
+            // The stored slot retains its own edge; the consumed operands must
+            // still be released or their roots leak.
+            runtime
+                .release_jsvalue(key)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime
+                .release_jsvalue(base)
+                .map_err(runtime_error_to_vm_error)?;
         }
         #[cfg(feature = "profiling")]
         if handled {
@@ -85,8 +97,8 @@ pub(super) fn complete(
             result.is_some()
         }
         Operation::ElementRead(_) => {
-            result =
-                index(runtime, &value).and_then(|index| runtime.try_dense_array_kept_read(&base, index));
+            result = index(runtime, &value)
+                .and_then(|index| runtime.try_dense_array_kept_read(&base, index));
             result.is_some()
         }
         Operation::ElementWrite => unreachable!(),
@@ -98,17 +110,42 @@ pub(super) fn complete(
         return Ok(false);
     }
     match operation {
-        Operation::Define(_) => transaction.slots().push(base)?,
+        Operation::Define(_) => {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+            transaction.slots().push(base)?;
+        }
         Operation::ElementRead(keep_key) => {
             let mut slots = transaction.slots();
             slots.push(base)?;
             if keep_key {
                 slots.push(value)?;
+            } else {
+                runtime
+                    .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
             }
             slots.push(result.expect("read result"))?;
         }
-        Operation::Delete => transaction.slots().push(result.expect("delete result"))?,
-        Operation::Write(_) | Operation::ElementWrite => {}
+        Operation::Delete => {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime
+                .release_jsvalue(base)
+                .map_err(runtime_error_to_vm_error)?;
+            transaction.slots().push(result.expect("delete result"))?;
+        }
+        Operation::Write(_) => {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime
+                .release_jsvalue(base)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Operation::ElementWrite => unreachable!(),
     }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event(match operation {

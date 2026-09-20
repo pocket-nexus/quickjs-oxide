@@ -99,16 +99,14 @@ impl BodyResume {
             }
             Phase::Async => {
                 let promise = match completion {
-                    Completion::Return(value) => {
-                        match runtime.root_and_release_jsvalue(value)? {
-                            Value::Object(promise) => promise,
-                            _ => {
-                                return Err(RuntimeError::Invariant(
-                                    "async module callable did not return a Promise",
-                                ));
-                            }
+                    Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
+                        Value::Object(promise) => promise,
+                        _ => {
+                            return Err(RuntimeError::Invariant(
+                                "async module callable did not return a Promise",
+                            ));
                         }
-                    }
+                    },
                     Completion::Throw(value) => {
                         runtime.release_jsvalue(value)?;
                         return Err(RuntimeError::Invariant(

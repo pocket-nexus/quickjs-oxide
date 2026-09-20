@@ -108,7 +108,7 @@ fn method(
 ) -> Result<ProxyBooleanStep, RuntimeError> {
     Ok(match step {
         MethodStep::Throw(value) => ProxyBooleanStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value)?,
+            runtime.root_and_release_jsvalue(value.take())?,
         )),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
@@ -119,7 +119,7 @@ fn method(
                 key,
                 receiver,
                 ProxyBooleanResume(Box::new(ProxyBooleanResumeState {
-                    pending_effect: ProxyBooleanStepPending::default(),
+                    pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Method { resume, kind },
                 })),
@@ -133,7 +133,7 @@ fn method(
                 None => {
                     let object = rooted.target.clone();
                     let resume = ProxyBooleanResume(Box::new(ProxyBooleanResumeState {
-                        pending_effect: ProxyBooleanStepPending::default(),
+                        pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Forward {
                             _rooted: rooted,
@@ -165,8 +165,7 @@ fn method(
                     if let ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) = &kind {
                         arguments.push(runtime.property_key_value(key)?);
                     }
-                    let receiver =
-                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
                     let arguments = arguments
                         .into_iter()
                         .map(|value| runtime.into_jsvalue(value))
@@ -176,7 +175,7 @@ fn method(
                         receiver,
                         arguments,
                         ProxyBooleanResume(Box::new(ProxyBooleanResumeState {
-                            pending_effect: ProxyBooleanStepPending::default(),
+                            pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                             realm,
                             phase: Phase::Trap { rooted, kind },
                         })),
@@ -218,7 +217,7 @@ impl ProxyBooleanResume {
                         rooted.target.clone(),
                         key.clone(),
                         Self(Box::new(ProxyBooleanResumeState {
-                            pending_effect: ProxyBooleanStepPending::default(),
+                            pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                             realm: self.0.realm,
                             phase: Phase::HasInvariant { rooted, key },
                         })),
@@ -232,7 +231,7 @@ impl ProxyBooleanResume {
                         rooted.target.clone(),
                         key.clone(),
                         Self(Box::new(ProxyBooleanResumeState {
-                            pending_effect: ProxyBooleanStepPending::default(),
+                            pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                             realm: self.0.realm,
                             phase: Phase::DeleteInvariant { rooted, key },
                         })),
@@ -241,7 +240,7 @@ impl ProxyBooleanResume {
                         Ok(ProxyBooleanStep::request_extensible(
                             rooted.target.clone(),
                             Self(Box::new(ProxyBooleanResumeState {
-                                pending_effect: ProxyBooleanStepPending::default(),
+                                pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                                 realm: self.0.realm,
                                 phase: Phase::RequiredExtensibility {
                                     _rooted: rooted,
@@ -255,7 +254,7 @@ impl ProxyBooleanResume {
                     ProxyBooleanKind::Extensible => Ok(ProxyBooleanStep::request_extensible(
                         rooted.target.clone(),
                         Self(Box::new(ProxyBooleanResumeState {
-                            pending_effect: ProxyBooleanStepPending::default(),
+                            pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                             realm: self.0.realm,
                             phase: Phase::ExtensibleInvariant {
                                 _rooted: rooted,
@@ -341,7 +340,7 @@ impl ProxyBooleanResume {
             return Ok(ProxyBooleanStep::request_extensible(
                 rooted.target.clone(),
                 Self(Box::new(ProxyBooleanResumeState {
-                    pending_effect: ProxyBooleanStepPending::default(),
+                    pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                     realm: self.0.realm,
                     phase: Phase::RequiredExtensibility {
                         _rooted: rooted,
@@ -532,8 +531,8 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct ProxyBooleanStepPending {
+    runtime: Runtime,
     delete_object: Option<ObjectRef>,
     delete_key: Option<PropertyKey>,
     prevent_extensions_object: Option<ObjectRef>,
@@ -548,6 +547,45 @@ struct ProxyBooleanStepPending {
     extensible_object: Option<ObjectRef>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
+}
+impl ProxyBooleanStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            delete_object: None,
+            delete_key: None,
+            prevent_extensions_object: None,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            has_object: None,
+            has_key: None,
+            extensible_object: None,
+            descriptor_object: None,
+            descriptor_key: None,
+        }
+    }
+}
+impl Drop for ProxyBooleanStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl ProxyBooleanStep {
     pub(crate) fn request_delete(

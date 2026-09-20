@@ -116,6 +116,7 @@ pub struct JsBigInt(BigIntRepr);
 
 impl JsBigInt {
     /// Immediate limbs have no allocation; shared heap limbs survive one drop.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn release_keeps_storage_alive(&self) -> bool {
         match &self.0 {
             BigIntRepr::Short(_) => true,

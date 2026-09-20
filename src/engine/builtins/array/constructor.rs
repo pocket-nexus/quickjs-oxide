@@ -31,6 +31,7 @@ impl std::ops::DerefMut for ConstructorResume {
 }
 const _: () = assert!(std::mem::size_of::<ConstructorResume>() <= 8);
 pub(crate) struct ConstructorResumeState {
+    runtime: Runtime,
     pending_effect: ConstructorStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
@@ -38,6 +39,19 @@ pub(crate) struct ConstructorResumeState {
     arguments: Vec<Value>,
     array: Option<ObjectRef>,
     index: usize,
+}
+impl Drop for ConstructorResumeState {
+    /// Release the internal edges the pending effect still owns when the
+    /// request is abandoned. Consumption goes through `Option::take`, so a
+    /// drained field is `None` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ConstructorStep {
     pub(crate) fn start(
@@ -52,6 +66,7 @@ impl ConstructorStep {
             ));
         };
         let resume = ConstructorResume(Box::new(ConstructorResumeState {
+            runtime: runtime.clone(),
             pending_effect: ConstructorStepPending::default(),
             scheduler_set_key: None,
             realm,
@@ -258,9 +273,11 @@ mod tests {
         };
         let arguments = NativeArguments {
             actual_arg_count: 1,
-            readable: vec![runtime
-                .unroot_value(&Value::Object(argument.clone()))
-                .unwrap()],
+            readable: vec![
+                runtime
+                    .unroot_value(&Value::Object(argument.clone()))
+                    .unwrap(),
+            ],
         };
         let ConstructorStep::Read { mut resume } =
             ConstructorStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()

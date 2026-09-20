@@ -170,13 +170,15 @@ impl PrimitiveResume {
         match self.0.phase {
             Phase::ExoticMethod => {
                 if matches!(value, JsValue::Undefined | JsValue::Null) {
+                    runtime.release_jsvalue(value)?;
                     return self.read_ordinary(runtime, false);
                 }
-                let JsValue::Object(method) = value else {
+                let JsValue::Object(method) = &value else {
+                    runtime.release_jsvalue(value)?;
                     return self.type_error(runtime, "not a function");
                 };
-                let method =
-                    ObjectRef::from_borrowed_handle(runtime.clone(), method)?;
+                let method = ObjectRef::from_borrowed_handle(runtime.clone(), *method)?;
+                runtime.release_jsvalue(value)?;
                 let Some(callable) = runtime.as_callable(&method)? else {
                     return self.type_error(runtime, "not a function");
                 };
@@ -193,17 +195,19 @@ impl PrimitiveResume {
             }
             Phase::ExoticResult => {
                 if matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     self.type_error(runtime, "toPrimitive")
                 } else {
                     Ok(PrimitiveStep::Complete(Completion::Return(value)))
                 }
             }
             Phase::OrdinaryMethod(second) => {
-                let JsValue::Object(method) = value else {
+                let JsValue::Object(method) = &value else {
+                    runtime.release_jsvalue(value)?;
                     return self.failed_method(runtime, second);
                 };
-                let method =
-                    ObjectRef::from_borrowed_handle(runtime.clone(), method)?;
+                let method = ObjectRef::from_borrowed_handle(runtime.clone(), *method)?;
+                runtime.release_jsvalue(value)?;
                 let Some(callable) = runtime.as_callable(&method)? else {
                     return self.failed_method(runtime, second);
                 };
@@ -213,6 +217,7 @@ impl PrimitiveResume {
             }
             Phase::OrdinaryResult(second) => {
                 if matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     self.failed_method(runtime, second)
                 } else {
                     Ok(PrimitiveStep::Complete(Completion::Return(value)))

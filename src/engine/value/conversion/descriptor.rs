@@ -61,7 +61,7 @@ impl DescriptorStep {
             return invalid(runtime, realm, "not an object");
         };
         DescriptorResume(Box::new(DescriptorResumeState {
-            pending_effect: DescriptorStepPending::default(),
+            pending_effect: DescriptorStepPending::new(runtime),
             state: State {
                 realm,
                 object,
@@ -221,13 +221,15 @@ mod tests {
         resume
     }
 
-    fn take_read(step: DescriptorStep) -> DescriptorResume {
+    fn take_read(runtime: &Runtime, step: DescriptorStep) -> DescriptorResume {
         let DescriptorStep::Read { mut resume } = step else {
             panic!("expected value read");
         };
         drop(resume.take_read_object());
         drop(resume.take_read_key());
-        drop(resume.take_read_receiver());
+        runtime
+            .release_jsvalue(resume.take_read_receiver())
+            .unwrap();
         resume
     }
 
@@ -277,6 +279,7 @@ mod tests {
                 .unwrap();
         }
         let resume = take_read(
+            &runtime,
             take_has(step)
                 .has(&runtime, NativeConversion::Value(true))
                 .unwrap(),
@@ -322,13 +325,35 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct DescriptorStepPending {
+    runtime: Runtime,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
+}
+impl DescriptorStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            has_object: None,
+            has_key: None,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+        }
+    }
+}
+impl Drop for DescriptorStepPending {
+    /// Release the internal edges still held when the descriptor request is
+    /// abandoned before conversion. Consumption goes through `Option::take`;
+    /// releases are defer-safe and nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl DescriptorStep {
     pub(crate) fn request_has(

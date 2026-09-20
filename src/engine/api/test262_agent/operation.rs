@@ -49,11 +49,13 @@ impl AgentStep {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
+        let NativeInvocation::Call { .. } = &invocation else {
+            let _ = invocation.release(runtime);
             return Err(RuntimeError::Invariant(
                 "Test262 agent function received a constructor invocation",
             ));
         };
+        invocation.release(runtime)?;
         let Some((session, role)) = registered_session_and_role(runtime, realm) else {
             return Err(RuntimeError::Invariant(
                 "Test262 agent function has no registered session",
@@ -78,16 +80,15 @@ impl AgentStep {
                 } else {
                     // Brand/detached/shared checks precede observable numeric conversion.
                     let buffer = runtime.root_value(&arguments.readable[0])?;
-                    let handle = match runtime
-                        .test262_agent_export_broadcast_buffer(realm, &buffer)?
-                    {
-                        NativeConversion::Value(handle) => handle,
-                        NativeConversion::Throw(value) => {
-                            return Ok(Self::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
-                        }
-                    };
+                    let handle =
+                        match runtime.test262_agent_export_broadcast_buffer(realm, &buffer)? {
+                            NativeConversion::Value(handle) => handle,
+                            NativeConversion::Throw(value) => {
+                                return Ok(Self::Complete(Completion::Throw(
+                                    runtime.into_jsvalue(value)?,
+                                )));
+                            }
+                        };
                     Ok(Self::Number {
                         value: runtime.dup_jsvalue(&arguments.readable[1])?,
                         resume: AgentResume(Box::new(AgentResumeState {

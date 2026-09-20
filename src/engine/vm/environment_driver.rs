@@ -341,7 +341,7 @@ pub(super) fn step(
                 } else {
                     let object = match op {
                         Operation::ReadReference { name, .. } => {
-                            let object = match execution.slots.peek(&frame.window, 0)? {
+                            match execution.slots.peek(&frame.window, 0)? {
                                 JsValue::Object(object) => {
                                     crate::engine::object::ObjectRef::from_borrowed_handle(
                                         runtime.clone(),
@@ -361,8 +361,7 @@ pub(super) fn step(
                                         .map_err(runtime_error_to_vm_error)?);
                                 }
                                 _ => return Err(Error::internal("invalid dynamic reference base")),
-                            };
-                            object
+                            }
                         }
                         Operation::Object(source) | Operation::Get { source, .. } => {
                             super::environment_bindings::dynamic_object(

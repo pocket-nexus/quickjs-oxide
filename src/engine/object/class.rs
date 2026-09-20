@@ -378,10 +378,14 @@ mod tests {
             panic!("base class definition unexpectedly threw")
         };
         assert_eq!(
-            runtime.root_and_release_jsvalue(returned_constructor).unwrap(),
+            runtime
+                .root_and_release_jsvalue(returned_constructor)
+                .unwrap(),
             Value::Object(constructor.as_object().clone())
         );
-        let Value::Object(prototype) = runtime.root_and_release_jsvalue(returned_prototype).unwrap()
+        let Value::Object(prototype) = runtime
+            .root_and_release_jsvalue(returned_prototype)
+            .unwrap()
         else {
             panic!("class prototype was not an object")
         };

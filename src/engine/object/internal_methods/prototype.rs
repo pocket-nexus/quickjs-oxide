@@ -97,7 +97,7 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyPrototypeStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyPrototypeStep::Complete(Completion::Throw(value)),
+        MethodStep::Throw(value) => ProxyPrototypeStep::Complete(Completion::Throw(value.take())),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let key = resume.take_read_key();
@@ -107,7 +107,7 @@ fn method(
                 key,
                 receiver,
                 ProxyPrototypeResume(Box::new(ProxyPrototypeResumeState {
-                    pending_effect: ProxyPrototypeStepPending::default(),
+                    pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
                     realm,
                     phase: Phase::Method { resume, kind },
                 })),
@@ -125,7 +125,7 @@ fn method(
                         _ => None,
                     };
                     let resume = ProxyPrototypeResume(Box::new(ProxyPrototypeResumeState {
-                        pending_effect: ProxyPrototypeStepPending::default(),
+                        pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
                         realm,
                         phase: Phase::Forward {
                             _rooted: rooted,
@@ -144,8 +144,7 @@ fn method(
                     if let ProxyPrototypeKind::Set(prototype) = &kind {
                         arguments.push(prototype.clone().map_or(Value::Null, Value::Object));
                     }
-                    let receiver =
-                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
                     let arguments = arguments
                         .into_iter()
                         .map(|value| runtime.into_jsvalue(value))
@@ -155,7 +154,7 @@ fn method(
                         receiver,
                         arguments,
                         ProxyPrototypeResume(Box::new(ProxyPrototypeResumeState {
-                            pending_effect: ProxyPrototypeStepPending::default(),
+                            pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
                             realm,
                             phase: Phase::Trap { rooted, kind },
                         })),
@@ -169,15 +168,15 @@ fn completed(prototype: Option<ObjectRef>, setting: bool) -> ProxyPrototypeStep 
     ProxyPrototypeStep::Complete(Completion::Return(if setting {
         JsValue::Bool(true)
     } else {
-        prototype.map_or(JsValue::Null, |object| JsValue::Object(object.into_handle()))
+        prototype.map_or(JsValue::Null, |object| {
+            JsValue::Object(object.into_handle())
+        })
     }))
 }
 fn inconsistent(runtime: &Runtime, realm: ContextId) -> Result<ProxyPrototypeStep, RuntimeError> {
     Ok(ProxyPrototypeStep::Complete(
         match runtime.proxy_invariant_throw::<Value>(realm, "prototype")? {
-            NativeConversion::Throw(value) => {
-                Completion::Throw(runtime.unroot_value(&value)?)
-            }
+            NativeConversion::Throw(value) => Completion::Throw(runtime.unroot_value(&value)?),
             NativeConversion::Value(_) => {
                 return Err(RuntimeError::Invariant(
                     "Proxy invariant rejection returned a value",
@@ -209,10 +208,9 @@ impl ProxyPrototypeResume {
                 let (prototype, setting) = match kind {
                     ProxyPrototypeKind::Get => (
                         match value {
-                            JsValue::Object(object) => Some(ObjectRef::from_owned_handle(
-                                runtime.clone(),
-                                object,
-                            )),
+                            JsValue::Object(object) => {
+                                Some(ObjectRef::from_owned_handle(runtime.clone(), object))
+                            }
                             JsValue::Null => None,
                             _ => return inconsistent(runtime, self.0.realm),
                         },
@@ -230,7 +228,7 @@ impl ProxyPrototypeResume {
                 Ok(ProxyPrototypeStep::request_extensible(
                     rooted.target.clone(),
                     Self(Box::new(ProxyPrototypeResumeState {
-                        pending_effect: ProxyPrototypeStepPending::default(),
+                        pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
                         realm: self.0.realm,
                         phase: Phase::Extensible {
                             rooted,
@@ -247,14 +245,14 @@ impl ProxyPrototypeResume {
     }
     pub(crate) fn boolean(
         self,
-        _runtime: &Runtime,
+        runtime: &Runtime,
         result: NativeConversion<bool>,
     ) -> Result<ProxyPrototypeStep, RuntimeError> {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(ProxyPrototypeStep::Complete(Completion::Throw(
-                    _runtime.unroot_value(&value)?,
+                    runtime.unroot_value(&value)?,
                 )));
             }
         };
@@ -276,7 +274,7 @@ impl ProxyPrototypeResume {
                 Ok(ProxyPrototypeStep::request_get(
                     rooted.target.clone(),
                     Self(Box::new(ProxyPrototypeResumeState {
-                        pending_effect: ProxyPrototypeStepPending::default(),
+                        pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
                         realm: self.0.realm,
                         phase: Phase::Compare {
                             _rooted: rooted,
@@ -479,8 +477,8 @@ mod tests {
     }
 }
 
-#[derive(Default)]
 struct ProxyPrototypeStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     read_receiver: Option<JsValue>,
@@ -491,6 +489,41 @@ struct ProxyPrototypeStepPending {
     set_object: Option<ObjectRef>,
     set_prototype: Option<Option<ObjectRef>>,
     extensible_object: Option<ObjectRef>,
+}
+impl ProxyPrototypeStepPending {
+    fn new(runtime: Runtime) -> Self {
+        Self {
+            runtime,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+            get_object: None,
+            set_object: None,
+            set_prototype: None,
+            extensible_object: None,
+        }
+    }
+}
+impl Drop for ProxyPrototypeStepPending {
+    /// Release the internal edges still held when the request is abandoned.
+    /// Consumption goes through `Option::take`; releases are defer-safe and
+    /// nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl ProxyPrototypeStep {
     pub(crate) fn request_read(

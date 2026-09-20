@@ -1,5 +1,5 @@
 //! Mechanical adapters for vm domain requests.
-use super::{Completion, JsValue, Resume, Step, Value};
+use super::{Completion, JsValue, Resume, Step};
 
 impl From<crate::engine::vm::environment_bindings::operation::EnvironmentStep> for Step {
     fn from(step: crate::engine::vm::environment_bindings::operation::EnvironmentStep) -> Self {
