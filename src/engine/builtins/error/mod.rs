@@ -176,16 +176,19 @@ impl Runtime {
             "Error.isError readable argv was not padded to length one",
         ))?;
         let is_error = match value {
-            Value::Object(object) => self.is_error_object(object)?,
-            Value::Undefined
-            | Value::Null
-            | Value::Bool(_)
-            | Value::Int(_)
-            | Value::Float(_)
-            | Value::BigInt(_)
-            | Value::String(_)
-            | Value::Symbol(_) => false,
+            crate::engine::value::JsValue::Object(id) => {
+                let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+                self.is_error_object(&object)?
+            }
+            crate::engine::value::JsValue::Undefined
+            | crate::engine::value::JsValue::Null
+            | crate::engine::value::JsValue::Bool(_)
+            | crate::engine::value::JsValue::Int(_)
+            | crate::engine::value::JsValue::Float(_)
+            | crate::engine::value::JsValue::BigInt(_)
+            | crate::engine::value::JsValue::String(_)
+            | crate::engine::value::JsValue::Symbol(_) => false,
         };
-        Ok(Completion::Return(Value::Bool(is_error)))
+        Ok(Completion::Return(crate::engine::value::JsValue::Bool(is_error)))
     }
 }

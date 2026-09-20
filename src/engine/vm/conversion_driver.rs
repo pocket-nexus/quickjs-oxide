@@ -4,7 +4,7 @@ mod local_add;
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::object::{CallableRef, OrdinaryRead};
-use crate::engine::value::JsValue;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::primitive::{PrimitiveResume, PrimitiveStep};
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
@@ -155,7 +155,7 @@ pub(super) fn complete_primitives(
                     super::bindings::FrameBinding::Direct(value) => Some((
                         *index,
                         executable.fusion.add_store_span(frame.fault_pc),
-                        matches!(value, Value::Object(_) | Value::Symbol(_)),
+                        matches!(value, JsValue::Object(_) | JsValue::Symbol(_)),
                     )),
                     _ => None,
                 },
@@ -368,7 +368,14 @@ impl ConversionTask {
     ) -> Result<Self, Error> {
         let realm = execution.frames.current_mut(frame)?.executable.realm;
         let step =
-            PrimitiveResume::start(runtime, realm, input.key.clone(), ToPrimitiveHint::String);
+            PrimitiveResume::start(
+            runtime,
+            realm,
+            runtime
+                .unroot_value(&input.key)
+                .map_err(runtime_error_to_vm_error)?,
+            ToPrimitiveHint::String,
+        );
         Ok(Self::new(
             Finish::Predicate(Some(input)),
             frame,
@@ -386,7 +393,14 @@ impl ConversionTask {
     ) -> Result<Self, Error> {
         let realm = execution.frames.current_mut(frame)?.executable.realm;
         let step =
-            PrimitiveResume::start(runtime, realm, input.key.clone(), ToPrimitiveHint::String);
+            PrimitiveResume::start(
+            runtime,
+            realm,
+            runtime
+                .dup_jsvalue(&input.key)
+                .map_err(runtime_error_to_vm_error)?,
+            ToPrimitiveHint::String,
+        );
         Ok(Self::new(
             Finish::SuperProperty(Some(input)),
             frame,
@@ -543,7 +557,9 @@ impl ConversionTask {
                             )?,
                             Finish::Predicate(input) => {
                                 let mut input = input.take().expect("predicate conversion input");
-                                input.key = value;
+                                input.key = runtime
+                                    .root_and_release_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?;
                                 return Ok(Progress::Predicate(input));
                             }
                             Finish::SuperProperty(input) => {
@@ -559,9 +575,15 @@ impl ConversionTask {
                                 let assigned = std::mem::replace(assigned, JsValue::Undefined);
                                 return Ok(Progress::PropertyWrite(Box::new(
                                     super::property_write_driver::ConvertedWrite {
-                                        base,
-                                        key: value,
-                                        value: assigned,
+                                        base: runtime
+                                            .root_and_release_jsvalue(base)
+                                            .map_err(runtime_error_to_vm_error)?,
+                                        key: runtime
+                                            .root_and_release_jsvalue(value)
+                                            .map_err(runtime_error_to_vm_error)?,
+                                        value: runtime
+                                            .root_and_release_jsvalue(assigned)
+                                            .map_err(runtime_error_to_vm_error)?,
                                     },
                                 )));
                             }
@@ -657,8 +679,18 @@ impl ConversionTask {
             }
             PrimitiveStep::Call { mut resume } => {
                 let callable = resume.take_callable();
-                let receiver = resume.take_receiver();
-                let arguments = resume.take_arguments();
+                // `normalize_callback` still crosses on public roots; the
+                // conversion domain stores internal values, so hand the
+                // callback boundary owned roots and let it re-enter.
+                let receiver = runtime
+                    .root_and_release_jsvalue(resume.take_receiver())
+                    .map_err(runtime_error_to_vm_error)?;
+                let arguments = resume
+                    .take_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(runtime_error_to_vm_error)?;
                 invoke(
                     runtime, execution, self, callable, receiver, arguments, resume,
                 )

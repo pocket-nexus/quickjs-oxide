@@ -10,7 +10,7 @@ use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -82,16 +82,20 @@ impl PredicateStep {
                 "own predicate did not receive a call",
             ));
         };
+        let this_value = runtime.root_value(this_value)?;
         let (receiver, key) = if matches!(kind, PredicateKind::HasOwn) {
-            let value = arguments
-                .readable
-                .first()
-                .cloned()
-                .ok_or(RuntimeError::Invariant("hasOwn target argv was not padded"))?;
+            let value = match arguments.readable.first() {
+                Some(value) => runtime.root_value(value)?,
+                None => {
+                    return Err(RuntimeError::Invariant("hasOwn target argv was not padded"));
+                }
+            };
             let object = match runtime.native_to_object(realm, value)? {
                 NativeConversion::Value(object) => object,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(value)));
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
             };
             (Value::Object(object), arguments.readable.get(1))
@@ -99,7 +103,9 @@ impl PredicateStep {
             let object = match runtime.native_to_object(realm, this_value.clone())? {
                 NativeConversion::Value(object) => object,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(value)));
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
             };
             (Value::Object(object), arguments.readable.first())
@@ -112,7 +118,13 @@ impl PredicateStep {
                 .get(1)
                 .ok_or(RuntimeError::Invariant("accessor argv was not padded"))?;
             let callable = match value {
-                Value::Object(object) => runtime.as_callable(object)?,
+                JsValue::Object(id) => {
+                    let object = crate::engine::object::ObjectRef::from_borrowed_handle(
+                        runtime.clone(),
+                        *id,
+                    )?;
+                    runtime.as_callable(&object)?
+                }
                 _ => None,
             };
             let Some(callable) = callable else {
@@ -128,9 +140,14 @@ impl PredicateStep {
         } else {
             None
         };
-        let value = key.cloned().ok_or(RuntimeError::Invariant(
-            "own predicate key argv was not padded",
-        ))?;
+        let value = match key {
+            Some(key) => runtime.dup_jsvalue(key)?,
+            None => {
+                return Err(RuntimeError::Invariant(
+                    "own predicate key argv was not padded",
+                ));
+            }
+        };
         Ok(Self::request_key(
             value,
             PredicateResume(Box::new(PredicateResumeState {
@@ -155,7 +172,7 @@ impl PredicateResume {
             ));
         };
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(PredicateStep::Complete(Completion::Throw(value)));
             }
@@ -163,13 +180,17 @@ impl PredicateResume {
         let key = match runtime.property_key_from_primitive(self.0.realm, value)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
-                return Ok(PredicateStep::Complete(Completion::Throw(value)));
+                return Ok(PredicateStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let object = match runtime.native_to_object(self.0.realm, self.0.receiver.clone())? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(PredicateStep::Complete(Completion::Throw(value)));
+                return Ok(PredicateStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let resume = {
@@ -208,6 +229,7 @@ impl PredicateResume {
     }
     pub(crate) fn boolean(
         self,
+        runtime: &Runtime,
         result: NativeConversion<bool>,
     ) -> Result<PredicateStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Own(_))
@@ -221,8 +243,8 @@ impl PredicateResume {
             ));
         }
         Ok(PredicateStep::Complete(match result {
-            NativeConversion::Value(value) => Completion::Return(Value::Bool(value)),
-            NativeConversion::Throw(value) => Completion::Throw(value),
+            NativeConversion::Value(value) => Completion::Return(JsValue::Bool(value)),
+            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
         }))
     }
 }
@@ -244,13 +266,14 @@ impl PredicateResume {
         }
         Ok(PredicateStep::Complete(
             match runtime.finish_define_property_or_throw(self.0.realm, &key, result)? {
-                Some(value) => Completion::Throw(value),
-                None => Completion::Return(Value::Undefined),
+                Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                None => Completion::Return(JsValue::Undefined),
             },
         ))
     }
     pub(crate) fn descriptor(
         mut self,
+        runtime: &Runtime,
         result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
     ) -> Result<PredicateStep, RuntimeError> {
         let Phase::Own(key) = self.0.phase else {
@@ -262,7 +285,9 @@ impl PredicateResume {
         let descriptor = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(PredicateStep::Complete(Completion::Throw(value)));
+                return Ok(PredicateStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let Some(descriptor) = descriptor else {
@@ -285,10 +310,13 @@ impl PredicateResume {
                 Value::Object(callable.into_object())
             }),
         };
-        Ok(PredicateStep::Complete(Completion::Return(value)))
+        Ok(PredicateStep::Complete(Completion::Return(
+            runtime.into_jsvalue(value)?,
+        )))
     }
     pub(crate) fn prototype(
         mut self,
+        runtime: &Runtime,
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<PredicateStep, RuntimeError> {
         let Phase::Prototype(key) = self.0.phase else {
@@ -297,9 +325,11 @@ impl PredicateResume {
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => PredicateStep::Complete(Completion::Throw(value)),
+            NativeConversion::Throw(value) => PredicateStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )),
             NativeConversion::Value(None) => {
-                PredicateStep::Complete(Completion::Return(Value::Undefined))
+                PredicateStep::Complete(Completion::Return(JsValue::Undefined))
             }
             NativeConversion::Value(Some(object)) => {
                 PredicateStep::request_descriptor(object.clone(), key.clone(), {
@@ -325,11 +355,17 @@ pub(in crate::engine::builtins) fn finish(
             PredicateStep::Descriptor { mut resume } => {
                 let object = resume.take_descriptor_object();
                 let key = resume.take_descriptor_key();
-                resume.descriptor(runtime.internal_get_own_property(realm, &object, &key)?)?
+                resume.descriptor(
+                    runtime,
+                    runtime.internal_get_own_property(realm, &object, &key)?,
+                )?
             }
             PredicateStep::Prototype { mut resume } => {
                 let object = resume.take_prototype_object();
-                resume.prototype(runtime.internal_get_prototype_of(realm, &object)?)?
+                resume.prototype(
+                    runtime,
+                    runtime.internal_get_prototype_of(realm, &object)?,
+                )?
             }
             PredicateStep::Define { mut resume } => {
                 let object = resume.take_define_object();
@@ -341,7 +377,7 @@ pub(in crate::engine::builtins) fn finish(
                 )?
             }
             PredicateStep::Key { mut resume } => {
-                let value = resume.take_key_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_key_value())?;
                 resume.key(
                     runtime,
                     runtime.to_primitive(realm, value, ToPrimitiveHint::String)?,
@@ -351,11 +387,14 @@ pub(in crate::engine::builtins) fn finish(
                 let object = resume.take_own_object();
                 let key = resume.take_own_key();
                 let enumerable = resume.take_own_enumerable();
-                resume.boolean(if enumerable {
-                    runtime.internal_own_property_is_enumerable(realm, &object, &key)?
-                } else {
-                    runtime.internal_has_own_property(realm, &object, &key)?
-                })?
+                resume.boolean(
+                    runtime,
+                    if enumerable {
+                        runtime.internal_own_property_is_enumerable(realm, &object, &key)?
+                    } else {
+                        runtime.internal_has_own_property(realm, &object, &key)?
+                    },
+                )?
             }
         };
     }
@@ -369,7 +408,7 @@ struct PredicateStepPending {
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
-    key_value: Option<Value>,
+    key_value: Option<JsValue>,
     own_object: Option<ObjectRef>,
     own_key: Option<PropertyKey>,
     own_enumerable: Option<bool>,
@@ -399,7 +438,7 @@ impl PredicateStep {
         resume.0.pending_effect.define_descriptor = Some(descriptor);
         Self::Define { resume }
     }
-    pub(crate) fn request_key(value: Value, mut resume: PredicateResume) -> Self {
+    pub(crate) fn request_key(value: JsValue, mut resume: PredicateResume) -> Self {
         resume.0.pending_effect.key_value = Some(value);
         Self::Key { resume }
     }
@@ -458,7 +497,7 @@ impl PredicateResume {
             .take()
             .expect("PredicateStep Define descriptor")
     }
-    pub(crate) fn take_key_value(&mut self) -> Value {
+    pub(crate) fn take_key_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .key_value

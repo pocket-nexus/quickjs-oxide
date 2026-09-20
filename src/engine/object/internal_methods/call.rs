@@ -7,7 +7,7 @@ use crate::engine::api::{
 };
 use crate::engine::heap::ContextId;
 use crate::engine::object::{ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyCallStep {
@@ -96,19 +96,20 @@ impl Search {
             ))?;
         if data.is_revoked {
             return match runtime.proxy_revoked_throw(self.realm)? {
-                NativeConversion::Throw(value) => {
-                    Ok(ProxyCallStep::Complete(Completion::Throw(value)))
-                }
+                NativeConversion::Throw(value) => Ok(ProxyCallStep::Complete(
+                    Completion::Throw(runtime.unroot_value(&value)?),
+                )),
                 NativeConversion::Value(()) => Err(RuntimeError::Invariant(
                     "revoked Proxy call returned a value",
                 )),
             };
         }
         let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
+        let read_receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
         Ok(ProxyCallStep::request_read(
             rooted.handler.clone(),
             self.key.clone(),
-            Value::Object(rooted.handler.clone()),
+            read_receiver,
             ProxyCallResume(Box::new(ProxyCallResumeState {
                 pending_effect: ProxyCallStepPending::default(),
                 phase: Phase::Method {
@@ -141,7 +142,7 @@ impl ProxyCallResume {
                 runtime.new_native_error_jsvalue(search.realm, NativeErrorKind::Type, "not a function")?,
             )));
         }
-        let (target, receiver, arguments) = if matches!(method, Value::Undefined | Value::Null) {
+        let (target, receiver, arguments) = if matches!(method, JsValue::Undefined | JsValue::Null) {
             if runtime.is_proxy_object(&rooted.target)? {
                 search.depth = search.depth.saturating_add(1);
                 return search.read(runtime, rooted.target);
@@ -154,7 +155,7 @@ impl ProxyCallResume {
         } else {
             // Allocate the argument array before validating the trap, as in C.
             let array = runtime.new_array_from_values(search.realm, search.arguments)?;
-            let method = match runtime.direct_call_target_from_value(method) {
+            let method = match runtime.direct_call_target_from_jsvalue(method) {
                 Ok(method) => method,
                 Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
                     return Ok(ProxyCallStep::Complete(Completion::Throw(
@@ -177,6 +178,11 @@ impl ProxyCallResume {
                 ],
             )
         };
+        let receiver = runtime.into_jsvalue(receiver)?;
+        let arguments = arguments
+            .into_iter()
+            .map(|value| runtime.into_jsvalue(value))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(ProxyCallStep::request_call(
             target,
             receiver,
@@ -232,7 +238,7 @@ mod tests {
             .unwrap();
             if after_lookup {
                 step = take_read(step)
-                    .resume(&runtime, Completion::Return(Value::Undefined))
+                    .resume(&runtime, Completion::Return(JsValue::Undefined))
                     .unwrap();
             }
             assert_eq!(runtime.0.proxy_method_depth.get(), 1);
@@ -257,16 +263,16 @@ mod tests {
 struct ProxyCallStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
 }
 impl ProxyCallStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ProxyCallResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -276,8 +282,8 @@ impl ProxyCallStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxyCallResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -301,7 +307,7 @@ impl ProxyCallResume {
             .take()
             .expect("ProxyCallStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -315,14 +321,14 @@ impl ProxyCallResume {
             .take()
             .expect("ProxyCallStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxyCallStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

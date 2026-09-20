@@ -44,7 +44,7 @@ fn function_closures_share_runtime_rooted_var_ref_cells() {
         .unwrap();
     let function = runtime.test_child_function_bytecode(&root, 0).unwrap();
     let cell = runtime
-        .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+        .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
         .unwrap();
     let cell_id = cell.id();
     let first = runtime
@@ -68,15 +68,15 @@ fn function_closures_share_runtime_rooted_var_ref_cells() {
         Value::Int(3)
     );
 
-    runtime.write_var_ref(&cell, Value::Int(7)).unwrap();
-    assert_eq!(runtime.read_var_ref(&cell).unwrap(), Value::Int(7));
+    runtime.write_var_ref(&cell, JsValue::Int(7)).unwrap();
+    assert_eq!(runtime.read_var_ref(&cell).unwrap(), JsValue::Int(7));
     drop(cell);
     assert_eq!(
         runtime.0.state.borrow().heap.var_ref_strong_count(cell_id),
         Ok(2)
     );
     let promoted = VarRefRoot::from_borrowed_handle(runtime.clone(), cell_id).unwrap();
-    assert_eq!(runtime.read_var_ref(&promoted).unwrap(), Value::Int(7));
+    assert_eq!(runtime.read_var_ref(&promoted).unwrap(), JsValue::Int(7));
     drop(first);
     drop(second);
     assert_eq!(

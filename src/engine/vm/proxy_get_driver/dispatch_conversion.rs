@@ -1,6 +1,6 @@
 //! Bounded native-stack dispatch for conversion requests.
 use super::{
-    Error, Next, Query, Resume, ReturnOwner, RunningExecution, Runtime, Step, Value,
+    Error, Next, Query, Resume, ReturnOwner, RunningExecution, Runtime, Step,
     runtime_error_to_vm_error,
 };
 
@@ -57,9 +57,15 @@ pub(super) fn primitive(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("argument continuation allocation failed"))?;
                 query.parents.push(resume);
-                *step = crate::engine::builtins::ArgumentsStep::start(runtime, realm, value)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                *step = crate::engine::builtins::ArgumentsStep::start(
+                    runtime,
+                    realm,
+                    runtime
+                        .root_and_release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
                 continue;
             }
             Step::ArgumentsComplete(result) => {
@@ -108,6 +114,9 @@ pub(super) fn primitive(
 
                 // Only a request which can suspend needs a parent owner. Complete
                 // results (including JS throws) use the same typed reply consumer.
+                let value = runtime
+                    .root_and_release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
                 let next = crate::engine::value::conversion::number::NumberStep::start(
                     runtime, realm, value,
                 )
@@ -245,7 +254,11 @@ pub(super) fn constructor(
                 })?;
                 query.parents.push(resume);
                 *step = super::super::call::prototype::ProtoSourceStep::start(
-                    runtime, realm, new_target,
+                    runtime,
+                    realm,
+                    runtime
+                        .root_and_release_jsvalue(new_target)
+                        .map_err(runtime_error_to_vm_error)?,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -297,10 +310,15 @@ pub(super) fn constructor(
                     Error::internal("typed iterator method continuation allocation failed")
                 })?;
                 query.parents.push(resume);
-                *step =
-                    crate::engine::builtins::TypedIteratorMethodStep::start(runtime, realm, source)
-                        .map_err(runtime_error_to_vm_error)?
-                        .into();
+                *step = crate::engine::builtins::TypedIteratorMethodStep::start(
+                    runtime,
+                    realm,
+                    runtime
+                        .root_and_release_jsvalue(source)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
                 continue;
             }
             Step::TypedIteratorMethodComplete(result) => {
@@ -331,8 +349,15 @@ pub(super) fn constructor(
                 })?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::TypedCollectStep::start(
-                    realm, source, method, element,
+                    runtime,
+                    realm,
+                    runtime
+                        .root_and_release_jsvalue(source)
+                        .map_err(runtime_error_to_vm_error)?,
+                    method,
+                    element,
                 )
+                .map_err(runtime_error_to_vm_error)?
                 .into();
                 continue;
             }
@@ -364,8 +389,13 @@ pub(super) fn constructor(
                 *step = crate::engine::builtins::TypedSpeciesStep::create(
                     runtime,
                     realm,
-                    constructor,
-                    vec![Value::number(length as f64)],
+                    runtime
+                        .root_and_release_jsvalue(constructor)
+                        .map_err(runtime_error_to_vm_error)?,
+                    vec![
+                        crate::engine::value::number::operations::Number::compact(length as f64)
+                            .into(),
+                    ],
                     Some(length),
                 )
                 .map_err(runtime_error_to_vm_error)?

@@ -2,7 +2,7 @@
 use super::{
     Completion,
     frame::{FrameCold, FrameEntry},
-    stack::{FrameStorage, copy_value},
+    stack::FrameStorage,
 };
 use crate::engine::api::{Error, runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::code::function::metadata::FunctionKind;
@@ -90,8 +90,12 @@ pub(in crate::engine::vm) fn prepare_call(
     closure_slots: crate::engine::vm::closure::ClosureSlots,
 ) -> Result<FrameEntry, crate::engine::api::runtime_error::RuntimeError> {
     use crate::engine::api::runtime_error::RuntimeError;
-    let prepared =
-        runtime.prepare_owned_bytecode_frame(callable, receiver, new_target, bytecode)?;
+    let prepared = runtime.prepare_owned_bytecode_frame(
+        callable,
+        runtime.into_jsvalue(receiver)?,
+        runtime.into_jsvalue(new_target)?,
+        bytecode,
+    )?;
     if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
         return Err(RuntimeError::Engine(Error::internal(
             "function object closure slot count does not match bytecode metadata",
@@ -106,7 +110,7 @@ pub(in crate::engine::vm) fn prepare_call(
             ))
         })?;
     for value in arguments {
-        original_arguments.push(copy_value(value).map_err(RuntimeError::Engine)?);
+        original_arguments.push(runtime.unroot_value(value)?);
     }
     let local_count = if prepared.executable.has_captured_locals {
         prepared.executable.local_definitions.len()

@@ -42,10 +42,14 @@ fn date_input_fields(fields: &DateFields) -> DateInputFields {
     ]
 }
 
-fn date_argument(arguments: &NativeArguments, index: usize) -> Result<&Value, RuntimeError> {
-    arguments.readable.get(index).ok_or(RuntimeError::Invariant(
+fn date_argument(
+    runtime: &Runtime,
+    arguments: &NativeArguments,
+    index: usize,
+) -> Result<Value, RuntimeError> {
+    runtime.root_value(arguments.readable.get(index).ok_or(RuntimeError::Invariant(
         "Date native argument vector was not padded to readable arity",
-    ))
+    ))?)
 }
 
 impl Runtime {
@@ -77,19 +81,20 @@ impl Runtime {
             ));
         };
 
+        let this_value = self.root_value(this_value)?;
         match kind {
-            DateNativeKind::TimeValue => self.call_date_time_value(realm, this_value),
-            DateNativeKind::String(method) => self.call_date_string(realm, this_value, method),
+            DateNativeKind::TimeValue => self.call_date_time_value(realm, &this_value),
+            DateNativeKind::String(method) => self.call_date_string(realm, &this_value, method),
             DateNativeKind::ToPrimitive => {
                 self.call_date_to_primitive(realm, this_value.clone(), arguments)
             }
-            DateNativeKind::TimezoneOffset => self.call_date_timezone_offset(realm, this_value),
-            DateNativeKind::GetField(field) => self.call_date_get_field(realm, this_value, field),
-            DateNativeKind::SetTime => self.call_date_set_time(realm, this_value, arguments),
+            DateNativeKind::TimezoneOffset => self.call_date_timezone_offset(realm, &this_value),
+            DateNativeKind::GetField(field) => self.call_date_get_field(realm, &this_value, field),
+            DateNativeKind::SetTime => self.call_date_set_time(realm, &this_value, arguments),
             DateNativeKind::SetField(field) => {
-                self.call_date_set_field(realm, this_value, field, arguments)
+                self.call_date_set_field(realm, &this_value, field, arguments)
             }
-            DateNativeKind::SetYear => self.call_date_set_year(realm, this_value, arguments),
+            DateNativeKind::SetYear => self.call_date_set_year(realm, &this_value, arguments),
             DateNativeKind::ToJson => self.call_date_to_json(realm, this_value.clone()),
             DateNativeKind::Constructor
             | DateNativeKind::Now
@@ -172,7 +177,7 @@ impl Runtime {
             .borrow_mut()
             .heap
             .set_date_value(object.object_id(), value)?;
-        Ok(Completion::Return(Value::number(value)))
+        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(value).into()))
     }
 
     fn call_date_time_value(
@@ -182,9 +187,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
         };
-        Ok(Completion::Return(Value::number(value)))
+        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(value).into()))
     }
 
     /// `toGMTString` is not a ninth formatter native. The installer must
@@ -199,7 +204,7 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
         };
         let kind = date_format_kind(method);
         let fields = get_date_fields(value, kind.uses_local_time(), false, |instant| {
@@ -215,9 +220,9 @@ impl Runtime {
                 )?));
             }
         };
-        Ok(Completion::Return(Value::String(JsString::try_from_utf8(
-            &output,
-        )?)))
+        Ok(Completion::Return(self.unroot_value(&Value::String(
+            JsString::try_from_utf8(&output)?,
+        ))?))
     }
 
     fn call_date_get_field(
@@ -228,18 +233,18 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
         };
         let Some(fields) = get_date_fields(value, field.uses_local_time(), false, |instant| {
             self.date_timezone_offset_minutes(instant)
         }) else {
-            return Ok(Completion::Return(Value::number(f64::NAN)));
+            return Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(f64::NAN).into()));
         };
         let mut value = fields[usize::from(field.field_index())];
         if field.is_legacy_year() {
             value -= 1900.0;
         }
-        Ok(Completion::Return(Value::number(value)))
+        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(value).into()))
     }
 
     fn call_date_timezone_offset(
@@ -249,13 +254,13 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let (_, value) = match self.date_this_time_value(realm, this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
         };
         if value.is_nan() {
-            return Ok(Completion::Return(Value::number(f64::NAN)));
+            return Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(f64::NAN).into()));
         }
         let offset = self.date_timezone_offset_minutes(value.trunc() as i64);
-        Ok(Completion::Return(Value::number(f64::from(offset))))
+        Ok(Completion::Return(crate::engine::value::number::operations::Number::compact(f64::from(offset)).into()))
     }
 
     fn call_date_set_time(
@@ -272,7 +277,7 @@ impl Runtime {
                 realm,
                 DateNativeKind::SetTime,
                 &NativeInvocation::Call {
-                    this_value: this_value.clone(),
+                    this_value: self.unroot_value(this_value)?,
                 },
                 arguments,
             )?,
@@ -294,7 +299,7 @@ impl Runtime {
                 realm,
                 DateNativeKind::SetField(field),
                 &NativeInvocation::Call {
-                    this_value: this_value.clone(),
+                    this_value: self.unroot_value(this_value)?,
                 },
                 arguments,
             )?,
@@ -346,7 +351,7 @@ impl Runtime {
                 realm,
                 DateNativeKind::SetYear,
                 &NativeInvocation::Call {
-                    this_value: this_value.clone(),
+                    this_value: self.unroot_value(this_value)?,
                 },
                 arguments,
             )?,
@@ -367,7 +372,7 @@ impl Runtime {
                 realm,
                 DateNativeKind::ToPrimitive,
                 &NativeInvocation::Call {
-                    this_value: this_value.clone(),
+                    this_value: self.unroot_value(&this_value)?,
                 },
                 arguments,
             )?,
@@ -391,7 +396,7 @@ impl Runtime {
                 realm,
                 DateNativeKind::ToJson,
                 &NativeInvocation::Call {
-                    this_value: this_value.clone(),
+                    this_value: self.unroot_value(&this_value)?,
                 },
                 &arguments,
             )?,

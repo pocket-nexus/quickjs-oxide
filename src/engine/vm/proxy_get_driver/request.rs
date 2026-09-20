@@ -14,9 +14,9 @@ mod vm;
 
 use super::{
     BytecodeCallRequest, CompleteOrdinaryPropertyDescriptor, Completion, DescriptorResume,
-    DescriptorStep, DirectCallTarget, NativeConversion, ObjectRef, OrdinaryPropertyDescriptor,
-    OrdinaryRead, PropertyKey, ProxyBooleanResume, ProxyBooleanStep, ProxyGetResume, ProxyGetStep,
-    ProxyOwnResume, ProxyOwnStep, Runtime, Value,
+    DescriptorStep, DirectCallTarget, JsValue, NativeConversion, ObjectRef,
+    OrdinaryPropertyDescriptor, OrdinaryRead, PropertyKey, ProxyBooleanResume, ProxyBooleanStep,
+    ProxyGetResume, ProxyGetStep, ProxyOwnResume, ProxyOwnStep, Runtime, Value,
 };
 use crate::engine::object::operations::{
     InternalDefineResult, InternalSetResult, PropertySetAction,
@@ -289,7 +289,7 @@ pub(super) enum Step {
         resume: Option<Resume>,
     },
     IntrinsicPromiseResolve {
-        value: Option<Value>,
+        value: Option<JsValue>,
         realm: Option<crate::engine::heap::ContextId>,
         resume: Option<Resume>,
     },
@@ -299,34 +299,34 @@ pub(super) enum Step {
         resume: Option<Resume>,
     },
     ForInComplete {
-        value: Option<Value>,
+        value: Option<JsValue>,
         done: Option<Option<bool>>,
     },
     TypedIteratorMethod {
-        source: Option<Value>,
+        source: Option<JsValue>,
         resume: Option<Resume>,
     },
     TypedIteratorMethodComplete(
         Option<NativeConversion<Option<crate::engine::object::CallableRef>>>,
     ),
     TypedCollect {
-        source: Option<Value>,
+        source: Option<JsValue>,
         method: Option<crate::engine::object::CallableRef>,
         element: Option<TypedArrayElementKind>,
         resume: Option<Resume>,
     },
     TypedCollectComplete(Option<NativeConversion<Vec<Value>>>),
     TypedCreate {
-        constructor: Option<Value>,
+        constructor: Option<JsValue>,
         length: Option<u64>,
         resume: Option<Resume>,
     },
     NumericComplete {
-        value: Option<Value>,
-        previous: Option<Option<Value>>,
+        value: Option<JsValue>,
+        previous: Option<Option<JsValue>>,
     },
     NumericHtmlDda {
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<crate::engine::vm::numeric::operation::NumericResume>,
     },
     TypedSpeciesView {
@@ -347,7 +347,7 @@ pub(super) enum Step {
         resume: Option<Resume>,
     },
     Aggregate {
-        iterable: Option<Value>,
+        iterable: Option<JsValue>,
         resume: Option<Resume>,
     },
     OrdinaryPrimitive {
@@ -355,7 +355,7 @@ pub(super) enum Step {
         hint: Option<ToPrimitiveHint>,
     },
     ConstructorSource {
-        new_target: Option<Value>,
+        new_target: Option<JsValue>,
         resume: Option<Resume>,
     },
     ConstructorSourceComplete(
@@ -378,7 +378,7 @@ pub(super) enum Step {
     },
     OrdinaryInstance {
         constructor: Option<crate::engine::object::CallableRef>,
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<Resume>,
     },
     ParseIterator {
@@ -386,15 +386,15 @@ pub(super) enum Step {
         resume: Option<Resume>,
     },
     String {
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<Resume>,
     },
     ObjectTag {
-        receiver: Option<Value>,
+        receiver: Option<JsValue>,
     },
     RegExpExec {
-        regexp: Option<Value>,
-        input: Option<Value>,
+        regexp: Option<JsValue>,
+        input: Option<JsValue>,
         resume: Option<Resume>,
     },
     IteratorCloseWithResume {
@@ -410,12 +410,12 @@ pub(super) enum Step {
     },
     ArrayPush {
         object: Option<ObjectRef>,
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<Resume>,
     },
     IteratorNext {
         iterator: Option<ObjectRef>,
-        method: Option<Value>,
+        method: Option<JsValue>,
         resume: Option<Resume>,
     },
     IteratorNextComplete(Option<crate::engine::builtins::ObjectIteratorStep>),
@@ -435,19 +435,19 @@ pub(super) enum Step {
         min_readable_args: Option<u8>,
         mode: Option<crate::engine::vm::call::NativeInvokeMode>,
         invocation: Option<crate::engine::vm::call::NativeInvocation>,
-        arguments: Option<Vec<Value>>,
+        arguments: Option<Vec<JsValue>>,
         resume: Option<Resume>,
     },
     Construct {
         target: Option<crate::engine::vm::call::ConstructorRef>,
         new_target: Option<crate::engine::vm::call::ConstructNewTarget>,
-        arguments: Option<Vec<Value>>,
+        arguments: Option<Vec<JsValue>>,
         resume: Option<Resume>,
     },
     ConstructProxy {
         target: Option<crate::engine::vm::call::ConstructorRef>,
         new_target: Option<crate::engine::vm::call::ConstructNewTarget>,
-        arguments: Option<Vec<Value>>,
+        arguments: Option<Vec<JsValue>>,
         resume: Option<Resume>,
     },
     ConstructorReady {
@@ -457,7 +457,7 @@ pub(super) enum Step {
         resume: Option<Resume>,
     },
     Arguments {
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<Resume>,
     },
     ArgumentsComplete(Option<NativeConversion<Vec<Value>>>),
@@ -478,7 +478,7 @@ pub(super) enum Step {
     },
     KeysComplete(Option<NativeConversion<Vec<PropertyKey>>>),
     ReadValue {
-        receiver: Option<Value>,
+        receiver: Option<JsValue>,
         key: Option<PropertyKey>,
         resume: Option<Resume>,
     },
@@ -493,7 +493,7 @@ pub(super) enum Step {
         resume: Option<Resume>,
     },
     Primitive {
-        value: Option<Value>,
+        value: Option<JsValue>,
         hint: Option<crate::engine::vm::ToPrimitiveHint>,
         resume: Option<Resume>,
     },
@@ -517,19 +517,19 @@ pub(super) enum Step {
     },
     Element {
         element: Option<TypedArrayElementKind>,
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<Resume>,
     },
     ElementComplete(Option<NativeConversion<[u8; 8]>>),
     TypedComplete(Option<NativeConversion<bool>>),
     Number {
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<Resume>,
     },
     NumberComplete(Option<NativeConversion<f64>>),
     LengthComplete(Option<ArrayLengthConversion>),
     SetLength {
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<SetResume>,
     },
     SetComplete(Option<PropertySetAction>),
@@ -541,22 +541,22 @@ pub(super) enum Step {
     SetSpecial {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
-        value: Option<Value>,
-        receiver: Option<Value>,
+        value: Option<JsValue>,
+        receiver: Option<JsValue>,
         resume: Option<SetResume>,
     },
     Set {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
-        value: Option<Value>,
-        receiver: Option<Value>,
+        value: Option<JsValue>,
+        receiver: Option<JsValue>,
         resume: Option<Resume>,
     },
     SetProxy {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
-        value: Option<Value>,
-        receiver: Option<Value>,
+        value: Option<JsValue>,
+        receiver: Option<JsValue>,
         resume: Option<Resume>,
     },
     Define {
@@ -584,13 +584,13 @@ pub(super) enum Step {
     Read {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
-        receiver: Option<Value>,
+        receiver: Option<JsValue>,
         resume: Option<Resume>,
     },
     Call {
         target: Option<DirectCallTarget>,
-        receiver: Option<Value>,
-        arguments: Option<Vec<Value>>,
+        receiver: Option<JsValue>,
+        arguments: Option<Vec<JsValue>>,
         resume: Option<Resume>,
     },
     Descriptor {
@@ -603,7 +603,7 @@ pub(super) enum Step {
         resume: Option<Resume>,
     },
     Convert {
-        value: Option<Value>,
+        value: Option<JsValue>,
         resume: Option<Resume>,
     },
 }
@@ -636,9 +636,9 @@ impl Resume {
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             Self::RootSet => Ok(Step::Complete(Some(match set_result(action)? {
-                NativeConversion::Throw(value) => Completion::Throw(value),
+                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
                 NativeConversion::Value(result) => {
-                    Completion::Return(Value::Bool(matches!(result, InternalSetResult::Accepted)))
+                    Completion::Return(JsValue::Bool(matches!(result, InternalSetResult::Accepted)))
                 }
             }))),
 
@@ -728,25 +728,26 @@ impl Resume {
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             Self::RootDefine => Ok(Step::Complete(Some(match result {
-                NativeConversion::Throw(value) => Completion::Throw(value),
-                NativeConversion::Value(result) => {
-                    Completion::Return(Value::Bool(matches!(result, InternalDefineResult::Defined)))
-                }
+                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                NativeConversion::Value(result) => Completion::Return(JsValue::Bool(matches!(
+                    result,
+                    InternalDefineResult::Defined
+                ))),
             }))),
 
             Self::LiteralDefinition(resume) => resume.defined(result).map(Into::into),
             Self::PublicField => match Runtime::finish_public_class_field_definition(result)? {
                 crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
-                    Ok(Step::Complete(Some(Completion::Return(Value::Undefined))))
+                    Ok(Step::Complete(Some(Completion::Return(JsValue::Undefined))))
                 }
                 crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
                     Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                         "public field rejected without throwing",
                     ))
                 }
-                crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
-                    Ok(Step::Complete(Some(Completion::Throw(value))))
-                }
+                crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => Ok(
+                    Step::Complete(Some(Completion::Throw(runtime.into_jsvalue(value)?))),
+                ),
             },
 
             Self::JsonParse(resume) => resume
@@ -810,7 +811,7 @@ impl Resume {
                 .finish_property_delete(result, payload.strict_delete)
                 .map(|result| Step::Complete(Some(result))),
             Self::Definitions(resume) => resume.boolean(runtime, result).map(Into::into),
-            Self::Predicate(resume) => resume.boolean(result).map(Into::into),
+            Self::Predicate(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Keys(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::Property(resume) => resume.boolean(runtime, result).map(Into::into),
             Self::BuiltinPrototype(resume) => resume.boolean(runtime, result).map(Into::into),
@@ -896,7 +897,7 @@ impl Resume {
             Self::TypedWith(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Uint8Codec(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::VmNumeric(resume) => resume
-                .resume(completion)
+                .resume(runtime, completion)
                 .map(Into::into)
                 .map_err(crate::engine::api::runtime_error::RuntimeError::Engine),
             Self::TypedSearch(resume) => resume.resume(runtime, completion).map(Into::into),
@@ -922,7 +923,7 @@ impl Resume {
             }
 
             Self::Bind(resume) => resume.resume(runtime, completion).map(Into::into),
-            Self::FunctionText(resume) => resume.resume(completion).map(Into::into),
+            Self::FunctionText(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::DynamicFunction(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::JsonParse(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::JsonStringify(resume) => resume.resume(runtime, completion).map(Into::into),
@@ -1001,8 +1002,13 @@ impl Resume {
             Self::IteratorCreate(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::StringValue { realm, resume } => {
                 let result = match completion {
-                    Completion::Return(value) => runtime.string_from_primitive(realm, &value)?,
-                    Completion::Throw(value) => NativeConversion::Throw(value),
+                    Completion::Return(value) => {
+                        let value = runtime.root_and_release_jsvalue(value)?;
+                        runtime.string_from_primitive(realm, &value)?
+                    }
+                    Completion::Throw(value) => {
+                        NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?)
+                    }
                 };
                 resume.string(runtime, result)
             }
@@ -1025,7 +1031,7 @@ impl Resume {
             }
             Self::Identity => Ok(Step::Complete(Some(completion))),
             Self::ObjectString(resume) => resume.resume(runtime, completion).map(Into::into),
-            Self::Definitions(resume) => resume.read(completion).map(Into::into),
+            Self::Definitions(resume) => resume.read(runtime, completion).map(Into::into),
             Self::PredicateKey(resume) => resume.key(runtime, completion).map(Into::into),
             Self::Keys(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::PropertyKey(resume) => resume.key(runtime, completion).map(Into::into),
@@ -1039,11 +1045,25 @@ impl Resume {
             Self::Prototype(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::PrototypeGetReply(resume) => {
                 let result = match completion {
-                    Completion::Return(Value::Object(object)) => {
-                        NativeConversion::Value(Some(object))
+                    Completion::Return(JsValue::Object(object)) => {
+                        match runtime
+                            .root_and_release_jsvalue(JsValue::Object(object))
+                            .map_err(crate::engine::api::runtime_error::RuntimeError::from)?
+                        {
+                            Value::Object(object) => NativeConversion::Value(Some(object)),
+                            _ => {
+                                return Err(
+                                    crate::engine::api::runtime_error::RuntimeError::Invariant(
+                                        "invalid GetPrototypeOf object reply",
+                                    ),
+                                );
+                            }
+                        }
                     }
-                    Completion::Return(Value::Null) => NativeConversion::Value(None),
-                    Completion::Throw(value) => NativeConversion::Throw(value),
+                    Completion::Return(JsValue::Null) => NativeConversion::Value(None),
+                    Completion::Throw(value) => {
+                        NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?)
+                    }
                     _ => {
                         return Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                             "invalid GetPrototypeOf reply",
@@ -1054,8 +1074,10 @@ impl Resume {
             }
             Self::PrototypeSetReply(resume) => {
                 let result = match completion {
-                    Completion::Return(Value::Bool(value)) => NativeConversion::Value(value),
-                    Completion::Throw(value) => NativeConversion::Throw(value),
+                    Completion::Return(JsValue::Bool(value)) => NativeConversion::Value(value),
+                    Completion::Throw(value) => {
+                        NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?)
+                    }
                     _ => {
                         return Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                             "invalid SetPrototypeOf reply",
@@ -1068,7 +1090,9 @@ impl Resume {
             Self::Define(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Setter => Ok(Step::SetComplete(Some(match completion {
                 Completion::Return(_) => PropertySetAction::Complete,
-                Completion::Throw(value) => PropertySetAction::Throw(value),
+                Completion::Throw(value) => {
+                    PropertySetAction::Throw(runtime.root_and_release_jsvalue(value)?)
+                }
             }))),
             Self::BooleanResult { .. } => {
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
@@ -1126,7 +1150,7 @@ impl Resume {
                     ),
                 },
             ),
-            Self::Predicate(resume) => resume.descriptor(result).map(Into::into),
+            Self::Predicate(resume) => resume.descriptor(runtime, result).map(Into::into),
             Self::Keys(resume) => resume.descriptor(runtime, result).map(Into::into),
             Self::Get(resume) => resume.descriptor(runtime, result).map(Into::into),
             Self::Property(resume) => resume.descriptor(runtime, result).map(Into::into),
@@ -1229,9 +1253,9 @@ impl Resume {
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             Self::ForIn(resume) => resume.prototype(runtime, result).map(Into::into),
-            Self::Instance(resume) => resume.prototype(result).map(Into::into),
-            Self::Predicate(resume) => resume.prototype(result).map(Into::into),
-            Self::BuiltinPrototype(resume) => resume.prototype(result).map(Into::into),
+            Self::Instance(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::Predicate(resume) => resume.prototype(runtime, result).map(Into::into),
+            Self::BuiltinPrototype(resume) => resume.prototype(runtime, result).map(Into::into),
             Self::Prototype(resume) => resume.prototype(runtime, result).map(Into::into),
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "prototype result has no matching continuation",
@@ -1247,9 +1271,9 @@ impl Resume {
         result: NativeConversion<OrdinaryPropertyDescriptor>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::Definitions(resume) => resume.converted(result).map(Into::into),
+            Self::Definitions(resume) => resume.converted(runtime, result).map(Into::into),
             Self::Own(resume) => resume.converted(runtime, result).map(Into::into),
-            Self::Property(resume) => resume.converted(result).map(Into::into),
+            Self::Property(resume) => resume.converted(runtime, result).map(Into::into),
             _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "descriptor conversion has no matching operation",
             )),
@@ -1273,10 +1297,10 @@ impl Resume {
             Self::JsonStringify(resume) => resume.number(runtime, result).map(Into::into),
 
             Self::TypedSort(resume) => resume.number(runtime, result).map(Into::into),
-            Self::Math(resume) => resume.number(result).map(Into::into),
-            Self::Global(resume) => resume.number(result).map(Into::into),
+            Self::Math(resume) => resume.number(runtime, result).map(Into::into),
+            Self::Global(resume) => resume.number(runtime, result).map(Into::into),
             Self::Numeric(resume) => resume.number(runtime, result).map(Into::into),
-            Self::ScalarText(resume) => resume.number(result).map(Into::into),
+            Self::ScalarText(resume) => resume.number(runtime, result).map(Into::into),
             Self::DateConstructor(resume) => resume.number(runtime, result).map(Into::into),
             Self::DatePrototype(resume) => resume.number(runtime, result).map(Into::into),
 
@@ -1388,8 +1412,12 @@ impl Resume {
                 .resume(
                     runtime,
                     match result {
-                        NativeConversion::Value(value) => Completion::Return(Value::String(value)),
-                        NativeConversion::Throw(value) => Completion::Throw(value),
+                        NativeConversion::Value(value) => {
+                            Completion::Return(runtime.into_jsvalue(Value::String(value))?)
+                        }
+                        NativeConversion::Throw(value) => {
+                            Completion::Throw(runtime.into_jsvalue(value)?)
+                        }
                     },
                 )
                 .map(Into::into),
@@ -1398,8 +1426,12 @@ impl Resume {
             resume @ (Self::EvalScript(_) | Self::Test262Agent(_)) => resume.resume(
                 runtime,
                 match result {
-                    NativeConversion::Value(value) => Completion::Return(Value::String(value)),
-                    NativeConversion::Throw(value) => Completion::Throw(value),
+                    NativeConversion::Value(value) => {
+                        Completion::Return(runtime.into_jsvalue(Value::String(value))?)
+                    }
+                    NativeConversion::Throw(value) => {
+                        Completion::Throw(runtime.into_jsvalue(value)?)
+                    }
                 },
             ),
 
@@ -1407,8 +1439,8 @@ impl Resume {
 
             Self::RegExpIterator(resume) => resume.string(runtime, result).map(Into::into),
 
-            Self::FunctionText(resume) => resume.string(result).map(Into::into),
-            Self::DynamicFunction(resume) => resume.string(result).map(Into::into),
+            Self::FunctionText(resume) => resume.string(runtime, result).map(Into::into),
+            Self::DynamicFunction(resume) => resume.string(runtime, result).map(Into::into),
             Self::JsonParse(resume) => resume.string(runtime, result).map(Into::into),
             Self::JsonStringify(resume) => resume.string(runtime, result).map(Into::into),
             Self::JsonRaw(resume) => resume

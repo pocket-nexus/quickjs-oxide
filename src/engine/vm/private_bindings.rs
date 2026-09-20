@@ -4,7 +4,7 @@ use super::exception::runtime_error_to_vm_error;
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::atom::Atom;
 use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 pub(in crate::engine::vm) fn validate_definition(
     definition: VariableDefinition,
@@ -75,8 +75,8 @@ pub(in crate::engine::vm) fn initialize_callable(
     runtime: &Runtime,
     definition: VariableDefinition,
     binding: &mut FrameBinding,
-    home_object: Value,
-    callable_value: Value,
+    home_object: JsValue,
+    callable_value: JsValue,
     infer_name: bool,
     accepts_kind: impl FnOnce(ClosureVariableKind) -> bool,
 ) -> Result<(), Error> {
@@ -86,11 +86,15 @@ pub(in crate::engine::vm) fn initialize_callable(
             "private-callable initializer referenced an incompatible binding",
         ));
     }
-    let Value::Object(home_object) = home_object else {
+    let JsValue::Object(home_object) = home_object else {
         return Err(Error::internal(
             "private-callable initializer did not receive a HomeObject",
         ));
     };
+    let home_object = ObjectRef::from_owned_handle(runtime.clone(), home_object);
+    let callable_value = runtime
+        .root_and_release_jsvalue(callable_value)
+        .map_err(runtime_error_to_vm_error)?;
     let callable = runtime
         .callable_from_value(callable_value)
         .map_err(|error| Error::internal(error.to_string()))?;
@@ -163,7 +167,9 @@ pub(super) fn step(
             runtime,
             definition,
             execution.slots.local_mut(&frame.window, index)?,
-            home.clone(),
+            runtime
+                .dup_jsvalue(&home)
+                .map_err(runtime_error_to_vm_error)?,
             callable,
             kind == Initialization::Method,
             |binding_kind| match kind {
@@ -367,16 +373,17 @@ pub(in crate::engine::vm) fn branded_receiver(
     runtime: &Runtime,
     callable: &CallableRef,
     kind: ClosureVariableKind,
-    base: Value,
+    base: JsValue,
 ) -> Result<ObjectRef, Error> {
     use crate::engine::api::error::ErrorKind;
     // Resolve HomeObject's brand before validating the receiver, as QuickJS does.
     runtime
         .require_private_method_brand(callable, kind)
         .map_err(runtime_error_to_vm_error)?;
-    let Value::Object(receiver) = base else {
+    let JsValue::Object(receiver) = base else {
         return Err(Error::new(ErrorKind::Type, "not an object"));
     };
+    let receiver = ObjectRef::from_owned_handle(runtime.clone(), receiver);
     if !runtime
         .check_private_method_brand(callable, &receiver, kind)
         .map_err(runtime_error_to_vm_error)?

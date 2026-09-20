@@ -1,5 +1,5 @@
 //! Mechanical adapters for module domain operations.
-use super::{DirectCallTarget, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step, Value};
 use crate::engine::modules::import::ImportStep;
 impl From<ImportStep> for Step {
     fn from(step: ImportStep) -> Self {
@@ -14,7 +14,7 @@ impl From<ImportStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::Import(resume)),
@@ -38,7 +38,7 @@ impl From<ImportStep> for Step {
                 resume,
             } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(Value::Undefined),
+                receiver: Some(JsValue::Undefined),
                 arguments: Some(vec![reason]),
                 resume: Some(Resume::Import(resume)),
             },
@@ -71,7 +71,7 @@ impl From<crate::engine::modules::body::BodyStep> for Step {
             BodyStep::Complete(result) => Self::Complete(Some(result)),
             BodyStep::Call { callable, resume } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(Value::Undefined),
+                receiver: Some(JsValue::Undefined),
                 arguments: Some(Vec::new()),
                 resume: Some(Resume::ModuleBody(resume)),
             },
@@ -94,7 +94,7 @@ impl From<crate::engine::modules::evaluation::EvaluationStep> for Step {
                 resume,
             } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(Value::Undefined),
+                receiver: Some(JsValue::Undefined),
                 arguments: Some(vec![value]),
                 resume: Some(Resume::ModuleEvaluation(resume)),
             },
@@ -117,7 +117,7 @@ impl From<crate::engine::modules::callback::CallbackStep> for Step {
                 resume,
             } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(Value::Undefined),
+                receiver: Some(JsValue::Undefined),
                 arguments: Some(vec![value]),
                 resume: Some(Resume::ModuleCallback(resume)),
             },

@@ -31,8 +31,8 @@ pub(crate) struct PrimitiveResumeState {
     requested_object: Option<ObjectRef>,
     requested_key: Option<PropertyKey>,
     requested_callable: Option<CallableRef>,
-    requested_receiver: Option<Value>,
-    requested_arguments: Vec<Value>,
+    requested_receiver: Option<JsValue>,
+    requested_arguments: Vec<JsValue>,
 }
 
 enum Phase {
@@ -51,8 +51,8 @@ impl PrimitiveResume {
     fn call(
         mut self,
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
     ) -> PrimitiveStep {
         self.requested_callable = Some(callable);
         self.requested_receiver = Some(receiver);
@@ -70,12 +70,12 @@ impl PrimitiveResume {
             .take()
             .expect("primitive call callee")
     }
-    pub(crate) fn take_receiver(&mut self) -> Value {
+    pub(crate) fn take_receiver(&mut self) -> JsValue {
         self.requested_receiver
             .take()
             .expect("primitive call receiver")
     }
-    pub(crate) fn take_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_arguments(&mut self) -> Vec<JsValue> {
         std::mem::take(&mut self.requested_arguments)
     }
 
@@ -88,6 +88,7 @@ impl PrimitiveResume {
         let JsValue::Object(object) = value else {
             return PrimitiveStep::Complete(Completion::Return(value));
         };
+        let object = ObjectRef::from_owned_handle(runtime.clone(), object);
         let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
         let requested = object.clone();
         Self(Box::new(PrimitiveResumeState {
@@ -179,13 +180,15 @@ impl PrimitiveResume {
                 let Some(callable) = runtime.as_callable(&method)? else {
                     return self.type_error(runtime, "not a function");
                 };
-                let argument = Value::String(JsString::from_static(match self.0.hint {
-                    ToPrimitiveHint::String => "string",
-                    ToPrimitiveHint::Number => "number",
-                    ToPrimitiveHint::Default => "default",
-                }));
+                let argument = runtime.into_jsvalue(Value::String(JsString::from_static(
+                    match self.0.hint {
+                        ToPrimitiveHint::String => "string",
+                        ToPrimitiveHint::Number => "number",
+                        ToPrimitiveHint::Default => "default",
+                    },
+                )))?;
                 self.0.phase = Phase::ExoticResult;
-                let receiver = Value::Object(self.0.object.clone());
+                let receiver = JsValue::Object(self.0.object.clone().into_handle());
                 Ok(self.call(callable, receiver, vec![argument]))
             }
             Phase::ExoticResult => {
@@ -205,7 +208,7 @@ impl PrimitiveResume {
                     return self.failed_method(runtime, second);
                 };
                 self.0.phase = Phase::OrdinaryResult(second);
-                let receiver = Value::Object(self.0.object.clone());
+                let receiver = JsValue::Object(self.0.object.clone().into_handle());
                 Ok(self.call(callable, receiver, Vec::new()))
             }
             Phase::OrdinaryResult(second) => {
@@ -237,8 +240,12 @@ impl Runtime {
                 }
                 PrimitiveStep::Call { mut resume } => {
                     let callable = resume.take_callable();
-                    let receiver = resume.take_receiver();
-                    let arguments = resume.take_arguments();
+                    let receiver = self.root_and_release_jsvalue(resume.take_receiver())?;
+                    let arguments = resume
+                        .take_arguments()
+                        .into_iter()
+                        .map(|argument| self.root_and_release_jsvalue(argument))
+                        .collect::<Result<Vec<_>, _>>()?;
                     let completion = self.call_internal(realm, &callable, receiver, &arguments)?;
                     resume.resume(self, completion)?
                 }
@@ -268,6 +275,7 @@ mod resident_request_tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let value = context.eval("({valueOf(){return 7}})").unwrap();
+        let value = runtime.unroot_value(&value).unwrap();
         let PrimitiveStep::Get { mut resume } =
             PrimitiveResume::start(&runtime, context.realm, value, ToPrimitiveHint::Number)
         else {
@@ -292,14 +300,20 @@ mod resident_request_tests {
         };
         assert_eq!(&*resume.0 as *const PrimitiveResumeState, address);
         let callable = resume.take_callable();
-        let receiver = resume.take_receiver();
-        let arguments = resume.take_arguments();
+        let receiver = runtime
+            .root_and_release_jsvalue(resume.take_receiver())
+            .unwrap();
+        let arguments = resume
+            .take_arguments()
+            .into_iter()
+            .map(|argument| runtime.root_and_release_jsvalue(argument).unwrap())
+            .collect::<Vec<_>>();
         let completion = runtime
             .call_internal(context.realm, &callable, receiver, &arguments)
             .unwrap();
         assert!(matches!(
             resume.resume(&runtime, completion).unwrap(),
-            PrimitiveStep::Complete(Completion::Return(Value::Int(7)))
+            PrimitiveStep::Complete(Completion::Return(JsValue::Int(7)))
         ));
     }
 }

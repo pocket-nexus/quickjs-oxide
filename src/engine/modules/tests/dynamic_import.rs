@@ -39,11 +39,12 @@ fn dynamic_import_load_and_finish_are_distinct_fifo_jobs_with_gc_roots() {
         panic!("dynamic import did not fulfill with a namespace object");
     };
     let answer = runtime.intern_property_key("answer").unwrap();
-    assert_eq!(
+    assert_returned_completion(
+        &runtime,
         runtime
             .get_property_in_realm(context.realm, &namespace, &answer)
             .unwrap(),
-        Completion::Return(Value::Int(42))
+        Value::Int(42),
     );
     assert!(!runtime.is_job_pending());
     #[cfg(feature = "profiling")]
@@ -137,11 +138,12 @@ fn dynamic_import_waits_for_a_pending_tla_evaluation_and_reuses_it() {
     };
     assert_eq!(first_namespace.object_id(), second_namespace.object_id());
     let answer = runtime.intern_property_key("answer").unwrap();
-    assert_eq!(
+    assert_returned_completion(
+        &runtime,
         runtime
             .get_property_in_realm(context.realm, &first_namespace, &answer)
             .unwrap(),
-        Completion::Return(Value::Int(42))
+        Value::Int(42),
     );
     assert_script_true(
         &mut context,

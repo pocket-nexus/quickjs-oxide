@@ -19,7 +19,7 @@ use crate::engine::object::{
     PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{ConstructorRef, NativeArguments, NativeInvocation};
 use std::cell::Cell;
@@ -449,10 +449,11 @@ impl Runtime {
     pub(crate) fn new_rejected_default_promise(
         &self,
         realm: ContextId,
-        reason: Value,
+        reason: JsValue,
     ) -> Result<ObjectRef, RuntimeError> {
         let capability = self.new_default_promise_capability(realm)?;
         let promise = capability.promise.clone();
+        let reason = self.root_and_release_jsvalue(reason)?;
         self.settle_promise(realm, &promise, PromiseState::Rejected, reason)?;
         Ok(promise)
     }
@@ -479,15 +480,21 @@ impl Runtime {
         completion: Completion,
     ) -> Result<NativeConversion<RootedPromiseCapability>, RuntimeError> {
         let promise = match completion {
-            Completion::Return(Value::Object(promise)) => promise,
-            Completion::Return(_) => {
-                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not an object",
-                )?));
+            Completion::Return(value) => {
+                let JsValue::Object(id) = value else {
+                    return Ok(NativeConversion::Throw(self.new_native_error(
+                        realm,
+                        NativeErrorKind::Type,
+                        "not an object",
+                    )?));
+                };
+                ObjectRef::from_borrowed_handle(self.clone(), id)?
             }
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+            Completion::Throw(value) => {
+                return Ok(NativeConversion::Throw(
+                    self.root_and_release_jsvalue(value)?,
+                ));
+            }
         };
         let capture = self
             .0
@@ -496,7 +503,7 @@ impl Runtime {
             .heap
             .promise_capability_capture(executor.as_object().object_id())?;
         let (Some(resolve), Some(reject)) = (capture.resolve, capture.reject) else {
-            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
+            return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,
                 "resolving function is not callable",
@@ -560,7 +567,7 @@ impl Runtime {
             PromiseNativeKind::Constructor => {
                 self.call_promise_constructor(realm, invocation, arguments)
             }
-            PromiseNativeKind::Species => self.call_promise_species(invocation),
+            PromiseNativeKind::Species => self.call_promise_species(&invocation),
             PromiseNativeKind::Then => self.call_promise_then(realm, invocation, arguments),
             PromiseNativeKind::Catch => self.call_promise_catch(realm, invocation, arguments),
             PromiseNativeKind::Finally => self.call_promise_finally(realm, invocation, arguments),
@@ -578,14 +585,14 @@ impl Runtime {
 
     fn call_promise_species(
         &self,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Promise species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value))
+        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     fn call_promise_constructor(
@@ -633,20 +640,12 @@ impl Runtime {
             ));
         };
         let active = self.active_function()?;
-        let resolve = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise capability resolve argv was not padded",
-            ))?;
-        let reject = arguments
-            .readable
-            .get(1)
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise capability reject argv was not padded",
-            ))?;
+        let resolve = self.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Promise capability resolve argv was not padded"),
+        )?)?;
+        let reject = self.root_value(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("Promise capability reject argv was not padded"),
+        )?)?;
         let raw_resolve = self.raw_property_value(&resolve)?;
         let raw_reject = self.raw_property_value(&reject)?;
         let mut state = self.0.state.borrow_mut();
@@ -659,7 +658,7 @@ impl Runtime {
                 drop(state);
                 drop(resolve);
                 drop(reject);
-                Ok(Completion::Return(Value::Undefined))
+                Ok(Completion::Return(JsValue::Undefined))
             }
             Ok(false) => {
                 state.release_atoms(retained)?;
@@ -857,7 +856,9 @@ impl Runtime {
             .borrow_mut()
             .heap
             .promise_mark_handled(promise.object_id())?;
-        Ok(Completion::Return(Value::Object(capability.promise)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(
+            capability.promise,
+        ))?))
     }
 
     fn call_promise_catch(
@@ -888,14 +889,10 @@ impl Runtime {
                 "Promise resolve/reject received a constructor invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise resolve/reject argv was not padded",
-            ))?;
-        self.promise_static_resolve_core(realm, kind, this_value, argument)
+        let argument = self.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Promise resolve/reject argv was not padded"),
+        )?)?;
+        self.promise_static_resolve_core(realm, kind, self.root_value(&this_value)?, argument)
     }
 
     fn promise_static_resolve_core(
@@ -977,7 +974,9 @@ impl Runtime {
         .finish(self, realm)?
         {
             Completion::Return(_) => Ok(NativeConversion::Value(())),
-            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(
+                self.root_and_release_jsvalue(value)?,
+            )),
         }
     }
 

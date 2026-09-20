@@ -18,7 +18,7 @@ use crate::engine::heap::{
 use crate::engine::object::{
     DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
 };
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
 use crate::engine::vm::suspend::{self, EncodedVmActivation, VmActivationResume, VmRunOutcome};
 use crate::engine::vm::{Completion, VmResume, VmSuspendKind};
@@ -199,9 +199,13 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match self.call_generator_prototype_resume_raw(realm, kind, invocation, arguments)? {
             NativeInvokeOutcome::Completion(completion) => Ok(completion),
-            NativeInvokeOutcome::IteratorNextRaw { value, done } => Ok(Completion::Return(
-                Value::Object(self.new_iterator_result(realm, value, done)?),
-            )),
+            NativeInvokeOutcome::IteratorNextRaw { value, done } => {
+                let value = self.root_and_release_jsvalue(value)?;
+                let result = self.new_iterator_result(realm, value, done)?;
+                Ok(Completion::Return(
+                    self.into_jsvalue(Value::Object(result))?,
+                ))
+            }
         }
     }
 
@@ -231,11 +235,12 @@ impl Runtime {
         let argument = arguments
             .readable
             .first()
-            .cloned()
+            .map(|value| self.dup_jsvalue(value))
+            .transpose()?
             .ok_or(RuntimeError::Invariant(
                 "Generator resume has no readable argument slot",
             ))?;
-        let Value::Object(generator) = this_value else {
+        let Value::Object(generator) = self.root_and_release_jsvalue(this_value)? else {
             return Ok(GeneratorStep::Complete(NativeInvokeOutcome::Completion(
                 Completion::Throw(self.new_native_error_jsvalue(
                     realm,
@@ -402,7 +407,7 @@ impl Runtime {
                     }
                 };
                 if state == GeneratorState::SuspendedYieldStar
-                    && !matches!(yielded, Value::Object(_))
+                    && !matches!(yielded, JsValue::Object(_))
                 {
                     self.complete_executing_generator(generator)?;
                     return Err(RuntimeError::Invariant(
@@ -437,11 +442,11 @@ impl Runtime {
 
     fn completed_generator_outcome(
         kind: GeneratorResumeKind,
-        argument: Value,
+        argument: JsValue,
     ) -> NativeInvokeOutcome {
         match kind {
             GeneratorResumeKind::Next => NativeInvokeOutcome::IteratorNextRaw {
-                value: Value::Undefined,
+                value: JsValue::Undefined,
                 done: true,
             },
             GeneratorResumeKind::Return => NativeInvokeOutcome::IteratorNextRaw {
@@ -975,12 +980,15 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(
-            runtime
-                .call_internal(context.realm, &callable, Value::Undefined, &[])
-                .unwrap(),
-            Completion::Throw(marker)
-        );
+        let thrown = match runtime
+            .call_internal(context.realm, &callable, Value::Undefined, &[])
+            .unwrap()
+        {
+            Completion::Throw(value) => value,
+            other => panic!("expected generator creation to throw, got {other:?}"),
+        };
+        assert_eq!(runtime.root_value(&thrown).unwrap(), marker);
+        runtime.release_jsvalue(thrown).unwrap();
         assert_eq!(context.eval("__order").unwrap(), Value::Int(1));
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

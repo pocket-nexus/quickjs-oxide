@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, operations::InternalSetResult},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{ConstructorRef, NativeArguments, NativeInvocation},
@@ -79,24 +79,21 @@ impl RegExpMatchAllStep {
                 "RegExp @@matchAll did not receive a generic invocation",
             ));
         };
+        let this_value = runtime.root_value(this_value)?;
         let Value::Object(regexp) = this_value else {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
         Ok(Self::make_primitive(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "RegExp @@matchAll input argv was not padded",
-                ))?
-                .clone(),
+            runtime.dup_jsvalue(arguments.readable.first().ok_or(RuntimeError::Invariant(
+                "RegExp @@matchAll input argv was not padded",
+            ))?)?,
             ToPrimitiveHint::String,
             RegExpMatchAllResume(Box::new(RegExpMatchAllResumeState {
                 step_pending: RegExpMatchAllStepPending::default(),
                 realm,
-                regexp: regexp.clone(),
+                regexp,
                 phase: Phase::Input,
             })),
         ))
@@ -111,7 +108,9 @@ impl RegExpMatchAllResume {
         let constructor = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(RegExpMatchAllStep::Complete(Completion::Throw(value)));
+                return Ok(RegExpMatchAllStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let Phase::Species(input) = self.0.phase else {
@@ -137,8 +136,8 @@ impl RegExpMatchAllResume {
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let completion = match runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            Some(value) => Completion::Throw(value),
-            None => Completion::Return(Value::Undefined),
+            Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+            None => Completion::Return(JsValue::Undefined),
         };
         self.resume(runtime, completion)
     }
@@ -148,7 +147,7 @@ impl RegExpMatchAllResume {
         result: Completion,
     ) -> Result<RegExpMatchAllStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(RegExpMatchAllStep::Complete(Completion::Throw(value)));
             }
@@ -158,7 +157,9 @@ impl RegExpMatchAllResume {
                 let input = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpMatchAllStep::Complete(Completion::Throw(value)));
+                        return Ok(RegExpMatchAllStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 Ok(RegExpMatchAllStep::make_species(self.0.regexp.clone(), {
@@ -168,7 +169,7 @@ impl RegExpMatchAllResume {
                 }))
             }
             Phase::Flags { input, constructor } => Ok(RegExpMatchAllStep::make_primitive(
-                value,
+                runtime.into_jsvalue(value)?,
                 ToPrimitiveHint::String,
                 {
                     let updated_0 = Phase::FlagsPrimitive { input, constructor };
@@ -180,7 +181,9 @@ impl RegExpMatchAllResume {
                 let flags = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpMatchAllStep::Complete(Completion::Throw(value)));
+                        return Ok(RegExpMatchAllStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let mut arguments = Vec::new();
@@ -193,8 +196,8 @@ impl RegExpMatchAllResume {
                         )?,
                     )));
                 }
-                arguments.push(Value::Object(self.0.regexp.clone()));
-                arguments.push(Value::String(flags.clone()));
+                arguments.push(runtime.into_jsvalue(Value::Object(self.0.regexp.clone()))?);
+                arguments.push(runtime.into_jsvalue(Value::String(flags.clone()))?);
                 Ok(RegExpMatchAllStep::make_construct(
                     constructor,
                     arguments,
@@ -231,7 +234,7 @@ impl RegExpMatchAllResume {
                 flags,
                 matcher,
             } => Ok(RegExpMatchAllStep::make_primitive(
-                value,
+                runtime.into_jsvalue(value)?,
                 ToPrimitiveHint::Number,
                 {
                     let updated_0 = Phase::LastIndexPrimitive {
@@ -251,14 +254,16 @@ impl RegExpMatchAllResume {
                 let length = match runtime.native_to_length(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpMatchAllStep::Complete(Completion::Throw(value)));
+                        return Ok(RegExpMatchAllStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 Ok(RegExpMatchAllStep::make_set(
                     matcher.clone(),
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
-                    Value::number(length as f64),
+                    runtime.into_jsvalue(Value::number(length as f64))?,
                     {
                         let updated_0 = Phase::Set {
                             input,
@@ -280,13 +285,13 @@ impl RegExpMatchAllResume {
                     .utf16_units()
                     .any(|unit| unit == u16::from(b'u') || unit == u16::from(b'v'));
                 Ok(RegExpMatchAllStep::Complete(Completion::Return(
-                    Value::Object(runtime.new_regexp_string_iterator(
+                    runtime.into_jsvalue(Value::Object(runtime.new_regexp_string_iterator(
                         self.0.realm,
                         &matcher,
                         input,
                         global,
                         full_unicode,
-                    )?),
+                    )?))?,
                 )))
             }
             Phase::Species(_) => Err(RuntimeError::Invariant(
@@ -307,8 +312,8 @@ pub(super) fn finish(
                 let value = resume.take_primitive_value();
                 let hint = resume.take_primitive_hint();
                 {
-                    let result = if matches!(value, Value::Object(_)) {
-                        runtime.to_primitive(realm, value, hint)?
+                    let result = if matches!(value, JsValue::Object(_)) {
+                        runtime.to_primitive_jsvalue(realm, value, hint)?
                     } else {
                         Completion::Return(value)
                     };
@@ -329,7 +334,11 @@ pub(super) fn finish(
             }
             RegExpMatchAllStep::Construct { mut resume } => {
                 let constructor = resume.take_construct_constructor();
-                let arguments = resume.take_construct_arguments();
+                let arguments = resume
+                    .take_construct_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.construct_constructor_internal(
@@ -343,7 +352,7 @@ pub(super) fn finish(
             RegExpMatchAllStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 resume.set(
                     runtime,
                     runtime.internal_set(
@@ -361,17 +370,17 @@ pub(super) fn finish(
 
 #[derive(Default)]
 pub(crate) struct RegExpMatchAllStepPending {
-    value: Option<Value>,
+    value: Option<JsValue>,
     hint: Option<ToPrimitiveHint>,
     object: Option<ObjectRef>,
     key: Option<PropertyKey>,
     regexp: Option<ObjectRef>,
     constructor: Option<ConstructorRef>,
-    arguments: Option<Vec<Value>>,
+    arguments: Option<Vec<JsValue>>,
 }
 impl RegExpMatchAllStep {
     pub(crate) fn make_primitive(
-        value: Value,
+        value: JsValue,
         hint: ToPrimitiveHint,
         mut resume: RegExpMatchAllResume,
     ) -> Self {
@@ -394,7 +403,7 @@ impl RegExpMatchAllStep {
     }
     pub(crate) fn make_construct(
         constructor: ConstructorRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         mut resume: RegExpMatchAllResume,
     ) -> Self {
         resume.0.step_pending.constructor = Some(constructor);
@@ -404,7 +413,7 @@ impl RegExpMatchAllStep {
     pub(crate) fn make_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: RegExpMatchAllResume,
     ) -> Self {
         resume.0.step_pending.object = Some(object);
@@ -414,7 +423,7 @@ impl RegExpMatchAllStep {
     }
 }
 impl RegExpMatchAllResume {
-    pub(crate) fn take_primitive_value(&mut self) -> Value {
+    pub(crate) fn take_primitive_value(&mut self) -> JsValue {
         self.0
             .step_pending
             .value
@@ -459,7 +468,7 @@ impl RegExpMatchAllResume {
             .take()
             .expect("RegExpMatchAllStep::Construct lost constructor")
     }
-    pub(crate) fn take_construct_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_construct_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .step_pending
             .arguments
@@ -481,7 +490,7 @@ impl RegExpMatchAllResume {
             .take()
             .expect("RegExpMatchAllStep::Set lost key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .step_pending
             .value

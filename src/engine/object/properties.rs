@@ -1367,6 +1367,7 @@ impl Runtime {
             step = match step {
                 crate::engine::object::ArrayLengthStep::Complete(result) => return Ok(result),
                 crate::engine::object::ArrayLengthStep::Number { value, resume } => {
+                    let value = self.root_and_release_jsvalue(value)?;
                     resume.number(self, self.array_length_to_number(realm, &value)?)?
                 }
             };

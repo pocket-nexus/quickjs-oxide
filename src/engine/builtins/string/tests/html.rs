@@ -339,16 +339,16 @@ fn string_create_html_small_limit_latches_too_long_but_attribute_throw_wins() {
             context.realm,
             StringCreateHtmlKind::Anchor,
             NativeInvocation::Call {
-                this_value: receiver.clone(),
+                this_value: runtime.unroot_value(&receiver).unwrap(),
             },
             &NativeArguments {
                 actual_arg_count: 2,
-                readable: vec![attribute.clone(), extra],
+                readable: vec![js(&runtime, attribute), js(&runtime, extra)],
             },
             16,
         )
         .unwrap();
-    let Completion::Throw(Value::Object(error)) = completion else {
+    let Value::Object(error) = thrown(&runtime, completion) else {
         panic!("one-below-boundary CreateHTML did not throw an Error object");
     };
     for (name, expected) in [("name", "InternalError"), ("message", "string too long")] {
@@ -367,42 +367,51 @@ fn string_create_html_small_limit_latches_too_long_but_attribute_throw_wins() {
     );
 
     assert_eq!(
-        runtime
-            .call_string_prototype_create_html_with_limit(
-                context.realm,
-                StringCreateHtmlKind::Anchor,
-                NativeInvocation::Call {
-                    this_value: Value::String(JsString::from_static("B")),
-                },
-                &NativeArguments {
-                    actual_arg_count: 1,
-                    readable: vec![Value::String(JsString::from_static("Q"))],
-                },
-                17,
-            )
-            .unwrap(),
-        Completion::Return(Value::String(JsString::from_static("<a name=\"Q\">B</a>",))),
+        returned(
+            &runtime,
+            runtime
+                .call_string_prototype_create_html_with_limit(
+                    context.realm,
+                    StringCreateHtmlKind::Anchor,
+                    NativeInvocation::Call {
+                        this_value: js(&runtime, Value::String(JsString::from_static("B"))),
+                    },
+                    &NativeArguments {
+                        actual_arg_count: 1,
+                        readable: vec![js(
+                            &runtime,
+                            Value::String(JsString::from_static("Q")),
+                        )],
+                    },
+                    17,
+                )
+                .unwrap(),
+        ),
+        Value::String(JsString::from_static("<a name=\"Q\">B</a>",)),
         "the exact CreateHTML output limit was rejected",
     );
 
     context.eval("createHtmlLimitLog=''").unwrap();
     let throwing_attribute = context.eval("createHtmlLimitThrow").unwrap();
     assert_eq!(
-        runtime
-            .call_string_prototype_create_html_with_limit(
-                context.realm,
-                StringCreateHtmlKind::Anchor,
-                NativeInvocation::Call {
-                    this_value: receiver,
-                },
-                &NativeArguments {
-                    actual_arg_count: 1,
-                    readable: vec![throwing_attribute],
-                },
-                1,
-            )
-            .unwrap(),
-        Completion::Throw(Value::Int(72)),
+        thrown(
+            &runtime,
+            runtime
+                .call_string_prototype_create_html_with_limit(
+                    context.realm,
+                    StringCreateHtmlKind::Anchor,
+                    NativeInvocation::Call {
+                        this_value: js(&runtime, receiver),
+                    },
+                    &NativeArguments {
+                        actual_arg_count: 1,
+                        readable: vec![js(&runtime, throwing_attribute)],
+                    },
+                    1,
+                )
+                .unwrap(),
+        ),
+        Value::Int(72),
         "CreateHTML's latched TooLong replaced a later user throw",
     );
     assert_eq!(

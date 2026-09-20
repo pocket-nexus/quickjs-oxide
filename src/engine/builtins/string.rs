@@ -17,7 +17,7 @@ use crate::engine::object::{ObjectRef, SymbolRef};
 #[cfg(test)]
 use crate::engine::object::{PropertyKey, WellKnownSymbol};
 use crate::engine::value::{
-    CreateHtmlStringBuffer, JsString, JsStringBuilder, JsStringError, Value,
+    CreateHtmlStringBuffer, JsString, JsStringBuilder, JsStringError, JsValue, Value,
 };
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
@@ -406,7 +406,9 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         let canonical_key = self.intern_property_key(canonical)?;
         let value = match self.get_property_in_realm(realm, string_prototype, &canonical_key)? {
-            Completion::Return(value @ Value::Object(_)) => value,
+            Completion::Return(value @ JsValue::Object(_)) => {
+                self.root_and_release_jsvalue(value)?
+            }
             Completion::Return(_) => {
                 return Err(RuntimeError::Invariant(
                     "String canonical alias target was not callable",
@@ -655,7 +657,7 @@ impl Runtime {
             }
         };
 
-        Ok(Completion::Return(Value::Int(result)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Int(result))?))
     }
 
     /// Internal-class fallback of pinned QuickJS `js_is_regexp` after an
@@ -776,7 +778,7 @@ impl Runtime {
                 start >= 0 && string_region_matches(&source, &needle, start)
             }
         };
-        Ok(Completion::Return(Value::Bool(found)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Bool(found))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_split` for the generic
@@ -801,24 +803,24 @@ impl Runtime {
         realm: ContextId,
         source: JsString,
         result: ObjectRef,
-        separator: &Value,
+        separator: &crate::engine::value::JsValue,
         separator_string: JsString,
         limit: u32,
     ) -> Result<Completion, RuntimeError> {
         let mut length = 0_u32;
         if limit == 0 {
-            return Ok(Completion::Return(Value::Object(result)));
+            return Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?));
         }
-        if matches!(separator, Value::Undefined) {
+        if matches!(separator, crate::engine::value::JsValue::Undefined) {
             if let Some(value) = self.define_string_split_element(
                 realm,
                 &result,
                 &mut length,
                 Value::String(source.clone()),
             )? {
-                return Ok(Completion::Throw(value));
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
-            return Ok(Completion::Return(Value::Object(result)));
+            return Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?));
         }
 
         let source_len = source.len();
@@ -831,10 +833,10 @@ impl Runtime {
                     &mut length,
                     Value::String(source),
                 )? {
-                    return Ok(Completion::Throw(value));
+                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
                 }
             }
-            return Ok(Completion::Return(Value::Object(result)));
+            return Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?));
         }
 
         if separator_len == 0 {
@@ -845,13 +847,13 @@ impl Runtime {
                     &mut length,
                     Value::String(source.sub_string(index, index + 1)),
                 )? {
-                    return Ok(Completion::Throw(value));
+                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
                 }
                 if length == limit {
                     break;
                 }
             }
-            return Ok(Completion::Return(Value::Object(result)));
+            return Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?));
         }
 
         let source_len_i32 = i32::try_from(source_len).map_err(|_| {
@@ -876,10 +878,10 @@ impl Runtime {
                     usize::try_from(end).expect("non-negative split end fits usize"),
                 )),
             )? {
-                return Ok(Completion::Throw(value));
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
             if length == limit {
-                return Ok(Completion::Return(Value::Object(result)));
+                return Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?));
             }
             start = end + separator_len_i32;
         }
@@ -892,9 +894,9 @@ impl Runtime {
                 source_len,
             )),
         )? {
-            return Ok(Completion::Throw(value));
+            return Ok(Completion::Throw(self.into_jsvalue(value)?));
         }
-        Ok(Completion::Return(Value::Object(result)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(result))?))
     }
 
     /// CreateDataProperty on the fresh result Array. `JsString::MAX_LEN` keeps
@@ -988,9 +990,9 @@ impl Runtime {
             .map_err(|_| RuntimeError::Invariant("String subrange start became negative"))?;
         let range_end = usize::try_from(range_end)
             .map_err(|_| RuntimeError::Invariant("String subrange end became negative"))?;
-        Ok(Completion::Return(Value::String(
+        Ok(Completion::Return(self.into_jsvalue(Value::String(
             source.sub_string(range_start, range_end),
-        )))
+        ))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_repeat`, including its distinct
@@ -1064,7 +1066,7 @@ impl Runtime {
                 )?));
             }
         };
-        Ok(Completion::Return(Value::String(repeated)))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(repeated))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_pad`. The typed selector mirrors
@@ -1117,7 +1119,7 @@ impl Runtime {
         string_limit: usize,
     ) -> Result<Completion, RuntimeError> {
         if filler.as_ref().is_some_and(JsString::is_empty) {
-            return Ok(Completion::Return(Value::String(source)));
+            return Ok(Completion::Return(self.into_jsvalue(Value::String(source))?));
         }
 
         let target = usize::try_from(target)
@@ -1144,7 +1146,7 @@ impl Runtime {
                 )?));
             }
         };
-        Ok(Completion::Return(Value::String(padded)))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(padded))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_trim`. The selector retains its
@@ -1195,7 +1197,7 @@ impl Runtime {
                 ));
             }
         };
-        Ok(Completion::Return(Value::String(trimmed)))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(trimmed))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_toLowerCase`. Its magic bit
@@ -1255,7 +1257,7 @@ impl Runtime {
                 )?));
             }
         };
-        Ok(Completion::Return(Value::String(converted)))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(converted))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_normalize`. Receiver coercion
@@ -1320,7 +1322,7 @@ impl Runtime {
                 )?));
             }
         };
-        Ok(Completion::Return(Value::String(normalized)))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(normalized))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_localeCompare`. QuickJS's
@@ -1399,7 +1401,7 @@ impl Runtime {
                 std::cmp::Ordering::Equal => 0,
                 std::cmp::Ordering::Greater => 1,
             });
-        Ok(Completion::Return(Value::Int(comparison)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Int(comparison))?))
     }
 
     /// Rust port of pinned QuickJS `js_string_CreateHTML`. Receiver coercion
@@ -1464,6 +1466,6 @@ impl Runtime {
                 )?));
             }
         };
-        Ok(Completion::Return(Value::String(result)))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(result))?))
     }
 }

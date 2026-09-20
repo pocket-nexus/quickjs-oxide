@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::ErrorConstructorKind,
     heap::ContextId,
     object::{ObjectRef, PropertyKey},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -76,6 +76,13 @@ impl ErrorStep {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
+        let mut owned_arguments = Vec::new();
+        owned_arguments
+            .try_reserve_exact(arguments.readable.len())
+            .map_err(|_| RuntimeError::Invariant("Error argument allocation failed"))?;
+        for argument in &arguments.readable {
+            owned_arguments.push(runtime.root_value(argument)?);
+        }
         let mut resume = ErrorResume(Box::new(ErrorResumeState {
             pending_effect: ErrorStepPending::default(),
             realm,
@@ -83,7 +90,7 @@ impl ErrorStep {
             phase: Phase::Prototype,
             object: None,
             new_target: Value::Undefined,
-            arguments: arguments.readable.clone(),
+            arguments: owned_arguments,
             actual: arguments.actual_arg_count,
             name: JsString::from_static("Error"),
         }));
@@ -94,13 +101,14 @@ impl ErrorStep {
                         "Error constructor requires constructor-or-function invocation",
                     ));
                 };
-                resume.new_target = if matches!(new_target, Value::Undefined) {
+                resume.new_target = if matches!(new_target, JsValue::Undefined) {
                     Value::Object(runtime.active_function()?)
                 } else {
-                    new_target.clone()
+                    runtime.root_value(new_target)?
                 };
                 Ok({
-                    let __pending_field_receiver = resume.new_target.clone();
+                    let __pending_field_receiver =
+                        runtime.into_jsvalue(resume.new_target.clone())?;
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
                     let __pending_field_resume = resume;
@@ -117,15 +125,20 @@ impl ErrorStep {
                         "Error string requires generic invocation",
                     ));
                 };
-                let Value::Object(object) = this_value else {
+                let JsValue::Object(object) = this_value else {
                     return Ok(Self::Complete(Completion::Throw(
-                        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
+                        runtime.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not an object",
+                        )?,
                     )));
                 };
+                let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
                 resume.object = Some(object.clone());
                 resume.phase = Phase::NameRead;
                 Ok({
-                    let __pending_field_receiver = this_value.clone();
+                    let __pending_field_receiver = JsValue::Object(object.into_handle());
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
                     let __pending_field_resume = resume;
@@ -158,7 +171,7 @@ impl ErrorResume {
         result: Completion,
     ) -> Result<ErrorStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(ErrorStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
@@ -174,7 +187,9 @@ impl ErrorResume {
                     {
                         NativeConversion::Value(realm) => realm,
                         NativeConversion::Throw(value) => {
-                            return Ok(ErrorStep::Complete(Completion::Throw(value)));
+                            return Ok(ErrorStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
                         }
                     };
                     let prototype = {
@@ -205,7 +220,7 @@ impl ErrorResume {
                 } else {
                     self.0.phase = Phase::Message;
                     Ok({
-                        let __pending_field_value = message;
+                        let __pending_field_value = runtime.into_jsvalue(message)?;
                         let __pending_field_resume = self;
                         ErrorStep::request_string(__pending_field_value, __pending_field_resume)
                     })
@@ -242,7 +257,7 @@ impl ErrorResume {
                 } else {
                     self.0.phase = Phase::Name;
                     Ok({
-                        let __pending_field_value = value;
+                        let __pending_field_value = runtime.into_jsvalue(value)?;
                         let __pending_field_resume = self;
                         ErrorStep::request_string(__pending_field_value, __pending_field_resume)
                     })
@@ -254,7 +269,7 @@ impl ErrorResume {
                     self.string(runtime, NativeConversion::Value(JsString::from_static("")))
                 } else {
                     Ok({
-                        let __pending_field_value = value;
+                        let __pending_field_value = runtime.into_jsvalue(value)?;
                         let __pending_field_resume = self;
                         ErrorStep::request_string(__pending_field_value, __pending_field_resume)
                     })
@@ -271,7 +286,9 @@ impl ErrorResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ErrorStep::Complete(Completion::Throw(value)));
+                return Ok(ErrorStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -300,9 +317,9 @@ impl ErrorResume {
                         .try_concat(&JsString::from_static(": "))?
                         .try_concat(&value)?
                 };
-                Ok(ErrorStep::Complete(Completion::Return(Value::String(
-                    value,
-                ))))
+                Ok(ErrorStep::Complete(Completion::Return(
+                    runtime.unroot_value(&Value::String(value))?,
+                )))
             }
             _ => Err(RuntimeError::Invariant("Error string reply phase mismatch")),
         }
@@ -310,7 +327,7 @@ impl ErrorResume {
     fn text(mut self, runtime: &Runtime) -> Result<ErrorStep, RuntimeError> {
         self.0.phase = Phase::TextRead;
         Ok({
-            let __pending_field_receiver = Value::Object(self.object()?);
+            let __pending_field_receiver = JsValue::Object(self.object()?.into_handle());
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)?;
             let __pending_field_resume = self;
@@ -355,7 +372,9 @@ impl ErrorResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ErrorStep::Complete(Completion::Throw(value)));
+                return Ok(ErrorStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         if !value {
@@ -364,7 +383,7 @@ impl ErrorResume {
         let receiver = self.0.arguments[usize::from(self.aggregate_kind()) + 1].clone();
         self.0.phase = Phase::Cause;
         Ok({
-            let __pending_field_receiver = receiver;
+            let __pending_field_receiver = runtime.into_jsvalue(receiver)?;
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Cause)?;
             let __pending_field_resume = self;
@@ -380,13 +399,9 @@ impl ErrorResume {
             self.0.phase = Phase::Aggregate;
             Ok({
                 let __pending_field_iterable =
-                    self.0
-                        .arguments
-                        .first()
-                        .cloned()
-                        .ok_or(RuntimeError::Invariant(
-                            "AggregateError errors argv missing",
-                        ))?;
+                    runtime.into_jsvalue(self.0.arguments.first().cloned().ok_or(
+                        RuntimeError::Invariant("AggregateError errors argv missing"),
+                    )?)?;
                 let __pending_field_resume = self;
                 ErrorStep::request_aggregate(__pending_field_iterable, __pending_field_resume)
             })
@@ -397,7 +412,9 @@ impl ErrorResume {
     fn finish(self, runtime: &Runtime) -> Result<ErrorStep, RuntimeError> {
         let value = Value::Object(self.object()?);
         runtime.ensure_error_backtrace(&value, true, None)?;
-        Ok(ErrorStep::Complete(Completion::Return(value)))
+        Ok(ErrorStep::Complete(Completion::Return(
+            runtime.into_jsvalue(value)?,
+        )))
     }
 }
 pub(crate) fn finish(
@@ -409,7 +426,7 @@ pub(crate) fn finish(
         step = match step {
             ErrorStep::Complete(result) => return Ok(result),
             ErrorStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -417,7 +434,7 @@ pub(crate) fn finish(
                 )?
             }
             ErrorStep::String { mut resume } => {
-                let value = resume.take_string_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
                 resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
             }
             ErrorStep::Has { mut resume } => {
@@ -429,7 +446,8 @@ pub(crate) fn finish(
                 )?
             }
             ErrorStep::Aggregate { mut resume } => {
-                let iterable = resume.take_aggregate_iterable();
+                let iterable =
+                    runtime.root_and_release_jsvalue(resume.take_aggregate_iterable())?;
                 resume.resume(
                     runtime,
                     super::aggregate::finish(
@@ -445,20 +463,24 @@ pub(crate) fn finish(
 
 #[derive(Default)]
 struct ErrorStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
-    string_value: Option<Value>,
+    string_value: Option<JsValue>,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
-    aggregate_iterable: Option<Value>,
+    aggregate_iterable: Option<JsValue>,
 }
 impl ErrorStep {
-    pub(crate) fn request_read(receiver: Value, key: PropertyKey, mut resume: ErrorResume) -> Self {
+    pub(crate) fn request_read(
+        receiver: JsValue,
+        key: PropertyKey,
+        mut resume: ErrorResume,
+    ) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_string(value: Value, mut resume: ErrorResume) -> Self {
+    pub(crate) fn request_string(value: JsValue, mut resume: ErrorResume) -> Self {
         resume.0.pending_effect.string_value = Some(value);
         Self::String { resume }
     }
@@ -471,13 +493,13 @@ impl ErrorStep {
         resume.0.pending_effect.has_key = Some(key);
         Self::Has { resume }
     }
-    pub(crate) fn request_aggregate(iterable: Value, mut resume: ErrorResume) -> Self {
+    pub(crate) fn request_aggregate(iterable: JsValue, mut resume: ErrorResume) -> Self {
         resume.0.pending_effect.aggregate_iterable = Some(iterable);
         Self::Aggregate { resume }
     }
 }
 impl ErrorResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -491,7 +513,7 @@ impl ErrorResume {
             .take()
             .expect("ErrorStep Read key")
     }
-    pub(crate) fn take_string_value(&mut self) -> Value {
+    pub(crate) fn take_string_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .string_value
@@ -512,7 +534,7 @@ impl ErrorResume {
             .take()
             .expect("ErrorStep Has key")
     }
-    pub(crate) fn take_aggregate_iterable(&mut self) -> Value {
+    pub(crate) fn take_aggregate_iterable(&mut self) -> JsValue {
         self.0
             .pending_effect
             .aggregate_iterable

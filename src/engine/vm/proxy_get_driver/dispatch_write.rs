@@ -102,7 +102,14 @@ pub(super) fn keys(
                             unreachable!()
                         };
                         *step = resume
-                            .keys(runtime, NativeConversion::Throw(value))
+                            .keys(
+                                runtime,
+                                NativeConversion::Throw(
+                                    runtime
+                                        .root_and_release_jsvalue(value)
+                                        .map_err(runtime_error_to_vm_error)?,
+                                ),
+                            )
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -146,7 +153,13 @@ pub(super) fn keys(
                 let resume = resume.take().expect("selected Step field");
 
                 *step = match runtime
-                    .prepare_value_property_read_completion(realm, receiver, &key)
+                    .prepare_value_property_read_completion(
+                        realm,
+                        runtime
+                            .root_and_release_jsvalue(receiver)
+                            .map_err(runtime_error_to_vm_error)?,
+                        &key,
+                    )
                     .map_err(runtime_error_to_vm_error)?
                 {
                     NativeConversion::Value(read) => Step::PreparedRead {
@@ -155,7 +168,14 @@ pub(super) fn keys(
                         resume: Some(resume),
                     },
                     NativeConversion::Throw(reason) => resume
-                        .resume(runtime, Completion::Throw(reason))
+                        .resume(
+                            runtime,
+                            Completion::Throw(
+                                runtime
+                                    .into_jsvalue(reason)
+                                    .map_err(runtime_error_to_vm_error)?,
+                            ),
+                        )
                         .map_err(runtime_error_to_vm_error)?,
                 };
                 continue;
@@ -199,7 +219,11 @@ pub(super) fn set(
                     *step = resume
                         .set(
                             runtime,
-                            crate::engine::object::operations::PropertySetAction::Throw(value),
+                            crate::engine::object::operations::PropertySetAction::Throw(
+                                runtime
+                                    .root_and_release_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?,
+                            ),
                         )
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -230,9 +254,15 @@ pub(super) fn set(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
                 query.parents.push(Resume::SetLength(resume));
-                *step = crate::engine::object::ArrayLengthStep::start(runtime, Some(realm), value)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                *step = crate::engine::object::ArrayLengthStep::start(
+                    runtime,
+                    Some(realm),
+                    runtime
+                        .root_and_release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
                 continue;
             }
             Step::SetSpecial {
@@ -248,8 +278,14 @@ pub(super) fn set(
                 let receiver = receiver.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
+                let rooted_value = runtime
+                    .root_value(&value)
+                    .map_err(runtime_error_to_vm_error)?;
+                let rooted_receiver = runtime
+                    .root_value(&receiver)
+                    .map_err(runtime_error_to_vm_error)?;
                 match runtime
-                    .prepare_typed_array_set(&object, &key, &value, &receiver)
+                    .prepare_typed_array_set(&object, &key, &rooted_value, &rooted_receiver)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     None => {
@@ -282,8 +318,16 @@ pub(super) fn set(
 
                     *step = Step::Call {
                         target: Some(DirectCallTarget::Callable(setter)),
-                        receiver: Some(receiver),
-                        arguments: Some(vec![argument]),
+                        receiver: Some(
+                            runtime
+                                .into_jsvalue(receiver)
+                                .map_err(runtime_error_to_vm_error)?,
+                        ),
+                        arguments: Some(vec![
+                            runtime
+                                .into_jsvalue(argument)
+                                .map_err(runtime_error_to_vm_error)?,
+                        ]),
                         resume: Some(Resume::Setter),
                     };
                     continue;
@@ -332,7 +376,11 @@ pub(super) fn set(
                     *step = resume
                         .set(
                             runtime,
-                            crate::engine::object::operations::PropertySetAction::Throw(value),
+                            crate::engine::object::operations::PropertySetAction::Throw(
+                                runtime
+                                    .root_and_release_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?,
+                            ),
                         )
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -347,8 +395,12 @@ pub(super) fn set(
                     Some(realm),
                     object,
                     key,
-                    value,
-                    receiver,
+                    runtime
+                        .root_and_release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?,
+                    runtime
+                        .root_and_release_jsvalue(receiver)
+                        .map_err(runtime_error_to_vm_error)?,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 // The budget check and parent reservation above must precede
@@ -382,7 +434,11 @@ pub(super) fn set(
                     *step = resume
                         .set(
                             runtime,
-                            crate::engine::object::operations::PropertySetAction::Throw(value),
+                            crate::engine::object::operations::PropertySetAction::Throw(
+                                runtime
+                                    .root_and_release_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?,
+                            ),
                         )
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -393,7 +449,16 @@ pub(super) fn set(
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
                 query.parents.push(resume);
                 *step = crate::engine::object::ProxySetStep::start(
-                    runtime, realm, object, key, value, receiver,
+                    runtime,
+                    realm,
+                    object,
+                    key,
+                    runtime
+                        .root_and_release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?,
+                    runtime
+                        .root_and_release_jsvalue(receiver)
+                        .map_err(runtime_error_to_vm_error)?,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -466,7 +531,14 @@ pub(super) fn define(
                             unreachable!()
                         };
                         *step = resume
-                            .defined(runtime, NativeConversion::Throw(value))
+                            .defined(
+                                runtime,
+                                NativeConversion::Throw(
+                                    runtime
+                                        .root_and_release_jsvalue(value)
+                                        .map_err(runtime_error_to_vm_error)?,
+                                ),
+                            )
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -562,6 +634,7 @@ mod local_set_tests {
     use super::super::Parents;
     use super::*;
     use crate::engine::api::Value;
+    use crate::engine::value::JsValue;
     use crate::engine::vm::execution::ExecutionLimits;
 
     #[test]
@@ -585,8 +658,12 @@ mod local_set_tests {
         let mut pending = Step::Set {
             object: Some(array.clone()),
             key: Some(key.clone()),
-            value: Some(Value::Int(7)),
-            receiver: Some(Value::Object(array.clone())),
+            value: Some(JsValue::Int(7)),
+            receiver: Some(
+                runtime
+                    .unroot_value(&Value::Object(array.clone()))
+                    .unwrap(),
+            ),
             resume: Some(Resume::RootSet),
         };
         let mut execution = RunningExecution::new(

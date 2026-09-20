@@ -20,7 +20,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -296,6 +296,7 @@ impl Runtime {
                         "WeakRef.prototype.deref received the wrong native invocation",
                     ));
                 };
+                let this_value = self.root_value(this_value)?;
                 let Value::Object(weak_ref) = this_value else {
                     return self.invalid_weak_target(realm, "WeakRef object expected");
                 };
@@ -314,7 +315,7 @@ impl Runtime {
                     Err(error) => return Err(error.into()),
                 };
                 let Some(target) = target else {
-                    return Ok(Completion::Return(Value::Undefined));
+                    return Ok(Completion::Return(JsValue::Undefined));
                 };
                 let live = {
                     let state = self.0.state.borrow();
@@ -330,7 +331,7 @@ impl Runtime {
                     }
                 };
                 if !live {
-                    return Ok(Completion::Return(Value::Undefined));
+                    return Ok(Completion::Return(JsValue::Undefined));
                 }
                 let raw = match target {
                     WeakCollectionKey::Object(object) => RawValue::Object(object),
@@ -338,21 +339,24 @@ impl Runtime {
                     // lookup above, so it can be narrowed without re-branding.
                     WeakCollectionKey::Symbol(atom) => RawValue::Symbol(AtomIdx::from_raw(atom.raw())),
                 };
-                Ok(Completion::Return(self.root_raw_value(&raw)?))
+                Ok(Completion::Return(
+                    self.into_jsvalue(self.root_raw_value(&raw)?)?,
+                ))
             }
         }
     }
 
-    pub(in crate::engine::builtins) fn finalization_registry_receiver<'a>(
+    pub(in crate::engine::builtins) fn finalization_registry_receiver(
         &self,
         realm: ContextId,
-        invocation: &'a NativeInvocation,
-    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
+        invocation: &NativeInvocation,
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "FinalizationRegistry method received the wrong native invocation",
             ));
         };
+        let this_value = self.root_value(this_value)?;
         let Value::Object(registry) = this_value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
@@ -405,15 +409,13 @@ impl Runtime {
 
         let registry = match self.finalization_registry_receiver(realm, invocation)? {
             NativeConversion::Value(registry) => registry,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
-        let first = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "FinalizationRegistry first argv was not padded",
-            ))?;
+        let first = self.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("FinalizationRegistry first argv was not padded"),
+        )?)?;
         match kind {
             FinalizationRegistryNativeKind::Constructor => {
                 unreachable!("FinalizationRegistry constructor returned before receiver validation")
@@ -423,25 +425,19 @@ impl Runtime {
                 else {
                     return self.invalid_weak_target(realm, "invalid target");
                 };
-                let held_value =
-                    arguments
-                        .readable
-                        .get(1)
-                        .cloned()
-                        .ok_or(RuntimeError::Invariant(
-                            "FinalizationRegistry held value argv was not padded",
-                        ))?;
+                let held_value = self.root_value(arguments.readable.get(1).ok_or(
+                    RuntimeError::Invariant(
+                        "FinalizationRegistry held value argv was not padded",
+                    ),
+                )?)?;
                 if first.same_value(&held_value) {
                     return self.invalid_weak_target(realm, "held value cannot be the target");
                 }
-                let token_value =
-                    arguments
-                        .readable
-                        .get(2)
-                        .cloned()
-                        .ok_or(RuntimeError::Invariant(
-                            "FinalizationRegistry unregister token argv was not padded",
-                        ))?;
+                let token_value = self.root_value(arguments.readable.get(2).ok_or(
+                    RuntimeError::Invariant(
+                        "FinalizationRegistry unregister token argv was not padded",
+                    ),
+                )?)?;
                 let unregister_token = if matches!(token_value, Value::Undefined) {
                     None
                 } else {
@@ -479,7 +475,7 @@ impl Runtime {
                 if let Some(edge) = conversion_edge {
                     self.release_converted_node_edge(edge);
                 }
-                Ok(Completion::Return(Value::Undefined))
+                Ok(Completion::Return(JsValue::Undefined))
             }
             FinalizationRegistryNativeKind::Unregister => {
                 let Some(token) =
@@ -492,7 +488,7 @@ impl Runtime {
                     .heap
                     .finalization_registry_unregister(registry.object_id(), token)?;
                 state.apply_cleanup(cleanup)?;
-                Ok(Completion::Return(Value::Bool(removed)))
+                Ok(Completion::Return(JsValue::Bool(removed)))
             }
         }
     }

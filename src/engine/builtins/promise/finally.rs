@@ -116,6 +116,7 @@ impl Runtime {
             ));
         };
         let value = self.root_raw_value(&value)?;
+        let value = self.into_jsvalue(value)?;
         Ok(match kind {
             PromiseReactionKind::Fulfill => Completion::Return(value),
             PromiseReactionKind::Reject => Completion::Throw(value),

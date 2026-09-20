@@ -6,7 +6,7 @@ use super::{
 use crate::engine::{
     api::{Error, ErrorKind, runtime::Runtime},
     object::ProxyBooleanKind,
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,24 +34,25 @@ pub(super) fn start(
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     for offset in 0..2 {
-        runtime
-            .validate_value_domain(
-                execution.slots.peek(&frame.window, offset)?,
-                "property predicate input",
-            )
-            .map_err(runtime_error_to_vm_error)?;
+        execution.slots.peek(&frame.window, offset)?;
     }
     let depth = execution.slots.depth(&frame.window);
     let right = execution.slots.pop(&mut frame.window)?;
     let left = execution.slots.pop(&mut frame.window)?;
     if kind == Kind::Instance {
-        let Value::Object(target) = right else {
-            return super::property_driver::throw_error(
-                runtime,
-                realm,
-                Error::new(ErrorKind::Type, "invalid 'instanceof' right operand"),
-            )
-            .map(Progress::Call);
+        let target = match runtime
+            .root_and_release_jsvalue(right)
+            .map_err(runtime_error_to_vm_error)?
+        {
+            Value::Object(target) => target,
+            _ => {
+                return super::property_driver::throw_error(
+                    runtime,
+                    realm,
+                    Error::new(ErrorKind::Type, "invalid 'instanceof' right operand"),
+                )
+                .map(Progress::Call);
+            }
         };
         return super::proxy_get_driver::start_instance(
             runtime, execution, id, left, target, depth,
@@ -63,7 +64,7 @@ pub(super) fn start(
     } else {
         (left, right)
     };
-    if kind == Kind::Has && !matches!(base, Value::Object(_)) {
+    if kind == Kind::Has && !matches!(base, JsValue::Object(_)) {
         return super::property_driver::throw_error(
             runtime,
             realm,
@@ -71,6 +72,12 @@ pub(super) fn start(
         )
         .map(Progress::Call);
     }
+    let base = runtime
+        .root_and_release_jsvalue(base)
+        .map_err(runtime_error_to_vm_error)?;
+    let key = runtime
+        .root_and_release_jsvalue(key)
+        .map_err(runtime_error_to_vm_error)?;
     let input = Box::new(Input {
         base,
         key,
@@ -110,7 +117,13 @@ pub(super) fn converted(
         .map_err(runtime_error_to_vm_error)?
     {
         NativeConversion::Value(key) => key,
-        NativeConversion::Throw(value) => return Ok(CallStep::Complete(Completion::Throw(value))),
+        NativeConversion::Throw(value) => {
+            return Ok(CallStep::Complete(Completion::Throw(
+                runtime
+                    .into_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?,
+            )));
+        }
     };
     if let Value::Object(object) = base {
         let op = if kind == Kind::Has {

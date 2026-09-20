@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::ArrayJoinKind,
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey},
-    value::{JsString, JsStringBuilder, JsStringError, Value, conversion::NativeConversion},
+    value::{JsString, JsStringBuilder, JsStringError, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -32,7 +32,7 @@ pub(crate) enum ArrayStringStep {
     Number { resume: ArrayStringResume },
     String { resume: ArrayStringResume },
     Call { resume: ArrayStringResume },
-    ObjectTag { receiver: Value },
+    ObjectTag { receiver: JsValue },
 }
 enum Phase {
     Length,
@@ -64,13 +64,13 @@ pub(crate) struct ArrayStringResumeState {
     kind: ArrayStringKind,
     object: ObjectRef,
     phase: Phase,
-    separator_value: Value,
+    separator_value: JsValue,
     separator: JsString,
     output: JsStringBuilder,
     separator_error: Option<JsStringError>,
     length: u64,
     index: u64,
-    element: Value,
+    element: JsValue,
 }
 impl ArrayStringStep {
     pub(crate) fn start(
@@ -86,13 +86,18 @@ impl ArrayStringStep {
                 "Array string method requires generic invocation",
             ));
         };
-        let object = match runtime.native_to_object(realm, this_value.clone())? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-        };
+        let object =
+            match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
         let to_string = matches!(kind, ArrayStringKind::ToString);
         Ok({
-            let __pending_field_receiver = Value::Object(object.clone());
+            let __pending_field_receiver = JsValue::Object(object.clone().into_handle());
             let __pending_field_key =
                 runtime.intern_property_key(if to_string { "join" } else { "length" })?;
             let __pending_field_resume = ArrayStringResume(Box::new(ArrayStringResumeState {
@@ -105,17 +110,16 @@ impl ArrayStringStep {
                 } else {
                     Phase::Length
                 },
-                separator_value: arguments
-                    .readable
-                    .first()
-                    .cloned()
-                    .unwrap_or(Value::Undefined),
+                separator_value: match arguments.readable.first() {
+                    Some(value) => runtime.dup_jsvalue(value)?,
+                    None => JsValue::Undefined,
+                },
                 separator: JsString::from_static(","),
                 output: JsStringBuilder::with_limit(0, string_limit),
                 separator_error: None,
                 length: 0,
                 index: 0,
-                element: Value::Undefined,
+                element: JsValue::Undefined,
             }));
             Self::request_read(
                 __pending_field_receiver,
@@ -147,7 +151,7 @@ impl ArrayStringResume {
                 })
             }
             Phase::Element => {
-                if matches!(value, Value::Undefined | Value::Null) {
+                if matches!(value, JsValue::Undefined | JsValue::Null) {
                     self.0.index += 1;
                     return self.next(runtime);
                 }
@@ -155,7 +159,7 @@ impl ArrayStringResume {
                     self.0.kind,
                     ArrayStringKind::Join(ArrayJoinKind::ToLocaleString)
                 ) {
-                    self.0.element = value.clone();
+                    self.0.element = runtime.dup_jsvalue(&value)?;
                     self.0.phase = Phase::LocaleMethod;
                     return Ok({
                         let __pending_field_receiver = value;
@@ -173,10 +177,7 @@ impl ArrayStringResume {
                 self.element_string(value)
             }
             Phase::LocaleMethod => {
-                let callable = match value {
-                    Value::Object(object) => runtime.as_callable(&object)?,
-                    _ => None,
-                };
+                let callable = callable(runtime, &value)?;
                 let Some(callable) = callable else {
                     return Ok(ArrayStringStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
@@ -189,7 +190,7 @@ impl ArrayStringResume {
                 self.0.phase = Phase::LocaleResult;
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = self.0.element.clone();
+                    let __pending_field_receiver = runtime.dup_jsvalue(&self.0.element)?;
                     let __pending_field_resume = self;
                     ArrayStringStep::request_call(
                         __pending_field_callable,
@@ -199,19 +200,17 @@ impl ArrayStringResume {
                 })
             }
             Phase::LocaleResult => {
-                self.0.element = Value::Undefined;
+                self.0.element = JsValue::Undefined;
                 self.element_string(value)
             }
             Phase::JoinMethod => {
-                let callable = match value {
-                    Value::Object(object) => runtime.as_callable(&object)?,
-                    _ => None,
-                };
+                let callable = callable(runtime, &value)?;
                 if let Some(callable) = callable {
                     self.0.phase = Phase::JoinResult;
                     Ok({
                         let __pending_field_callable = callable;
-                        let __pending_field_receiver = Value::Object(self.0.object.clone());
+                        let __pending_field_receiver =
+                            JsValue::Object(self.0.object.clone().into_handle());
                         let __pending_field_resume = self;
                         ArrayStringStep::request_call(
                             __pending_field_callable,
@@ -221,7 +220,7 @@ impl ArrayStringResume {
                     })
                 } else {
                     Ok(ArrayStringStep::ObjectTag {
-                        receiver: Value::Object(self.0.object),
+                        receiver: JsValue::Object(self.0.object.into_handle()),
                     })
                 }
             }
@@ -229,7 +228,7 @@ impl ArrayStringResume {
             _ => Err(RuntimeError::Invariant("Array string value phase mismatch")),
         }
     }
-    fn element_string(mut self, value: Value) -> Result<ArrayStringStep, RuntimeError> {
+    fn element_string(mut self, value: JsValue) -> Result<ArrayStringStep, RuntimeError> {
         if let Some(error) = self.0.separator_error {
             return Err(error.into());
         }
@@ -253,14 +252,16 @@ impl ArrayStringResume {
         self.0.length = match result {
             NativeConversion::Value(value) => Runtime::length_from_number(value),
             NativeConversion::Throw(value) => {
-                return Ok(ArrayStringStep::Complete(Completion::Throw(value)));
+                return Ok(ArrayStringStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         if matches!(self.0.kind, ArrayStringKind::Join(ArrayJoinKind::Join))
-            && !matches!(self.0.separator_value, Value::Undefined)
+            && !matches!(self.0.separator_value, JsValue::Undefined)
         {
             self.0.phase = Phase::Separator;
-            let value = std::mem::replace(&mut self.0.separator_value, Value::Undefined);
+            let value = std::mem::replace(&mut self.0.separator_value, JsValue::Undefined);
             return Ok({
                 let __pending_field_value = value;
                 let __pending_field_resume = self;
@@ -277,7 +278,9 @@ impl ArrayStringResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ArrayStringStep::Complete(Completion::Throw(value)));
+                return Ok(ArrayStringStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -300,7 +303,7 @@ impl ArrayStringResume {
                 return Err(error.into());
             }
             return Ok(ArrayStringStep::Complete(Completion::Return(
-                Value::String(self.0.output.finish()?),
+                runtime.into_jsvalue(Value::String(self.0.output.finish()?))?,
             )));
         }
         if self.0.index != 0
@@ -310,7 +313,7 @@ impl ArrayStringResume {
         }
         self.0.phase = Phase::Element;
         Ok({
-            let __pending_field_receiver = Value::Object(self.0.object.clone());
+            let __pending_field_receiver = JsValue::Object(self.0.object.clone().into_handle());
             let __pending_field_key =
                 runtime.property_key_for_index(u64::from(self.0.index as u32))?;
             let __pending_field_resume = self;
@@ -322,6 +325,15 @@ impl ArrayStringResume {
         })
     }
 }
+fn callable(runtime: &Runtime, value: &JsValue) -> Result<Option<CallableRef>, RuntimeError> {
+    Ok(match value {
+        JsValue::Object(id) => {
+            runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+        }
+        _ => None,
+    })
+}
+
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
@@ -331,7 +343,7 @@ pub(crate) fn finish(
         step = match step {
             ArrayStringStep::Complete(result) => return Ok(result),
             ArrayStringStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -339,16 +351,16 @@ pub(crate) fn finish(
                 )?
             }
             ArrayStringStep::Number { mut resume } => {
-                let value = resume.take_number_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             ArrayStringStep::String { mut resume } => {
-                let value = resume.take_string_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
                 resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
             }
             ArrayStringStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, receiver, &[])?,
@@ -368,16 +380,16 @@ pub(crate) fn finish(
 
 #[derive(Default)]
 struct ArrayStringStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
-    number_value: Option<Value>,
-    string_value: Option<Value>,
+    number_value: Option<JsValue>,
+    string_value: Option<JsValue>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
+    call_receiver: Option<JsValue>,
 }
 impl ArrayStringStep {
     pub(crate) fn request_read(
-        receiver: Value,
+        receiver: JsValue,
         key: PropertyKey,
         mut resume: ArrayStringResume,
     ) -> Self {
@@ -385,17 +397,17 @@ impl ArrayStringStep {
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: ArrayStringResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: ArrayStringResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
-    pub(crate) fn request_string(value: Value, mut resume: ArrayStringResume) -> Self {
+    pub(crate) fn request_string(value: JsValue, mut resume: ArrayStringResume) -> Self {
         resume.0.pending_effect.string_value = Some(value);
         Self::String { resume }
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ArrayStringResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -404,7 +416,7 @@ impl ArrayStringStep {
     }
 }
 impl ArrayStringResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -418,14 +430,14 @@ impl ArrayStringResume {
             .take()
             .expect("ArrayStringStep Read key")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value
             .take()
             .expect("ArrayStringStep Number value")
     }
-    pub(crate) fn take_string_value(&mut self) -> Value {
+    pub(crate) fn take_string_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .string_value
@@ -439,7 +451,7 @@ impl ArrayStringResume {
             .take()
             .expect("ArrayStringStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver

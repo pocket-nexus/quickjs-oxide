@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{CallableRef, ObjectRef},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -40,11 +40,11 @@ pub(crate) struct CallbackResumeState {
 enum Phase {
     Each {
         callback: CallableRef,
-        receiver: Value,
+        receiver: JsValue,
         index: usize,
         record: Option<ActiveCollectionRecordGuard>,
     },
-    Insert(Value),
+    Insert(JsValue),
 }
 impl CallbackStep {
     pub(crate) fn start(
@@ -56,39 +56,46 @@ impl CallbackStep {
     ) -> Result<Self, RuntimeError> {
         let map = match runtime.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         if let CallbackKind::Insert { computed } = kind {
-            let key = Runtime::normalized_map_key(arguments.readable.first().cloned().ok_or(
+            let key = Runtime::normalized_map_key(runtime.dup_jsvalue(arguments.readable.first().ok_or(
                 RuntimeError::Invariant("Map getOrInsert key argv was not padded"),
-            )?);
-            let second = arguments
-                .readable
-                .get(1)
-                .cloned()
-                .ok_or(RuntimeError::Invariant(
-                    "Map getOrInsert value argv was not padded",
-                ))?;
+            )?)?);
+            let second = runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
+                RuntimeError::Invariant("Map getOrInsert value argv was not padded"),
+            )?)?;
             let callback = if computed {
                 match callable(runtime, realm, &second)? {
                     NativeConversion::Value(value) => Some(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(value)));
+                        runtime.release_jsvalue(key)?;
+                        runtime.release_jsvalue(second)?;
+                        return Ok(Self::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 }
             } else {
                 None
             };
-            if let Some((_, value)) = runtime.find_map_record(map, &key)? {
+            if let Some((_, value)) = runtime.find_map_record(&map, &key)? {
+                runtime.release_jsvalue(key)?;
+                runtime.release_jsvalue(second)?;
                 return Ok(Self::Complete(Completion::Return(
-                    runtime.root_raw_value(&value)?,
+                    runtime.into_jsvalue(runtime.root_raw_value(&value)?)?,
                 )));
             }
             if let Some(callable) = callback {
+                let call_key = runtime.dup_jsvalue(&key)?;
                 return Ok(Self::request_call(
                     callable,
-                    Value::Undefined,
-                    vec![key.clone()],
+                    JsValue::Undefined,
+                    vec![call_key],
                     CallbackResume(Box::new(CallbackResumeState {
                         pending_effect: CallbackStepPending::default(),
                         map: map.clone(),
@@ -96,26 +103,30 @@ impl CallbackStep {
                     })),
                 ));
             }
-            runtime.set_map_record(map, key, second.clone())?;
-            return Ok(Self::Complete(Completion::Return(second)));
+            let result = runtime.dup_jsvalue(&second);
+            runtime.set_map_record(&map, key, second)?;
+            return Ok(Self::Complete(Completion::Return(result?)));
         }
         let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "Map.prototype.forEach callback argv was not padded",
         ))?;
         let callback = match callable(runtime, realm, value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         CallbackResume(Box::new(CallbackResumeState {
             pending_effect: CallbackStepPending::default(),
             map: map.clone(),
             phase: Phase::Each {
                 callback,
-                receiver: arguments
-                    .readable
-                    .get(1)
-                    .cloned()
-                    .unwrap_or(Value::Undefined),
+                receiver: match arguments.readable.get(1) {
+                    Some(value) => runtime.dup_jsvalue(value)?,
+                    None => JsValue::Undefined,
+                },
                 index: 0,
                 record: None,
             },
@@ -126,10 +137,10 @@ impl CallbackStep {
 fn callable(
     runtime: &Runtime,
     realm: ContextId,
-    value: &Value,
+    value: &JsValue,
 ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
     let result = match value {
-        Value::Object(object) => runtime.as_callable(object)?,
+        JsValue::Object(id) => runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
         _ => None,
     };
     Ok(match result {
@@ -163,13 +174,15 @@ impl CallbackResume {
                 .map(|(id, entry)| (id, entry.key.clone(), entry.value.clone()))
         };
         let Some((record_index, key, value)) = entry else {
-            return Ok(CallbackStep::Complete(Completion::Return(Value::Undefined)));
+            return Ok(CallbackStep::Complete(Completion::Return(
+                JsValue::Undefined,
+            )));
         };
         *index = record_index.checked_add(1).ok_or(RuntimeError::Invariant(
             "Map forEach record index overflowed",
         ))?;
-        let key = runtime.root_raw_value(&key)?;
-        let value = runtime.root_raw_value(&value)?;
+        let key = runtime.into_jsvalue(runtime.root_raw_value(&key)?)?;
+        let value = runtime.into_jsvalue(runtime.root_raw_value(&value)?)?;
         *record = Some(
             runtime.push_active_collection_record(ActiveCollectionRecord::Map {
                 object: self.0.map.object_id(),
@@ -178,8 +191,12 @@ impl CallbackResume {
         );
         Ok(CallbackStep::request_call(
             callback.clone(),
-            receiver.clone(),
-            vec![value, key, Value::Object(self.0.map.clone())],
+            runtime.dup_jsvalue(receiver)?,
+            vec![
+                value,
+                key,
+                runtime.into_jsvalue(crate::engine::value::Value::Object(self.0.map.clone()))?,
+            ],
             self,
         ))
     }
@@ -201,9 +218,10 @@ impl CallbackResume {
         };
         match self.0.phase {
             Phase::Insert(key) => {
-                runtime.delete_map_record(&self.0.map, &key)?;
-                runtime.set_map_record(&self.0.map, key, value.clone())?;
-                Ok(CallbackStep::Complete(Completion::Return(value)))
+                let result = runtime.dup_jsvalue(&value)?;
+                runtime.delete_map_record(&self.0.map, runtime.dup_jsvalue(&key)?)?;
+                runtime.set_map_record(&self.0.map, key, value)?;
+                Ok(CallbackStep::Complete(Completion::Return(result)))
             }
             Phase::Each { .. } => self.next(runtime),
         }
@@ -223,7 +241,15 @@ pub(crate) fn finish(
                 let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal(
+                        realm,
+                        &callable,
+                        runtime.root_and_release_jsvalue(receiver)?,
+                        &arguments
+                            .into_iter()
+                            .map(|value| runtime.root_and_release_jsvalue(value))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )?,
                 )?
             }
         };
@@ -233,6 +259,7 @@ pub(crate) fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::value::Value;
 
     #[test]
     fn abandoned_each_requests_release_records_and_collection_roots_in_lifo_order() {
@@ -249,14 +276,18 @@ mod tests {
         let set_id = set.object_id();
         let arguments = NativeArguments {
             actual_arg_count: 1,
-            readable: vec![context.eval("(function () {})").unwrap()],
+            readable: vec![
+                runtime
+                    .unroot_value(&context.eval("(function () {})").unwrap())
+                    .unwrap(),
+            ],
         };
         let map_step = CallbackStep::start(
             &runtime,
             context.realm,
             CallbackKind::Each,
             &NativeInvocation::Call {
-                this_value: Value::Object(map),
+                this_value: runtime.unroot_value(&Value::Object(map)).unwrap(),
             },
             &arguments,
         )
@@ -265,7 +296,7 @@ mod tests {
             &runtime,
             context.realm,
             &NativeInvocation::Call {
-                this_value: Value::Object(set),
+                this_value: runtime.unroot_value(&Value::Object(set)).unwrap(),
             },
             &arguments,
         )
@@ -307,14 +338,14 @@ mod tests {
 #[derive(Default)]
 struct CallbackStepPending {
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
 }
 impl CallbackStep {
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: CallbackResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -331,14 +362,14 @@ impl CallbackResume {
             .take()
             .expect("CallbackStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("CallbackStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

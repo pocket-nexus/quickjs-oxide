@@ -1,4 +1,5 @@
 //! Mechanical adapters for object domain requests.
+use super::JsValue;
 use super::{
     ArrayLengthStep, DescriptorStep, ProxyBooleanStep, ProxyDefineStep, ProxyGetStep, ProxyOwnStep,
     ProxyPrototypeStep, ProxySetStep, Resume, SetStep, Step, Value, set_completion,
@@ -530,7 +531,7 @@ impl From<crate::engine::object::ProxyConstructStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ProxyConstruct(resume)),

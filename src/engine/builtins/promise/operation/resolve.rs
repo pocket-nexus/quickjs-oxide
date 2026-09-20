@@ -1,7 +1,7 @@
 //! Static and intrinsic PromiseResolve share the constructor identity fast path.
 use super::{
-    Completion, ContextId, NativeConversion, ObjectRef, Phase, PromiseNativeKind, PromiseResume,
-    PromiseStep, Runtime, RuntimeError, Value,
+    Completion, ContextId, JsValue, NativeConversion, ObjectRef, Phase, PromiseNativeKind,
+    PromiseResume, PromiseStep, Runtime, RuntimeError, Value,
 };
 use crate::engine::heap::ObjectPayload;
 impl PromiseStep {
@@ -29,7 +29,7 @@ impl PromiseStep {
             )
         {
             return Ok({
-                let __pending_field_receiver = Value::Object(promise.clone());
+                let __pending_field_receiver = JsValue::Object(promise.clone().into_handle());
                 let __pending_field_key = runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
                 let __pending_field_resume = Box::new(PromiseResume {
@@ -61,10 +61,16 @@ pub(super) fn constructor(
 ) -> Result<PromiseStep, RuntimeError> {
     match completion {
         Completion::Throw(value) => Ok(PromiseStep::Complete(Completion::Throw(value))),
-        Completion::Return(value) if value.same_value(&Value::Object(constructor.clone())) => {
-            Ok(PromiseStep::Complete(Completion::Return(argument)))
+        Completion::Return(value) => {
+            let value = runtime.root_and_release_jsvalue(value)?;
+            if value.same_value(&Value::Object(constructor.clone())) {
+                Ok(PromiseStep::Complete(Completion::Return(
+                    runtime.into_jsvalue(argument)?,
+                )))
+            } else {
+                create(runtime, realm, constructor, argument, kind)
+            }
         }
-        Completion::Return(_) => create(runtime, realm, constructor, argument, kind),
     }
 }
 fn create(
@@ -76,7 +82,9 @@ fn create(
 ) -> Result<PromiseStep, RuntimeError> {
     let constructor = match runtime.constructor_from_value(realm, Value::Object(constructor))? {
         NativeConversion::Throw(value) => {
-            return Ok(PromiseStep::Complete(Completion::Throw(value)));
+            return Ok(PromiseStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
         NativeConversion::Value(constructor) => constructor,
     };

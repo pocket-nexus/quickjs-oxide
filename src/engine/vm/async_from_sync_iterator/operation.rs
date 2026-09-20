@@ -6,11 +6,24 @@ use crate::engine::builtins::{
 };
 use crate::engine::heap::{ContextId, HeapError, InternalCallableData};
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
 };
+
+/// Reconstruct one owned internal value from the dormant wrapper record,
+/// retaining every edge so the decoded value owns them independently.
+fn decode_raw_jsvalue(
+    runtime: &Runtime,
+    raw: &crate::engine::heap::RawValue,
+) -> Result<JsValue, RuntimeError> {
+    let value = JsValue::from_raw(raw.clone()).ok_or(RuntimeError::Invariant(
+        "Async-from-Sync wrapper held an internal-only sentinel",
+    ))?;
+    runtime.dup_jsvalue(&value)
+}
+
 pub(crate) enum FromSyncStep {
     Complete(Completion),
     Read { resume: Box<FromSyncResume> },
@@ -38,7 +51,7 @@ struct State {
     capability: RootedPromiseCapability,
     iterator: ObjectRef,
     kind: GeneratorResumeKind,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
 }
 fn continuation(realm: ContextId, phase: Phase) -> Box<FromSyncResume> {
     Box::new(FromSyncResume {
@@ -48,17 +61,18 @@ fn continuation(realm: ContextId, phase: Phase) -> Box<FromSyncResume> {
     })
 }
 fn settle(
+    _runtime: &Runtime,
     realm: ContextId,
     capability: RootedPromiseCapability,
     completion: Completion,
-) -> FromSyncStep {
+) -> Result<FromSyncStep, RuntimeError> {
     let (callable, value) = match completion {
         Completion::Return(value) => (capability.resolve, value),
         Completion::Throw(value) => (capability.reject, value),
     };
-    {
+    Ok({
         let __pending_field_callable = callable;
-        let __pending_field_receiver = Value::Undefined;
+        let __pending_field_receiver = JsValue::Undefined;
         let __pending_field_arguments = vec![value];
         let __pending_field_resume = continuation(realm, Phase::Settled(capability.promise));
         FromSyncStep::request_call(
@@ -67,7 +81,7 @@ fn settle(
             __pending_field_arguments,
             __pending_field_resume,
         )
-    }
+    })
 }
 impl FromSyncStep {
     pub(crate) fn start(
@@ -79,7 +93,7 @@ impl FromSyncStep {
     ) -> Result<Self, RuntimeError> {
         if target == NativeFunctionId::AsyncFromSyncIteratorUnwrap {
             return runtime
-                .call_async_from_sync_iterator_unwrap(realm, invocation.clone(), arguments)
+                .call_async_from_sync_iterator_unwrap(realm, invocation.dup(runtime)?, arguments)
                 .map(Self::Complete);
         }
         if target == NativeFunctionId::AsyncFromSyncIteratorClose {
@@ -107,7 +121,8 @@ impl FromSyncStep {
             let reason = arguments
                 .readable
                 .first()
-                .cloned()
+                .map(|value| runtime.dup_jsvalue(value))
+                .transpose()?
                 .ok_or(RuntimeError::Invariant(
                     "Async-from-Sync close argv was not padded",
                 ))?;
@@ -133,15 +148,22 @@ impl FromSyncStep {
                 "Async-from-Sync resume did not receive a call invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Async-from-Sync resume argv was not padded",
-            ))?;
-        let receiver = if let Value::Object(receiver) = this_value {
-            Some(receiver)
+        let argument = if arguments.actual_arg_count == 0 {
+            None
+        } else {
+            Some(
+                arguments
+                    .readable
+                    .first()
+                    .map(|value| runtime.dup_jsvalue(value))
+                    .transpose()?
+                    .ok_or(RuntimeError::Invariant(
+                        "Async-from-Sync resume argv was not padded",
+                    ))?,
+            )
+        };
+        let receiver = if let JsValue::Object(receiver) = this_value {
+            Some(ObjectRef::from_borrowed_handle(runtime.clone(), *receiver)?)
         } else {
             None
         };
@@ -162,7 +184,7 @@ impl FromSyncStep {
                     NativeErrorKind::Type,
                     "not an Async-from-Sync Iterator",
                 )?;
-                return Ok(settle(realm, capability, Completion::Throw(reason)));
+                return settle(runtime, realm, capability, Completion::Throw(reason));
             }
             Err(error) => return Err(error.into()),
         };
@@ -171,19 +193,19 @@ impl FromSyncStep {
             capability,
             iterator,
             kind,
-            arguments: if arguments.actual_arg_count == 0 {
-                Vec::new()
-            } else {
-                vec![argument]
+            arguments: match argument {
+                Some(argument) => vec![argument],
+                None => Vec::new(),
             },
         };
         match kind {
             GeneratorResumeKind::Next => continuation(realm, Phase::Method(state)).resume(
                 runtime,
-                Completion::Return(runtime.root_raw_value(&cached_next)?),
+                Completion::Return(decode_raw_jsvalue(runtime, &cached_next)?),
             ),
             GeneratorResumeKind::Return | GeneratorResumeKind::Throw => Ok({
-                let __pending_field_receiver = Value::Object(state.iterator.clone());
+                let __pending_field_receiver =
+                    runtime.into_jsvalue(Value::Object(state.iterator.clone()))?;
                 let __pending_field_key =
                     runtime.intern_property_key(if kind == GeneratorResumeKind::Return {
                         "return"
@@ -228,7 +250,7 @@ impl FromSyncResume {
         if let Phase::Settled(promise) = phase {
             return match completion {
                 Completion::Return(_) => Ok(FromSyncStep::Complete(Completion::Return(
-                    Value::Object(promise),
+                    runtime.into_jsvalue(Value::Object(promise))?,
                 ))),
                 Completion::Throw(_) => Err(RuntimeError::Invariant(
                     "intrinsic Promise resolving function threw",
@@ -257,31 +279,36 @@ impl FromSyncResume {
                     | Phase::Done { state, .. }
                     | Phase::Value { state, .. }
                     | Phase::Promise { state, .. } => {
-                        self.settle(state.capability, Completion::Throw(reason))
+                        self.settle(runtime, state.capability, Completion::Throw(reason))?
                     }
                     Phase::MissingThrow(capability) | Phase::Reject(capability) => {
-                        self.settle(capability, Completion::Throw(reason))
+                        self.settle(runtime, capability, Completion::Throw(reason))?
                     }
                     Phase::Identity | Phase::Settled(_) => unreachable!(),
                 });
             }
         };
         match phase {
-            Phase::Method(state) => {
-                if matches!(value, Value::Undefined | Value::Null) {
+            Phase::Method(mut state) => {
+                if matches!(value, JsValue::Undefined | JsValue::Null) {
                     return Ok(match state.kind {
                         GeneratorResumeKind::Return => {
                             let value = state
                                 .arguments
                                 .into_iter()
                                 .next()
-                                .unwrap_or(Value::Undefined);
+                                .unwrap_or(JsValue::Undefined);
+                            let value = runtime.root_and_release_jsvalue(value)?;
                             let result = runtime.new_iterator_result(realm, value, true)?;
-                            self.settle(state.capability, Completion::Return(Value::Object(result)))
+                            self.settle(
+                                runtime,
+                                state.capability,
+                                Completion::Return(runtime.into_jsvalue(Value::Object(result))?),
+                            )?
                         }
                         GeneratorResumeKind::Throw => {
                             let __pending_field_iterator = state.iterator;
-                            let __pending_field_completion = Completion::Return(Value::Undefined);
+                            let __pending_field_completion = Completion::Return(JsValue::Undefined);
                             let __pending_field_resume =
                                 self.continue_with(Phase::MissingThrow(state.capability));
                             FromSyncStep::request_close(
@@ -296,21 +323,27 @@ impl FromSyncResume {
                                 NativeErrorKind::Type,
                                 "not a function",
                             )?;
-                            self.settle(state.capability, Completion::Throw(reason))
+                            self.settle(runtime, state.capability, Completion::Throw(reason))?
                         }
                     });
                 }
+                let value = runtime.root_and_release_jsvalue(value)?;
                 let callable =
                     match runtime.async_from_sync_callable(realm, value, "not a function")? {
                         NativeConversion::Value(callable) => callable,
                         NativeConversion::Throw(reason) => {
-                            return Ok(self.settle(state.capability, Completion::Throw(reason)));
+                            return self.settle(
+                                runtime,
+                                state.capability,
+                                Completion::Throw(runtime.into_jsvalue(reason)?),
+                            );
                         }
                     };
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = Value::Object(state.iterator.clone());
-                    let __pending_field_arguments = state.arguments.clone();
+                    let __pending_field_receiver =
+                        runtime.into_jsvalue(Value::Object(state.iterator.clone()))?;
+                    let __pending_field_arguments = std::mem::take(&mut state.arguments);
                     let __pending_field_resume = self.continue_with(Phase::Result(state));
                     FromSyncStep::request_call(
                         __pending_field_callable,
@@ -321,16 +354,17 @@ impl FromSyncResume {
                 })
             }
             Phase::Result(state) => {
-                let Value::Object(result) = value else {
+                let Value::Object(result) = runtime.root_and_release_jsvalue(value)? else {
                     let reason = runtime.new_native_error_jsvalue(
                         realm,
                         NativeErrorKind::Type,
                         "iterator must return an object",
                     )?;
-                    return Ok(self.settle(state.capability, Completion::Throw(reason)));
+                    return self.settle(runtime, state.capability, Completion::Throw(reason));
                 };
                 Ok({
-                    let __pending_field_receiver = Value::Object(result.clone());
+                    let __pending_field_receiver =
+                        runtime.into_jsvalue(Value::Object(result.clone()))?;
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?;
                     let __pending_field_resume = self.continue_with(Phase::Done { state, result });
@@ -342,9 +376,9 @@ impl FromSyncResume {
                 })
             }
             Phase::Done { state, result } => {
-                let done = runtime.value_to_boolean(&value)?;
+                let done = runtime.value_to_boolean_jsvalue(&value)?;
                 Ok({
-                    let __pending_field_receiver = Value::Object(result);
+                    let __pending_field_receiver = runtime.into_jsvalue(Value::Object(result))?;
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Value)?;
                     let __pending_field_resume = self.continue_with(Phase::Value { state, done });
@@ -366,7 +400,7 @@ impl FromSyncResume {
                 )
             }),
             Phase::Promise { state, done } => {
-                let Value::Object(promise) = value else {
+                let Value::Object(promise) = runtime.root_and_release_jsvalue(value)? else {
                     return Err(RuntimeError::Invariant(
                         "intrinsic PromiseResolve returned a non-object",
                     ));
@@ -398,9 +432,9 @@ impl FromSyncResume {
                     close.as_ref(),
                     &state.capability,
                 )?;
-                Ok(FromSyncStep::Complete(Completion::Return(Value::Object(
-                    state.capability.promise,
-                ))))
+                Ok(FromSyncStep::Complete(Completion::Return(
+                    runtime.into_jsvalue(Value::Object(state.capability.promise))?,
+                )))
             }
             Phase::MissingThrow(capability) => {
                 let reason = runtime.new_native_error_jsvalue(
@@ -408,7 +442,7 @@ impl FromSyncResume {
                     NativeErrorKind::Type,
                     "throw is not a method",
                 )?;
-                Ok(self.settle(capability, Completion::Throw(reason)))
+                self.settle(runtime, capability, Completion::Throw(reason))
             }
             Phase::Reject(_) | Phase::Identity | Phase::Settled(_) => {
                 Err(RuntimeError::Invariant("Async-from-Sync unexpected reply"))
@@ -423,37 +457,38 @@ impl FromSyncResume {
     }
     fn settle(
         self: Box<Self>,
+        _runtime: &Runtime,
         capability: RootedPromiseCapability,
         completion: Completion,
-    ) -> FromSyncStep {
+    ) -> Result<FromSyncStep, RuntimeError> {
         let (callable, value) = match completion {
             Completion::Return(value) => (capability.resolve, value),
             Completion::Throw(value) => (capability.reject, value),
         };
-        FromSyncStep::request_call(
+        Ok(FromSyncStep::request_call(
             callable,
-            Value::Undefined,
+            JsValue::Undefined,
             vec![value],
             self.continue_with(Phase::Settled(capability.promise)),
-        )
+        ))
     }
 }
 
 #[derive(Default)]
 struct FromSyncStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
-    resolve_value: Option<Value>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
+    resolve_value: Option<JsValue>,
     resolve_realm: Option<ContextId>,
     close_iterator: Option<ObjectRef>,
     close_completion: Option<Completion>,
 }
 impl FromSyncStep {
     pub(crate) fn request_read(
-        receiver: Value,
+        receiver: JsValue,
         key: PropertyKey,
         mut resume: Box<FromSyncResume>,
     ) -> Self {
@@ -463,8 +498,8 @@ impl FromSyncStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: Box<FromSyncResume>,
     ) -> Self {
         resume.pending_effect.call_callable = Some(callable);
@@ -473,7 +508,7 @@ impl FromSyncStep {
         Self::Call { resume }
     }
     pub(crate) fn request_resolve(
-        value: Value,
+        value: JsValue,
         realm: ContextId,
         mut resume: Box<FromSyncResume>,
     ) -> Self {
@@ -492,7 +527,7 @@ impl FromSyncStep {
     }
 }
 impl FromSyncResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.pending_effect
             .read_receiver
             .take()
@@ -510,19 +545,19 @@ impl FromSyncResume {
             .take()
             .expect("FromSyncStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.pending_effect
             .call_receiver
             .take()
             .expect("FromSyncStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.pending_effect
             .call_arguments
             .take()
             .expect("FromSyncStep Call arguments")
     }
-    pub(crate) fn take_resolve_value(&mut self) -> Value {
+    pub(crate) fn take_resolve_value(&mut self) -> JsValue {
         self.pending_effect
             .resolve_value
             .take()

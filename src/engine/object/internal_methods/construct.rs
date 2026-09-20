@@ -8,7 +8,7 @@ use crate::engine::{
     },
     heap::ContextId,
     object::{ObjectRef, PropertyKey},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{ConstructNewTarget, ConstructorRef, DirectCallTarget},
@@ -103,9 +103,9 @@ impl Search {
                 ))?;
         if data.is_revoked {
             return match runtime.proxy_revoked_throw(self.realm)? {
-                NativeConversion::Throw(value) => {
-                    Ok(ProxyConstructStep::Complete(Completion::Throw(value)))
-                }
+                NativeConversion::Throw(value) => Ok(ProxyConstructStep::Complete(
+                    Completion::Throw(runtime.unroot_value(&value)?),
+                )),
                 NativeConversion::Value(()) => Err(RuntimeError::Invariant(
                     "revoked Proxy construct returned a value",
                 )),
@@ -135,7 +135,7 @@ impl ProxyConstructResume {
             Phase::Method { rooted, search } => (rooted, search),
             Phase::Result { realm, trap, .. } => {
                 return Ok(ProxyConstructStep::Complete(match completion {
-                    Completion::Return(value) if trap && !matches!(value, Value::Object(_)) => {
+                    Completion::Return(value) if trap && !matches!(value, JsValue::Object(_)) => {
                         Completion::Throw(runtime.new_native_error_jsvalue(
                             realm,
                             NativeErrorKind::Type,
@@ -156,10 +156,12 @@ impl ProxyConstructResume {
         {
             NativeConversion::Value(target) => target,
             NativeConversion::Throw(value) => {
-                return Ok(ProxyConstructStep::Complete(Completion::Throw(value)));
+                return Ok(ProxyConstructStep::Complete(Completion::Throw(
+                    runtime.unroot_value(&value)?,
+                )));
             }
         };
-        if matches!(method, Value::Null | Value::Undefined) {
+        if matches!(method, JsValue::Null | JsValue::Undefined) {
             if runtime.is_proxy_object(target.as_object())? {
                 search.depth = search.depth.saturating_add(1);
                 return search.read(runtime, target);
@@ -167,7 +169,11 @@ impl ProxyConstructResume {
             return Ok(ProxyConstructStep::request_construct(
                 target,
                 search.new_target,
-                search.arguments,
+                search
+                    .arguments
+                    .into_iter()
+                    .map(|value| runtime.into_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?,
                 Self(Box::new(ProxyConstructResumeState {
                     pending_effect: ProxyConstructStepPending::default(),
                     phase: Phase::Result {
@@ -180,7 +186,7 @@ impl ProxyConstructResume {
             ));
         }
         let array = runtime.new_array_from_values(search.realm, search.arguments)?;
-        let method = match runtime.direct_call_target_from_value(method) {
+        let method = match runtime.direct_call_target_from_jsvalue(method) {
             Ok(method) => method,
             Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
                 return Ok(ProxyConstructStep::Complete(Completion::Throw(
@@ -195,12 +201,14 @@ impl ProxyConstructResume {
         };
         Ok(ProxyConstructStep::request_call(
             method,
-            Value::Object(rooted.handler.clone()),
-            vec![
-                Value::Object(rooted.target.clone()),
-                Value::Object(array),
-                search.new_target.value(),
-            ],
+            runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
+            [
+                runtime.into_jsvalue(Value::Object(rooted.target.clone()))?,
+                runtime.into_jsvalue(Value::Object(array))?,
+                runtime.into_jsvalue(runtime.root_value(&search.new_target.value())?)?,
+            ]
+            .into_iter()
+            .collect::<Vec<_>>(),
             Self(Box::new(ProxyConstructResumeState {
                 pending_effect: ProxyConstructStepPending::default(),
                 phase: Phase::Result {
@@ -231,8 +239,12 @@ pub(super) fn finish(
             }
             ProxyConstructStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 {
                     let result = match target {
                         DirectCallTarget::Callable(target) => {
@@ -248,7 +260,11 @@ pub(super) fn finish(
             ProxyConstructStep::Construct { mut resume } => {
                 let target = resume.take_construct_target();
                 let new_target = resume.take_construct_new_target();
-                let arguments = resume.take_construct_arguments();
+                let arguments = resume
+                    .take_construct_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.construct_internal_with_new_target(
@@ -265,11 +281,11 @@ struct ProxyConstructStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     construct_target: Option<ConstructorRef>,
     construct_new_target: Option<ConstructNewTarget>,
-    construct_arguments: Option<Vec<Value>>,
+    construct_arguments: Option<Vec<JsValue>>,
 }
 impl ProxyConstructStep {
     pub(crate) fn request_read(
@@ -283,8 +299,8 @@ impl ProxyConstructStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxyConstructResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -295,7 +311,7 @@ impl ProxyConstructStep {
     pub(crate) fn request_construct(
         target: ConstructorRef,
         new_target: ConstructNewTarget,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         mut resume: ProxyConstructResume,
     ) -> Self {
         resume.0.pending_effect.construct_target = Some(target);
@@ -326,14 +342,14 @@ impl ProxyConstructResume {
             .take()
             .expect("ProxyConstructStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxyConstructStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments
@@ -354,7 +370,7 @@ impl ProxyConstructResume {
             .take()
             .expect("ProxyConstructStep Construct new_target")
     }
-    pub(crate) fn take_construct_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_construct_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .construct_arguments

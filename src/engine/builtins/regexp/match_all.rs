@@ -81,9 +81,12 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match self.call_regexp_string_iterator_next_raw(realm, invocation)? {
             NativeInvokeOutcome::Completion(completion) => Ok(completion),
-            NativeInvokeOutcome::IteratorNextRaw { value, done } => Ok(Completion::Return(
-                Value::Object(self.new_iterator_result(realm, value, done)?),
-            )),
+            NativeInvokeOutcome::IteratorNextRaw { value, done } => {
+                let value = self.root_and_release_jsvalue(value)?;
+                Ok(Completion::Return(self.into_jsvalue(Value::Object(
+                    self.new_iterator_result(realm, value, done)?,
+                ))?))
+            }
         }
     }
 

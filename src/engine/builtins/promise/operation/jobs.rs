@@ -1,7 +1,7 @@
 //! FIFO jobs keep their callback and resolution targets rooted across driver turns.
 use super::{
-    Completion, ContextId, ObjectRef, Phase, PromiseResume, PromiseStep, Runtime, RuntimeError,
-    Value,
+    Completion, ContextId, JsValue, ObjectRef, Phase, PromiseResume, PromiseStep, Runtime,
+    RuntimeError,
 };
 use crate::engine::heap::{ObjectId, PromiseReaction, PromiseReactionKind, RawValue};
 
@@ -25,12 +25,12 @@ impl PromiseStep {
         ))?;
         let (resolve, reject) = runtime.create_promise_resolving_functions(realm, &promise)?;
         let arguments = vec![
-            Value::Object(resolve.as_object().clone()),
-            Value::Object(reject.as_object().clone()),
+            JsValue::Object(resolve.as_object().clone().into_handle()),
+            JsValue::Object(reject.as_object().clone().into_handle()),
         ];
         Ok({
             let __pending_field_callable = then;
-            let __pending_field_receiver = Value::Object(thenable);
+            let __pending_field_receiver = JsValue::Object(thenable.into_handle());
             let __pending_field_arguments = arguments;
             let __pending_field_resume = Box::new(PromiseResume {
                 pending_effect: super::PromiseStepPending::default(),
@@ -76,8 +76,8 @@ impl PromiseStep {
                 ))?;
             Ok({
                 let __pending_field_callable = handler;
-                let __pending_field_receiver = Value::Undefined;
-                let __pending_field_arguments = vec![argument];
+                let __pending_field_receiver = JsValue::Undefined;
+                let __pending_field_arguments = vec![runtime.into_jsvalue(argument.clone())?];
                 let __pending_field_resume = resume;
                 Self::request_call(
                     __pending_field_callable,
@@ -87,6 +87,7 @@ impl PromiseStep {
                 )
             })
         } else {
+            let argument = runtime.into_jsvalue(argument)?;
             let completion = if reaction.kind == PromiseReactionKind::Reject {
                 Completion::Throw(argument)
             } else {

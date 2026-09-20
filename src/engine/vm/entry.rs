@@ -7,7 +7,7 @@ use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey,
 };
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 
 pub(super) type DescriptorReply = NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>;
 pub(crate) fn call(
@@ -46,16 +46,24 @@ pub(crate) fn construct(
     let (constructor, new_target) =
         match runtime.prepare_constructor_pair(realm, constructor, new_target)? {
             NativeConversion::Value(pair) => pair,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(runtime.into_jsvalue(value)?));
+            }
         };
+    let mut js_arguments = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        js_arguments.push(runtime.unroot_value(argument)?);
+    }
     let normalized = match runtime.normalize_constructor(
         realm,
         constructor,
         ConstructNewTarget::Validated(new_target),
-        arguments.to_vec(),
+        js_arguments,
     )? {
         NativeConversion::Value(normalized) => normalized,
-        NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+        NativeConversion::Throw(value) => {
+            return Ok(Completion::Throw(runtime.into_jsvalue(value)?));
+        }
     };
     execute_root(runtime.clone(), realm, RootOperation::Construct(normalized))
         .map_err(RuntimeError::Engine)
@@ -109,6 +117,7 @@ pub(crate) fn define(
     runtime.validate_object_and_key(object, key)?;
     runtime.validate_descriptor_domains(descriptor)?;
     boolean(
+        runtime,
         execute_root(
             runtime.clone(),
             realm,
@@ -133,6 +142,7 @@ pub(crate) fn set(
     runtime.validate_value_domain(&value, "property value")?;
     runtime.validate_value_domain(&receiver, "property receiver")?;
     boolean(
+        runtime,
         execute_root(
             runtime.clone(),
             realm,
@@ -146,10 +156,15 @@ pub(crate) fn set(
         .map_err(RuntimeError::Engine)?,
     )
 }
-fn boolean(completion: Completion) -> Result<NativeConversion<bool>, RuntimeError> {
+fn boolean(
+    runtime: &Runtime,
+    completion: Completion,
+) -> Result<NativeConversion<bool>, RuntimeError> {
     match completion {
-        Completion::Return(Value::Bool(value)) => Ok(NativeConversion::Value(value)),
-        Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+        Completion::Return(JsValue::Bool(value)) => Ok(NativeConversion::Value(value)),
+        Completion::Throw(value) => Ok(NativeConversion::Throw(
+            runtime.root_and_release_jsvalue(value)?,
+        )),
         _ => Err(RuntimeError::Invariant(
             "property entry did not return a boolean",
         )),

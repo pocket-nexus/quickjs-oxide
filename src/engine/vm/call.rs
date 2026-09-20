@@ -25,7 +25,7 @@ use crate::engine::code::rooted::FunctionBytecodeRef;
 
 use crate::engine::heap::{ContextId, ObjectPayload};
 use crate::engine::object::{CallableRef, ObjectRef};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 
@@ -74,10 +74,19 @@ impl Runtime {
                     drop(state);
                     let target = ObjectRef::from_borrowed_handle(self.clone(), target)?;
                     let target = CallableRef::from_validated_object(target);
-                    let this_value = self.root_raw_value(&this_value)?;
+                    let to_internal =
+                        |raw: &crate::engine::heap::RawValue| -> Result<JsValue, RuntimeError> {
+                            let value = JsValue::from_raw(raw.clone()).ok_or(
+                                RuntimeError::Invariant(
+                                    "bound value was an internal sentinel",
+                                ),
+                            )?;
+                            self.dup_jsvalue(&value)
+                        };
+                    let this_value = to_internal(&this_value)?;
                     let arguments = arguments
                         .iter()
-                        .map(|argument| self.root_raw_value(argument))
+                        .map(|argument| to_internal(argument))
                         .collect::<Result<Vec<_>, _>>()?;
                     #[cfg(feature = "profiling")]
                     {
@@ -250,7 +259,7 @@ impl Runtime {
             target,
             min_readable_args,
             NativeInvocation::Call {
-                this_value: iterator,
+                this_value: self.unroot_value(&iterator)?,
             },
             &[],
             NativeInvokeMode::IteratorNextRaw,
@@ -304,7 +313,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let constructor = match self.constructor_from_value(caller_realm, function)? {
             NativeConversion::Value(constructor) => constructor,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.unroot_value(&value)?));
+            }
         };
         self.construct_constructor_with_raw_new_target_internal(
             caller_realm,
@@ -371,7 +382,9 @@ impl Runtime {
         let (constructor, new_target) =
             match self.prepare_constructor_pair(caller_realm, constructor, new_target)? {
                 NativeConversion::Value(pair) => pair,
-                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                NativeConversion::Throw(value) => {
+                    return Ok(Completion::Throw(self.unroot_value(&value)?));
+                }
             };
         self.construct_constructor_internal(caller_realm, &constructor, &new_target, arguments)
     }
@@ -512,7 +525,9 @@ impl Runtime {
             arguments,
         )? {
             NativeConversion::Value(result) => result,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         // This synchronous host path consumes public roots; the normalized
         // internal owners are rooted at this boundary and their internal
@@ -639,7 +654,7 @@ impl Runtime {
         new_target: &Value,
     ) -> Result<Completion, RuntimeError> {
         let reply = if matches!(new_target, Value::Undefined) {
-            Completion::Return(Value::Undefined)
+            Completion::Return(JsValue::Undefined)
         } else {
             let key =
                 self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
@@ -656,22 +671,26 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let prototype = match reply {
             result @ Completion::Throw(_) => return Ok(result),
-            Completion::Return(Value::Object(prototype)) => prototype,
+            Completion::Return(JsValue::Object(prototype)) => {
+                ObjectRef::from_owned_handle(self.clone(), prototype)
+            }
             Completion::Return(_) => {
                 let realm = if matches!(new_target, Value::Undefined) {
                     caller_realm
                 } else {
                     match self.function_realm_from_value(caller_realm, new_target)? {
                         NativeConversion::Value(realm) => realm,
-                        NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                        NativeConversion::Throw(value) => {
+                            return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                        }
                     }
                 };
                 let prototype = self.0.state.borrow().heap.context(realm)?.object_prototype;
                 ObjectRef::from_borrowed_handle(self.clone(), prototype)?
             }
         };
-        Ok(Completion::Return(Value::Object(
-            self.new_object(Some(&prototype))?,
+        Ok(Completion::Return(JsValue::Object(
+            self.new_object(Some(&prototype))?.into_handle(),
         )))
     }
 
@@ -690,7 +709,9 @@ impl Runtime {
             realm,
             target,
             min_readable_args,
-            NativeInvocation::Construct { new_target },
+            NativeInvocation::Construct {
+                new_target: self.unroot_value(&new_target)?,
+            },
             arguments,
             NativeInvokeMode::Ordinary,
         )?;
@@ -712,7 +733,9 @@ impl Runtime {
             realm,
             target,
             min_readable_args,
-            NativeInvocation::Call { this_value },
+            NativeInvocation::Call {
+                this_value: self.unroot_value(&this_value)?,
+            },
             arguments,
             NativeInvokeMode::Ordinary,
         )?;
@@ -796,12 +819,43 @@ impl Runtime {
     }
 }
 
-#[derive(Clone)]
 pub(crate) enum NativeInvocation {
-    Call { this_value: Value },
-    Construct { new_target: Value },
-    Getter { this_value: Value },
-    Setter { this_value: Value },
+    Call {
+        this_value: crate::engine::value::JsValue,
+    },
+    Construct {
+        new_target: crate::engine::value::JsValue,
+    },
+    Getter {
+        this_value: crate::engine::value::JsValue,
+    },
+    Setter {
+        this_value: crate::engine::value::JsValue,
+    },
+}
+
+impl NativeInvocation {
+    /// Duplicate the invocation's internal value edges. There is no automatic
+    /// `Clone` because duplicating a handle needs the owning runtime.
+    pub(crate) fn dup(
+        &self,
+        runtime: &crate::engine::api::runtime::Runtime,
+    ) -> Result<Self, crate::engine::api::runtime_error::RuntimeError> {
+        Ok(match self {
+            Self::Call { this_value } => Self::Call {
+                this_value: runtime.dup_jsvalue(this_value)?,
+            },
+            Self::Construct { new_target } => Self::Construct {
+                new_target: runtime.dup_jsvalue(new_target)?,
+            },
+            Self::Getter { this_value } => Self::Getter {
+                this_value: runtime.dup_jsvalue(this_value)?,
+            },
+            Self::Setter { this_value } => Self::Setter {
+                this_value: runtime.dup_jsvalue(this_value)?,
+            },
+        })
+    }
 }
 
 pub(crate) enum NativeInvocationAdaptation<I = NativeInvocation> {
@@ -819,7 +873,10 @@ pub(crate) enum NativeInvocationAdaptation<I = NativeInvocation> {
 /// return an already-materialized result object (`pdone == 2`).
 pub(crate) enum NativeInvokeOutcome {
     Completion(Completion),
-    IteratorNextRaw { value: Value, done: bool },
+    IteratorNextRaw {
+        value: crate::engine::value::JsValue,
+        done: bool,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -830,7 +887,7 @@ pub(crate) enum NativeInvokeMode {
 
 pub(crate) struct NativeArguments {
     pub(crate) actual_arg_count: usize,
-    pub(crate) readable: Vec<Value>,
+    pub(crate) readable: Vec<crate::engine::value::JsValue>,
 }
 
 /// Result of QuickJS `Get(newTarget, "prototype")` followed by
@@ -856,8 +913,8 @@ pub(crate) enum CallableExecution {
     },
     Bound {
         target: CallableRef,
-        this_value: Value,
-        arguments: Vec<Value>,
+        this_value: crate::engine::value::JsValue,
+        arguments: Vec<crate::engine::value::JsValue>,
     },
     Proxy,
 }
@@ -953,7 +1010,7 @@ impl ConstructNewTarget {
     pub(crate) fn retarget_bound_identity(&mut self, bound: &ConstructorRef, target: &CallableRef) {
         let matches_bound = match self {
             Self::Validated(constructor) => constructor.as_object() == bound.as_object(),
-            Self::Raw(Value::Object(object)) => object == bound.as_object(),
+            Self::Raw(JsValue::Object(object)) => *object == bound.as_object().object_id(),
             Self::Raw(_) => false,
         };
         if !matches_bound {
@@ -963,7 +1020,9 @@ impl ConstructNewTarget {
             Self::Validated(constructor) => {
                 *constructor = ConstructorRef::from_validated_callable(target);
             }
-            Self::Raw(value) => *value = Value::Object(target.as_object().clone()),
+            Self::Raw(value) => {
+                *value = JsValue::Object(target.as_object().clone().into_handle());
+            }
         }
     }
 }

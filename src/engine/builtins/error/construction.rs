@@ -76,13 +76,12 @@ impl Runtime {
             .last()
             .is_none_or(|frame| matches!(frame.kind, ActiveFrameKind::Native { .. }));
         if capture_now {
-            let JsValue::Object(object) = &value else {
+            let JsValue::Object(_) = &value else {
                 return Err(RuntimeError::Invariant(
                     "native Error construction did not produce an object",
                 ));
             };
-            let object = ObjectRef::from_borrowed_handle(self.clone(), *object)?;
-            self.ensure_error_backtrace(&object, false, None)?;
+            self.ensure_error_backtrace_jsvalue(&value, false, None)?;
         }
         Ok(value)
     }

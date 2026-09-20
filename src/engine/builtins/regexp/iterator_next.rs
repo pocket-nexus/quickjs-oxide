@@ -4,7 +4,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, ObjectPayload},
     object::{ObjectRef, PropertyKey, operations::InternalSetResult},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeInvocation, NativeInvokeOutcome},
@@ -66,31 +66,34 @@ impl RegExpIteratorStep {
                 "RegExp String Iterator next did not receive an iterator-next invocation",
             ));
         };
-        let iterator = match this_value {
-            Value::Object(iterator)
-                if matches!(
-                    runtime
-                        .0
-                        .state
-                        .borrow()
-                        .heap
-                        .object(iterator.object_id())?
-                        .payload,
-                    ObjectPayload::RegExpStringIterator { .. }
-                ) =>
-            {
-                iterator.clone()
-            }
-            _ => {
-                return Ok(Self::Complete(NativeInvokeOutcome::Completion(
-                    Completion::Throw(runtime.new_native_error_jsvalue(
-                        realm,
-                        NativeErrorKind::Type,
-                        "RegExp String Iterator object expected",
-                    )?),
-                )));
-            }
+        let JsValue::Object(iterator_id) = this_value else {
+            return Ok(Self::Complete(NativeInvokeOutcome::Completion(
+                Completion::Throw(runtime.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    "RegExp String Iterator object expected",
+                )?),
+            )));
         };
+        let iterator = ObjectRef::from_borrowed_handle(runtime.clone(), *iterator_id)?;
+        if !matches!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object(iterator.object_id())?
+                .payload,
+            ObjectPayload::RegExpStringIterator { .. }
+        ) {
+            return Ok(Self::Complete(NativeInvokeOutcome::Completion(
+                Completion::Throw(runtime.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    "RegExp String Iterator object expected",
+                )?),
+            )));
+        }
         let (regexp_id, string, global, full_unicode, done) = runtime
             .0
             .state
@@ -99,14 +102,14 @@ impl RegExpIteratorStep {
             .regexp_string_iterator_state(iterator.object_id())?;
         if done {
             return Ok(Self::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value: Value::Undefined,
+                value: JsValue::Undefined,
                 done: true,
             }));
         }
         let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), regexp_id)?;
         Ok(Self::make_exec(
-            Value::Object(regexp.clone()),
-            Value::String(string.clone()),
+            runtime.into_jsvalue(Value::Object(regexp.clone()))?,
+            runtime.into_jsvalue(Value::String(string.clone()))?,
             RegExpIteratorResume(Box::new(RegExpIteratorResumeState {
                 step_pending: RegExpIteratorStepPending::default(),
                 scheduler_set_key: None,
@@ -133,16 +136,19 @@ impl RegExpIteratorResume {
         self.0.scheduler_set_key.take().expect("waiting Set key")
     }
 
-    fn abrupt(self, value: Value) -> RegExpIteratorStep {
-        RegExpIteratorStep::Complete(NativeInvokeOutcome::Completion(Completion::Throw(value)))
+    fn abrupt(self, runtime: &Runtime, value: Value) -> Result<RegExpIteratorStep, RuntimeError> {
+        Ok(RegExpIteratorStep::Complete(
+            NativeInvokeOutcome::Completion(Completion::Throw(runtime.into_jsvalue(value)?)),
+        ))
     }
     fn yielded(self) -> Result<RegExpIteratorStep, RuntimeError> {
         Ok(RegExpIteratorStep::Complete(
             NativeInvokeOutcome::IteratorNextRaw {
-                value: Value::Object(
+                value: JsValue::Object(
                     self.0
                         .matched
-                        .ok_or(RuntimeError::Invariant("RegExp iterator lost match result"))?,
+                        .ok_or(RuntimeError::Invariant("RegExp iterator lost match result"))?
+                        .into_handle(),
                 ),
                 done: false,
             },
@@ -154,8 +160,10 @@ impl RegExpIteratorResume {
         reply: Completion,
     ) -> Result<RegExpIteratorStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(self.abrupt(value)),
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Throw(value) => {
+                return self.abrupt(runtime, runtime.root_and_release_jsvalue(value)?);
+            }
         };
         match self.0.phase {
             Phase::Exec => {
@@ -169,7 +177,7 @@ impl RegExpIteratorResume {
                             .finish_regexp_string_iterator(self.0.iterator.object_id())?;
                         return Ok(RegExpIteratorStep::Complete(
                             NativeInvokeOutcome::IteratorNextRaw {
-                                value: Value::Undefined,
+                                value: JsValue::Undefined,
                                 done: true,
                             },
                         ));
@@ -200,12 +208,18 @@ impl RegExpIteratorResume {
             }
             Phase::MatchString => {
                 self.0.match_value = value.clone();
-                Ok(RegExpIteratorStep::make_string(value, self))
+                Ok(RegExpIteratorStep::make_string(
+                    runtime.into_jsvalue(value)?,
+                    self,
+                ))
             }
             Phase::LastIndex => {
                 self.0.index_value = value.clone();
                 self.0.phase = Phase::Advance;
-                Ok(RegExpIteratorStep::make_primitive(value, self))
+                Ok(RegExpIteratorStep::make_primitive(
+                    runtime.into_jsvalue(value)?,
+                    self,
+                ))
             }
             Phase::Advance => {
                 if matches!(value, Value::Object(_)) {
@@ -215,7 +229,9 @@ impl RegExpIteratorResume {
                 }
                 let current = match runtime.native_to_length(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
+                    NativeConversion::Throw(value) => {
+                        return self.abrupt(runtime, value);
+                    }
                 };
                 let next = advance_string_index(&self.0.string, current, self.0.full_unicode);
                 self.0.phase = Phase::Set;
@@ -223,7 +239,7 @@ impl RegExpIteratorResume {
                     self.0.regexp.clone(),
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
-                    Value::number(next as f64),
+                    runtime.into_jsvalue(Value::number(next as f64))?,
                     self,
                 ))
             }
@@ -244,7 +260,7 @@ impl RegExpIteratorResume {
         }
         let string = match reply {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
+            NativeConversion::Throw(value) => return self.abrupt(runtime, value),
         };
         if !string.is_empty() {
             return self.yielded();
@@ -268,7 +284,7 @@ impl RegExpIteratorResume {
             ));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, reply)? {
-            return Ok(self.abrupt(value));
+            return self.abrupt(runtime, value);
         }
         self.yielded()
     }
@@ -282,8 +298,8 @@ pub(crate) fn finish(
         step = match step {
             RegExpIteratorStep::Complete(result) => return Ok(result),
             RegExpIteratorStep::Exec { mut resume } => {
-                let regexp = resume.take_exec_regexp();
-                let input = resume.take_exec_input();
+                let regexp = runtime.root_and_release_jsvalue(resume.take_exec_regexp())?;
+                let input = runtime.root_and_release_jsvalue(resume.take_exec_input())?;
                 resume.resume(runtime, runtime.regexp_exec_abstract(realm, regexp, input)?)?
             }
             RegExpIteratorStep::Read { mut resume } => {
@@ -296,19 +312,22 @@ pub(crate) fn finish(
             }
             RegExpIteratorStep::String { mut resume } => {
                 let value = resume.take_string_value();
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                resume.string(
+                    runtime,
+                    runtime.native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
+                )?
             }
             RegExpIteratorStep::Primitive { mut resume } => {
                 let value = resume.take_primitive_value();
                 resume.resume(
                     runtime,
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::Number)?,
+                    runtime.to_primitive_jsvalue(realm, value, ToPrimitiveHint::Number)?,
                 )?
             }
             RegExpIteratorStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 resume.set(
                     runtime,
                     key.clone(),
@@ -327,14 +346,18 @@ pub(crate) fn finish(
 
 #[derive(Default)]
 pub(crate) struct RegExpIteratorStepPending {
-    regexp: Option<Value>,
-    input: Option<Value>,
+    regexp: Option<JsValue>,
+    input: Option<JsValue>,
     object: Option<ObjectRef>,
     key: Option<PropertyKey>,
-    value: Option<Value>,
+    value: Option<JsValue>,
 }
 impl RegExpIteratorStep {
-    pub(crate) fn make_exec(regexp: Value, input: Value, mut resume: RegExpIteratorResume) -> Self {
+    pub(crate) fn make_exec(
+        regexp: JsValue,
+        input: JsValue,
+        mut resume: RegExpIteratorResume,
+    ) -> Self {
         resume.0.step_pending.regexp = Some(regexp);
         resume.0.step_pending.input = Some(input);
         Self::Exec { resume }
@@ -348,18 +371,18 @@ impl RegExpIteratorStep {
         resume.0.step_pending.key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn make_string(value: Value, mut resume: RegExpIteratorResume) -> Self {
+    pub(crate) fn make_string(value: JsValue, mut resume: RegExpIteratorResume) -> Self {
         resume.0.step_pending.value = Some(value);
         Self::String { resume }
     }
-    pub(crate) fn make_primitive(value: Value, mut resume: RegExpIteratorResume) -> Self {
+    pub(crate) fn make_primitive(value: JsValue, mut resume: RegExpIteratorResume) -> Self {
         resume.0.step_pending.value = Some(value);
         Self::Primitive { resume }
     }
     pub(crate) fn make_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: RegExpIteratorResume,
     ) -> Self {
         resume.0.step_pending.object = Some(object);
@@ -369,14 +392,14 @@ impl RegExpIteratorStep {
     }
 }
 impl RegExpIteratorResume {
-    pub(crate) fn take_exec_regexp(&mut self) -> Value {
+    pub(crate) fn take_exec_regexp(&mut self) -> JsValue {
         self.0
             .step_pending
             .regexp
             .take()
             .expect("RegExpIteratorStep::Exec lost regexp")
     }
-    pub(crate) fn take_exec_input(&mut self) -> Value {
+    pub(crate) fn take_exec_input(&mut self) -> JsValue {
         self.0
             .step_pending
             .input
@@ -399,7 +422,7 @@ impl RegExpIteratorResume {
             .expect("RegExpIteratorStep::Read lost key")
     }
 
-    pub(crate) fn take_string_value(&mut self) -> Value {
+    pub(crate) fn take_string_value(&mut self) -> JsValue {
         self.0
             .step_pending
             .value
@@ -407,7 +430,7 @@ impl RegExpIteratorResume {
             .expect("RegExpIteratorStep::String lost value")
     }
 
-    pub(crate) fn take_primitive_value(&mut self) -> Value {
+    pub(crate) fn take_primitive_value(&mut self) -> JsValue {
         self.0
             .step_pending
             .value
@@ -429,7 +452,7 @@ impl RegExpIteratorResume {
             .take()
             .expect("RegExpIteratorStep::Set lost key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .step_pending
             .value

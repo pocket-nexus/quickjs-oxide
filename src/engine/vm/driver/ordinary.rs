@@ -59,11 +59,11 @@ pub(super) fn enter_selected(
         if !transaction.validate_call_value_domains(runtime, count, method)? {
             return Ok(Entry::General);
         }
+        let linked = runtime
+            .root_value(transaction.peek(count)?)
+            .map_err(runtime_error_to_vm_error)?;
         let Some((callable, selected)) =
-            crate::engine::vm::frames::NativeClassification::promote_linked(
-                selected,
-                transaction.peek(count)?,
-            )
+            crate::engine::vm::frames::NativeClassification::promote_linked(selected, &linked)
         else {
             return Ok(Entry::General);
         };
@@ -73,7 +73,10 @@ pub(super) fn enter_selected(
         );
         Prepared::Native(callable, selected)
     } else {
-        let selection_result = DirectSelection::select(runtime, transaction.peek(count)?);
+        let callable_value = runtime
+            .root_value(transaction.peek(count)?)
+            .map_err(runtime_error_to_vm_error)?;
+        let selection_result = DirectSelection::select(runtime, &callable_value);
         if matches!(selection_result, Ok(DirectSelection::General)) {
             return Ok(Entry::General);
         }
@@ -244,7 +247,7 @@ pub(super) fn finish(
     let value = execution.pending.take().unwrap();
     let mut frame = execution.frames.pop(id)?;
     let guard = frame.cold.entry_guard.take();
-    execution.slots.clear_frame(frame.window.take())?;
+    execution.slots.clear_frame(runtime, frame.window.take())?;
     if let Some(guard) = guard {
         guard.finish().map_err(runtime_error_to_vm_error)?;
     }

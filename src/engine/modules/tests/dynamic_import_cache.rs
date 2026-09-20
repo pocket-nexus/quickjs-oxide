@@ -23,11 +23,12 @@ fn dynamic_import_load_job_samples_the_current_loader() {
         panic!("sampled dynamic import did not return a namespace");
     };
     let source = runtime.intern_property_key("source").unwrap();
-    assert_eq!(
+    assert_returned_completion(
+        &runtime,
         runtime
             .get_property_in_realm(context.realm, &namespace, &source)
             .unwrap(),
-        Completion::Return(Value::Int(2))
+        Value::Int(2),
     );
 }
 

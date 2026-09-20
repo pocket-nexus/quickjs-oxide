@@ -6,7 +6,7 @@ use crate::engine::{
         DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
         operations::{InternalDefineResult, InternalSetResult},
     },
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -68,16 +68,22 @@ impl ConcatStep {
                 "Array concat requires generic invocation",
             ));
         };
-        let source = match runtime.native_to_object(realm, this_value.clone())? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-        };
+        let source =
+            match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
         let mut elements = Vec::with_capacity(arguments.actual_arg_count + 1);
         elements.push(Value::Object(source.clone()));
         elements.extend(
             arguments.readable[..arguments.actual_arg_count]
                 .iter()
-                .cloned(),
+                .map(|value| runtime.root_value(value))
+                .collect::<Result<Vec<_>, _>>()?,
         );
         Ok(Self::request_species(
             source,
@@ -130,7 +136,7 @@ impl ConcatResume {
         result: Completion,
     ) -> Result<ConcatStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(ConcatStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
@@ -148,7 +154,9 @@ impl ConcatResume {
                     match runtime.internal_is_array(self.0.realm, &self.0.element)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(ConcatStep::Complete(Completion::Throw(value)));
+                            return Ok(ConcatStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
                         }
                     }
                 } else {
@@ -168,7 +176,7 @@ impl ConcatResume {
             }
             Phase::Length => {
                 self.0.phase = Phase::Number;
-                Ok(ConcatStep::request_number(value, self))
+                Ok(ConcatStep::request_number(runtime.into_jsvalue(value)?, self))
             }
             Phase::Read => self.define(runtime, value, true),
             _ => Err(RuntimeError::Invariant("Array concat value phase mismatch")),
@@ -180,7 +188,7 @@ impl ConcatResume {
             return Ok(ConcatStep::request_set(
                 self.result()?,
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-                Value::number(self.0.next_index as f64),
+                runtime.into_jsvalue(Value::number(self.0.next_index as f64))?,
                 self,
             ));
         };
@@ -218,7 +226,9 @@ impl ConcatResume {
         self.0.length = match result {
             NativeConversion::Value(value) => Runtime::length_from_number(value),
             NativeConversion::Throw(value) => {
-                return Ok(ConcatStep::Complete(Completion::Throw(value)));
+                return Ok(ConcatStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         if self.0.next_index.saturating_add(self.0.length) > (1_u64 << 53) - 1 {
@@ -250,7 +260,9 @@ impl ConcatResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ConcatStep::Complete(Completion::Throw(value)));
+                return Ok(ConcatStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         if value {
@@ -299,7 +311,9 @@ impl ConcatResume {
         if let Some(value) =
             runtime.finish_create_indexed_data_property(self.0.realm, self.0.next_index, result)?
         {
-            return Ok(ConcatStep::Complete(Completion::Throw(value)));
+            return Ok(ConcatStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
         self.0.next_index += 1;
         if indexed {
@@ -319,11 +333,13 @@ impl ConcatResume {
             return Err(RuntimeError::Invariant("Array concat set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(ConcatStep::Complete(Completion::Throw(value)));
+            return Ok(ConcatStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
-        Ok(ConcatStep::Complete(Completion::Return(Value::Object(
-            self.result()?,
-        ))))
+        Ok(ConcatStep::Complete(Completion::Return(
+            runtime.into_jsvalue(Value::Object(self.result()?))?,
+        )))
     }
 }
 pub(crate) fn finish(
@@ -354,7 +370,7 @@ pub(crate) fn finish(
                 )?
             }
             ConcatStep::Number { mut resume } => {
-                let value = resume.take_number_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             ConcatStep::Has { mut resume } => {
@@ -377,7 +393,7 @@ pub(crate) fn finish(
             ConcatStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 {
                     let result = runtime.internal_set(
                         realm,
@@ -398,7 +414,7 @@ struct ConcatStepPending {
     species_source: Option<ObjectRef>,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    number_value: Option<Value>,
+    number_value: Option<JsValue>,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
     define_object: Option<ObjectRef>,
@@ -406,7 +422,7 @@ struct ConcatStepPending {
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
+    set_value: Option<JsValue>,
 }
 impl ConcatStep {
     pub(crate) fn request_species(source: ObjectRef, mut resume: ConcatResume) -> Self {
@@ -422,7 +438,7 @@ impl ConcatStep {
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: ConcatResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: ConcatResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
@@ -449,7 +465,7 @@ impl ConcatStep {
     pub(crate) fn request_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: ConcatResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -480,7 +496,7 @@ impl ConcatResume {
             .take()
             .expect("ConcatStep Read key")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value
@@ -536,7 +552,7 @@ impl ConcatResume {
             .take()
             .expect("ConcatStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value

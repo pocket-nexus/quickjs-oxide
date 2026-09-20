@@ -1,4 +1,5 @@
 //! Mechanical adapters for conversion domain requests.
+use super::JsValue;
 use super::{DirectCallTarget, NumberStep, Resume, Step, Value};
 
 impl From<NumberStep> for Step {
@@ -9,7 +10,7 @@ impl From<NumberStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::Number(resume)),
@@ -38,7 +39,7 @@ impl From<crate::engine::value::conversion::primitive::PrimitiveStep> for Step {
             PrimitiveStep::Get { mut resume } => {
                 let (object, key) = resume.take_get();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::Primitive(resume)),

@@ -17,7 +17,7 @@ use crate::engine::object::{
     DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -355,7 +355,7 @@ impl Runtime {
                 realm,
                 super::function::invoke::InvokeKind::ReflectApply,
                 &NativeInvocation::Call {
-                    this_value: Value::Undefined,
+                    this_value: JsValue::Undefined,
                 },
                 arguments,
             )?,
@@ -375,7 +375,7 @@ impl Runtime {
                 realm,
                 super::function::invoke::InvokeKind::ReflectConstruct,
                 &NativeInvocation::Call {
-                    this_value: Value::Undefined,
+                    this_value: JsValue::Undefined,
                 },
                 arguments,
             )?,

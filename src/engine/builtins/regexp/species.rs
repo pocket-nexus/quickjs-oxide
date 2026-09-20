@@ -62,9 +62,11 @@ impl RegExpSpeciesResume {
         result: Completion,
     ) -> Result<RegExpSpeciesStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
-                return Ok(RegExpSpeciesStep::Complete(NativeConversion::Throw(value)));
+                return Ok(RegExpSpeciesStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
         };
         if self.0.species {

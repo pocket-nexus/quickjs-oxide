@@ -11,7 +11,7 @@ use crate::engine::object::{
     CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey,
 };
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyDefineStep {
@@ -80,7 +80,9 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyDefineStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyDefineStep::Complete(NativeConversion::Throw(value)),
+        MethodStep::Throw(value) => ProxyDefineStep::Complete(NativeConversion::Throw(
+            runtime.root_and_release_jsvalue(value)?,
+        )),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let method_key = resume.take_read_key();
@@ -118,14 +120,20 @@ fn method(
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
                     let descriptor_object = runtime.proxy_descriptor_object(realm, &descriptor)?;
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let arguments = [
+                        Value::Object(rooted.target.clone()),
+                        key_value,
+                        Value::Object(descriptor_object),
+                    ]
+                    .into_iter()
+                    .map(|value| runtime.into_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                     ProxyDefineStep::request_call(
                         target,
-                        Value::Object(rooted.handler.clone()),
-                        vec![
-                            Value::Object(rooted.target.clone()),
-                            key_value,
-                            Value::Object(descriptor_object),
-                        ],
+                        receiver,
+                        arguments,
                         ProxyDefineResume(Box::new(ProxyDefineResumeState {
                             pending_effect: ProxyDefineStepPending::default(),
                             realm,
@@ -149,7 +157,9 @@ impl ProxyDefineResume {
     ) -> Result<ProxyDefineStep, RuntimeError> {
         let value = match completion {
             Completion::Throw(value) => {
-                return Ok(ProxyDefineStep::Complete(NativeConversion::Throw(value)));
+                return Ok(ProxyDefineStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
             Completion::Return(value) => value,
         };
@@ -170,7 +180,7 @@ impl ProxyDefineResume {
                 key,
                 descriptor,
             } => {
-                if !runtime.value_to_boolean(&value)? {
+                if !runtime.value_to_boolean_jsvalue(&value)? {
                     return Ok(ProxyDefineStep::Complete(NativeConversion::Value(
                         InternalDefineResult::RejectedProxyTrap,
                     )));
@@ -235,10 +245,10 @@ impl ProxyDefineResume {
 struct ProxyDefineStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
@@ -249,7 +259,7 @@ impl ProxyDefineStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ProxyDefineResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -259,8 +269,8 @@ impl ProxyDefineStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxyDefineResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -304,7 +314,7 @@ impl ProxyDefineResume {
             .take()
             .expect("ProxyDefineStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -318,14 +328,14 @@ impl ProxyDefineResume {
             .take()
             .expect("ProxyDefineStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxyDefineStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

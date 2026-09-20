@@ -8,7 +8,7 @@ use crate::engine::heap::ContextId;
 
 use crate::engine::object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey};
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 use crate::engine::vm::call::{DirectCallTarget, NativeArguments, NativeInvocation};
@@ -112,9 +112,9 @@ impl Runtime {
             if updates_last_index
                 && let Some(exception) = self.set_regexp_last_index(realm, object, 0)?
             {
-                return Ok(Completion::Throw(exception));
+                return Ok(Completion::Throw(self.into_jsvalue(exception)?));
             }
-            return Ok(Completion::Return(Value::Null));
+            return Ok(Completion::Return(JsValue::Null));
         };
 
         let complete = matched.capture(0).ok_or(RuntimeError::Invariant(
@@ -126,12 +126,13 @@ impl Runtime {
             })?;
             // This write happens before any result/indices allocation.
             if let Some(exception) = self.set_regexp_last_index(realm, object, end)? {
-                return Ok(Completion::Throw(exception));
+                return Ok(Completion::Throw(self.into_jsvalue(exception)?));
             }
         }
 
-        self.build_regexp_result(realm, input, program, matched)
-            .map(Completion::Return)
+        Ok(Completion::Return(self.into_jsvalue(
+            self.build_regexp_result(realm, input, program, matched)?,
+        )?))
     }
 
     fn regexp_last_index_value(&self, object: &ObjectRef) -> Result<Value, RuntimeError> {
@@ -207,25 +208,27 @@ impl RegExpExecStep {
                 "RegExp exec/test did not receive a generic invocation",
             ));
         };
-        let input = arguments
-            .readable
-            .first()
-            .ok_or(RuntimeError::Invariant(
-                "RegExp exec/test input argv was not padded",
-            ))?
-            .clone();
+        let input = runtime.root_value(
+            arguments
+                .readable
+                .first()
+                .ok_or(RuntimeError::Invariant(
+                    "RegExp exec/test input argv was not padded",
+                ))?,
+        )?;
+        let this_value = runtime.root_value(this_value)?;
         match kind {
             RegExpNativeKind::Exec => RegExpExecResume(Box::new(RegExpExecResumeState {
                 step_pending: RegExpExecStepPending::default(),
                 realm,
-                regexp: this_value.clone(),
+                regexp: this_value,
                 input,
                 test: false,
                 phase: ExecPhase::Input,
             }))
             .builtin(runtime),
             RegExpNativeKind::Test => {
-                Self::abstract_start(runtime, realm, this_value.clone(), input, true)
+                Self::abstract_start(runtime, realm, this_value, input, true)
             }
             _ => Err(RuntimeError::Invariant(
                 "non-exec RegExp selector reached exec dispatch",
@@ -263,7 +266,7 @@ impl RegExpExecStep {
             )));
         }
         Ok(Self::make_read(
-            regexp.clone(),
+            runtime.unroot_value(&regexp)?,
             key,
             RegExpExecResume(Box::new(RegExpExecResumeState {
                 step_pending: RegExpExecStepPending::default(),
@@ -280,7 +283,7 @@ impl RegExpExecResume {
     fn complete(&mut self, result: Completion) -> RegExpExecStep {
         RegExpExecStep::Complete(match result {
             Completion::Return(value) if self.0.test => {
-                Completion::Return(Value::Bool(!matches!(value, Value::Null)))
+                Completion::Return(JsValue::Bool(!matches!(value, JsValue::Null)))
             }
             result => result,
         })
@@ -303,12 +306,12 @@ impl RegExpExecResume {
         };
         if matches!(input, Value::Object(_)) {
             Ok(RegExpExecStep::make_primitive(
-                input,
+                runtime.into_jsvalue(input)?,
                 ToPrimitiveHint::String,
                 resume,
             ))
         } else {
-            resume.resume(runtime, Completion::Return(input))
+            resume.resume(runtime, Completion::Return(runtime.into_jsvalue(input)?))
         }
     }
     pub(crate) fn resume(
@@ -317,7 +320,7 @@ impl RegExpExecResume {
         result: Completion,
     ) -> Result<RegExpExecStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(self.complete(Completion::Throw(value))),
         };
         match self.0.phase {
@@ -337,10 +340,10 @@ impl RegExpExecResume {
                         "out of memory",
                     )?)));
                 }
-                arguments.push(self.0.input.clone());
+                arguments.push(runtime.unroot_value(&self.0.input)?);
                 Ok(RegExpExecStep::make_call(
                     DirectCallTarget::Callable(callable),
-                    self.0.regexp.clone(),
+                    runtime.unroot_value(&self.0.regexp)?,
                     arguments,
                     {
                         let updated_0 = ExecPhase::Called;
@@ -351,7 +354,7 @@ impl RegExpExecResume {
             }
             ExecPhase::Called => {
                 if matches!(value, Value::Object(_) | Value::Null) {
-                    Ok(self.complete(Completion::Return(value)))
+                    Ok(self.complete(Completion::Return(runtime.into_jsvalue(value)?)))
                 } else {
                     Ok(self.complete(Completion::Throw(runtime.new_native_error_jsvalue(
                         self.0.realm,
@@ -369,7 +372,9 @@ impl RegExpExecResume {
                 let input = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(input) => input,
                     NativeConversion::Throw(value) => {
-                        return Ok(self.complete(Completion::Throw(value)));
+                        return Ok(self.complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let Value::Object(object) = &self.0.regexp else {
@@ -385,14 +390,14 @@ impl RegExpExecResume {
                 };
                 if matches!(value, Value::Object(_)) {
                     Ok(RegExpExecStep::make_primitive(
-                        value,
+                        runtime.into_jsvalue(value)?,
                         ToPrimitiveHint::Number,
                         resume,
                     ))
                 } else {
                     // No callback: the branded receiver and input stay owned by
                     // this domain; the generic conversion/Query is never built.
-                    resume.resume(runtime, Completion::Return(value))
+                    resume.resume(runtime, Completion::Return(runtime.into_jsvalue(value)?))
                 }
             }
             ExecPhase::LastIndex(input) => {
@@ -404,7 +409,9 @@ impl RegExpExecResume {
                 let last_index = match runtime.native_to_length(self.0.realm, &value)? {
                     NativeConversion::Value(index) => index,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpExecStep::Complete(Completion::Throw(value)));
+                        return Ok(RegExpExecStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let Value::Object(object) = &self.0.regexp else {
@@ -433,7 +440,7 @@ fn finish(
         step = match step {
             RegExpExecStep::Complete(result) => return Ok(result),
             RegExpExecStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -444,8 +451,8 @@ fn finish(
                 let value = resume.take_primitive_value();
                 let hint = resume.take_primitive_hint();
                 {
-                    let result = if matches!(value, Value::Object(_)) {
-                        runtime.to_primitive(realm, value, hint)?
+                    let result = if matches!(value, JsValue::Object(_)) {
+                        runtime.to_primitive_jsvalue(realm, value, hint)?
                     } else {
                         Completion::Return(value)
                     };
@@ -454,8 +461,12 @@ fn finish(
             }
             RegExpExecStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 {
                     let DirectCallTarget::Callable(callable) = target else {
                         return Err(RuntimeError::Invariant(
@@ -480,12 +491,17 @@ mod local_exec_tests {
     fn primitive_regexp_exec_completes_inside_its_domain() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let invocation = NativeInvocation::Call {
-            this_value: context.eval("/a/g").unwrap(),
-        };
+        let this_value = runtime
+            .unroot_value(&context.eval("/a/g").unwrap())
+            .unwrap();
+        let invocation = NativeInvocation::Call { this_value };
         let arguments = NativeArguments {
             actual_arg_count: 1,
-            readable: vec![Value::String(JsString::from_static("a"))],
+            readable: vec![
+                runtime
+                    .unroot_value(&Value::String(JsString::from_static("a")))
+                    .unwrap(),
+            ],
         };
         assert!(matches!(
             RegExpExecStep::start(
@@ -496,7 +512,7 @@ mod local_exec_tests {
                 &arguments
             )
             .unwrap(),
-            RegExpExecStep::Complete(Completion::Return(Value::Object(_)))
+            RegExpExecStep::Complete(Completion::Return(JsValue::Object(_)))
         ));
     }
 
@@ -519,16 +535,16 @@ mod local_exec_tests {
 
 #[derive(Default)]
 pub(crate) struct RegExpExecStepPending {
-    receiver: Option<Value>,
+    receiver: Option<JsValue>,
     key: Option<PropertyKey>,
-    value: Option<Value>,
+    value: Option<JsValue>,
     hint: Option<ToPrimitiveHint>,
     target: Option<DirectCallTarget>,
-    arguments: Option<Vec<Value>>,
+    arguments: Option<Vec<JsValue>>,
 }
 impl RegExpExecStep {
     pub(crate) fn make_read(
-        receiver: Value,
+        receiver: JsValue,
         key: PropertyKey,
         mut resume: RegExpExecResume,
     ) -> Self {
@@ -537,7 +553,7 @@ impl RegExpExecStep {
         Self::Read { resume }
     }
     pub(crate) fn make_primitive(
-        value: Value,
+        value: JsValue,
         hint: ToPrimitiveHint,
         mut resume: RegExpExecResume,
     ) -> Self {
@@ -547,8 +563,8 @@ impl RegExpExecStep {
     }
     pub(crate) fn make_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: RegExpExecResume,
     ) -> Self {
         resume.0.step_pending.target = Some(target);
@@ -558,7 +574,7 @@ impl RegExpExecStep {
     }
 }
 impl RegExpExecResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .step_pending
             .receiver
@@ -573,7 +589,7 @@ impl RegExpExecResume {
             .expect("RegExpExecStep::Read lost key")
     }
 
-    pub(crate) fn take_primitive_value(&mut self) -> Value {
+    pub(crate) fn take_primitive_value(&mut self) -> JsValue {
         self.0
             .step_pending
             .value
@@ -595,14 +611,14 @@ impl RegExpExecResume {
             .take()
             .expect("RegExpExecStep::Call lost target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .step_pending
             .receiver
             .take()
             .expect("RegExpExecStep::Call lost receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .step_pending
             .arguments

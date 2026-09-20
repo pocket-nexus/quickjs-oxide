@@ -1,4 +1,5 @@
 //! Mechanical adapters for scalar domain requests.
+use super::JsValue;
 use super::{DirectCallTarget, Resume, Step, ToPrimitiveHint, Value};
 
 impl From<crate::engine::builtins::MathStep> for Step {
@@ -166,7 +167,7 @@ impl From<crate::engine::builtins::DatePrototypeStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::DatePrototype(resume)),

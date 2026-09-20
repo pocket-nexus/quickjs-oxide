@@ -1,4 +1,5 @@
 //! Bounded native-stack dispatch for execution requests.
+use super::JsValue;
 use super::{
     CallStep, Completion, DirectCallTarget, Error, Finish, IteratorProgress, Next, OperationTarget,
     Progress, Query, ReturnOwner, ReturnTarget, ReturnValue, RunningExecution, Runtime, Step,
@@ -139,9 +140,16 @@ pub(super) fn finish(
                 let Some(Finish::Numeric(_depth)) = query.finish.take() else {
                     return Err(Error::internal("numeric result lost its instruction"));
                 };
-                return super::finish_numeric(execution, owner.frame()?, value, previous, _depth)
-                    .map(Progress::Call)
-                    .map(Next::Done);
+                return super::finish_numeric(
+                    runtime,
+                    execution,
+                    owner.frame()?,
+                    value,
+                    previous,
+                    _depth,
+                )
+                .map(Progress::Call)
+                .map(Next::Done);
             }
             Step::NativeRawComplete(result) => {
                 let result = result.take().expect("selected Step field");
@@ -250,7 +258,7 @@ pub(super) fn activation(
                 let arguments = arguments.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                *step = Step::Complete(Some(Completion::Return(Value::Undefined)));
+                *step = Step::Complete(Some(Completion::Return(JsValue::Undefined)));
                 native_scope(
                     runtime,
                     execution,
@@ -261,7 +269,11 @@ pub(super) fn activation(
                     min_readable_args,
                     mode,
                     invocation,
-                    arguments,
+                    arguments
+                        .into_iter()
+                        .map(|argument| runtime.root_and_release_jsvalue(argument))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(runtime_error_to_vm_error)?,
                     resume,
                     step,
                 )?;
@@ -363,8 +375,8 @@ pub(super) fn prepare(
                 }
                 let entry = super::BytecodeCallRequest {
                     callable,
-                    receiver: Value::Bool(true),
-                    new_target: Value::Undefined,
+                    receiver: JsValue::Bool(true),
+                    new_target: JsValue::Undefined,
                     arguments: Vec::new(),
                     bytecode,
                     closure_slots,
@@ -413,7 +425,12 @@ pub(super) fn prepare(
                 })?;
                 query.parents.push(resume);
                 *step = runtime
-                    .prepare_intrinsic_promise_resolve(resolve_realm, value)
+                    .prepare_intrinsic_promise_resolve(
+                        resolve_realm,
+                        runtime
+                            .root_and_release_jsvalue(value)
+                            .map_err(runtime_error_to_vm_error)?,
+                    )
                     .map_err(runtime_error_to_vm_error)?
                     .into();
                 continue;
@@ -460,7 +477,15 @@ pub(super) fn prepare(
                     .map_err(|_| Error::internal("constructor continuation allocation failed"))?;
                 query.parents.push(resume);
                 *step = crate::engine::object::ProxyConstructStep::start(
-                    runtime, realm, target, new_target, arguments,
+                    runtime,
+                    realm,
+                    target,
+                    new_target,
+                    arguments
+                        .into_iter()
+                        .map(|argument| runtime.root_and_release_jsvalue(argument))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(runtime_error_to_vm_error)?,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -482,7 +507,11 @@ pub(super) fn prepare(
                         this_value,
                     } => Step::Call {
                         target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(this_value),
+                        receiver: Some(
+                            runtime
+                                .into_jsvalue(this_value)
+                                .map_err(runtime_error_to_vm_error)?,
+                        ),
                         arguments: Some(Vec::new()),
                         resume: Some(resume),
                     },
@@ -493,8 +522,12 @@ pub(super) fn prepare(
                 let value = value.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
+                let value = runtime
+                    .root_and_release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
                 *step = resume
                     .html_dda(
+                        runtime,
                         runtime
                             .value_is_html_dda(&value)
                             .map_err(runtime_error_to_vm_error)?,

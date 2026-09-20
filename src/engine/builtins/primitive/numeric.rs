@@ -5,7 +5,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{BigIntAsNKind, NumberFormatKind, PrimitiveKind},
     heap::ContextId,
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -29,8 +29,8 @@ impl NumericKind {
 }
 pub(crate) enum NumericStep {
     Complete(Completion),
-    Number { value: Value, resume: NumericResume },
-    Primitive { value: Value, resume: NumericResume },
+    Number { value: JsValue, resume: NumericResume },
+    Primitive { value: JsValue, resume: NumericResume },
 }
 enum Phase {
     Radix,
@@ -72,26 +72,29 @@ impl NumericStep {
                 "scalar numeric method requires generic invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .cloned()
-            .unwrap_or(Value::Undefined);
+        let argument = match arguments.readable.first() {
+            Some(value) => runtime.root_value(value)?,
+            None => Value::Undefined,
+        };
         let value = match kind {
-            NumericKind::BigIntAsN(_) => arguments
-                .readable
-                .get(1)
-                .cloned()
-                .ok_or(RuntimeError::Invariant("BigInt width argv was not padded"))?,
+            NumericKind::BigIntAsN(_) => runtime.root_value(
+                arguments
+                    .readable
+                    .get(1)
+                    .ok_or(RuntimeError::Invariant("BigInt width argv was not padded"))?,
+            )?,
             _ => {
                 let brand = match kind {
                     NumericKind::ToString(kind) => kind,
                     _ => PrimitiveKind::Number,
                 };
-                match runtime.primitive_this_value(realm, brand, this_value.clone())? {
+                let this_value = runtime.root_value(this_value)?;
+                match runtime.primitive_this_value(realm, brand, this_value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(value)));
+                        return Ok(Self::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 }
             }
@@ -126,7 +129,7 @@ impl NumericStep {
                 resume.format(runtime, 0)
             }
             _ => Ok(Self::Number {
-                value: argument,
+                value: runtime.unroot_value(&argument)?,
                 resume,
             }),
         }
@@ -141,7 +144,9 @@ impl NumericResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(NumericStep::Complete(Completion::Throw(value)));
+                return Ok(NumericStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -173,13 +178,15 @@ impl NumericResume {
                 self.0.bits = match runtime.index_from_number(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(NumericStep::Complete(Completion::Throw(value)));
+                        return Ok(NumericStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 self.0.phase = Phase::BigInt;
                 let value = std::mem::replace(&mut self.0.value, Value::Undefined);
                 Ok(NumericStep::Primitive {
-                    value,
+                    value: runtime.into_jsvalue(value)?,
                     resume: self,
                 })
             }
@@ -224,13 +231,15 @@ impl NumericResume {
             ));
         }
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(NumericStep::Complete(Completion::Throw(value))),
         };
         let value = match runtime.bigint_from_primitive(self.0.realm, value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(NumericStep::Complete(Completion::Throw(value)));
+                return Ok(NumericStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let NumericKind::BigIntAsN(kind) = self.0.kind else {
@@ -241,7 +250,7 @@ impl NumericResume {
             BigIntAsNKind::AsIntN => value.as_int_n(self.0.bits),
         };
         Ok(NumericStep::Complete(match result {
-            Ok(value) => Completion::Return(Value::BigInt(value)),
+            Ok(value) => Completion::Return(runtime.unroot_value(&Value::BigInt(value))?),
             Err(_) => Completion::Throw(runtime.new_native_error_jsvalue(
                 self.0.realm,
                 NativeErrorKind::Range,
@@ -259,11 +268,16 @@ pub(crate) fn finish(
         step = match step {
             NumericStep::Complete(result) => return Ok(result),
             NumericStep::Number { value, resume } => {
+                let value = runtime.root_and_release_jsvalue(value)?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             NumericStep::Primitive { value, resume } => resume.primitive(
                 runtime,
-                runtime.to_primitive(realm, value, crate::engine::vm::ToPrimitiveHint::Number)?,
+                runtime.to_primitive(
+                    realm,
+                    runtime.root_and_release_jsvalue(value)?,
+                    crate::engine::vm::ToPrimitiveHint::Number,
+                )?,
             )?,
         };
     }

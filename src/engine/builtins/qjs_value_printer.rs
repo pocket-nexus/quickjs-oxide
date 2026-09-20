@@ -19,7 +19,7 @@ use crate::engine::heap::{
     PrimitiveObjectData, PropertySlot, RawValue, RegExpObjectData,
 };
 use crate::engine::object::access::raw_string_property_one_level;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::frames::ActiveCollectionRecord;
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
@@ -107,7 +107,7 @@ impl Runtime {
     /// are quoted just like upstream.
     pub fn qjs_print_value_bytes(&self, value: &Value) -> Result<Vec<u8>, RuntimeError> {
         let mut output = Vec::new();
-        self.qjs_print_value_into_bytes(value, &mut output)?;
+        self.print_value_rooted_into_bytes(value, &mut output)?;
         Ok(output)
     }
 
@@ -115,6 +115,15 @@ impl Runtime {
     /// The qjs host uses this to assemble a line without allocating and then
     /// copying a temporary vector for every non-String argument.
     pub(crate) fn qjs_print_value_into_bytes(
+        &self,
+        value: &JsValue,
+        output: &mut Vec<u8>,
+    ) -> Result<(), RuntimeError> {
+        let value = self.root_and_release_jsvalue(self.dup_jsvalue(value)?)?;
+        self.print_value_rooted_into_bytes(&value, output)
+    }
+
+    fn print_value_rooted_into_bytes(
         &self,
         value: &Value,
         output: &mut Vec<u8>,

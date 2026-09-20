@@ -162,25 +162,34 @@ fn string_includes_preserves_pinned_values_utf16_and_shared_magic_kernel() {
         (StringIncludesKind::EndsWith, "bc", None, true),
         (StringIncludesKind::EndsWith, "ab", Some(2), true),
     ] {
-        let mut readable = vec![Value::String(JsString::from_static(search))];
+        let mut readable = vec![js(
+            &runtime,
+            Value::String(JsString::from_static(search)),
+        )];
         if let Some(position) = position {
-            readable.push(Value::Int(position));
+            readable.push(JsValue::Int(position));
         }
         assert_eq!(
-            runtime
-                .call_string_prototype_includes(
-                    context.realm,
-                    selector,
-                    NativeInvocation::Call {
-                        this_value: Value::String(JsString::from_static("abc")),
-                    },
-                    &NativeArguments {
-                        actual_arg_count: readable.len(),
-                        readable,
-                    },
-                )
-                .unwrap(),
-            Completion::Return(Value::Bool(expected)),
+            returned(
+                &runtime,
+                runtime
+                    .call_string_prototype_includes(
+                        context.realm,
+                        selector,
+                        NativeInvocation::Call {
+                            this_value: js(
+                                &runtime,
+                                Value::String(JsString::from_static("abc")),
+                            ),
+                        },
+                        &NativeArguments {
+                            actual_arg_count: readable.len(),
+                            readable,
+                        },
+                    )
+                    .unwrap(),
+            ),
+            Value::Bool(expected),
         );
     }
 }

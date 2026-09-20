@@ -16,7 +16,7 @@ use crate::engine::object::{
     OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -33,9 +33,9 @@ pub(super) mod string;
 mod tests;
 
 pub(crate) enum ObjectIteratorStep {
-    Yield(Value),
+    Yield(JsValue),
     Done,
-    Throw(Value),
+    Throw(JsValue),
 }
 
 impl Runtime {
@@ -525,41 +525,46 @@ impl Runtime {
             ));
         };
         match this_value {
-            value @ Value::Object(_) => Ok(Completion::Return(value)),
-            Value::Undefined | Value::Null => Ok(Completion::Throw(self.new_native_error_jsvalue(
+            value @ JsValue::Object(_) => Ok(Completion::Return(value)),
+            JsValue::Undefined | JsValue::Null => Ok(Completion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "cannot convert to object",
             )?)),
-            value @ Value::Bool(_) => {
+            value @ JsValue::Bool(_) => {
                 let prototype =
                     self.primitive_prototype_for_realm(realm, PrimitiveKind::Boolean)?;
-                Ok(Completion::Return(Value::Object(
-                    self.new_primitive_object(&prototype, PrimitiveKind::Boolean, value)?,
+                Ok(Completion::Return(JsValue::Object(
+                    self.new_primitive_object_jsvalue(&prototype, PrimitiveKind::Boolean, value)?
+                        .into_handle(),
                 )))
             }
-            value @ (Value::Int(_) | Value::Float(_)) => {
+            value @ (JsValue::Int(_) | JsValue::Float(_)) => {
                 let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::Number)?;
-                Ok(Completion::Return(Value::Object(
-                    self.new_primitive_object(&prototype, PrimitiveKind::Number, value)?,
+                Ok(Completion::Return(JsValue::Object(
+                    self.new_primitive_object_jsvalue(&prototype, PrimitiveKind::Number, value)?
+                        .into_handle(),
                 )))
             }
-            value @ Value::String(_) => {
+            value @ JsValue::String(_) => {
                 let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::String)?;
-                Ok(Completion::Return(Value::Object(
-                    self.new_primitive_object(&prototype, PrimitiveKind::String, value)?,
+                Ok(Completion::Return(JsValue::Object(
+                    self.new_primitive_object_jsvalue(&prototype, PrimitiveKind::String, value)?
+                        .into_handle(),
                 )))
             }
-            value @ Value::BigInt(_) => {
+            value @ JsValue::BigInt(_) => {
                 let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::BigInt)?;
-                Ok(Completion::Return(Value::Object(
-                    self.new_primitive_object(&prototype, PrimitiveKind::BigInt, value)?,
+                Ok(Completion::Return(JsValue::Object(
+                    self.new_primitive_object_jsvalue(&prototype, PrimitiveKind::BigInt, value)?
+                        .into_handle(),
                 )))
             }
-            value @ Value::Symbol(_) => {
+            value @ JsValue::Symbol(_) => {
                 let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::Symbol)?;
-                Ok(Completion::Return(Value::Object(
-                    self.new_primitive_object(&prototype, PrimitiveKind::Symbol, value)?,
+                Ok(Completion::Return(JsValue::Object(
+                    self.new_primitive_object_jsvalue(&prototype, PrimitiveKind::Symbol, value)?
+                        .into_handle(),
                 )))
             }
         }
@@ -1038,7 +1043,11 @@ impl Runtime {
             .readable
             .get(1)
             .ok_or(RuntimeError::Invariant("Object.is rhs argv was not padded"))?;
-        Ok(Completion::Return(Value::Bool(left.same_value(right))))
+        let left = self.root_value(left)?;
+        let right = self.root_value(right)?;
+        Ok(Completion::Return(JsValue::Bool(
+            left.same_value(&right),
+        )))
     }
 
     pub(crate) fn call_object_assign(

@@ -96,7 +96,7 @@ pub(in crate::engine::vm) fn to_number_jsvalue(
         }
         JsValue::Int(value) => f64::from(*value),
         JsValue::Float(value) => *value,
-        JsValue::String(id) => string_payload(runtime, *id)?.to_number()?,
+        JsValue::String(id) => crate::engine::value::string_to_number(&string_payload(runtime, *id)?),
         JsValue::BigInt(_) => {
             return Err(Error::new(ErrorKind::Type, "cannot convert bigint to number"));
         }

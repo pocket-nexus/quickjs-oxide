@@ -5,7 +5,7 @@ use crate::engine::heap::{
     AsyncFunctionPhase, AsyncFunctionResumeKind, ContextId, InternalCallableData,
 };
 use crate::engine::object::{CallableRef, ObjectRef};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::{
     Completion, VmSuspendKind,
     suspend::{EncodedVmActivation, RootedVmActivation, VmActivationResume, VmRunOutcome},
@@ -22,7 +22,7 @@ pub(crate) struct AsyncResume {
     pending_effect: AsyncStepPending,
     runtime: Runtime,
     state: ObjectRef,
-    output: Value,
+    output: JsValue,
     phase: Phase,
     active: bool,
 }
@@ -43,7 +43,7 @@ impl AsyncResume {
             pending_effect: AsyncStepPending::default(),
             runtime: runtime.clone(),
             state,
-            output: Value::Object(capability.promise),
+            output: runtime.into_jsvalue(Value::Object(capability.promise))?,
             phase: Phase::Body,
             active: true,
         }))
@@ -53,7 +53,7 @@ impl AsyncResume {
             pending_effect: AsyncStepPending::default(),
             runtime: runtime.clone(),
             state,
-            output: Value::Undefined,
+            output: JsValue::Undefined,
             phase: Phase::Body,
             active: true,
         })
@@ -145,11 +145,15 @@ impl AsyncResume {
             Phase::Await(activation) => {
                 let promise = match completion {
                     Completion::Throw(reason) => return self.settle(Completion::Throw(reason)),
-                    Completion::Return(Value::Object(promise)) => promise,
-                    Completion::Return(_) => {
-                        return Err(RuntimeError::Invariant(
-                            "intrinsic PromiseResolve returned a non-object",
-                        ));
+                    Completion::Return(value) => {
+                        let Value::Object(promise) =
+                            self.runtime.root_and_release_jsvalue(value)?
+                        else {
+                            return Err(RuntimeError::Invariant(
+                                "intrinsic PromiseResolve returned a non-object",
+                            ));
+                        };
+                        promise
                     }
                 };
                 let realm = self
@@ -184,10 +188,8 @@ impl AsyncResume {
         }
     }
     fn finish(mut self: Box<Self>) -> Result<AsyncStep, RuntimeError> {
-        Ok(AsyncStep::Complete(Completion::Return(std::mem::replace(
-            &mut self.output,
-            Value::Undefined,
-        ))))
+        let output = std::mem::replace(&mut self.output, JsValue::Undefined);
+        Ok(AsyncStep::Complete(Completion::Return(output)))
     }
 }
 impl Drop for AsyncResume {
@@ -248,10 +250,10 @@ mod tests {
 struct AsyncStepPending {
     run_activation: Option<Box<RootedVmActivation>>,
     run_input: Option<VmActivationResume>,
-    resolve_value: Option<Value>,
+    resolve_value: Option<JsValue>,
     resolve_realm: Option<ContextId>,
     call_callable: Option<CallableRef>,
-    call_value: Option<Value>,
+    call_value: Option<JsValue>,
 }
 impl AsyncStep {
     pub(crate) fn request_run(
@@ -264,7 +266,7 @@ impl AsyncStep {
         Self::Run { resume }
     }
     pub(crate) fn request_resolve(
-        value: Value,
+        value: JsValue,
         realm: ContextId,
         mut resume: Box<AsyncResume>,
     ) -> Self {
@@ -274,7 +276,7 @@ impl AsyncStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        value: Value,
+        value: JsValue,
         mut resume: Box<AsyncResume>,
     ) -> Self {
         resume.pending_effect.call_callable = Some(callable);
@@ -295,7 +297,7 @@ impl AsyncResume {
             .take()
             .expect("AsyncStep Run input")
     }
-    pub(crate) fn take_resolve_value(&mut self) -> Value {
+    pub(crate) fn take_resolve_value(&mut self) -> JsValue {
         self.pending_effect
             .resolve_value
             .take()
@@ -313,7 +315,7 @@ impl AsyncResume {
             .take()
             .expect("AsyncStep Call callable")
     }
-    pub(crate) fn take_call_value(&mut self) -> Value {
+    pub(crate) fn take_call_value(&mut self) -> JsValue {
         self.pending_effect
             .call_value
             .take()

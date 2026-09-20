@@ -1,4 +1,5 @@
 //! Bounded native-stack dispatch for read requests.
+use super::JsValue;
 use super::{
     Completion, DescriptorStep, DirectCallTarget, Error, NativeConversion, Next, OrdinaryRead,
     PreparedHas, ProxyBooleanKind, ProxyBooleanStep, ProxyGetStep, ProxyOwnStep,
@@ -63,7 +64,14 @@ pub(super) fn prototype(
                             unreachable!()
                         };
                         *step = resume
-                            .prototype(runtime, NativeConversion::Throw(value))
+                            .prototype(
+                                runtime,
+                                NativeConversion::Throw(
+                                    runtime
+                                        .root_and_release_jsvalue(value)
+                                        .map_err(runtime_error_to_vm_error)?,
+                                ),
+                            )
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -109,7 +117,14 @@ pub(super) fn prototype(
                             unreachable!()
                         };
                         *step = resume
-                            .boolean(runtime, NativeConversion::Throw(value))
+                            .boolean(
+                                runtime,
+                                NativeConversion::Throw(
+                                    runtime
+                                        .root_and_release_jsvalue(value)
+                                        .map_err(runtime_error_to_vm_error)?,
+                                ),
+                            )
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -181,7 +196,14 @@ pub(super) fn attributes(
                             unreachable!()
                         };
                         *step = resume
-                            .boolean(runtime, NativeConversion::Throw(value))
+                            .boolean(
+                                runtime,
+                                NativeConversion::Throw(
+                                    runtime
+                                        .root_and_release_jsvalue(value)
+                                        .map_err(runtime_error_to_vm_error)?,
+                                ),
+                            )
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -224,7 +246,14 @@ pub(super) fn attributes(
                             unreachable!()
                         };
                         *step = resume
-                            .boolean(runtime, NativeConversion::Throw(value))
+                            .boolean(
+                                runtime,
+                                NativeConversion::Throw(
+                                    runtime
+                                        .root_and_release_jsvalue(value)
+                                        .map_err(runtime_error_to_vm_error)?,
+                                ),
+                            )
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -311,9 +340,15 @@ pub(super) fn get(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
                 query.parents.push(resume);
-                *step = DescriptorStep::start(runtime, realm, value)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                *step = DescriptorStep::start(
+                    runtime,
+                    realm,
+                    runtime
+                        .root_and_release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
                 continue;
             }
             Step::Converted(result) => {
@@ -387,6 +422,9 @@ pub(super) fn get(
                 let receiver = receiver.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
+                let receiver = runtime
+                    .root_and_release_jsvalue(receiver)
+                    .map_err(runtime_error_to_vm_error)?;
                 let read = runtime
                     .prepare_ordinary_read(&object, &key, receiver)
                     .map_err(runtime_error_to_vm_error)?;
@@ -406,14 +444,16 @@ pub(super) fn get(
                         *step = resume
                             .resume(
                                 runtime,
-                                Completion::Return(value.unwrap_or(Value::Undefined)),
+                                Completion::Return(value.unwrap_or(JsValue::Undefined)),
                             )
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
                     OrdinaryRead::Call { getter, receiver } => (
                         DirectCallTarget::Callable(getter),
-                        receiver,
+                        runtime
+                            .into_jsvalue(receiver)
+                            .map_err(runtime_error_to_vm_error)?,
                         Vec::new(),
                         resume,
                     ),
@@ -439,7 +479,13 @@ pub(super) fn get(
                             object,
                             key,
                             receiver,
-                            execution.slots.take_argument_buffer(3)?,
+                            execution
+                                .slots
+                                .take_argument_buffer(3)?
+                                .into_iter()
+                                .map(|argument| runtime.root_and_release_jsvalue(argument))
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(runtime_error_to_vm_error)?,
                         )
                         .map_err(runtime_error_to_vm_error)?
                         .into();

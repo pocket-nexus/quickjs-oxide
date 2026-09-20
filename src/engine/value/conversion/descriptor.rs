@@ -4,7 +4,7 @@ use crate::engine::heap::ContextId;
 use crate::engine::object::{
     AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
 };
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::Completion;
 
 pub(crate) enum DescriptorStep {
@@ -127,7 +127,7 @@ impl DescriptorResume {
             return self.next(runtime);
         }
         let object = state.object.clone();
-        let receiver = Value::Object(state.object.clone());
+        let receiver = JsValue::Object(state.object.clone().into_handle());
         Ok(DescriptorStep::request_read(object, key, receiver, self))
     }
 
@@ -143,7 +143,7 @@ impl DescriptorResume {
         }
         let state = &mut self.0.state;
         let value = match completion {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 if state.field >= 4 {
                     return invalid(
@@ -156,7 +156,9 @@ impl DescriptorResume {
                         },
                     );
                 }
-                return Ok(DescriptorStep::Throw(value));
+                return Ok(DescriptorStep::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                ));
             }
         };
         match state.field {
@@ -280,7 +282,10 @@ mod tests {
                 .unwrap(),
         );
         let step = resume
-            .read(&runtime, Completion::Return(Value::Object(value)))
+            .read(
+                &runtime,
+                Completion::Return(JsValue::Object(value.into_handle())),
+            )
             .unwrap();
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(object_id).is_ok());
@@ -309,7 +314,7 @@ mod tests {
         drop(resume.take_has_key());
         assert!(
             resume
-                .read(&runtime, Completion::Return(Value::Int(1)))
+                .read(&runtime, Completion::Return(JsValue::Int(1)))
                 .is_err()
         );
         runtime.run_gc().unwrap();
@@ -323,7 +328,7 @@ struct DescriptorStepPending {
     has_key: Option<PropertyKey>,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
 }
 impl DescriptorStep {
     pub(crate) fn request_has(
@@ -338,7 +343,7 @@ impl DescriptorStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: DescriptorResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -376,7 +381,7 @@ impl DescriptorResume {
             .take()
             .expect("DescriptorStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver

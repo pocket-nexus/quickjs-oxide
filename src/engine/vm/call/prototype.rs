@@ -3,14 +3,14 @@ use super::ConstructorPrototypeSource;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
-    object::PropertyKey,
-    value::{Value, conversion::NativeConversion},
+    object::{ObjectRef, PropertyKey},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::Completion,
 };
 pub(crate) enum ProtoSourceStep {
     Complete(NativeConversion<ConstructorPrototypeSource>),
     ReadValue {
-        receiver: Value,
+        receiver: JsValue,
         key: PropertyKey,
         resume: ProtoSourceResume,
     },
@@ -44,7 +44,7 @@ impl ProtoSourceStep {
             )));
         }
         Ok(Self::ReadValue {
-            receiver: new_target.clone(),
+            receiver: runtime.unroot_value(&new_target)?,
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?,
             resume: ProtoSourceResume(Box::new(ProtoSourceResumeState { realm, new_target })),
         })
@@ -57,9 +57,13 @@ impl ProtoSourceResume {
         reply: Completion,
     ) -> Result<ProtoSourceStep, RuntimeError> {
         let result = match reply {
-            Completion::Throw(value) => NativeConversion::Throw(value),
-            Completion::Return(Value::Object(prototype)) => {
-                NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype))
+            Completion::Throw(value) => NativeConversion::Throw(
+                runtime.root_and_release_jsvalue(value)?,
+            ),
+            Completion::Return(JsValue::Object(prototype)) => {
+                NativeConversion::Value(ConstructorPrototypeSource::Explicit(
+                    ObjectRef::from_owned_handle(runtime.clone(), prototype),
+                ))
             }
             Completion::Return(_) => {
                 match runtime.function_realm_from_value(self.0.realm, &self.0.new_target)? {
@@ -87,7 +91,11 @@ pub(crate) fn finish(
                 resume,
             } => resume.resume(
                 runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                runtime.get_value_property_in_realm(
+                    realm,
+                    runtime.root_and_release_jsvalue(receiver)?,
+                    &key,
+                )?,
             )?,
         };
     }

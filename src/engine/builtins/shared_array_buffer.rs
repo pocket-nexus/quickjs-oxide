@@ -21,7 +21,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -249,7 +249,7 @@ impl Runtime {
             Err(error) => return Err(shared_memory_runtime_error(error)),
         };
         let object = self.new_shared_array_buffer_from_handle(&prototype, handle)?;
-        Ok(Completion::Return(Value::Object(object)))
+        Ok(Completion::Return(JsValue::Object(object.into_handle())))
     }
 
     pub(in crate::engine::builtins) fn call_shared_array_buffer_species(
@@ -261,7 +261,7 @@ impl Runtime {
                 "SharedArrayBuffer species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value.clone()))
+        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(in crate::engine::builtins) fn call_shared_array_buffer_getter(
@@ -275,9 +275,12 @@ impl Runtime {
                 "SharedArrayBuffer prototype getter received a non-getter invocation",
             ));
         };
-        let object = match self.require_shared_array_buffer_borrowed(realm, this_value)? {
+        let this_value = self.root_value(this_value)?;
+        let object = match self.require_shared_array_buffer_borrowed(realm, &this_value)? {
             NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let snapshot = self.shared_array_buffer_snapshot(object)?;
         let value = match kind {
@@ -301,7 +304,7 @@ impl Runtime {
                 ));
             }
         };
-        Ok(Completion::Return(value))
+        Ok(Completion::Return(self.into_jsvalue(value)?))
     }
 
     fn call_shared_array_buffer_grow(
@@ -353,7 +356,7 @@ impl Runtime {
             .borrow_mut()
             .heap
             .grow_shared_array_buffer(object.object_id(), new_length)?;
-        Ok(Completion::Return(Value::Undefined))
+        Ok(Completion::Return(JsValue::Undefined))
     }
 
     fn call_shared_array_buffer_slice(
@@ -477,7 +480,7 @@ impl Runtime {
         target_handle
             .copy_range_from(&source_handle, start, 0, new_length)
             .map_err(shared_memory_runtime_error)?;
-        Ok(Completion::Return(Value::Object(target)))
+        Ok(Completion::Return(JsValue::Object(target.into_handle())))
     }
 
     pub(in crate::engine::builtins) fn shared_array_buffer_default_prototype(

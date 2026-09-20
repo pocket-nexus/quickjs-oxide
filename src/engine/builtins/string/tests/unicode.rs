@@ -281,19 +281,24 @@ fn string_normalize_limit_and_oom_use_internal_error_and_recover() {
 
     let arguments = NativeArguments {
         actual_arg_count: 1,
-        readable: vec![Value::String(JsString::from_static("NFD"))],
+        readable: vec![js(&runtime, Value::String(JsString::from_static("NFD")))],
     };
-    let Completion::Throw(Value::Object(error)) = runtime
-        .call_string_prototype_normalize_with_limit(
-            defining.realm,
-            NativeInvocation::Call {
-                this_value: Value::String(JsString::try_from_utf8("ý").unwrap()),
-            },
-            &arguments,
-            1,
-        )
-        .unwrap()
-    else {
+    let Value::Object(error) = thrown(
+        &runtime,
+        runtime
+            .call_string_prototype_normalize_with_limit(
+                defining.realm,
+                NativeInvocation::Call {
+                    this_value: js(
+                        &runtime,
+                        Value::String(JsString::try_from_utf8("ý").unwrap()),
+                    ),
+                },
+                &arguments,
+                1,
+            )
+            .unwrap(),
+    ) else {
         panic!("one-below-boundary normalization did not throw an Error object");
     };
     for (name, expected) in [("name", "InternalError"), ("message", "string too long")] {
@@ -306,19 +311,23 @@ fn string_normalize_limit_and_oom_use_internal_error_and_recover() {
         assert_eq!(value, JsString::from_static(expected));
     }
     assert_eq!(
-        runtime
-            .call_string_prototype_normalize_with_limit(
-                defining.realm,
-                NativeInvocation::Call {
-                    this_value: Value::String(JsString::try_from_utf8("ý").unwrap()),
-                },
-                &arguments,
-                2,
-            )
-            .unwrap(),
-        Completion::Return(Value::String(
-            JsString::try_from_utf16([u16::from(b'y'), 0x0301]).unwrap(),
-        )),
+        returned(
+            &runtime,
+            runtime
+                .call_string_prototype_normalize_with_limit(
+                    defining.realm,
+                    NativeInvocation::Call {
+                        this_value: js(
+                            &runtime,
+                            Value::String(JsString::try_from_utf8("ý").unwrap()),
+                        ),
+                    },
+                    &arguments,
+                    2,
+                )
+                .unwrap(),
+        ),
+        Value::String(JsString::try_from_utf16([u16::from(b'y'), 0x0301]).unwrap()),
         "the exact normalization expansion boundary was rejected",
     );
 

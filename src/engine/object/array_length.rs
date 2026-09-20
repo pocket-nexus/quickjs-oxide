@@ -2,12 +2,12 @@
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::operations::ArrayLengthConversion;
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 
 pub(crate) enum ArrayLengthStep {
     Complete(ArrayLengthConversion),
     Number {
-        value: Value,
+        value: JsValue,
         resume: ArrayLengthResume,
     },
 }
@@ -49,7 +49,7 @@ impl ArrayLengthStep {
             }
             Value::Int(_) => Self::Complete(runtime.invalid_array_length(realm)?),
             value => Self::Number {
-                value: value.clone(),
+                value: runtime.unroot_value(&value)?,
                 resume: ArrayLengthResume(Box::new(ArrayLengthResumeState {
                     realm,
                     phase: Phase::First(value),
@@ -74,7 +74,7 @@ impl ArrayLengthResume {
         };
         Ok(match self.0.phase {
             Phase::First(original) => ArrayLengthStep::Number {
-                value: original.clone(),
+                value: runtime.unroot_value(&original)?,
                 resume: Self(Box::new(ArrayLengthResumeState {
                     realm: self.0.realm,
                     phase: Phase::Second {
@@ -97,10 +97,11 @@ const _: () = assert!(std::mem::size_of::<ArrayLengthStep>() <= 64);
 mod tests {
     use super::*;
 
-    fn take_number(step: ArrayLengthStep) -> ArrayLengthResume {
-        let ArrayLengthStep::Number { resume, .. } = step else {
+    fn take_number(runtime: &Runtime, step: ArrayLengthStep) -> ArrayLengthResume {
+        let ArrayLengthStep::Number { value, resume } = step else {
             panic!("expected ToNumber request")
         };
+        runtime.release_jsvalue(value).unwrap();
         resume
     }
 
@@ -113,11 +114,13 @@ mod tests {
             let original = runtime.new_object(None).unwrap();
             let id = original.object_id();
             let mut resume = take_number(
+                &runtime,
                 ArrayLengthStep::start(&runtime, Some(context.realm), Value::Object(original))
                     .unwrap(),
             );
             if second {
                 resume = take_number(
+                    &runtime,
                     resume
                         .number(&runtime, NativeConversion::Value(1.0))
                         .unwrap(),

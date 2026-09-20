@@ -351,7 +351,7 @@ impl Runtime {
                 enumerable,
                 configurable,
             } => {
-                self.write_var_ref(&var_ref, value)?;
+                self.write_var_ref(&var_ref, self.unroot_value(&value)?)?;
                 self.store_property_slot(
                     object,
                     key,
@@ -365,7 +365,7 @@ impl Runtime {
                 let CompleteOrdinaryPropertyDescriptor::Data { value, .. } = &complete else {
                     unreachable!()
                 };
-                self.write_var_ref(&var_ref, value.clone())?;
+                self.write_var_ref(&var_ref, self.unroot_value(value)?)?;
                 self.store_complete_property(object, key, complete)?;
             }
             complete @ CompleteOrdinaryPropertyDescriptor::Accessor { .. } => {
@@ -406,7 +406,7 @@ impl Runtime {
         match slot {
             PropertySlot::VarRef(id) => {
                 let root = VarRefRoot::from_borrowed_handle(self.clone(), id)?;
-                self.write_var_ref(&root, value.clone())?;
+                self.write_var_ref(&root, self.unroot_value(value)?)?;
             }
             PropertySlot::Data(_) => {
                 let raw = self.raw_property_value(value)?;
@@ -427,6 +427,7 @@ impl Runtime {
 mod tests {
     use crate::engine::code::function::metadata::ClosureVariableKind;
     use crate::engine::object::DescriptorField;
+    use crate::engine::value::JsValue;
 
     use super::*;
 
@@ -592,7 +593,7 @@ mod tests {
         let mut context = runtime.new_context();
         let callee = context.function_prototype().unwrap();
         let root = runtime
-            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
             .unwrap();
         let arguments = runtime
             .new_mapped_arguments_object(context.realm, &callee, vec![root.clone()])
@@ -604,10 +605,10 @@ mod tests {
                 .set_property(&arguments, &zero, Value::Int(2))
                 .unwrap()
         );
-        assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(2));
+        assert_eq!(runtime.read_var_ref(&root).unwrap(), JsValue::Int(2));
         assert_eq!(runtime.arguments_fast_len(&arguments), Ok(Some(1)));
 
-        runtime.write_var_ref(&root, Value::Int(3)).unwrap();
+        runtime.write_var_ref(&root, JsValue::Int(3)).unwrap();
         assert_eq!(
             context.get_property(&arguments, &zero).unwrap(),
             Value::Int(3)
@@ -625,9 +626,9 @@ mod tests {
                 )
                 .unwrap()
         );
-        assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(4));
+        assert_eq!(runtime.read_var_ref(&root).unwrap(), JsValue::Int(4));
         assert_eq!(runtime.arguments_fast_len(&arguments), Ok(None));
-        runtime.write_var_ref(&root, Value::Int(5)).unwrap();
+        runtime.write_var_ref(&root, JsValue::Int(5)).unwrap();
         assert_eq!(
             context.get_property(&arguments, &zero).unwrap(),
             Value::Int(5)
@@ -646,8 +647,8 @@ mod tests {
                 )
                 .unwrap()
         );
-        assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(6));
-        runtime.write_var_ref(&root, Value::Int(7)).unwrap();
+        assert_eq!(runtime.read_var_ref(&root).unwrap(), JsValue::Int(6));
+        runtime.write_var_ref(&root, JsValue::Int(7)).unwrap();
         assert_eq!(
             context.get_property(&arguments, &zero).unwrap(),
             Value::Int(6)
@@ -670,10 +671,10 @@ mod tests {
         let mut context = runtime.new_context();
         let callee = context.function_prototype().unwrap();
         let first = runtime
-            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
             .unwrap();
         let second = runtime
-            .new_var_ref(Value::Int(2), false, false, ClosureVariableKind::Normal)
+            .new_var_ref(JsValue::Int(2), false, false, ClosureVariableKind::Normal)
             .unwrap();
         let tail = runtime
             .new_mapped_arguments_object(
@@ -697,7 +698,7 @@ mod tests {
         assert!(runtime.delete_property(&middle, &zero).unwrap());
         assert_eq!(runtime.arguments_fast_len(&middle), Ok(None));
         assert!(context.set_property(&middle, &zero, Value::Int(8)).unwrap());
-        runtime.write_var_ref(&first, Value::Int(9)).unwrap();
+        runtime.write_var_ref(&first, JsValue::Int(9)).unwrap();
         assert_eq!(context.get_property(&middle, &zero).unwrap(), Value::Int(8));
     }
 }

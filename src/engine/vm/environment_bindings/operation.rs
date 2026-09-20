@@ -3,7 +3,7 @@ use crate::engine::{
     api::{ErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol, operations::InternalSetResult},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
 
@@ -221,7 +221,9 @@ impl EnvironmentResume {
         let present = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(EnvironmentStep::Complete(Completion::Throw(value)));
+                return Ok(EnvironmentStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let realm = self.0.realm;
@@ -329,9 +331,9 @@ impl EnvironmentResume {
             } else {
                 EnvironmentStep::Complete(Completion::Return(JsValue::Bool(true)))
             }),
-            Phase::Boolean => Ok(EnvironmentStep::Complete(Completion::Return(JsValue::Bool(
-                present,
-            )))),
+            Phase::Boolean => Ok(EnvironmentStep::Complete(Completion::Return(
+                JsValue::Bool(present),
+            ))),
             _ => Err(RuntimeError::Invariant(
                 "environment Boolean reply has wrong phase",
             )),
@@ -363,9 +365,9 @@ impl EnvironmentResume {
                 ),
                 _ => EnvironmentStep::Complete(Completion::Return(JsValue::Bool(true))),
             }),
-            Phase::Excluded => Ok(EnvironmentStep::Complete(Completion::Return(JsValue::Bool(
-                !runtime.value_to_boolean_jsvalue(&value)?,
-            )))),
+            Phase::Excluded => Ok(EnvironmentStep::Complete(Completion::Return(
+                JsValue::Bool(!runtime.value_to_boolean_jsvalue(&value)?),
+            ))),
             Phase::Value => Ok(EnvironmentStep::Complete(Completion::Return(value))),
             _ => Err(RuntimeError::Invariant(
                 "environment value reply has wrong phase",

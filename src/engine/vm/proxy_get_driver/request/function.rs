@@ -1,5 +1,5 @@
 //! Mechanical adapters for function domain requests.
-use super::{DirectCallTarget, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step, Value};
 
 impl From<crate::engine::builtins::ArgumentsStep> for Step {
     fn from(step: crate::engine::builtins::ArgumentsStep) -> Self {
@@ -11,7 +11,7 @@ impl From<crate::engine::builtins::ArgumentsStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::Arguments(resume)),
@@ -71,7 +71,7 @@ impl From<crate::engine::builtins::InstanceStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::Instance(resume)),
@@ -127,7 +127,7 @@ impl From<crate::engine::builtins::BindStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::Bind(resume)),
@@ -155,7 +155,7 @@ impl From<crate::engine::builtins::FunctionTextStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::FunctionText(resume)),

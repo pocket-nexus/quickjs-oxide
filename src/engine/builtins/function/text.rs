@@ -4,7 +4,7 @@ use crate::engine::{
     code::function::metadata::FunctionKind,
     heap::{ContextId, ObjectPayload},
     object::{ObjectRef, PropertyKey},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::NativeInvocation},
 };
 pub(crate) enum FunctionTextStep {
@@ -37,16 +37,17 @@ impl FunctionTextStep {
         realm: ContextId,
         invocation: &NativeInvocation,
     ) -> Result<Self, RuntimeError> {
-        let NativeInvocation::Call { this_value } = invocation.clone() else {
+        let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Function.prototype.toString did not receive a generic invocation",
             ));
         };
-        let Value::Object(function) = this_value else {
+        let JsValue::Object(id) = this_value else {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
             )));
         };
+        let function = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
 
         let (is_callable, source, function_kind) = {
             let state = runtime.0.state.borrow();
@@ -108,9 +109,9 @@ impl FunctionTextStep {
             )));
         }
         if let Some(source) = source {
-            return Ok(Self::Complete(Completion::Return(Value::String(
-                JsString::try_from_bytes(&source)?,
-            ))));
+            return Ok(Self::Complete(Completion::Return(
+                runtime.unroot_value(&Value::String(JsString::try_from_bytes(&source)?))?,
+            )));
         }
 
         Ok({
@@ -132,7 +133,11 @@ impl FunctionTextStep {
     }
 }
 impl FunctionTextResume {
-    pub(crate) fn resume(mut self, result: Completion) -> Result<FunctionTextStep, RuntimeError> {
+    pub(crate) fn resume(
+        mut self,
+        runtime: &Runtime,
+        result: Completion,
+    ) -> Result<FunctionTextStep, RuntimeError> {
         if self.converted {
             return Err(RuntimeError::Invariant("Function name repeated reply"));
         }
@@ -143,8 +148,8 @@ impl FunctionTextResume {
             }
         };
         self.converted = true;
-        if matches!(value, Value::Undefined) {
-            self.string(NativeConversion::Value(JsString::from_static("")))
+        if matches!(value, JsValue::Undefined) {
+            self.string(runtime, NativeConversion::Value(JsString::from_static("")))
         } else {
             Ok({
                 let __pending_field_value = value;
@@ -155,6 +160,7 @@ impl FunctionTextResume {
     }
     pub(crate) fn string(
         self,
+        runtime: &Runtime,
         result: NativeConversion<JsString>,
     ) -> Result<FunctionTextStep, RuntimeError> {
         if !self.converted {
@@ -163,7 +169,9 @@ impl FunctionTextResume {
         let name = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(FunctionTextStep::Complete(Completion::Throw(value)));
+                return Ok(FunctionTextStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let prefix = match self.kind {
@@ -177,7 +185,7 @@ impl FunctionTextResume {
             .try_concat(&JsString::from_static("() {\n    [native code]\n}"))?;
         drop(self.0.function);
         Ok(FunctionTextStep::Complete(Completion::Return(
-            Value::String(value),
+            runtime.unroot_value(&Value::String(value))?,
         )))
     }
 }
@@ -192,11 +200,14 @@ pub(crate) fn finish(
             FunctionTextStep::Read { mut resume } => {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
-                resume.resume(runtime.get_property_in_realm(realm, &object, &key)?)?
+                resume.resume(
+                    runtime,
+                    runtime.get_property_in_realm(realm, &object, &key)?,
+                )?
             }
             FunctionTextStep::String { mut resume } => {
-                let value = resume.take_string_value();
-                resume.string(runtime.native_to_js_string(realm, &value)?)?
+                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
+                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
             }
         };
     }
@@ -206,7 +217,7 @@ pub(crate) fn finish(
 struct FunctionTextStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    string_value: Option<Value>,
+    string_value: Option<JsValue>,
 }
 impl FunctionTextStep {
     pub(crate) fn request_read(
@@ -218,7 +229,7 @@ impl FunctionTextStep {
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_string(value: Value, mut resume: FunctionTextResume) -> Self {
+    pub(crate) fn request_string(value: JsValue, mut resume: FunctionTextResume) -> Self {
         resume.0.pending_effect.string_value = Some(value);
         Self::String { resume }
     }
@@ -238,7 +249,7 @@ impl FunctionTextResume {
             .take()
             .expect("FunctionTextStep Read key")
     }
-    pub(crate) fn take_string_value(&mut self) -> Value {
+    pub(crate) fn take_string_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .string_value

@@ -8,7 +8,7 @@ use crate::engine::{
     atom::Atom,
     heap::ContextId,
     object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::DirectCallTarget},
 };
 use std::collections::HashSet;
@@ -87,17 +87,21 @@ impl KeysStep {
         realm: ContextId,
         object: ObjectRef,
     ) -> Result<Self, RuntimeError> {
-        method(realm, MethodStep::start(runtime, realm, object, "ownKeys")?)
+        method(runtime, realm, MethodStep::start(runtime, realm, object, "ownKeys")?)
     }
 }
-fn method(realm: ContextId, step: MethodStep) -> Result<KeysStep, RuntimeError> {
+fn method(
+    runtime: &Runtime,
+    realm: ContextId,
+    step: MethodStep,
+) -> Result<KeysStep, RuntimeError> {
     Ok(match step {
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let key = resume.take_read_key();
             let _ = resume.take_read_receiver();
             KeysStep::request_read(
-                Value::Object(object),
+                runtime.into_jsvalue(Value::Object(object))?,
                 key,
                 KeysResume(Box::new(KeysResumeState {
                     pending_effect: KeysStepPending::default(),
@@ -106,7 +110,9 @@ fn method(realm: ContextId, step: MethodStep) -> Result<KeysStep, RuntimeError> 
                 })),
             )
         }
-        MethodStep::Throw(value) => KeysStep::Complete(NativeConversion::Throw(value)),
+        MethodStep::Throw(value) => KeysStep::Complete(NativeConversion::Throw(
+            runtime.root_and_release_jsvalue(value)?,
+        )),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -122,8 +128,8 @@ fn method(realm: ContextId, step: MethodStep) -> Result<KeysStep, RuntimeError> 
                 ),
                 Some(target) => KeysStep::request_call(
                     target,
-                    Value::Object(rooted.handler.clone()),
-                    vec![Value::Object(rooted.target.clone())],
+                    runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
+                    vec![runtime.into_jsvalue(Value::Object(rooted.target.clone()))?],
                     KeysResume(Box::new(KeysResumeState {
                         pending_effect: KeysStepPending::default(),
                         realm,
@@ -150,7 +156,7 @@ fn items(
     if keys.len() < length as usize {
         let key = runtime.intern_property_key(&keys.len().to_string())?;
         return Ok(KeysStep::request_read(
-            list.clone(),
+            runtime.into_jsvalue(list.clone())?,
             key,
             KeysResume(Box::new(KeysResumeState {
                 pending_effect: KeysStepPending::default(),
@@ -224,26 +230,28 @@ impl KeysResume {
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(KeysStep::Complete(NativeConversion::Throw(value)));
+                return Ok(KeysStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
         };
         let realm = self.0.realm;
         match self.0.phase {
             Phase::Method(resume) => {
-                method(realm, resume.resume(runtime, Completion::Return(value))?)
+                method(runtime, realm, resume.resume(runtime, Completion::Return(value))?)
             }
-            Phase::Trap(rooted) => Ok(KeysStep::request_read(
-                value.clone(),
-                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-                Self(Box::new(KeysResumeState {
-                    pending_effect: KeysStepPending::default(),
-                    realm,
-                    phase: Phase::Length {
-                        rooted,
-                        list: value,
-                    },
-                })),
-            )),
+            Phase::Trap(rooted) => {
+                let list = runtime.root_and_release_jsvalue(value)?;
+                Ok(KeysStep::request_read(
+                    runtime.into_jsvalue(list.clone())?,
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+                    Self(Box::new(KeysResumeState {
+                        pending_effect: KeysStepPending::default(),
+                        realm,
+                        phase: Phase::Length { rooted, list },
+                    })),
+                ))
+            }
             Phase::Length { rooted, list } => Ok(KeysStep::request_number(
                 value,
                 Self(Box::new(KeysResumeState {
@@ -258,7 +266,7 @@ impl KeysResume {
                 length,
                 mut keys,
             } => {
-                let key = match value {
+                let key = match runtime.root_and_release_jsvalue(value)? {
                     Value::String(value) => runtime.intern_property_key_js_string(&value)?,
                     Value::Symbol(value) => PropertyKey::from(value),
                     _ => {
@@ -412,7 +420,7 @@ pub(super) fn finish(
         step = match step {
             KeysStep::Complete(result) => return Ok(result),
             KeysStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -421,8 +429,12 @@ pub(super) fn finish(
             }
             KeysStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 {
                     let completion = match target {
                         DirectCallTarget::Callable(callable) => {
@@ -436,7 +448,7 @@ pub(super) fn finish(
                 }
             }
             KeysStep::Number { mut resume } => {
-                let value = resume.take_number_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             KeysStep::Keys { mut resume } => {
@@ -480,7 +492,10 @@ mod tests {
                 panic!("expected handler read")
             };
             let KeysStep::Call { resume, .. } = resume
-                .resume(&runtime, Completion::Return(callable))
+                .resume(
+                    &runtime,
+                    Completion::Return(runtime.into_jsvalue(callable).unwrap()),
+                )
                 .unwrap()
             else {
                 panic!("expected trap")
@@ -488,13 +503,16 @@ mod tests {
             let list = runtime.new_object(None).unwrap();
             let list_id = list.object_id();
             let KeysStep::Read { resume, .. } = resume
-                .resume(&runtime, Completion::Return(Value::Object(list)))
+                .resume(
+                    &runtime,
+                    Completion::Return(runtime.into_jsvalue(Value::Object(list)).unwrap()),
+                )
                 .unwrap()
             else {
                 panic!("expected length")
             };
             let KeysStep::Number { mut resume, .. } = resume
-                .resume(&runtime, Completion::Return(Value::Int(1)))
+                .resume(&runtime, Completion::Return(JsValue::Int(1)))
                 .unwrap()
             else {
                 panic!("expected conversion")
@@ -512,7 +530,10 @@ mod tests {
                     panic!("expected item")
                 };
                 let KeysStep::Extensible { resume: next, .. } = next
-                    .resume(&runtime, Completion::Return(Value::Symbol(symbol)))
+                    .resume(
+                        &runtime,
+                        Completion::Return(runtime.into_jsvalue(Value::Symbol(symbol)).unwrap()),
+                    )
                     .unwrap()
                 else {
                     panic!("expected target query")
@@ -566,27 +587,27 @@ mod tests {
 
 #[derive(Default)]
 struct KeysStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
-    number_value: Option<Value>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
+    number_value: Option<JsValue>,
     keys_object: Option<ObjectRef>,
     extensible_object: Option<ObjectRef>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
 }
 impl KeysStep {
-    pub(crate) fn request_read(receiver: Value, key: PropertyKey, mut resume: KeysResume) -> Self {
+    pub(crate) fn request_read(receiver: JsValue, key: PropertyKey, mut resume: KeysResume) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: KeysResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -594,7 +615,7 @@ impl KeysStep {
         resume.0.pending_effect.call_arguments = Some(arguments);
         Self::Call { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: KeysResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: KeysResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
@@ -617,7 +638,7 @@ impl KeysStep {
     }
 }
 impl KeysResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -638,21 +659,21 @@ impl KeysResume {
             .take()
             .expect("KeysStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("KeysStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments
             .take()
             .expect("KeysStep Call arguments")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value

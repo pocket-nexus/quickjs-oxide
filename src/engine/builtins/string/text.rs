@@ -6,7 +6,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{StringCaseKind, StringCreateHtmlKind, StringPadKind, StringTrimKind},
     heap::ContextId,
-    value::{CreateHtmlStringBuffer, JsString, Value, conversion::NativeConversion},
+    value::{CreateHtmlStringBuffer, JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -40,7 +40,7 @@ impl StringTextKind {
 pub(crate) enum StringTextStep {
     Complete(Completion),
     Primitive {
-        value: Value,
+        value: JsValue,
         hint: ToPrimitiveHint,
         resume: StringTextResume,
     },
@@ -113,6 +113,7 @@ impl StringTextStep {
                 "String text conversion did not receive a call",
             ));
         };
+        let this_value = runtime.root_value(this_value)?;
         if matches!(this_value, Value::Undefined | Value::Null) {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
@@ -122,20 +123,22 @@ impl StringTextStep {
                 )?,
             )));
         }
+        let first = match arguments.and_then(|args| args.readable.first()) {
+            Some(value) => runtime.root_value(value)?,
+            None => Value::Undefined,
+        };
+        let second = match arguments.and_then(|args| args.readable.get(1)) {
+            Some(value) => runtime.root_value(value)?,
+            None => Value::Undefined,
+        };
         Ok(Self::Primitive {
-            value: this_value.clone(),
+            value: runtime.into_jsvalue(this_value)?,
             hint: ToPrimitiveHint::String,
             resume: StringTextResume(Box::new(StringTextResumeState {
                 realm,
                 kind,
-                first: arguments
-                    .and_then(|args| args.readable.first())
-                    .cloned()
-                    .unwrap_or(Value::Undefined),
-                second: arguments
-                    .and_then(|args| args.readable.get(1))
-                    .cloned()
-                    .unwrap_or(Value::Undefined),
+                first,
+                second,
                 actual: arguments.map_or(0, |args| args.actual_arg_count),
                 limit,
                 phase: TextPhase::Source,
@@ -144,7 +147,7 @@ impl StringTextStep {
     }
 }
 impl StringTextResume {
-    fn convert(mut self, value: Value, hint: ToPrimitiveHint, phase: TextPhase) -> StringTextStep {
+    fn convert(mut self, value: JsValue, hint: ToPrimitiveHint, phase: TextPhase) -> StringTextStep {
         StringTextStep::Primitive {
             value,
             hint,
@@ -161,7 +164,7 @@ impl StringTextResume {
         result: Completion,
     ) -> Result<StringTextStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(StringTextStep::Complete(Completion::Throw(value)));
             }
@@ -177,7 +180,9 @@ impl StringTextResume {
                 let source = match runtime.native_to_js_string(realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
+                        return Ok(StringTextStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 match self.0.kind {
@@ -188,7 +193,7 @@ impl StringTextResume {
                         runtime.finish_string_case(realm, kind, source, self.0.limit)?
                     }
                     StringTextKind::Repeat => {
-                        let argument = self.0.first.clone();
+                        let argument = runtime.unroot_value(&self.0.first)?;
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::Number,
@@ -196,7 +201,7 @@ impl StringTextResume {
                         ));
                     }
                     StringTextKind::Pad(_) => {
-                        let argument = self.0.first.clone();
+                        let argument = runtime.unroot_value(&self.0.first)?;
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::Number,
@@ -212,7 +217,7 @@ impl StringTextResume {
                                 self.0.limit,
                             )?
                         } else {
-                            let argument = self.0.first.clone();
+                            let argument = runtime.unroot_value(&self.0.first)?;
                             return Ok(self.convert(
                                 argument,
                                 ToPrimitiveHint::String,
@@ -221,7 +226,7 @@ impl StringTextResume {
                         }
                     }
                     StringTextKind::LocaleCompare => {
-                        let argument = self.0.first.clone();
+                        let argument = runtime.unroot_value(&self.0.first)?;
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::String,
@@ -242,7 +247,7 @@ impl StringTextResume {
                                     )?,
                                 )));
                             }
-                            let argument = self.0.first.clone();
+                            let argument = runtime.unroot_value(&self.0.first)?;
                             return Ok(self.convert(
                                 argument,
                                 ToPrimitiveHint::String,
@@ -261,7 +266,9 @@ impl StringTextResume {
                 let count = match runtime.native_to_int64_sat(realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
+                        return Ok(StringTextStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 runtime.finish_string_repeat(realm, source, count, self.0.limit)?
@@ -272,15 +279,17 @@ impl StringTextResume {
                         crate::engine::value::number::to_int32_sat(value)
                     }
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
+                        return Ok(StringTextStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let source_len = i32::try_from(source.len())
                     .map_err(|_| RuntimeError::Invariant("String length exceeded signed Int32"))?;
                 if source_len >= target {
-                    Completion::Return(Value::String(source))
+                    Completion::Return(runtime.into_jsvalue(Value::String(source))?)
                 } else if self.0.actual > 1 && !matches!(self.0.second, Value::Undefined) {
-                    let argument = self.0.second.clone();
+                    let argument = runtime.unroot_value(&self.0.second)?;
                     return Ok({
                         let updated_0 = TextPhase::Source;
                         self.0.phase = updated_0;
@@ -302,7 +311,9 @@ impl StringTextResume {
                 let filler = match runtime.native_to_js_string(realm, &value)? {
                     NativeConversion::Value(value) => value.linearize(),
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
+                        return Ok(StringTextStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let StringTextKind::Pad(kind) = self.0.kind else {
@@ -321,7 +332,9 @@ impl StringTextResume {
                 let form = match runtime.native_to_js_string(realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
+                        return Ok(StringTextStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let form = if form.utf16_units().eq("NFC".encode_utf16()) {
@@ -347,7 +360,9 @@ impl StringTextResume {
                 let that = match runtime.native_to_js_string(realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
+                        return Ok(StringTextStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 runtime.finish_string_locale_compare(realm, source, that)?
@@ -360,7 +375,9 @@ impl StringTextResume {
                 let attribute = match runtime.native_to_js_string(realm, &value)? {
                     NativeConversion::Value(value) => value.linearize(),
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
+                        return Ok(StringTextStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 buffer.append_escaped_attribute(&attribute);
@@ -383,8 +400,8 @@ pub(super) fn finish(
                 hint,
                 resume,
             } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, hint)?
+                let result = if matches!(value, JsValue::Object(_)) {
+                    runtime.to_primitive_jsvalue(realm, value, hint)?
                 } else {
                     Completion::Return(value)
                 };

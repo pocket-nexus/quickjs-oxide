@@ -1,4 +1,5 @@
 //! Bounded native-stack dispatch for iteration requests.
+use super::JsValue;
 use super::{
     DirectCallTarget, Error, Finish, IteratorProgress, Next, Progress, Query, Resume, ReturnOwner,
     RunningExecution, Runtime, Step, Value, continue_iterator, runtime_error_to_vm_error,
@@ -66,9 +67,15 @@ pub(super) fn advance(
                     Error::internal("AggregateError continuation allocation failed")
                 })?;
                 query.parents.push(resume);
-                *step = crate::engine::builtins::AggregateStep::start(runtime, realm, iterable)
-                    .map_err(runtime_error_to_vm_error)?
-                    .into();
+                *step = crate::engine::builtins::AggregateStep::start(
+                    runtime,
+                    realm,
+                    runtime
+                        .root_and_release_jsvalue(iterable)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .into();
                 continue;
             }
             Step::ArraySpecies {
@@ -113,7 +120,11 @@ pub(super) fn advance(
                         crate::engine::builtins::native::ArrayPushKind::Push,
                     ),
                     Value::Object(object),
-                    vec![value],
+                    vec![
+                        runtime
+                            .root_and_release_jsvalue(value)
+                            .map_err(runtime_error_to_vm_error)?,
+                    ],
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -134,7 +145,12 @@ pub(super) fn advance(
                     .map_err(|_| Error::internal("iterator continuation allocation failed"))?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::IteratorNextStep::start(
-                    runtime, realm, iterator, method,
+                    runtime,
+                    realm,
+                    iterator,
+                    runtime
+                        .root_and_release_jsvalue(method)
+                        .map_err(runtime_error_to_vm_error)?,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -168,7 +184,7 @@ pub(super) fn advance(
                     && target.descriptor().cproto
                         == crate::engine::builtins::native::NativeCProto::IteratorNext
                 {
-                    *step = Step::Complete(Some(super::Completion::Return(Value::Undefined)));
+                    *step = Step::Complete(Some(super::Completion::Return(JsValue::Undefined)));
                     super::native_scope(
                         runtime,
                         execution,
@@ -179,7 +195,7 @@ pub(super) fn advance(
                         min_readable_args,
                         super::super::call::NativeInvokeMode::IteratorNextRaw,
                         super::super::call::NativeInvocation::Call {
-                            this_value: Value::Object(iterator),
+                            this_value: JsValue::Object(iterator.into_handle()),
                         },
                         Vec::new(),
                         Resume::IteratorNext(resume),
@@ -188,7 +204,7 @@ pub(super) fn advance(
                 } else {
                     *step = Step::Call {
                         target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(Value::Object(iterator)),
+                        receiver: Some(JsValue::Object(iterator.into_handle())),
                         arguments: Some(Vec::new()),
                         resume: Some(Resume::IteratorNext(resume)),
                     };
@@ -240,7 +256,14 @@ pub(super) fn advance(
                     .map_err(|_| Error::internal("RegExp exec continuation allocation failed"))?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::RegExpExecStep::abstract_exec(
-                    runtime, realm, regexp, input,
+                    runtime,
+                    realm,
+                    runtime
+                        .root_and_release_jsvalue(regexp)
+                        .map_err(runtime_error_to_vm_error)?,
+                    runtime
+                        .root_and_release_jsvalue(input)
+                        .map_err(runtime_error_to_vm_error)?,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -285,7 +308,9 @@ pub(super) fn advance(
                     runtime,
                     realm,
                     &constructor,
-                    value,
+                    runtime
+                        .root_and_release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();

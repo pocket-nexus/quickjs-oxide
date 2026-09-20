@@ -23,8 +23,12 @@ impl Runtime {
     ) -> Result<NativeConversion<PropertyKey>, RuntimeError> {
         let value = if matches!(value, Value::Object(_)) {
             match self.to_primitive(realm, value, ToPrimitiveHint::String)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+                Completion::Throw(value) => {
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
+                }
             }
         } else {
             value
@@ -43,8 +47,10 @@ impl Runtime {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => {
                     // The callback boundary throws public roots; hand the host
-                    // adapter its owned root back without a retain/release pair.
-                    return Ok(NativeConversion::Throw(self.root_value(&value)?));
+                    // adapter its owned root back and release the internal edge.
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
                 }
             }
         } else {
@@ -155,7 +161,7 @@ impl Runtime {
                 DescriptorStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
+                    let receiver = self.root_and_release_jsvalue(resume.take_read_receiver())?;
                     resume.read(self, self.internal_get(realm, &object, &key, receiver)?)?
                 }
             };
@@ -169,8 +175,12 @@ impl Runtime {
     ) -> Result<NativeConversion<JsString>, RuntimeError> {
         let value = if matches!(value, Value::Object(_)) {
             match self.to_primitive(realm, value.clone(), ToPrimitiveHint::String)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+                Completion::Throw(value) => {
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
+                }
             }
         } else {
             value.clone()
@@ -225,8 +235,12 @@ impl Runtime {
                 }
                 number::NumberStep::Call { mut resume } => {
                     let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
+                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
+                    let arguments = resume
+                        .take_call_arguments()
+                        .into_iter()
+                        .map(|argument| self.root_and_release_jsvalue(argument))
+                        .collect::<Result<Vec<_>, _>>()?;
                     resume.resume(
                         self,
                         self.call_internal(realm, &callable, receiver, &arguments)?,
@@ -333,8 +347,12 @@ impl Runtime {
     ) -> Result<NativeConversion<crate::engine::value::bigint::JsBigInt>, RuntimeError> {
         let value = if matches!(value, Value::Object(_)) {
             match self.to_primitive(realm, value.clone(), ToPrimitiveHint::Number)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+                Completion::Throw(value) => {
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
+                }
             }
         } else {
             value.clone()

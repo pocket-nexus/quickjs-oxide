@@ -12,7 +12,7 @@ use crate::engine::object::{
     CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey,
 };
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
 
 mod set;
@@ -117,8 +117,12 @@ impl Runtime {
             }
             OrdinaryRead::Call { getter, receiver } => {
                 Ok(match self.call_internal(realm, &getter, receiver, &[])? {
-                    Completion::Return(value) => NativeConversion::Value(Some(value)),
-                    Completion::Throw(value) => NativeConversion::Throw(value),
+                    Completion::Return(value) => NativeConversion::Value(Some(
+                        self.root_and_release_jsvalue(value)?,
+                    )),
+                    Completion::Throw(value) => {
+                        NativeConversion::Throw(self.root_and_release_jsvalue(value)?)
+                    }
                 })
             }
             OrdinaryRead::Special {
@@ -166,9 +170,12 @@ impl Runtime {
         loop {
             let current = prototype.as_ref().unwrap_or(object);
             match self.ordinary_read_probe_selected(current, key, native.as_deref_mut())? {
-                ReadProbe::Value(value) => return Ok(OrdinaryRead::Complete(Some(value))),
+                ReadProbe::Value(value) => {
+                    let value = self.unroot_value(&value)?;
+                    return Ok(OrdinaryRead::Complete(Some(value)));
+                }
                 ReadProbe::Getter(None) => {
-                    return Ok(OrdinaryRead::Complete(Some(Value::Undefined)));
+                    return Ok(OrdinaryRead::Complete(Some(JsValue::Undefined)));
                 }
                 ReadProbe::Getter(Some(getter)) => {
                     return Ok(OrdinaryRead::Call {
@@ -199,7 +206,7 @@ impl Runtime {
                                 Value::Undefined
                             }
                         };
-                        return Ok(OrdinaryRead::Complete(Some(value)));
+                        return Ok(OrdinaryRead::Complete(Some(self.unroot_value(&value)?)));
                     }
                     // Reuse the full storage kernel for Array holes, String,
                     // Arguments, namespace live cells and lazy own properties.
@@ -207,7 +214,7 @@ impl Runtime {
                     if let Some(own) = self.get_own_property_in_operation(current, key)? {
                         return Ok(match own {
                             CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
-                                OrdinaryRead::Complete(Some(value))
+                                OrdinaryRead::Complete(Some(self.unroot_value(&value)?))
                             }
                             CompleteOrdinaryPropertyDescriptor::Accessor {
                                 get: Some(getter),
@@ -217,7 +224,7 @@ impl Runtime {
                                 receiver: receiver.clone(),
                             },
                             CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. } => {
-                                OrdinaryRead::Complete(Some(Value::Undefined))
+                                OrdinaryRead::Complete(Some(JsValue::Undefined))
                             }
                         });
                     }

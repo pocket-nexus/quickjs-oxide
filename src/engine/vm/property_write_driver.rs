@@ -6,7 +6,7 @@ use super::{
 use crate::engine::{
     api::{Error, ErrorKind, runtime::Runtime},
     object::PropertyKey,
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
 };
 
 pub(super) struct ConvertedWrite {
@@ -45,16 +45,21 @@ pub(super) fn write_progress(
         PropertyKey::from_borrowed_atom(runtime.clone(), atom)
             .map_err(|error| Error::internal(error.to_string()))?
     } else {
-        let value = execution.slots.peek(&parent.window, 1)?.clone();
-        if matches!(value, Value::Object(_)) {
+        let value = runtime
+            .dup_jsvalue(execution.slots.peek(&parent.window, 1)?)
+            .map_err(runtime_error_to_vm_error)?;
+        if matches!(value, JsValue::Object(_)) {
             return Err(Error::internal("object write key did not enter conversion"));
         }
         match runtime
-            .native_to_property_key(realm, value)
+            .native_to_property_key_jsvalue(realm, value)
             .map_err(runtime_error_to_vm_error)?
         {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
+                let value = runtime
+                    .into_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
                 return Ok(PropertyProgress::Deferred(CallStep::Complete(
                     Completion::Throw(value),
                 )));
@@ -73,7 +78,17 @@ pub(super) fn write_progress(
         };
         (slots.pop()?, value, discarded_key)
     };
-    drop(discarded_key);
+    if let Some(discarded_key) = discarded_key {
+        runtime
+            .release_jsvalue(discarded_key)
+            .map_err(runtime_error_to_vm_error)?;
+    }
+    let base = runtime
+        .root_and_release_jsvalue(base)
+        .map_err(runtime_error_to_vm_error)?;
+    let value = runtime
+        .root_and_release_jsvalue(value)
+        .map_err(runtime_error_to_vm_error)?;
     dispatch(runtime, execution, frame, base, key, value, depth)
 }
 
@@ -97,7 +112,13 @@ pub(super) fn converted(
         .map_err(runtime_error_to_vm_error)?
     {
         NativeConversion::Value(key) => key,
-        NativeConversion::Throw(value) => return Ok(CallStep::Complete(Completion::Throw(value))),
+        NativeConversion::Throw(value) => {
+            return Ok(CallStep::Complete(Completion::Throw(
+                runtime
+                    .into_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?,
+            )));
+        }
     };
     dispatch(runtime, execution, frame, base, key, value, depth)
         .map(PropertyProgress::into_call_step)

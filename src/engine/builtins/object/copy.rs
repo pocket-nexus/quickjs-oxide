@@ -5,7 +5,7 @@ use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     atom::PropertyKeyKind,
     object::{ObjectRef, PropertyKey},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::Completion,
 };
 // These count this cursor's successful logical clone sites, not all runtime
@@ -85,7 +85,7 @@ impl CopyStep {
                     "object-rest source was not an Object after ToObject",
                 ));
             }
-            return Ok(Self::Complete(Completion::Return(Value::Undefined)));
+            return Ok(Self::Complete(Completion::Return(JsValue::Undefined)));
         };
         if !target.belongs_to(runtime)
             || !source.belongs_to(runtime)
@@ -140,7 +140,9 @@ impl CopyResume {
         let keys = match reply {
             NativeConversion::Value(keys) => keys,
             NativeConversion::Throw(value) => {
-                return Ok(CopyStep::Complete(Completion::Throw(value)));
+                return Ok(CopyStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let mut selected = Vec::new();
@@ -195,7 +197,9 @@ impl CopyResume {
                 match read {
                     crate::engine::object::OrdinaryRead::Complete(value) => {
                         self.0.key = Some(key);
-                        self.define_value(runtime, value.unwrap_or(Value::Undefined))?;
+                        let value =
+                            runtime.root_and_release_jsvalue(value.unwrap_or(JsValue::Undefined))?;
+                        self.define_value(runtime, value)?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "object_copy_value_completed_locally",
@@ -231,7 +235,7 @@ impl CopyResume {
                 }
             });
         }
-        Ok(CopyStep::Complete(Completion::Return(Value::Undefined)))
+        Ok(CopyStep::Complete(Completion::Return(JsValue::Undefined)))
     }
 
     fn define_value(&self, runtime: &Runtime, value: Value) -> Result<(), RuntimeError> {
@@ -255,7 +259,9 @@ impl CopyResume {
         reply: NativeConversion<bool>,
     ) -> Result<CopyStep, RuntimeError> {
         match reply {
-            NativeConversion::Throw(value) => Ok(CopyStep::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                Ok(CopyStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?)))
+            }
             NativeConversion::Value(false) => self.next(runtime),
             NativeConversion::Value(true) => Ok(CopyStep::Read {
                 object: clone_copy_object(&self.0.source),
@@ -275,7 +281,7 @@ impl CopyResume {
         reply: Completion,
     ) -> Result<CopyStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(CopyStep::Complete(Completion::Throw(value))),
         };
         // Definition uses the unpublished target's own C_W_E data slot.
@@ -296,10 +302,12 @@ pub(crate) fn finish(
             CopyStep::PreparedRead(prepared) => {
                 let PreparedCopyRead { read, key, resume } = *prepared;
                 let completion = match runtime.finish_prepared_read(realm, &key, read)? {
-                    NativeConversion::Value(value) => {
-                        Completion::Return(value.unwrap_or(Value::Undefined))
+                    NativeConversion::Value(value) => Completion::Return(
+                        runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?,
+                    ),
+                    NativeConversion::Throw(value) => {
+                        Completion::Throw(runtime.into_jsvalue(value)?)
                     }
-                    NativeConversion::Throw(value) => Completion::Throw(value),
                 };
                 resume.resume(runtime, completion)?
             }
@@ -351,7 +359,7 @@ mod recovery_tests {
         assert_eq!(context.eval("copyTrace").unwrap(), Value::Int(0));
         assert!(matches!(
             finish(&runtime, context.realm, step).unwrap(),
-            Completion::Return(Value::Undefined)
+            Completion::Return(JsValue::Undefined)
         ));
         assert_eq!(context.eval("copyTrace").unwrap(), Value::Int(1));
         assert_eq!(runtime.own_property_keys(&target).unwrap().len(), 2);

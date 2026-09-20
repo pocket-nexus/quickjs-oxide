@@ -67,12 +67,12 @@ fn string_raw_latched_overflow_preserves_pinned_observable_order() {
             context.realm,
             &NativeArguments {
                 actual_arg_count: 1,
-                readable: vec![Value::Object(cooked)],
+                readable: vec![js(&runtime, Value::Object(cooked))],
             },
             1,
         )
         .unwrap();
-    assert!(matches!(completion, Completion::Throw(Value::Int(77))));
+    assert!(matches!(completion, Completion::Throw(JsValue::Int(77))));
     assert_eq!(
         context.eval("stringRawOverflowLog").unwrap(),
         Value::String(JsString::from_static("g1")),
@@ -100,7 +100,10 @@ fn string_raw_latched_overflow_preserves_pinned_observable_order() {
             context.realm,
             &NativeArguments {
                 actual_arg_count: 2,
-                readable: vec![Value::Object(cooked), substitution],
+                readable: vec![
+                    js(&runtime, Value::Object(cooked)),
+                    js(&runtime, substitution),
+                ],
             },
             1,
         )

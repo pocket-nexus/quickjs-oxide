@@ -5,7 +5,7 @@ use crate::engine::api::{
 };
 use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -14,12 +14,12 @@ use crate::engine::vm::{
 pub(crate) enum EvalScriptStep {
     Complete(Completion),
     String {
-        value: Value,
+        value: JsValue,
         resume: EvalScriptResume,
     },
     Call {
         callable: CallableRef,
-        receiver: Value,
+        receiver: JsValue,
     },
 }
 pub(crate) struct EvalScriptResume {
@@ -27,6 +27,7 @@ pub(crate) struct EvalScriptResume {
 }
 impl EvalScriptStep {
     pub(crate) fn start(
+        runtime: &Runtime,
         realm: ContextId,
         invocation: NativeInvocation,
         arguments: &NativeArguments,
@@ -40,7 +41,7 @@ impl EvalScriptStep {
             "Test262 evalScript argument was not padded",
         ))?;
         Ok(Self::String {
-            value: source.clone(),
+            value: runtime.dup_jsvalue(source)?,
             resume: EvalScriptResume { realm },
         })
     }
@@ -55,12 +56,14 @@ impl EvalScriptResume {
             Completion::Throw(value) => {
                 return Ok(EvalScriptStep::Complete(Completion::Throw(value)));
             }
-            Completion::Return(Value::String(source)) => source,
-            _ => {
-                return Err(RuntimeError::Invariant(
-                    "evalScript conversion returned a non-string",
-                ));
-            }
+            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
+                Value::String(source) => source,
+                _ => {
+                    return Err(RuntimeError::Invariant(
+                        "evalScript conversion returned a non-string",
+                    ));
+                }
+            },
         };
         let realm = self.realm;
         // The compiler currently accepts UTF-8 source rather than an exact
@@ -82,14 +85,16 @@ impl EvalScriptResume {
         let script = match runtime.compile_in_realm(realm, &source, EVAL_SCRIPT_FILENAME)? {
             Compilation::Published(script) => script,
             Compilation::Throw(value) => {
-                return Ok(EvalScriptStep::Complete(Completion::Throw(value)));
+                return Ok(EvalScriptStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let callable = runtime.new_bytecode_closure(realm, &script)?;
         let global_object = runtime.global_object_for_realm(realm)?;
         Ok(EvalScriptStep::Call {
             callable,
-            receiver: Value::Object(global_object),
+            receiver: JsValue::Object(global_object.into_handle()),
         })
     }
 }

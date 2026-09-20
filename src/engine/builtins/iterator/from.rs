@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -51,13 +51,9 @@ impl FromStep {
                 "Iterator.from did not receive a generic invocation",
             ));
         }
-        let input = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Iterator.from argument was not padded",
-            ))?;
+        let input = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Iterator.from argument was not padded"),
+        )?)?;
         if !matches!(input, Value::Object(_) | Value::String(_)) {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
@@ -68,16 +64,15 @@ impl FromStep {
             )));
         }
         Ok({
-            let __pending_field_receiver = input.clone();
             let __pending_field_key =
                 PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
             let __pending_field_resume = FromResume(Box::new(FromResumeState {
                 pending_effect: FromStepPending::default(),
                 realm,
-                phase: Phase::Method(input),
+                phase: Phase::Method(input.clone()),
             }));
             Self::request_read(
-                __pending_field_receiver,
+                runtime.into_jsvalue(input)?,
                 __pending_field_key,
                 __pending_field_resume,
             )
@@ -88,7 +83,7 @@ impl FromResume {
     fn next(mut self, runtime: &Runtime, iterator: Value) -> Result<FromStep, RuntimeError> {
         self.0.phase = Phase::Next(iterator.clone());
         Ok({
-            let __pending_field_receiver = iterator;
+            let __pending_field_receiver = runtime.into_jsvalue(iterator)?;
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
             let __pending_field_resume = self;
@@ -105,23 +100,27 @@ impl FromResume {
         reply: Completion,
     ) -> Result<FromStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(FromStep::Complete(Completion::Throw(value))),
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Throw(value) => {
+                return Ok(FromStep::Complete(Completion::Throw(value)));
+            }
         };
         match std::mem::replace(&mut self.0.phase, Phase::Iterator) {
             Phase::Method(input) => {
                 if matches!(value, Value::Undefined | Value::Null) {
                     return self.next(runtime, input);
                 }
-                let callable = match runtime.iterator_callable_value(self.0.realm, value)? {
+                let callable = match runtime.iterator_callable_value(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(FromStep::Complete(Completion::Throw(value)));
+                        return Ok(FromStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = input;
+                    let __pending_field_receiver = runtime.into_jsvalue(input)?;
                     let __pending_field_resume = self;
                     FromStep::request_call(
                         __pending_field_callable,
@@ -153,7 +152,7 @@ impl FromResume {
                 };
                 Ok({
                     let __pending_field_constructor = constructor;
-                    let __pending_field_value = iterator;
+                    let __pending_field_value = runtime.into_jsvalue(iterator)?;
                     let __pending_field_resume = self;
                     FromStep::request_instance(
                         __pending_field_constructor,
@@ -163,11 +162,11 @@ impl FromResume {
                 })
             }
             Phase::Instance { iterator, next } => Ok(FromStep::Complete(Completion::Return(
-                if runtime.value_to_boolean(&value)? {
+                runtime.into_jsvalue(if runtime.value_to_boolean(&value)? {
                     iterator
                 } else {
                     Value::Object(runtime.new_iterator_wrap(self.0.realm, &iterator, &next)?)
-                },
+                })?,
             ))),
         }
     }
@@ -181,7 +180,7 @@ pub(crate) fn finish(
         step = match step {
             FromStep::Complete(result) => return Ok(result),
             FromStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -190,7 +189,7 @@ pub(crate) fn finish(
             }
             FromStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, receiver, &[])?,
@@ -198,7 +197,7 @@ pub(crate) fn finish(
             }
             FromStep::Instance { mut resume } => {
                 let constructor = resume.take_instance_constructor();
-                let value = resume.take_instance_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_instance_value())?;
                 resume.resume(
                     runtime,
                     runtime.ordinary_is_instance_of(realm, &constructor, value)?,
@@ -210,22 +209,22 @@ pub(crate) fn finish(
 
 #[derive(Default)]
 struct FromStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
+    call_receiver: Option<JsValue>,
     instance_constructor: Option<CallableRef>,
-    instance_value: Option<Value>,
+    instance_value: Option<JsValue>,
 }
 impl FromStep {
-    pub(crate) fn request_read(receiver: Value, key: PropertyKey, mut resume: FromResume) -> Self {
+    pub(crate) fn request_read(receiver: JsValue, key: PropertyKey, mut resume: FromResume) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: FromResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -234,7 +233,7 @@ impl FromStep {
     }
     pub(crate) fn request_instance(
         constructor: CallableRef,
-        value: Value,
+        value: JsValue,
         mut resume: FromResume,
     ) -> Self {
         resume.0.pending_effect.instance_constructor = Some(constructor);
@@ -243,7 +242,7 @@ impl FromStep {
     }
 }
 impl FromResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -264,7 +263,7 @@ impl FromResume {
             .take()
             .expect("FromStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
@@ -278,7 +277,7 @@ impl FromResume {
             .take()
             .expect("FromStep Instance constructor")
     }
-    pub(crate) fn take_instance_value(&mut self) -> Value {
+    pub(crate) fn take_instance_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .instance_value

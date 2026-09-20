@@ -13,7 +13,7 @@ use crate::engine::object::{
     CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::NativeArguments;
 
@@ -122,12 +122,14 @@ enum Children {
 }
 impl ParseStep {
     pub(crate) fn start(
-        _runtime: &Runtime,
+        runtime: &Runtime,
         realm: ContextId,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        Ok(Self::request_string(arguments.readable[0].clone(), {
-            let phase = Phase::Source(arguments.readable[1].clone());
+        let source = runtime.dup_jsvalue(&arguments.readable[0])?;
+        let reviver = runtime.root_value(&arguments.readable[1])?;
+        Ok(Self::request_string(source, {
+            let phase = Phase::Source(reviver);
             let mut owner = Box::new(ParseResumeState {
                 pending_effect: Default::default(),
                 phase: Phase::Read,
@@ -218,15 +220,15 @@ impl ParseResumeState {
             let object = object.clone();
             return self.enter(runtime, object, key, record);
         }
-        let receiver = Value::Object(node.holder.clone());
-        let name = Value::String(
+        let receiver = runtime.into_jsvalue(Value::Object(node.holder.clone()))?;
+        let name = runtime.into_jsvalue(Value::String(
             runtime
                 .0
                 .state
                 .borrow()
                 .atoms
                 .to_js_string(node.key.atom())?,
-        );
+        ))?;
         let context = node
             .context
             .clone()
@@ -238,8 +240,8 @@ impl ParseResumeState {
             )));
         }
         arguments.push(name);
-        arguments.push(node.value.clone());
-        arguments.push(Value::Object(context));
+        arguments.push(runtime.unroot_value(&node.value)?);
+        arguments.push(runtime.into_jsvalue(Value::Object(context))?);
         let callable = self
             .reviver
             .clone()
@@ -301,8 +303,10 @@ impl ParseResume {
         let source = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(value)));
-            }
+                return Ok(ParseStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+                                }
         };
         let Phase::Source(reviver) = std::mem::replace(&mut self.0.phase, Phase::Read) else {
             return Err(RuntimeError::Invariant(
@@ -325,11 +329,15 @@ impl ParseResume {
             match runtime.parse_json_text(state.realm, &state.source, state.reviver.is_some())? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(ParseStep::Complete(Completion::Throw(value)));
-                }
+                    return Ok(ParseStep::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                                }
             };
         let Some(root) = root else {
-            return Ok(ParseStep::Complete(Completion::Return(parsed)));
+            return Ok(ParseStep::Complete(Completion::Return(
+                runtime.into_jsvalue(parsed)?,
+            )));
         };
         let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal0)?;
         match runtime.define_json_reviver_property(state.realm, &root, &key, parsed)? {
@@ -340,7 +348,9 @@ impl ParseResume {
                 ));
             }
             PropertyDefineOutcome::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(value)));
+                return Ok(ParseStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         }
         let record = record.map(Rc::new);
@@ -355,7 +365,7 @@ impl ParseResume {
         reply: Completion,
     ) -> Result<ParseStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(ParseStep::Complete(Completion::Throw(value))),
         };
         match std::mem::replace(&mut self.0.phase, Phase::Read) {
@@ -370,8 +380,10 @@ impl ParseResume {
                         match runtime.internal_is_array(realm, &Value::Object(object.clone()))? {
                             NativeConversion::Value(value) => value,
                             NativeConversion::Throw(value) => {
-                                return Ok(ParseStep::Complete(Completion::Throw(value)));
-                            }
+                                return Ok(ParseStep::Complete(Completion::Throw(
+                                    runtime.into_jsvalue(value)?,
+                                )));
+                                }
                         };
                     if array {
                         Ok(ParseStep::request_read(
@@ -412,19 +424,24 @@ impl ParseResume {
                                 ));
                             }
                             PropertyDefineOutcome::Throw(value) => {
-                                return Ok(ParseStep::Complete(Completion::Throw(value)));
+                                return Ok(ParseStep::Complete(Completion::Throw(
+                                    runtime.into_jsvalue(value)?,
+                                )));
                             }
                         }
                     }
                     self.0.next(runtime)
                 }
             }
-            Phase::Length => Ok(ParseStep::request_number(value, {
-                let phase = Phase::Number;
-                let mut owner = self.0;
-                owner.phase = phase;
-                ParseResume(owner)
-            })),
+            Phase::Length => Ok(ParseStep::request_number(
+                runtime.into_jsvalue(value)?,
+                {
+                    let phase = Phase::Number;
+                    let mut owner = self.0;
+                    owner.phase = phase;
+                    ParseResume(owner)
+                },
+            )),
             Phase::Revived => {
                 let node = self
                     .0
@@ -432,7 +449,9 @@ impl ParseResume {
                     .pop()
                     .ok_or(RuntimeError::Invariant("JSON reviver reply lost node"))?;
                 if self.0.frames.is_empty() {
-                    return Ok(ParseStep::Complete(Completion::Return(value)));
+                    return Ok(ParseStep::Complete(Completion::Return(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
                 let resume = {
                     let phase = Phase::Applied;
@@ -475,8 +494,10 @@ impl ParseResume {
         let number = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(value)));
-            }
+                return Ok(ParseStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+                                }
         };
         self.0.top()?.children = Children::Array {
             index: 0,
@@ -498,7 +519,9 @@ impl ParseResume {
             NativeConversion::Value(keys) => {
                 self.0.enumerate(runtime, keys.into_iter(), Vec::new())
             }
-            NativeConversion::Throw(value) => Ok(ParseStep::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => Ok(ParseStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            ))),
         }
     }
     pub(crate) fn boolean(
@@ -509,8 +532,10 @@ impl ParseResume {
         let value = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(value)));
-            }
+                return Ok(ParseStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+                                }
         };
         match std::mem::replace(&mut self.0.phase, Phase::Read) {
             Phase::Enumerable {
@@ -549,11 +574,17 @@ fn finish(
             ParseStep::Complete(result) => return Ok(result),
             ParseStep::String { mut resume } => {
                 let value = resume.take_string_value();
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                resume.string(
+                    runtime,
+                    runtime.native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
+                )?
             }
             ParseStep::Number { mut resume } => {
                 let value = resume.take_number_value();
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                resume.number(
+                    runtime,
+                    runtime.native_to_number(realm, &runtime.root_and_release_jsvalue(value)?)?,
+                )?
             }
             ParseStep::Read { mut resume } => {
                 let object = resume.take_read_object();
@@ -577,8 +608,12 @@ fn finish(
             }
             ParseStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, receiver, &arguments)?,
@@ -677,8 +712,12 @@ mod ownership_tests {
         let arguments = NativeArguments {
             actual_arg_count: 2,
             readable: vec![
-                Value::String(JsString::from_static("{\"a\":{},\"b\":{}}")),
-                callback,
+                runtime
+                    .into_jsvalue(Value::String(JsString::from_static(
+                        "{\"a\":{},\"b\":{}}",
+                    )))
+                    .unwrap(),
+                runtime.into_jsvalue(callback).unwrap(),
             ],
         };
         let ParseStep::String { mut resume } =
@@ -686,7 +725,10 @@ mod ownership_tests {
         else {
             panic!("expected source conversion");
         };
-        let Value::String(source) = resume.take_string_value() else {
+        let Value::String(source) = runtime
+            .root_and_release_jsvalue(resume.take_string_value())
+            .unwrap()
+        else {
             panic!("expected payload");
         };
         let resident_owner = (&*resume.0) as *const ParseResumeState;
@@ -707,28 +749,42 @@ mod ownership_tests {
         assert_eq!(resident_owner, (&*resume.0) as *const ParseResumeState);
         drop(callable);
         drop(receiver);
-        assert_eq!(arguments[0].to_js_string().unwrap().to_utf8_lossy(), "a");
-        let Value::Object(first) = &arguments[1] else {
+        assert_eq!(
+            runtime
+                .root_value(&arguments[0])
+                .unwrap()
+                .to_js_string()
+                .unwrap()
+                .to_utf8_lossy(),
+            "a"
+        );
+        let JsValue::Object(first_id) = arguments[1] else {
             panic!("expected first child");
         };
-        let first_id = first.object_id();
         drop(arguments);
         let step = until_call(
             &runtime,
             context.realm,
             resume
-                .resume(&runtime, Completion::Return(Value::Undefined))
+                .resume(&runtime, Completion::Return(JsValue::Undefined))
                 .unwrap(),
         );
         let ParseStep::Call { resume } = &step else {
             panic!("expected b callback");
         };
         let arguments = resume.0.pending_effect.call_arguments.as_ref().unwrap();
-        assert_eq!(arguments[0].to_js_string().unwrap().to_utf8_lossy(), "b");
-        let Value::Object(second) = &arguments[1] else {
+        assert_eq!(
+            runtime
+                .root_value(&arguments[0])
+                .unwrap()
+                .to_js_string()
+                .unwrap()
+                .to_utf8_lossy(),
+            "b"
+        );
+        let JsValue::Object(second_id) = arguments[1] else {
             panic!("expected second child");
         };
-        let second_id = second.object_id();
         let context_id = resume
             .state
             .frames
@@ -748,7 +804,7 @@ mod ownership_tests {
             runtime
                 .get_property_in_realm(context.realm, root, &key)
                 .unwrap(),
-            Completion::Return(Value::Undefined)
+            Completion::Return(JsValue::Undefined)
         ));
         drop(key);
         runtime.run_gc().unwrap();
@@ -779,16 +835,16 @@ mod ownership_tests {
 
 #[derive(Default)]
 struct ParseStepPending {
-    string_value: Option<Value>,
+    string_value: Option<JsValue>,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    number_value: Option<Value>,
+    number_value: Option<JsValue>,
     keys_object: Option<ObjectRef>,
     enumerable_object: Option<ObjectRef>,
     enumerable_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     delete_object: Option<ObjectRef>,
     delete_key: Option<PropertyKey>,
     define_object: Option<ObjectRef>,
@@ -796,7 +852,7 @@ struct ParseStepPending {
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
 }
 impl ParseStep {
-    pub(crate) fn request_string(value: Value, mut resume: ParseResume) -> Self {
+    pub(crate) fn request_string(value: JsValue, mut resume: ParseResume) -> Self {
         resume.0.pending_effect.string_value = Some(value);
         Self::String { resume }
     }
@@ -809,7 +865,7 @@ impl ParseStep {
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: ParseResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: ParseResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
@@ -828,8 +884,8 @@ impl ParseStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ParseResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -859,7 +915,7 @@ impl ParseStep {
     }
 }
 impl ParseResume {
-    pub(crate) fn take_string_value(&mut self) -> Value {
+    pub(crate) fn take_string_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .string_value
@@ -880,7 +936,7 @@ impl ParseResume {
             .take()
             .expect("ParseStep Read key")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value
@@ -915,14 +971,14 @@ impl ParseResume {
             .take()
             .expect("ParseStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ParseStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

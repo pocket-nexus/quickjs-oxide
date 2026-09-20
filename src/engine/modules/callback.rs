@@ -8,7 +8,7 @@ use crate::engine::heap::{
     ContextId, InternalCallableData, ModuleId, RawModuleRef, RawModuleTransition, RawValue,
 };
 use crate::engine::object::CallableRef;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -19,7 +19,7 @@ pub(crate) enum CallbackStep {
     Complete(Completion),
     Call {
         callable: CallableRef,
-        value: Value,
+        value: JsValue,
         resume: Box<CallbackResume>,
     },
     Body {
@@ -96,13 +96,14 @@ impl CallbackStep {
                 "module evaluation callback received a constructor invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "module evaluation callback argv was not padded",
-            ))?;
+        let argument = match arguments.readable.first() {
+            Some(value) => runtime.root_value(value)?,
+            None => {
+                return Err(RuntimeError::Invariant(
+                    "module evaluation callback argv was not padded",
+                ));
+            }
+        };
         let active = runtime.active_function()?;
         let internal = runtime
             .0
@@ -140,13 +141,14 @@ impl CallbackStep {
                 "dynamic import handler received a constructor invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "dynamic import handler argv was not padded",
-            ))?;
+        let argument = match arguments.readable.first() {
+            Some(value) => runtime.root_value(value)?,
+            None => {
+                return Err(RuntimeError::Invariant(
+                    "dynamic import handler argv was not padded",
+                ));
+            }
+        };
         let active = runtime.active_function()?;
         let internal = runtime
             .0
@@ -186,7 +188,7 @@ impl CallbackStep {
         let callable = runtime.dynamic_import_settler(target)?;
         Ok(Self::Call {
             callable,
-            value,
+            value: runtime.into_jsvalue(value)?,
             resume: Box::new(CallbackResume {
                 runtime: runtime.clone(),
                 realm,
@@ -202,7 +204,7 @@ impl CallbackStep {
     ) -> Result<Self, RuntimeError> {
         match runtime.module_record(module)?.evaluation {
             ModuleEvaluationState::Errored(_) => {
-                return Ok(Self::Complete(Completion::Return(Value::Undefined)));
+                return Ok(Self::Complete(Completion::Return(JsValue::Undefined)));
             }
             ModuleEvaluationState::EvaluatingAsync => {}
             _ => {
@@ -226,11 +228,11 @@ impl CallbackStep {
         {
             return Ok(Self::Call {
                 callable,
-                value: Value::Undefined,
+                value: JsValue::Undefined,
                 resume,
             });
         }
-        resume.resume(Completion::Return(Value::Undefined))
+        resume.resume(Completion::Return(JsValue::Undefined))
     }
     fn reject(
         runtime: &Runtime,
@@ -287,7 +289,7 @@ impl CallbackResume {
             Mode::DynamicSettled => {
                 return match completion {
                     Completion::Return(_) => {
-                        Ok(CallbackStep::Complete(Completion::Return(Value::Undefined)))
+                        Ok(CallbackStep::Complete(Completion::Return(JsValue::Undefined)))
                     }
                     Completion::Throw(_) => Err(RuntimeError::Invariant(
                         "intrinsic dynamic import resolving function threw",
@@ -314,7 +316,7 @@ impl CallbackResume {
                         return self.advance();
                     }
                     match completion {
-                        Completion::Return(Value::Undefined) => {
+                        Completion::Return(JsValue::Undefined) => {
                             self.runtime.transition_module_record(
                                 module,
                                 RawModuleTransition::FinishAsyncEvaluation,
@@ -325,12 +327,13 @@ impl CallbackResume {
                             {
                                 return Ok(CallbackStep::Call {
                                     callable,
-                                    value: Value::Undefined,
+                                    value: JsValue::Undefined,
                                     resume: self,
                                 });
                             }
                         }
                         Completion::Throw(reason) => {
+                            let reason = self.runtime.root_and_release_jsvalue(reason)?;
                             let step =
                                 CallbackStep::reject(&self.runtime, self.realm, module, reason)?;
                             return Ok(CallbackStep::Nested {
@@ -371,7 +374,7 @@ impl CallbackResume {
                         resume: self,
                     });
                 }
-                Ok(CallbackStep::Complete(Completion::Return(Value::Undefined)))
+                Ok(CallbackStep::Complete(Completion::Return(JsValue::Undefined)))
             }
             Mode::Reject {
                 reason,
@@ -443,7 +446,7 @@ impl CallbackResume {
                         *parents = next_parents;
                         return Ok(CallbackStep::Call {
                             callable,
-                            value: reason.clone(),
+                            value: self.runtime.unroot_value(reason)?,
                             resume: self,
                         });
                     }
@@ -452,7 +455,7 @@ impl CallbackResume {
                 // Every ancestor was already errored: no record consumed the
                 // value, so its producer edge dies with this walk.
                 release_conversion_probe(&self.runtime, &mut conversion_probe);
-                Ok(CallbackStep::Complete(Completion::Return(Value::Undefined)))
+                Ok(CallbackStep::Complete(Completion::Return(JsValue::Undefined)))
             }
         }
     }

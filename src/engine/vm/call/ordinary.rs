@@ -194,8 +194,8 @@ impl OrdinaryCall {
     pub(in crate::engine::vm) fn prepare_callback(
         self,
         storage: &mut crate::engine::vm::frame::CallStorage,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: crate::engine::value::JsValue,
+        arguments: Vec<crate::engine::value::JsValue>,
         caller_realm: crate::engine::heap::ContextId,
         return_to: crate::engine::vm::frame::ReturnTarget,
     ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
@@ -218,7 +218,7 @@ impl OrdinaryCall {
             reusable_captured_locals: flags,
             input: crate::engine::vm::CallInput {
                 this_value: receiver,
-                new_target: Value::Undefined,
+                new_target: crate::engine::value::JsValue::Undefined,
                 callee_global: None,
             }
             .into(),
@@ -254,7 +254,7 @@ impl OrdinaryCall {
 
     pub(in crate::engine::vm) fn install(
         self,
-        _runtime: &Runtime,
+        runtime: &Runtime,
         execution: &mut crate::engine::vm::execution::RunningExecution,
         parent: crate::engine::vm::frame::FrameId,
         count: usize,
@@ -271,9 +271,12 @@ impl OrdinaryCall {
             .checked_add(1)
             .ok_or_else(|| Error::internal("call resume PC overflow"))?;
         let receiver = if method {
-            crate::engine::vm::stack::copy_value(execution.slots.peek(&frame.window, count + 1)?)?
+            crate::engine::vm::stack::copy_value(
+                runtime,
+                execution.slots.peek(&frame.window, count + 1)?,
+            )?
         } else {
-            Value::Undefined
+            crate::engine::value::JsValue::Undefined
         };
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             execution
@@ -286,6 +289,7 @@ impl OrdinaryCall {
         let mut prepared = prepared;
         let frame = prepared.current_mut(parent)?;
         let window = execution.slots.push_ordinary_frame(
+            runtime,
             &self.executable.frame_layout(),
             &mut frame.window,
             count,
@@ -308,7 +312,7 @@ impl OrdinaryCall {
         cold.reusable_captured_locals = flags;
         cold.input = crate::engine::vm::CallInput {
             this_value: receiver,
-            new_target: Value::Undefined,
+            new_target: crate::engine::value::JsValue::Undefined,
             callee_global: None,
         }
         .into();

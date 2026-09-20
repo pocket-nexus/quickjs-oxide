@@ -23,7 +23,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -299,7 +299,7 @@ impl Runtime {
                 "out of memory",
             )?));
         };
-        Ok(Completion::Return(Value::Object(object)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(object))?))
     }
 
     pub(in crate::engine::builtins) fn call_array_buffer_is_view(
@@ -317,17 +317,17 @@ impl Runtime {
                 "ArrayBuffer.isView argument was not padded",
             ));
         };
-        let is_view = if let Value::Object(object) = value {
+        let is_view = if let JsValue::Object(id) = value {
             let state = self.0.state.borrow();
             matches!(
-                state.heap.object(object.object_id())?.payload,
+                state.heap.object(*id)?.payload,
                 ObjectPayload::DataView(_) | ObjectPayload::TypedArray(_)
             )
         } else {
             false
         };
         // Proxies intentionally do not forward this internal-slot brand test.
-        Ok(Completion::Return(Value::Bool(is_view)))
+        Ok(Completion::Return(JsValue::Bool(is_view)))
     }
 
     pub(in crate::engine::builtins) fn call_array_buffer_species(
@@ -339,7 +339,7 @@ impl Runtime {
                 "ArrayBuffer species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value.clone()))
+        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(in crate::engine::builtins) fn call_array_buffer_getter(
@@ -353,9 +353,12 @@ impl Runtime {
                 "ArrayBuffer prototype getter received a non-getter invocation",
             ));
         };
-        let object = match self.require_array_buffer_borrowed(realm, this_value)? {
+        let this_value = self.root_value(this_value)?;
+        let object = match self.require_array_buffer_borrowed(realm, &this_value)? {
             NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let snapshot = self.array_buffer_snapshot(object)?;
         let value = match kind {
@@ -381,7 +384,7 @@ impl Runtime {
                 ));
             }
         };
-        Ok(Completion::Return(value))
+        Ok(Completion::Return(self.into_jsvalue(value)?))
     }
 
     fn call_array_buffer_resize(
@@ -445,7 +448,7 @@ impl Runtime {
                 "out of memory",
             )?));
         }
-        Ok(Completion::Return(Value::Undefined))
+        Ok(Completion::Return(JsValue::Undefined))
     }
 
     fn call_array_buffer_slice(
@@ -577,7 +580,7 @@ impl Runtime {
             start,
             new_length_usize,
         )?;
-        Ok(Completion::Return(Value::Object(target)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(target))?))
     }
 
     fn call_array_buffer_transfer(
@@ -654,7 +657,9 @@ impl Runtime {
                 "out of memory",
             )?));
         }
-        Ok(Completion::Return(Value::Object(target)))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target))?,
+        ))
     }
 
     fn array_buffer_default_prototype(&self, realm: ContextId) -> Result<ObjectRef, RuntimeError> {
@@ -863,8 +868,9 @@ impl Runtime {
         let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "Test262 detachArrayBuffer argument was not padded",
         ))?;
-        self.detach_array_buffer_value(value)?;
-        Ok(Completion::Return(Value::Undefined))
+        let value = self.root_value(value)?;
+        self.detach_array_buffer_value(&value)?;
+        Ok(Completion::Return(JsValue::Undefined))
     }
 }
 

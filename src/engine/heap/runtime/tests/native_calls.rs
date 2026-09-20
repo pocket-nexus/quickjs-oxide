@@ -1,5 +1,19 @@
 use super::*;
 
+fn returned(runtime: &Runtime, completion: Completion) -> Value {
+    match completion {
+        Completion::Return(value) => runtime.root_and_release_jsvalue(value).unwrap(),
+        Completion::Throw(_) => panic!("expected return completion"),
+    }
+}
+
+fn thrown(runtime: &Runtime, completion: Completion) -> Value {
+    match completion {
+        Completion::Throw(value) => runtime.root_and_release_jsvalue(value).unwrap(),
+        Completion::Return(_) => panic!("expected throw completion"),
+    }
+}
+
 #[test]
 fn native_function_retains_and_dispatches_in_its_defining_realm() {
     let runtime = Runtime::new();
@@ -90,8 +104,8 @@ fn native_call_preserves_actual_argc_padding_and_restores_active_frame() {
         .call_internal(caller_context.realm, &probe, Value::Undefined, &[])
         .unwrap();
     assert_eq!(
-        no_args,
-        Completion::Return(Value::String(JsString::from_static("0|2|2|false")))
+        returned(&runtime, no_args),
+        Value::String(JsString::from_static("0|2|2|false"))
     );
     let extra_args = runtime
         .call_internal(
@@ -102,21 +116,24 @@ fn native_call_preserves_actual_argc_padding_and_restores_active_frame() {
         )
         .unwrap();
     assert_eq!(
-        extra_args,
-        Completion::Return(Value::String(JsString::from_static("3|3|0|false")))
+        returned(&runtime, extra_args),
+        Value::String(JsString::from_static("3|3|0|false"))
     );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 
     assert_eq!(
-        runtime
-            .call_internal(
-                caller_context.realm,
-                &probe,
-                Value::Undefined,
-                &[Value::Bool(false)],
-            )
-            .unwrap(),
-        Completion::Throw(Value::String(JsString::from_static("native probe throw")))
+        thrown(
+            &runtime,
+            runtime
+                .call_internal(
+                    caller_context.realm,
+                    &probe,
+                    Value::Undefined,
+                    &[Value::Bool(false)],
+                )
+                .unwrap(),
+        ),
+        Value::String(JsString::from_static("native probe throw"))
     );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 
@@ -233,7 +250,10 @@ fn native_constructor_cproto_adapters_use_defining_realm_and_restore_frames() {
             &[],
         )
         .unwrap();
-    let Completion::Throw(Value::Object(exception)) = called_without_new else {
+    let Completion::Throw(value) = called_without_new else {
+        panic!("constructor-only native did not throw an object");
+    };
+    let Value::Object(exception) = runtime.root_and_release_jsvalue(value).unwrap() else {
         panic!("constructor-only native did not throw an object");
     };
     let defining_type_error_prototype = runtime
@@ -264,37 +284,46 @@ fn native_constructor_cproto_adapters_use_defining_realm_and_restore_frames() {
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 
     assert_eq!(
-        runtime
-            .construct_internal(
-                caller_context.realm,
-                &constructor_only,
-                &constructor_only,
-                &[],
-            )
-            .unwrap(),
-        Completion::Return(Value::String(JsString::from_static("0|0|0|true")))
+        returned(
+            &runtime,
+            runtime
+                .construct_internal(
+                    caller_context.realm,
+                    &constructor_only,
+                    &constructor_only,
+                    &[],
+                )
+                .unwrap(),
+        ),
+        Value::String(JsString::from_static("0|0|0|true"))
     );
     assert_eq!(
-        runtime
-            .call_internal(
-                caller_context.realm,
-                &constructor_or_function,
-                Value::Undefined,
-                &[],
-            )
-            .unwrap(),
-        Completion::Return(Value::String(JsString::from_static("0|0|0|false")))
+        returned(
+            &runtime,
+            runtime
+                .call_internal(
+                    caller_context.realm,
+                    &constructor_or_function,
+                    Value::Undefined,
+                    &[],
+                )
+                .unwrap(),
+        ),
+        Value::String(JsString::from_static("0|0|0|false"))
     );
     assert_eq!(
-        runtime
-            .construct_internal(
-                caller_context.realm,
-                &constructor_or_function,
-                &constructor_or_function,
-                &[],
-            )
-            .unwrap(),
-        Completion::Return(Value::String(JsString::from_static("0|0|0|true")))
+        returned(
+            &runtime,
+            runtime
+                .construct_internal(
+                    caller_context.realm,
+                    &constructor_or_function,
+                    &constructor_or_function,
+                    &[],
+                )
+                .unwrap(),
+        ),
+        Value::String(JsString::from_static("0|0|0|true"))
     );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }

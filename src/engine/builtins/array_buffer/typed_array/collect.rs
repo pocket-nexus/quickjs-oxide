@@ -4,14 +4,14 @@ use crate::engine::{
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::Completion,
 };
 
 pub(crate) enum TypedIteratorMethodStep {
     Complete(NativeConversion<Option<CallableRef>>),
     Read {
-        receiver: Value,
+        receiver: JsValue,
         key: PropertyKey,
         resume: TypedIteratorMethodResume,
     },
@@ -31,7 +31,7 @@ impl TypedIteratorMethodStep {
             )));
         }
         Ok(Self::Read {
-            receiver: source,
+            receiver: runtime.into_jsvalue(source)?,
             key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
             resume: TypedIteratorMethodResume { realm },
         })
@@ -47,17 +47,18 @@ impl TypedIteratorMethodResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(TypedIteratorMethodStep::Complete(NativeConversion::Throw(
-                    value,
+                    runtime.root_and_release_jsvalue(value)?,
                 )));
             }
         };
-        if matches!(value, Value::Null | Value::Undefined) {
+        if matches!(value, JsValue::Null | JsValue::Undefined) {
             return Ok(TypedIteratorMethodStep::Complete(NativeConversion::Value(
                 None,
             )));
         }
         let callable = match value {
-            Value::Object(object) => runtime.as_callable(&object)?,
+            JsValue::Object(id) => runtime
+                .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), id)?)?,
             _ => None,
         };
         Ok(TypedIteratorMethodStep::Complete(match callable {
@@ -82,10 +83,13 @@ pub(crate) fn finish_method(
                 receiver,
                 key,
                 resume,
-            } => resume.resume(
-                runtime,
-                runtime.get_value_property_in_realm(realm, receiver, &key)?,
-            )?,
+            } => {
+                let receiver = runtime.root_and_release_jsvalue(receiver)?;
+                resume.resume(
+                    runtime,
+                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                )?
+            }
         };
     }
 }
@@ -94,7 +98,7 @@ pub(crate) enum TypedCollectStep {
     Complete(NativeConversion<Vec<Value>>),
     Call {
         callable: CallableRef,
-        receiver: Value,
+        receiver: JsValue,
         resume: TypedCollectResume,
     },
     Read {
@@ -137,14 +141,15 @@ pub(crate) struct TypedCollectResumeState {
 }
 impl TypedCollectStep {
     pub(crate) fn start(
+        runtime: &Runtime,
         realm: ContextId,
         source: Value,
         method: CallableRef,
         element: TypedArrayElementKind,
-    ) -> Self {
-        Self::Call {
+    ) -> Result<Self, RuntimeError> {
+        Ok(Self::Call {
             callable: method.clone(),
-            receiver: source,
+            receiver: runtime.into_jsvalue(source)?,
             resume: TypedCollectResume(Box::new(TypedCollectResumeState {
                 realm,
                 _method: method,
@@ -157,7 +162,7 @@ impl TypedCollectStep {
                 values: Vec::new(),
                 phase: Phase::Factory,
             })),
-        }
+        })
     }
 }
 impl TypedCollectResume {
@@ -180,14 +185,15 @@ impl TypedCollectResume {
                     "TypedArray iterator lost cached next",
                 ))?
                 .clone(),
-            receiver: Value::Object(
+            receiver: JsValue::Object(
                 self.0
                     .iterator
                     .as_ref()
                     .ok_or(RuntimeError::Invariant(
                         "TypedArray collection lost iterator",
                     ))?
-                    .clone(),
+                    .clone()
+                    .into_handle(),
             ),
             resume: self,
         })
@@ -198,8 +204,10 @@ impl TypedCollectResume {
         reply: Completion,
     ) -> Result<TypedCollectStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(self.abrupt(value)),
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Throw(value) => {
+                return Ok(self.abrupt(runtime.root_and_release_jsvalue(value)?));
+            }
         };
         match self.0.phase {
             Phase::Factory => {
@@ -307,10 +315,13 @@ pub(crate) fn finish_collect(
                 callable,
                 receiver,
                 resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, receiver, &[])?,
-            )?,
+            } => {
+                let receiver = runtime.root_and_release_jsvalue(receiver)?;
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, receiver, &[])?,
+                )?
+            }
             TypedCollectStep::Read {
                 object,
                 key,

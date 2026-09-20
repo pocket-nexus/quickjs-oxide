@@ -2,6 +2,7 @@
 use super::primitive::{PrimitiveResume, PrimitiveStep};
 use super::*;
 use crate::engine::object::CallableRef;
+use crate::engine::value::JsValue;
 
 pub(crate) enum NumberStep {
     Complete(NativeConversion<f64>),
@@ -35,7 +36,12 @@ impl NumberStep {
         from_primitive(
             runtime,
             realm,
-            PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number),
+            PrimitiveResume::start(
+                runtime,
+                realm,
+                runtime.unroot_value(&value)?,
+                ToPrimitiveHint::Number,
+            ),
         )
     }
 }
@@ -45,10 +51,11 @@ fn from_primitive(
     step: PrimitiveStep,
 ) -> Result<NumberStep, RuntimeError> {
     Ok(match step {
-        PrimitiveStep::Complete(Completion::Throw(value)) => {
-            NumberStep::Complete(NativeConversion::Throw(value))
-        }
+        PrimitiveStep::Complete(Completion::Throw(value)) => NumberStep::Complete(
+            NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?),
+        ),
         PrimitiveStep::Complete(Completion::Return(value)) => {
+            let value = runtime.root_and_release_jsvalue(value)?;
             NumberStep::Complete(runtime.number_from_primitive(realm, &value)?)
         }
         PrimitiveStep::Get { mut resume } => {
@@ -99,8 +106,8 @@ struct NumberStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
 }
 impl NumberStep {
     pub(crate) fn request_read(
@@ -114,8 +121,8 @@ impl NumberStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: NumberResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -146,14 +153,14 @@ impl NumberResume {
             .take()
             .expect("NumberStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("NumberStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

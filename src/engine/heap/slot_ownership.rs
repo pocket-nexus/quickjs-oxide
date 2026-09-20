@@ -337,7 +337,9 @@ mod tests {
         use crate::engine::code::bytecode::Instruction;
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let base = context.eval("globalThis.fieldProbe={x:7}").unwrap();
+        let base = runtime
+            .into_jsvalue(context.eval("globalThis.fieldProbe={x:7}").unwrap())
+            .unwrap();
         let callable = runtime
             .callable_from_value(context.eval("(function(o,v){o.x=v;return o.x})").unwrap())
             .unwrap();
@@ -371,15 +373,16 @@ mod tests {
                 .try_ordinary_field_immediate_read(&base, &code, key)
                 .is_none()
         );
-        assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, key, &Value::Int(17)));
+        assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, key, &JsValue::Int(17)));
         assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
         runtime.run_gc().unwrap();
         assert_eq!(context.eval("fieldProbe.x").unwrap(), Value::Int(7));
-        assert!(runtime.try_ordinary_field_immediate_write(&base, &code, key, &Value::Int(17)));
+        assert!(runtime.try_ordinary_field_immediate_write(&base, &code, key, &JsValue::Int(17)));
         assert_eq!(
             runtime.try_ordinary_field_immediate_read(&base, &code, key),
-            Some(Value::Int(17))
+            Some(JsValue::Int(17))
         );
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
@@ -409,11 +412,15 @@ mod tests {
             .release_raw_no_drain(RawId::Object(queued_id))
             .unwrap();
         assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
-        assert!(!runtime.try_typed_array_number_write(&typed, 0, 17.0));
-        assert!(runtime.try_dense_array_immediate_read(&dense, 0).is_none());
-        assert!(runtime.try_array_immediate_read(&dense, 0).is_none());
-        assert!(runtime.try_array_immediate_read(&typed, 0).is_none());
+        let dense_js = runtime.unroot_value(&dense).unwrap();
+        let typed_js = runtime.unroot_value(&typed).unwrap();
+        assert!(!runtime.try_typed_array_number_write(&typed_js, 0, 17.0));
+        assert!(runtime.try_dense_array_immediate_read(&dense_js, 0).is_none());
+        assert!(runtime.try_array_immediate_read(&dense_js, 0).is_none());
+        assert!(runtime.try_array_immediate_read(&typed_js, 0).is_none());
         assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
+        runtime.release_jsvalue(dense_js).unwrap();
+        runtime.release_jsvalue(typed_js).unwrap();
         for value in [&dense, &typed] {
             let Value::Object(object) = value else {
                 panic!("array receiver");

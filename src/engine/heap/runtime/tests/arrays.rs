@@ -348,16 +348,20 @@ fn array_join_separator_overflow_still_gets_nullish_slots_and_later_throw_wins()
             context.realm,
             ArrayJoinKind::Join,
             crate::engine::vm::call::NativeInvocation::Call {
-                this_value: Value::Object(source),
+                this_value: runtime.into_jsvalue(Value::Object(source)).unwrap(),
             },
             &crate::engine::vm::call::NativeArguments {
                 actual_arg_count: 1,
-                readable: vec![Value::String(JsString::from_static("xx"))],
+                readable: vec![
+                    runtime
+                        .into_jsvalue(Value::String(JsString::from_static("xx")))
+                        .unwrap(),
+                ],
             },
             2,
         )
         .unwrap();
-    assert!(matches!(completion, Completion::Throw(Value::Int(77))));
+    assert!(matches!(completion, Completion::Throw(JsValue::Int(77))));
     assert_eq!(
         context.eval("joinOverflowLog").unwrap(),
         Value::String(JsString::from_static("123"))
@@ -390,7 +394,7 @@ fn array_locale_separator_overflow_invokes_method_but_skips_result_to_string() {
             context.realm,
             ArrayJoinKind::ToLocaleString,
             crate::engine::vm::call::NativeInvocation::Call {
-                this_value: Value::Object(source),
+                this_value: runtime.into_jsvalue(Value::Object(source)).unwrap(),
             },
             &crate::engine::vm::call::NativeArguments {
                 actual_arg_count: 0,
@@ -433,7 +437,7 @@ fn array_locale_method_throw_replaces_pending_separator_overflow() {
             context.realm,
             ArrayJoinKind::ToLocaleString,
             crate::engine::vm::call::NativeInvocation::Call {
-                this_value: Value::Object(source),
+                this_value: runtime.into_jsvalue(Value::Object(source)).unwrap(),
             },
             &crate::engine::vm::call::NativeArguments {
                 actual_arg_count: 0,
@@ -442,7 +446,7 @@ fn array_locale_method_throw_replaces_pending_separator_overflow() {
             2,
         )
         .unwrap();
-    assert!(matches!(completion, Completion::Throw(Value::Int(88))));
+    assert!(matches!(completion, Completion::Throw(JsValue::Int(88))));
 }
 
 #[test]

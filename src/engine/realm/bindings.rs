@@ -10,7 +10,7 @@ use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
 #[cfg(test)]
 use crate::engine::value::JsString;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 impl Runtime {
     pub(crate) fn check_global_lexical_declaration(
@@ -289,7 +289,7 @@ impl Runtime {
         };
         self.set_var_ref_metadata(&root, true, is_const, ClosureVariableKind::Normal)?;
         if let Some(value) = initial_value {
-            self.write_var_ref(&root, value)?;
+            self.write_var_ref(&root, self.into_jsvalue(value)?)?;
         }
         self.store_property_slot(
             &global_var_object,
@@ -344,7 +344,7 @@ impl Runtime {
                 "hidden global VarRef property was not configurable",
             ));
         }
-        self.write_var_ref(&root, Value::Undefined)?;
+        self.write_var_ref(&root, JsValue::Undefined)?;
         self.set_var_ref_metadata(&root, false, false, ClosureVariableKind::Normal)?;
         self.store_property_slot(
             &global_object,
@@ -400,7 +400,7 @@ impl Runtime {
                     "hidden global VarRef property was not configurable",
                 ));
             }
-            self.write_var_ref(&root, Value::Undefined)?;
+            self.write_var_ref(&root, JsValue::Undefined)?;
             self.set_var_ref_metadata(&root, false, false, ClosureVariableKind::Normal)?;
             self.store_property_slot(
                 &global_object,
@@ -456,7 +456,7 @@ impl Runtime {
                 }
             }
             PropertySlot::Data(value) => {
-                let value = self.root_raw_value(value)?;
+                let value = self.into_jsvalue(self.root_raw_value(value)?)?;
                 self.write_var_ref(&root, value)?;
                 if hidden_root
                     .as_ref()
@@ -542,7 +542,7 @@ impl Runtime {
                 .ok_or(RuntimeError::Invariant(
                     "test initialized a missing global lexical binding",
                 ))?;
-        self.write_var_ref(&root, value)
+        self.write_var_ref(&root, self.into_jsvalue(value)?)
     }
 }
 

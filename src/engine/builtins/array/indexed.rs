@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::ArraySearchKind,
     heap::ContextId,
     object::{ObjectRef, PropertyKey, operations::InternalSetResult},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -94,10 +94,15 @@ impl IndexedStep {
                 "Array indexed method requires generic invocation",
             ));
         };
-        let object = match runtime.native_to_object(realm, this_value.clone())? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-        };
+        let object =
+            match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
         Ok(Self::request_read(
             object.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
@@ -107,7 +112,11 @@ impl IndexedStep {
                 realm,
                 kind,
                 object,
-                arguments: arguments.readable.clone(),
+                arguments: arguments
+                    .readable
+                    .iter()
+                    .map(|value| runtime.root_value(value))
+                    .collect::<Result<Vec<_>, _>>()?,
                 actual: arguments.actual_arg_count,
                 phase: Phase::Length,
                 length: 0,
@@ -143,16 +152,18 @@ impl IndexedResume {
         result: Completion,
     ) -> Result<IndexedStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(IndexedStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(IndexedStep::request_number(value, self))
+                Ok(IndexedStep::request_number(runtime.into_jsvalue(value)?, self))
             }
             Phase::Read => match self.0.kind {
-                IndexedKind::At => Ok(IndexedStep::Complete(Completion::Return(value))),
+                IndexedKind::At => Ok(IndexedStep::Complete(Completion::Return(
+                    runtime.into_jsvalue(value)?,
+                ))),
                 IndexedKind::With | IndexedKind::ToReversed => {
                     let output = if matches!(self.0.kind, IndexedKind::ToReversed) {
                         self.0.length - self.0.index - 1
@@ -170,12 +181,13 @@ impl IndexedResume {
                         search.strict_equal(&value)
                     };
                     if found {
+                        let result = if kind == ArraySearchKind::Includes {
+                            Value::Bool(true)
+                        } else {
+                            Value::number(self.0.index as f64)
+                        };
                         Ok(IndexedStep::Complete(Completion::Return(
-                            if kind == ArraySearchKind::Includes {
-                                Value::Bool(true)
-                            } else {
-                                Value::number(self.0.index as f64)
-                            },
+                            runtime.into_jsvalue(result)?,
                         )))
                     } else {
                         self.advance(runtime)
@@ -197,7 +209,9 @@ impl IndexedResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(IndexedStep::Complete(Completion::Throw(value)));
+                return Ok(IndexedStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -260,7 +274,7 @@ impl IndexedResume {
                 return self.bound(runtime, index + 1);
             }
             self.0.phase = Phase::Bound(index);
-            return Ok(IndexedStep::request_number(value, self));
+            return Ok(IndexedStep::request_number(runtime.into_jsvalue(value)?, self));
         }
         self.0.index = self.0.bounds[0];
         self.0.end = self.0.length;
@@ -272,7 +286,7 @@ impl IndexedResume {
                 if self.0.index < 0 || self.0.index >= self.0.length {
                     return Ok(IndexedStep::Complete(
                         if matches!(self.0.kind, IndexedKind::At) {
-                            Completion::Return(Value::Undefined)
+                            Completion::Return(JsValue::Undefined)
                         } else {
                             Completion::Throw(runtime.new_native_error_jsvalue(
                                 self.0.realm,
@@ -286,7 +300,9 @@ impl IndexedResume {
                     self.0.replacement = self.0.index;
                     self.0.index = 0;
                     if let Some(value) = self.allocate(runtime)? {
-                        return Ok(IndexedStep::Complete(Completion::Throw(value)));
+                        return Ok(IndexedStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 }
             }
@@ -311,7 +327,9 @@ impl IndexedResume {
             }
             IndexedKind::ToReversed => {
                 if let Some(value) = self.allocate(runtime)? {
-                    return Ok(IndexedStep::Complete(Completion::Throw(value)));
+                    return Ok(IndexedStep::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
                 self.0.index = self.0.length - 1;
                 self.0.end = -1;
@@ -350,7 +368,7 @@ impl IndexedResume {
                 return Ok(IndexedStep::request_set(
                     self.0.object.clone(),
                     key,
-                    self.argument(0),
+                    runtime.into_jsvalue(self.argument(0))?,
                     self,
                 ));
             }
@@ -372,7 +390,9 @@ impl IndexedResume {
             IndexedKind::At => Value::Undefined,
             _ => Value::Object(self.0.object),
         };
-        Ok(IndexedStep::Complete(Completion::Return(value)))
+        Ok(IndexedStep::Complete(Completion::Return(
+            runtime.into_jsvalue(value)?,
+        )))
     }
     pub(crate) fn boolean(
         mut self,
@@ -382,7 +402,9 @@ impl IndexedResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(IndexedStep::Complete(Completion::Throw(value)));
+                return Ok(IndexedStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -415,7 +437,9 @@ impl IndexedResume {
             return Err(RuntimeError::Invariant("Array indexed set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(IndexedStep::Complete(Completion::Throw(value)));
+            return Ok(IndexedStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
         self.advance(runtime)
     }
@@ -454,7 +478,7 @@ pub(crate) fn finish(
                 )?
             }
             IndexedStep::Number { mut resume } => {
-                let value = resume.take_number_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             IndexedStep::Has { mut resume } => {
@@ -468,7 +492,7 @@ pub(crate) fn finish(
             IndexedStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 {
                     let result = runtime.internal_set(
                         realm,
@@ -493,12 +517,12 @@ struct IndexedStepPending {
     copy_backwards: Option<bool>,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    number_value: Option<Value>,
+    number_value: Option<JsValue>,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
+    set_value: Option<JsValue>,
 }
 impl IndexedStep {
     pub(crate) fn request_copy(
@@ -525,7 +549,7 @@ impl IndexedStep {
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: IndexedResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: IndexedResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
@@ -541,7 +565,7 @@ impl IndexedStep {
     pub(crate) fn request_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: IndexedResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -600,7 +624,7 @@ impl IndexedResume {
             .take()
             .expect("IndexedStep Read key")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value
@@ -635,7 +659,7 @@ impl IndexedResume {
             .take()
             .expect("IndexedStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value

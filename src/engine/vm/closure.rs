@@ -54,6 +54,7 @@ impl ClosureSlots {
 mod tests {
     use crate::engine::{
         api::{Runtime, Value},
+        value::JsValue,
         object::CallableRef,
         vm::call::CallableExecution,
     };
@@ -118,20 +119,20 @@ mod tests {
             runtime
                 .read_var_ref(&closure_slots.get(0).unwrap())
                 .unwrap(),
-            Value::Int(1)
+            JsValue::Int(1)
         );
         runtime
-            .write_var_ref(&closure_slots.get(0).unwrap(), Value::Int(9))
+            .write_var_ref(&closure_slots.get(0).unwrap(), JsValue::Int(9))
             .unwrap();
         assert_eq!(
             runtime
                 .read_var_ref(&closure_slots.get(0).unwrap())
                 .unwrap(),
-            Value::Int(9)
+            JsValue::Int(9)
         );
         let escaped = closure_slots.get(0).unwrap().clone();
         drop(closure_slots);
-        assert_eq!(runtime.read_var_ref(&escaped).unwrap(), Value::Int(9));
+        assert_eq!(runtime.read_var_ref(&escaped).unwrap(), JsValue::Int(9));
         assert!(runtime.0.state.borrow().heap.var_ref(ids[1]).is_err());
         drop(escaped);
         assert!(runtime.0.state.borrow().heap.var_ref(ids[0]).is_err());

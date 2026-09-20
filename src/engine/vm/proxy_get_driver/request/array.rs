@@ -1,5 +1,5 @@
 //! Mechanical adapters for array domain requests.
-use super::{DirectCallTarget, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step, Value};
 
 impl From<crate::engine::builtins::ArrayMutationStep> for Step {
     fn from(step: crate::engine::builtins::ArrayMutationStep) -> Self {
@@ -29,7 +29,7 @@ impl From<crate::engine::builtins::ArrayMutationStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayMutation(resume)),
@@ -62,7 +62,7 @@ impl From<crate::engine::builtins::ArrayMutationStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     value: Some(value),
                     key: Some(key.clone()),
@@ -93,7 +93,7 @@ impl From<crate::engine::builtins::ArrayCallbackStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayCallback(resume)),
@@ -160,7 +160,7 @@ impl From<crate::engine::builtins::ArraySpeciesStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::ArraySpecies(resume)),
@@ -194,7 +194,7 @@ impl From<crate::engine::builtins::ArrayNextStep> for Step {
             T::Read { mut resume } => {
                 let (object, key) = resume.take_read();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayNext(resume)),
@@ -220,7 +220,7 @@ impl From<crate::engine::builtins::ArraySortStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArraySort(resume)),
@@ -247,7 +247,7 @@ impl From<crate::engine::builtins::ArraySortStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -277,7 +277,7 @@ impl From<crate::engine::builtins::ArraySortStep> for Step {
                 let arguments = resume.take_call_arguments();
                 Self::Call {
                     target: Some(DirectCallTarget::Callable(callable)),
-                    receiver: Some(Value::Undefined),
+                    receiver: Some(JsValue::Undefined),
                     arguments: Some(arguments),
                     resume: Some(Resume::ArraySort(resume)),
                 }
@@ -295,7 +295,7 @@ impl From<crate::engine::builtins::ArrayIndexedStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayIndexed(resume)),
@@ -322,7 +322,7 @@ impl From<crate::engine::builtins::ArrayIndexedStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -359,7 +359,7 @@ impl From<crate::engine::builtins::ArrayReverseStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayReverse(resume)),
@@ -386,7 +386,7 @@ impl From<crate::engine::builtins::ArrayReverseStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -490,7 +490,7 @@ impl From<crate::engine::builtins::ArrayBuildStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -549,7 +549,7 @@ impl From<crate::engine::builtins::ArrayCopyStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayCopy(resume)),
@@ -569,7 +569,7 @@ impl From<crate::engine::builtins::ArrayCopyStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -600,7 +600,7 @@ impl From<crate::engine::builtins::ArrayConcatStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayConcat(resume)),
@@ -627,7 +627,7 @@ impl From<crate::engine::builtins::ArrayConcatStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -668,7 +668,7 @@ impl From<crate::engine::builtins::ArrayFlattenStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArrayFlatten(resume)),
@@ -743,7 +743,7 @@ impl From<crate::engine::builtins::ArrayConstructorStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -781,7 +781,7 @@ impl From<crate::engine::builtins::ArraySliceStep> for Step {
             T::Read { mut resume } => {
                 let (object, key) = resume.take_read();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::ArraySlice(resume)),
@@ -797,7 +797,7 @@ impl From<crate::engine::builtins::ArraySliceStep> for Step {
             T::Set { mut resume } => {
                 let (object, key, value) = resume.take_set();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),

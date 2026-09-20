@@ -71,13 +71,12 @@ impl Runtime {
                 "global eval used an unexpected native invocation protocol",
             ));
         };
-        let input = arguments
-            .readable
-            .first()
-            .cloned()
-            .unwrap_or(Value::Undefined);
+        let input = match arguments.readable.first() {
+            Some(value) => self.root_and_release_jsvalue(self.dup_jsvalue(value)?)?,
+            None => Value::Undefined,
+        };
         let Value::String(source) = input else {
-            return Ok(Completion::Return(input));
+            return Ok(Completion::Return(self.into_jsvalue(input)?));
         };
         self.execute_indirect_string_eval(realm, &source)
     }
@@ -108,7 +107,9 @@ impl Runtime {
                     "non-String direct eval prepared a caller environment",
                 ));
             }
-            return Ok(DirectEvalPreparation::Complete(Completion::Return(input)));
+            return Ok(DirectEvalPreparation::Complete(Completion::Return(
+                self.into_jsvalue(input)?,
+            )));
         }
 
         let environment = environment.ok_or(RuntimeError::Invariant(
@@ -155,7 +156,9 @@ impl Runtime {
         )? {
             Compilation::Published(function) => function,
             Compilation::Throw(value) => {
-                return Ok(DirectEvalPreparation::Complete(Completion::Throw(value)));
+                return Ok(DirectEvalPreparation::Complete(Completion::Throw(
+                    self.into_jsvalue(value)?,
+                )));
             }
         };
 
@@ -430,7 +433,9 @@ impl Runtime {
             match self.compile_eval_in_realm(realm, &source, DEFAULT_EVAL_FILENAME, context)? {
                 Compilation::Published(function) => function,
                 Compilation::Throw(value) => {
-                    return Ok(DirectEvalPreparation::Complete(Completion::Throw(value)));
+                    return Ok(DirectEvalPreparation::Complete(Completion::Throw(
+                        self.into_jsvalue(value)?,
+                    )));
                 }
             };
         let callable =

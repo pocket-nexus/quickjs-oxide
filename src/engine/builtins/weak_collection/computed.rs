@@ -4,7 +4,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, WeakCollectionKey},
     object::{CallableRef, ObjectRef},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -14,7 +14,7 @@ pub(crate) enum ComputedStep {
     Complete(Completion),
     Call {
         callable: CallableRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         resume: ComputedResume,
     },
 }
@@ -47,21 +47,20 @@ impl ComputedStep {
             match runtime.weak_collection_receiver(realm, invocation, WeakCollectionKind::Map)? {
                 NativeConversion::Value(map) => map,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(value)));
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
             };
-        let key_value = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant("WeakMap key argv was not padded"))?;
-        let callback_value = arguments
-            .readable
-            .get(1)
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "WeakMap computed value argv was not padded",
-            ))?;
+        let key_value = runtime.root_value(
+            arguments
+                .readable
+                .first()
+                .ok_or(RuntimeError::Invariant("WeakMap key argv was not padded"))?,
+        )?;
+        let callback_value = runtime.root_value(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("WeakMap computed value argv was not padded"),
+        )?)?;
         let callback = match callback_value {
             Value::Object(ref object) => runtime.as_callable(object)?,
             _ => None,
@@ -76,14 +75,14 @@ impl ComputedStep {
                 runtime.invalid_weak_key(realm, WeakCollectionKind::Map)?,
             ));
         };
-        if let Some(value) = runtime.find_weak_map_record(map, key)? {
+        if let Some(value) = runtime.find_weak_map_record(&map, key)? {
             return Ok(Self::Complete(Completion::Return(
-                runtime.root_raw_value(&value)?,
+                runtime.into_jsvalue(runtime.root_raw_value(&value)?)?,
             )));
         }
         Ok(Self::Call {
             callable,
-            arguments: vec![key_value.clone()],
+            arguments: vec![runtime.into_jsvalue(key_value.clone())?],
             resume: ComputedResume(Box::new(ComputedResumeState {
                 map: map.clone(),
                 key,
@@ -101,9 +100,12 @@ impl ComputedResume {
         match reply {
             Completion::Throw(value) => Ok(ComputedStep::Complete(Completion::Throw(value))),
             Completion::Return(value) => {
+                let value = runtime.root_and_release_jsvalue(value)?;
                 runtime.delete_weak_map_record(&self.0.map, self.0.key)?;
                 runtime.set_weak_map_record(&self.0.map, self.0.key, value.clone())?;
-                Ok(ComputedStep::Complete(Completion::Return(value)))
+                Ok(ComputedStep::Complete(Completion::Return(
+                    runtime.into_jsvalue(value)?,
+                )))
             }
         }
     }
@@ -120,10 +122,16 @@ pub(crate) fn finish(
                 callable,
                 arguments,
                 resume,
-            } => resume.resume(
-                runtime,
-                runtime.call_internal(realm, &callable, Value::Undefined, &arguments)?,
-            )?,
+            } => {
+                let arguments = arguments
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                resume.resume(
+                    runtime,
+                    runtime.call_internal(realm, &callable, Value::Undefined, &arguments)?,
+                )?
+            }
         };
     }
 }

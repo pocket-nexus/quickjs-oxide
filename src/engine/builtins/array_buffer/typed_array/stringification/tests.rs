@@ -543,7 +543,7 @@ fn typed_array_separator_overflow_stops_before_the_next_locale_call() {
             context.realm,
             ArrayJoinKind::ToLocaleString,
             NativeInvocation::Call {
-                this_value: Value::Object(source),
+                this_value: runtime.into_jsvalue(Value::Object(source)).unwrap(),
             },
             &NativeArguments {
                 actual_arg_count: 0,

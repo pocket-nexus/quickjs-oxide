@@ -200,7 +200,7 @@ pub(crate) enum NativeStep {
 
     GlobalEval(crate::engine::value::Value),
     JsonRaw {
-        value: crate::engine::value::Value,
+        value: crate::engine::value::JsValue,
         resume: super::JsonRawResume,
     },
     ObjectConstructor(super::ObjectConstructorStep),
@@ -832,7 +832,7 @@ impl NativeOperation {
             Self::AsyncResume(kind) => NativeStep::Async(runtime.start_async_function_resume(
                 realm,
                 kind,
-                invocation.clone(),
+                invocation.dup(runtime)?,
                 arguments,
             )?),
             Self::Promise(target) => {
@@ -844,7 +844,7 @@ impl NativeOperation {
                 NativeStep::GeneratorResume(runtime.start_generator_prototype_resume(
                     realm,
                     kind,
-                    invocation.clone(),
+                    invocation.dup(runtime)?,
                     arguments,
                 )?)
             }
@@ -955,9 +955,18 @@ impl NativeOperation {
             Self::StringProtocol(kind) => NativeStep::StringProtocol(
                 super::StringProtocolStep::start(runtime, realm, kind, invocation, arguments)?,
             ),
-            Self::GlobalEval => NativeStep::GlobalEval(arguments.readable[0].clone()),
+            Self::GlobalEval => {
+                let argument = &arguments.readable[0];
+                if matches!(argument, crate::engine::value::JsValue::String(_)) {
+                    NativeStep::GlobalEval(runtime.root_value(argument)?)
+                } else {
+                    NativeStep::Complete(crate::engine::vm::Completion::Return(
+                        runtime.dup_jsvalue(argument)?,
+                    ))
+                }
+            }
             Self::JsonRaw => NativeStep::JsonRaw {
-                value: arguments.readable[0].clone(),
+                value: runtime.dup_jsvalue(&arguments.readable[0])?,
                 resume: super::JsonRawResume::new(realm),
             },
 
@@ -1026,15 +1035,16 @@ impl NativeOperation {
                     runtime,
                     realm,
                     kind,
-                    invocation.clone(),
+                    invocation.dup(runtime)?,
                     arguments,
                 )?,
             ),
             #[cfg(feature = "test262-host")]
             Self::EvalScript => NativeStep::EvalScript(
                 crate::engine::api::test262_host::operation::EvalScriptStep::start(
+                    runtime,
                     realm,
-                    invocation.clone(),
+                    invocation.dup(runtime)?,
                     arguments,
                 )?,
             ),
@@ -1043,13 +1053,13 @@ impl NativeOperation {
                     runtime,
                     realm,
                     target,
-                    invocation.clone(),
+                    invocation.dup(runtime)?,
                     arguments,
                 )?)
             }
             Self::HostOutput(target) => NativeStep::Complete(runtime.call_qjs_output(
                 target,
-                invocation.clone(),
+                invocation.dup(runtime)?,
                 arguments,
             )?),
             Self::Pure(target) => {
@@ -1116,7 +1126,7 @@ impl NativeOperation {
                 runtime, realm, kind, invocation, arguments,
             )?),
             Self::ArraySpeciesGetter => {
-                NativeStep::Complete(runtime.call_array_species_getter(invocation.clone())?)
+                NativeStep::Complete(runtime.call_array_species_getter(invocation.dup(runtime)?)?)
             }
             Self::ArraySort(kind) => NativeStep::ArraySort(super::ArraySortStep::start(
                 runtime, realm, kind, invocation, arguments,
@@ -1164,13 +1174,13 @@ impl NativeOperation {
             }
             Self::PureIterator(target) => NativeStep::Raw(match target {
                 NativeFunctionId::StringIteratorNext => {
-                    runtime.call_string_iterator_next_raw(realm, invocation.clone())?
+                    runtime.call_string_iterator_next_raw(realm, invocation.dup(runtime)?)?
                 }
                 NativeFunctionId::MapIteratorNext => {
-                    runtime.call_map_iterator_next_raw(realm, invocation.clone())?
+                    runtime.call_map_iterator_next_raw(realm, invocation.dup(runtime)?)?
                 }
                 NativeFunctionId::SetIteratorNext => {
-                    runtime.call_set_iterator_next_raw(realm, invocation.clone())?
+                    runtime.call_set_iterator_next_raw(realm, invocation.dup(runtime)?)?
                 }
                 _ => unreachable!("closed pure iterator registration"),
             }),
@@ -1200,22 +1210,24 @@ impl NativeOperation {
             ),
             Self::Proxy(target) => NativeStep::Complete(match target {
                 NativeFunctionId::ProxyConstructor => {
-                    runtime.call_proxy_constructor(realm, invocation.clone(), arguments)?
+                    runtime.call_proxy_constructor(realm, invocation.dup(runtime)?, arguments)?
                 }
                 NativeFunctionId::ProxyRevocable => {
-                    runtime.call_proxy_revocable(realm, invocation.clone(), arguments)?
+                    runtime.call_proxy_revocable(realm, invocation.dup(runtime)?, arguments)?
                 }
-                NativeFunctionId::ProxyRevoke => runtime.call_proxy_revoke(invocation.clone())?,
+                NativeFunctionId::ProxyRevoke => {
+                    runtime.call_proxy_revoke(invocation.dup(runtime)?)?
+                }
                 _ => unreachable!("closed Proxy native registration"),
             }),
             Self::Invoke(kind) => NativeStep::Invoke(super::function::invoke::InvokeStep::start(
                 runtime, realm, kind, invocation, arguments,
             )?),
             Self::ObjectValueOf => NativeStep::Complete(
-                runtime.call_object_prototype_value_of(realm, invocation.clone())?,
+                runtime.call_object_prototype_value_of(realm, invocation.dup(runtime)?)?,
             ),
             Self::ObjectIs => {
-                NativeStep::Complete(runtime.call_object_is(invocation.clone(), arguments)?)
+                NativeStep::Complete(runtime.call_object_is(invocation.dup(runtime)?, arguments)?)
             }
             Self::String(kind) => {
                 NativeStep::String(ObjectStringStep::start(runtime, realm, kind, invocation)?)

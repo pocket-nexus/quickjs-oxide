@@ -8,12 +8,12 @@ use crate::engine::api::{
 };
 use crate::engine::heap::ContextId;
 use crate::engine::object::{ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(super) enum MethodStep {
     Complete { resume: MethodResume },
-    Throw(Value),
+    Throw(JsValue),
     Read { resume: MethodResume },
 }
 
@@ -85,7 +85,7 @@ impl MethodStep {
 }
 
 fn overflow(runtime: &Runtime, realm: ContextId) -> Result<MethodStep, RuntimeError> {
-    Ok(MethodStep::Throw(runtime.new_native_error(
+    Ok(MethodStep::Throw(runtime.new_native_error_jsvalue(
         realm,
         NativeErrorKind::Internal,
         "stack overflow",
@@ -107,7 +107,7 @@ impl Search {
             else {
                 unreachable!("revoked proxy throws")
             };
-            return Ok(MethodStep::Throw(value));
+            return Ok(MethodStep::Throw(runtime.unroot_value(&value)?));
         }
         // A cached data-slot location skips the dynamic `handler[name]` read.
         // The value is always read from today's slot, so a same-shape overwrite
@@ -123,13 +123,14 @@ impl Search {
                 selected: None,
                 search: self,
             }));
-            return resume.resume(runtime, Completion::Return(value));
+            return resume.resume(runtime, Completion::Return(runtime.unroot_value(&value)?));
         }
         let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
+        let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
         Ok(MethodStep::request_read(
             rooted.handler.clone(),
             self.key.clone(),
-            Value::Object(rooted.handler.clone()),
+            receiver,
             MethodResume(super::reuse::PooledBox::new(MethodResumeState {
                 pending_effect: MethodStepPending::default(),
                 rooted: Some(rooted),
@@ -159,7 +160,7 @@ impl MethodResume {
         // Undefined/Null keeps walking the target Proxy chain iteratively; every
         // level first tries the trap cache and otherwise keeps the dynamic read.
         loop {
-            if matches!(value, Value::Undefined | Value::Null) {
+            if matches!(value, JsValue::Undefined | JsValue::Null) {
                 let target = self.0.rooted.as_ref().expect("proxy owner").target.clone();
                 let Some(data) = runtime.proxy_snapshot_if_any(&target)? else {
                     return Ok(MethodStep::Complete { resume: self });
@@ -182,7 +183,7 @@ impl MethodResume {
                     else {
                         unreachable!("revoked proxy throws")
                     };
-                    return Ok(MethodStep::Throw(value));
+                    return Ok(MethodStep::Throw(runtime.unroot_value(&value)?));
                 }
                 let next = runtime.root_proxy_snapshot(&target, data)?;
                 let cached = runtime.proxy_trap_read(
@@ -195,7 +196,7 @@ impl MethodResume {
                 match cached {
                     Some(method_value) => {
                         drop(old);
-                        value = method_value;
+                        value = runtime.unroot_value(&method_value)?;
                         continue;
                     }
                     None => {
@@ -203,7 +204,7 @@ impl MethodResume {
                             let rooted = self.0.rooted.as_ref().expect("proxy owner");
                             (
                                 rooted.handler.clone(),
-                                Value::Object(rooted.handler.clone()),
+                                runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
                                 self.0.search.key.clone(),
                             )
                         };
@@ -213,10 +214,10 @@ impl MethodResume {
                     }
                 }
             }
-            let method = match runtime.direct_call_target_from_value(value) {
+            let method = match runtime.direct_call_target_from_jsvalue(value) {
                 Ok(method) => method,
                 Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
-                    return Ok(MethodStep::Throw(runtime.new_native_error_from_error(
+                    return Ok(MethodStep::Throw(runtime.new_native_error_from_error_jsvalue(
                         self.0.search.realm,
                         NativeErrorKind::Type,
                         &error,
@@ -234,13 +235,13 @@ impl MethodResume {
 struct MethodStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
 }
 impl MethodStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: MethodResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -264,7 +265,7 @@ impl MethodResume {
             .take()
             .expect("MethodStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -297,7 +298,7 @@ mod resident_tests {
         drop(resume.take_read_key());
         drop(resume.take_read_receiver());
         let MethodStep::Complete { mut resume } = resume
-            .resume(&runtime, Completion::Return(Value::Undefined))
+            .resume(&runtime, Completion::Return(JsValue::Undefined))
             .unwrap()
         else {
             panic!("complete")

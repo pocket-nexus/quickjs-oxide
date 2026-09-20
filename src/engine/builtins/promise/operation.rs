@@ -10,7 +10,7 @@ mod then;
 use crate::engine::builtins::native::{NativeFunctionId, PromiseNativeKind, PromiseResolvingKind};
 use crate::engine::heap::{ContextId, InternalCallableData, PromiseState};
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{
     Completion,
     call::{ConstructorPrototypeSource, NativeArguments, NativeInvocation},
@@ -100,8 +100,14 @@ impl PromiseStep {
     pub(super) fn ignore_return(realm: ContextId, callable: CallableRef, argument: Value) -> Self {
         {
             let __pending_field_callable = callable;
-            let __pending_field_receiver = Value::Undefined;
-            let __pending_field_arguments = vec![argument];
+            let __pending_field_receiver = JsValue::Undefined;
+            let __pending_field_arguments = vec![match argument {
+                Value::Object(object) => JsValue::Object(object.into_handle()),
+                other => __pending_field_callable
+                    .runtime()
+                    .into_jsvalue(other)
+                    .expect("Promise ignore-return argument conversion"),
+            }];
             let __pending_field_resume = Box::new(PromiseResume {
                 pending_effect: PromiseStepPending::default(),
                 realm,
@@ -130,19 +136,20 @@ impl PromiseStep {
                 | PromiseNativeKind::Race),
             ) => Self::aggregate(runtime, realm, kind, invocation, arguments),
             NativeFunctionId::PromiseAllResolveElement => {
-                runtime.prepare_promise_all_resolve_element(realm, invocation.clone(), arguments)
+                runtime.prepare_promise_all_resolve_element(realm, invocation, arguments)
             }
-            NativeFunctionId::PromiseAllSettledElement(kind) => runtime
-                .prepare_promise_all_settled_element(kind, realm, invocation.clone(), arguments),
+            NativeFunctionId::PromiseAllSettledElement(kind) => {
+                runtime.prepare_promise_all_settled_element(kind, realm, invocation, arguments)
+            }
             NativeFunctionId::PromiseAnyRejectElement => {
-                runtime.prepare_promise_any_reject_element(realm, invocation.clone(), arguments)
+                runtime.prepare_promise_any_reject_element(realm, invocation, arguments)
             }
             NativeFunctionId::Promise(PromiseNativeKind::Finally)
             | NativeFunctionId::PromiseFinallyHandler(_) => {
                 finally::start(runtime, realm, target, invocation, arguments)
             }
             NativeFunctionId::PromiseFinallyThunk(kind) => runtime
-                .call_promise_finally_thunk(kind, invocation.clone())
+                .call_promise_finally_thunk(kind, invocation.dup(runtime)?)
                 .map(Self::Complete),
             NativeFunctionId::Promise(
                 kind @ (PromiseNativeKind::Try | PromiseNativeKind::WithResolvers),
@@ -153,23 +160,18 @@ impl PromiseStep {
                         "Promise.prototype.catch received a constructor invocation",
                     ));
                 };
-                let handler =
-                    arguments
-                        .readable
-                        .first()
-                        .cloned()
-                        .ok_or(RuntimeError::Invariant(
-                            "Promise.catch reject argv was not padded",
-                        ))?;
+                let handler = runtime.root_value(arguments.readable.first().ok_or(
+                    RuntimeError::Invariant("Promise.catch reject argv was not padded"),
+                )?)?;
                 Ok({
-                    let __pending_field_receiver = this_value.clone();
+                    let __pending_field_receiver = runtime.dup_jsvalue(this_value)?;
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
                         pending_effect: PromiseStepPending::default(),
                         realm,
                         phase: Phase::CatchThen {
-                            receiver: this_value.clone(),
+                            receiver: runtime.root_value(this_value)?,
                             handler,
                         },
                     });
@@ -195,14 +197,10 @@ impl PromiseStep {
                     runtime,
                     realm,
                     kind,
-                    this_value.clone(),
-                    arguments
-                        .readable
-                        .first()
-                        .cloned()
-                        .ok_or(RuntimeError::Invariant(
-                            "Promise resolve/reject argv was not padded",
-                        ))?,
+                    runtime.root_value(this_value)?,
+                    runtime.root_value(arguments.readable.first().ok_or(
+                        RuntimeError::Invariant("Promise resolve/reject argv was not padded"),
+                    )?)?,
                 )
             }
             NativeFunctionId::PromiseResolving(kind) => {
@@ -214,12 +212,13 @@ impl PromiseStep {
                         "Promise constructor did not receive a constructor invocation",
                     ));
                 };
-                let executor =
-                    runtime.callable_from_value(arguments.readable.first().cloned().ok_or(
-                        RuntimeError::Invariant("Promise executor argv was not padded"),
-                    )?)?;
+                let executor = runtime.callable_from_value(runtime.root_value(
+                    arguments.readable.first().ok_or(RuntimeError::Invariant(
+                        "Promise executor argv was not padded",
+                    ))?,
+                )?)?;
                 Ok({
-                    let __pending_field_new_target = new_target.clone();
+                    let __pending_field_new_target = runtime.dup_jsvalue(new_target)?;
                     let __pending_field_resume = Box::new(PromiseResume {
                         pending_effect: PromiseStepPending::default(),
                         realm,
@@ -228,11 +227,11 @@ impl PromiseStep {
                     Self::request_prototype(__pending_field_new_target, __pending_field_resume)
                 })
             }
-            NativeFunctionId::Promise(PromiseNativeKind::Species) => runtime
-                .call_promise_species(invocation.clone())
-                .map(Self::Complete),
+            NativeFunctionId::Promise(PromiseNativeKind::Species) => {
+                runtime.call_promise_species(invocation).map(Self::Complete)
+            }
             NativeFunctionId::PromiseCapabilityExecutor => runtime
-                .call_promise_capability_executor(realm, invocation.clone(), arguments)
+                .call_promise_capability_executor(realm, invocation.dup(runtime)?, arguments)
                 .map(Self::Complete),
             _ => Err(RuntimeError::Invariant("unregistered Promise operation")),
         }
@@ -276,15 +275,11 @@ impl PromiseStep {
             ));
         }
         if already_resolved.replace(true) {
-            return Ok(Self::Complete(Completion::Return(Value::Undefined)));
+            return Ok(Self::Complete(Completion::Return(JsValue::Undefined)));
         }
-        let resolution = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise resolving argv was not padded",
-            ))?;
+        let resolution = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Promise resolving argv was not padded"),
+        )?)?;
         let promise = ObjectRef::from_borrowed_handle(runtime.clone(), promise)?;
         if kind == PromiseResolvingKind::Reject {
             runtime.settle_promise(realm, &promise, PromiseState::Rejected, resolution)?;
@@ -298,7 +293,7 @@ impl PromiseStep {
                 runtime.settle_promise(realm, &promise, PromiseState::Rejected, reason)?;
             } else {
                 return Ok({
-                    let __pending_field_receiver = Value::Object(object.clone());
+                    let __pending_field_receiver = JsValue::Object(object.clone().into_handle());
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
@@ -319,7 +314,7 @@ impl PromiseStep {
         } else {
             runtime.settle_promise(realm, &promise, PromiseState::Fulfilled, resolution)?;
         }
-        Ok(Self::Complete(Completion::Return(Value::Undefined)))
+        Ok(Self::Complete(Completion::Return(JsValue::Undefined)))
     }
 
     pub(crate) fn finish(
@@ -351,7 +346,9 @@ impl PromiseResume {
         };
         let prototype = match result {
             NativeConversion::Throw(value) => {
-                return Ok(PromiseStep::Complete(Completion::Throw(value)));
+                return Ok(PromiseStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(object)) => object,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {
@@ -364,12 +361,12 @@ impl PromiseResume {
         let promise = runtime.new_promise_object(&prototype)?;
         let (resolve, reject) = runtime.create_promise_resolving_functions(self.realm, &promise)?;
         let arguments = vec![
-            Value::Object(resolve.as_object().clone()),
-            Value::Object(reject.as_object().clone()),
+            JsValue::Object(resolve.as_object().clone().into_handle()),
+            JsValue::Object(reject.as_object().clone().into_handle()),
         ];
         Ok({
             let __pending_field_callable = executor;
-            let __pending_field_receiver = Value::Undefined;
+            let __pending_field_receiver = JsValue::Undefined;
             let __pending_field_arguments = arguments;
             let __pending_field_resume = Box::new(Self {
                 pending_effect: PromiseStepPending::default(),
@@ -401,7 +398,9 @@ impl PromiseResume {
             Phase::ConvenienceCapability { .. } => Err(RuntimeError::Invariant(
                 "Promise convenience expected capability",
             )),
-            Phase::TryCallback(capability) => convenience::settle(realm, capability, completion),
+            Phase::TryCallback(capability) => {
+                convenience::settle(runtime, realm, capability, completion)
+            }
             Phase::Finally(phase) => finally::resume(runtime, realm, phase, completion),
             Phase::InvokeThen {
                 receiver,
@@ -413,14 +412,17 @@ impl PromiseResume {
                         return Ok(PromiseStep::Complete(Completion::Throw(value)));
                     }
                 };
-                match runtime.promise_callable(realm, value)? {
-                    NativeConversion::Throw(value) => {
-                        Ok(PromiseStep::Complete(Completion::Throw(value)))
-                    }
+                match runtime.promise_callable(realm, &value)? {
+                    NativeConversion::Throw(value) => Ok(PromiseStep::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    ))),
                     NativeConversion::Value(callable) => Ok({
                         let __pending_field_callable = callable;
-                        let __pending_field_receiver = receiver;
-                        let __pending_field_arguments = arguments;
+                        let __pending_field_receiver = runtime.into_jsvalue(receiver)?;
+                        let __pending_field_arguments = arguments
+                            .into_iter()
+                            .map(|value| runtime.into_jsvalue(value))
+                            .collect::<Result<Vec<_>, _>>()?;
                         let __pending_field_resume = Box::new(Self {
                             pending_effect: PromiseStepPending::default(),
                             realm,
@@ -440,7 +442,7 @@ impl PromiseResume {
             )),
             Phase::Aggregate(phase) => aggregate::resume(runtime, realm, phase, completion),
             Phase::IgnoreReturn => Ok(PromiseStep::Complete(match completion {
-                Completion::Return(_) => Completion::Return(Value::Undefined),
+                Completion::Return(_) => Completion::Return(JsValue::Undefined),
                 other => other,
             })),
             Phase::Identity => Ok(PromiseStep::Complete(completion)),
@@ -451,8 +453,8 @@ impl PromiseResume {
                     }
                     Completion::Return(value) => value,
                 };
-                let callable = if let Value::Object(object) = method {
-                    runtime.as_callable(&object)?
+                let callable = if let JsValue::Object(id) = method {
+                    runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), id)?)?
                 } else {
                     None
                 };
@@ -461,8 +463,9 @@ impl PromiseResume {
                 };
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = receiver;
-                    let __pending_field_arguments = vec![Value::Undefined, handler];
+                    let __pending_field_receiver = runtime.into_jsvalue(receiver)?;
+                    let __pending_field_arguments =
+                        vec![JsValue::Undefined, runtime.into_jsvalue(handler)?];
                     let __pending_field_resume = Box::new(Self {
                         pending_effect: PromiseStepPending::default(),
                         realm,
@@ -480,7 +483,7 @@ impl PromiseResume {
                 Completion::Return(value) => Ok(PromiseStep::Complete(Completion::Return(value))),
                 Completion::Throw(reason) => Ok({
                     let __pending_field_callable = reject;
-                    let __pending_field_receiver = Value::Undefined;
+                    let __pending_field_receiver = JsValue::Undefined;
                     let __pending_field_arguments = vec![reason];
                     let __pending_field_resume = Box::new(Self {
                         pending_effect: PromiseStepPending::default(),
@@ -497,7 +500,9 @@ impl PromiseResume {
             },
             Phase::Reaction(targets) => {
                 let Some(targets) = targets else {
-                    return Ok(PromiseStep::Complete(Completion::Return(Value::Undefined)));
+                    return Ok(PromiseStep::Complete(Completion::Return(
+                        JsValue::Undefined,
+                    )));
                 };
                 let (target, value) = match completion {
                     Completion::Return(value) => (targets.resolve, value),
@@ -510,7 +515,7 @@ impl PromiseResume {
                     ))?;
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = Value::Undefined;
+                    let __pending_field_receiver = JsValue::Undefined;
                     let __pending_field_arguments = vec![value];
                     let __pending_field_resume = Box::new(Self {
                         pending_effect: PromiseStepPending::default(),
@@ -548,12 +553,18 @@ impl PromiseResume {
                 resolution,
             } => {
                 match completion {
-                    Completion::Throw(reason) => {
-                        runtime.settle_promise(realm, &promise, PromiseState::Rejected, reason)?
-                    }
+                    Completion::Throw(reason) => runtime.settle_promise(
+                        realm,
+                        &promise,
+                        PromiseState::Rejected,
+                        runtime.root_and_release_jsvalue(reason)?,
+                    )?,
                     Completion::Return(then) => {
-                        let then = if let Value::Object(object) = then {
-                            runtime.as_callable(&object)?
+                        let then = if let JsValue::Object(id) = then {
+                            runtime.as_callable(&ObjectRef::from_borrowed_handle(
+                                runtime.clone(),
+                                id,
+                            )?)?
                         } else {
                             None
                         };
@@ -574,13 +585,15 @@ impl PromiseResume {
                         }
                     }
                 }
-                Ok(PromiseStep::Complete(Completion::Return(Value::Undefined)))
+                Ok(PromiseStep::Complete(Completion::Return(
+                    JsValue::Undefined,
+                )))
             }
             Phase::ConstructorExecutor { capability } => {
                 if let Completion::Throw(reason) = completion {
                     return Ok({
                         let __pending_field_callable = capability.reject;
-                        let __pending_field_receiver = Value::Undefined;
+                        let __pending_field_receiver = JsValue::Undefined;
                         let __pending_field_arguments = vec![reason];
                         let __pending_field_resume = Box::new(Self {
                             pending_effect: PromiseStepPending::default(),
@@ -595,13 +608,15 @@ impl PromiseResume {
                         )
                     });
                 }
-                Ok(PromiseStep::Complete(Completion::Return(Value::Object(
-                    capability.promise,
-                ))))
+                Ok(PromiseStep::Complete(Completion::Return(
+                    runtime.into_jsvalue(Value::Object(capability.promise))?,
+                )))
             }
             Phase::ReturnPromise(promise) => Ok(PromiseStep::Complete(match completion {
                 Completion::Throw(value) => Completion::Throw(value),
-                Completion::Return(_) => Completion::Return(Value::Object(promise)),
+                Completion::Return(_) => {
+                    Completion::Return(runtime.into_jsvalue(Value::Object(promise))?)
+                }
             })),
             Phase::ConstructorPrototype { .. } => Err(RuntimeError::Invariant(
                 "Promise constructor expected prototype source",
@@ -628,23 +643,23 @@ impl PromiseResume {
 #[derive(Default)]
 struct PromiseStepPending {
     next_iterator: Option<ObjectRef>,
-    next_method: Option<Value>,
+    next_method: Option<JsValue>,
     close_iterator: Option<ObjectRef>,
     close_completion: Option<Completion>,
     nested_step: Option<Box<PromiseStep>>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     construct_target: Option<crate::engine::vm::call::ConstructorRef>,
-    construct_arguments: Option<Vec<Value>>,
-    prototype_new_target: Option<Value>,
+    construct_arguments: Option<Vec<JsValue>>,
+    prototype_new_target: Option<JsValue>,
 }
 impl PromiseStep {
     pub(crate) fn request_next(
         iterator: ObjectRef,
-        method: Value,
+        method: JsValue,
         mut resume: Box<PromiseResume>,
     ) -> Self {
         resume.pending_effect.next_iterator = Some(iterator);
@@ -665,7 +680,7 @@ impl PromiseStep {
         Self::Nested { resume }
     }
     pub(crate) fn request_read(
-        receiver: Value,
+        receiver: JsValue,
         key: PropertyKey,
         mut resume: Box<PromiseResume>,
     ) -> Self {
@@ -675,8 +690,8 @@ impl PromiseStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: Box<PromiseResume>,
     ) -> Self {
         resume.pending_effect.call_callable = Some(callable);
@@ -686,14 +701,14 @@ impl PromiseStep {
     }
     pub(crate) fn request_construct(
         target: crate::engine::vm::call::ConstructorRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         mut resume: Box<PromiseResume>,
     ) -> Self {
         resume.pending_effect.construct_target = Some(target);
         resume.pending_effect.construct_arguments = Some(arguments);
         Self::Construct { resume }
     }
-    pub(crate) fn request_prototype(new_target: Value, mut resume: Box<PromiseResume>) -> Self {
+    pub(crate) fn request_prototype(new_target: JsValue, mut resume: Box<PromiseResume>) -> Self {
         resume.pending_effect.prototype_new_target = Some(new_target);
         Self::Prototype { resume }
     }
@@ -705,7 +720,7 @@ impl PromiseResume {
             .take()
             .expect("PromiseStep Next iterator")
     }
-    pub(crate) fn take_next_method(&mut self) -> Value {
+    pub(crate) fn take_next_method(&mut self) -> JsValue {
         self.pending_effect
             .next_method
             .take()
@@ -729,7 +744,7 @@ impl PromiseResume {
             .take()
             .expect("PromiseStep Nested step")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.pending_effect
             .read_receiver
             .take()
@@ -747,13 +762,13 @@ impl PromiseResume {
             .take()
             .expect("PromiseStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.pending_effect
             .call_receiver
             .take()
             .expect("PromiseStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.pending_effect
             .call_arguments
             .take()
@@ -765,13 +780,13 @@ impl PromiseResume {
             .take()
             .expect("PromiseStep Construct target")
     }
-    pub(crate) fn take_construct_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_construct_arguments(&mut self) -> Vec<JsValue> {
         self.pending_effect
             .construct_arguments
             .take()
             .expect("PromiseStep Construct arguments")
     }
-    pub(crate) fn take_prototype_new_target(&mut self) -> Value {
+    pub(crate) fn take_prototype_new_target(&mut self) -> JsValue {
         self.pending_effect
             .prototype_new_target
             .take()

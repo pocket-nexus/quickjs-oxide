@@ -128,7 +128,7 @@ pub(super) fn start(
                 .dup_jsvalue(&pending.next)
                 .map_err(runtime_error_to_vm_error)?;
             let target = match runtime
-                .direct_call_target_from_value(next)
+                .direct_call_target_from_jsvalue(next)
                 .map_err(runtime_error_to_vm_error)
             {
                 Ok(target) => target,
@@ -233,7 +233,7 @@ impl PendingIteratorState {
                 };
                 self.stage = Stage::ResumeResult;
                 let target = runtime
-                    .direct_call_target_from_value(value)
+                    .direct_call_target_from_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?;
                 let arguments = if kind == IteratorCallKind::ReturnWithoutValue {
                     Vec::new()

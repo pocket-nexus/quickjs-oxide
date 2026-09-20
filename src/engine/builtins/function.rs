@@ -7,7 +7,7 @@ use crate::engine::code::function::metadata::FunctionKind;
 
 use crate::engine::heap::{ContextId, ObjectPayload};
 use crate::engine::object::CallableRef;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -40,7 +40,11 @@ impl Runtime {
         // explicit part of QuickJS's `b->has_prototype` test.
         let sloppy_legacy_get = if arguments.actual_arg_count == 0 {
             match this_value {
-                Value::Object(object) => {
+                JsValue::Object(id) => {
+                    let object = crate::engine::object::ObjectRef::from_borrowed_handle(
+                        self.clone(),
+                        *id,
+                    )?;
                     let state = self.0.state.borrow();
                     let object = state.heap.object(object.object_id())?;
                     match object.payload {
@@ -88,20 +92,20 @@ impl Runtime {
                         | ObjectPayload::AsyncGenerator(_) => false,
                     }
                 }
-                Value::Undefined
-                | Value::Null
-                | Value::Bool(_)
-                | Value::Int(_)
-                | Value::Float(_)
-                | Value::String(_)
-                | Value::BigInt(_)
-                | Value::Symbol(_) => false,
+                JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::String(_)
+                | JsValue::BigInt(_)
+                | JsValue::Symbol(_) => false,
             }
         } else {
             false
         };
         if sloppy_legacy_get {
-            return Ok(Completion::Return(Value::Undefined));
+            return Ok(Completion::Return(JsValue::Undefined));
         }
         Ok(Completion::Throw(self.new_native_error_jsvalue(
             realm,
@@ -177,14 +181,15 @@ impl Runtime {
                 "Function.prototype.fileName getter received the wrong native invocation",
             ));
         };
-        let Value::Object(function) = this_value else {
-            return Ok(Completion::Return(Value::Undefined));
+        let JsValue::Object(id) = this_value else {
+            return Ok(Completion::Return(JsValue::Undefined));
         };
+        let function = crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         let filename = {
             let state = self.0.state.borrow();
             let object = state.heap.object(function.object_id())?;
             let ObjectPayload::BytecodeFunction { bytecode, .. } = &object.payload else {
-                return Ok(Completion::Return(Value::Undefined));
+                return Ok(Completion::Return(JsValue::Undefined));
             };
             let bytecode = state.heap.function_bytecode(*bytecode)?;
             bytecode
@@ -193,9 +198,10 @@ impl Runtime {
                 .map(|debug| state.atoms.to_js_string(debug.filename))
                 .transpose()?
         };
-        Ok(Completion::Return(
-            filename.map_or(Value::Undefined, Value::String),
-        ))
+        Ok(Completion::Return(match filename {
+            Some(filename) => self.unroot_value(&Value::String(filename))?,
+            None => JsValue::Undefined,
+        }))
     }
 
     pub(crate) fn call_function_prototype_position(
@@ -208,14 +214,15 @@ impl Runtime {
                 "Function.prototype position getter received the wrong native invocation",
             ));
         };
-        let Value::Object(function) = this_value else {
-            return Ok(Completion::Return(Value::Undefined));
+        let JsValue::Object(id) = this_value else {
+            return Ok(Completion::Return(JsValue::Undefined));
         };
+        let function = crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         let position = {
             let state = self.0.state.borrow();
             let object = state.heap.object(function.object_id())?;
             let ObjectPayload::BytecodeFunction { bytecode, .. } = &object.payload else {
-                return Ok(Completion::Return(Value::Undefined));
+                return Ok(Completion::Return(JsValue::Undefined));
             };
             let bytecode = state.heap.function_bytecode(*bytecode)?;
             bytecode
@@ -224,10 +231,10 @@ impl Runtime {
                 .map(|debug| debug.pc2line.as_ref().map(|table| table.lookup(None)))
         };
         let Some(position) = position else {
-            return Ok(Completion::Return(Value::Undefined));
+            return Ok(Completion::Return(JsValue::Undefined));
         };
         let Some(position) = position else {
-            return Ok(Completion::Return(Value::Int(0)));
+            return Ok(Completion::Return(JsValue::Int(0)));
         };
         let (line, column) = position.one_based().ok_or(RuntimeError::Invariant(
             "function definition position cannot be represented one-based",
@@ -239,7 +246,7 @@ impl Runtime {
         let selected = i32::try_from(selected).map_err(|_| {
             RuntimeError::Invariant("function definition position does not fit Int32")
         })?;
-        Ok(Completion::Return(Value::Int(selected)))
+        Ok(Completion::Return(JsValue::Int(selected)))
     }
 
     pub(crate) fn call_function_prototype_has_instance(

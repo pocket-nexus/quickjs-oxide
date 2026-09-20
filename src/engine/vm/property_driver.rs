@@ -13,7 +13,7 @@ use crate::engine::{
     code::function::metadata::FunctionKind,
     heap::ContextId,
     object::{OrdinaryRead, PropertyKey},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
 };
 
 #[derive(Clone, Copy)]
@@ -207,8 +207,10 @@ pub(super) fn read_progress_selected(
     if computed && matches!(base, JsValue::Null | JsValue::Undefined) {
         let key = execution.slots.peek(&frame.window, 0)?;
         let message = if matches!(key_kind, ReadKey::Computed { keep_key: true })
-            && !matches!(key, JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_))
-        {
+            && !matches!(
+                key,
+                JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_)
+            ) {
             "value has no property"
         } else if matches!(base, JsValue::Null) {
             "cannot read property of null"
@@ -272,9 +274,9 @@ pub(super) fn read_progress_selected(
             };
             let retained = keep_key
                 .then(|| match value {
-                    JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_) => {
-                        runtime.dup_jsvalue(value).map_err(runtime_error_to_vm_error)
-                    }
+                    JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_) => runtime
+                        .dup_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error),
                     value => Ok(super::numeric::allocate_string_jsvalue(
                         runtime,
                         super::numeric::to_js_string_jsvalue(runtime, value)?,
@@ -368,9 +370,9 @@ pub(super) fn read_converted(
     // if ToPrimitive returned an Int. Direct Int keys retain their original tag.
     let retained = if keep_key {
         Some(match &key {
-            JsValue::Symbol(_) | JsValue::String(_) => {
-                runtime.dup_jsvalue(&key).map_err(runtime_error_to_vm_error)?
-            }
+            JsValue::Symbol(_) | JsValue::String(_) => runtime
+                .dup_jsvalue(&key)
+                .map_err(runtime_error_to_vm_error)?,
             value => super::numeric::allocate_string_jsvalue(
                 runtime,
                 super::numeric::to_js_string_jsvalue(runtime, value)?,
@@ -551,11 +553,12 @@ fn complete_read(
             preserved_receiver = discarded[consume - 1].take();
         }
         if immediate_key {
-            for slot in discarded.iter_mut().flatten() {
-                let taken = slot.take().expect("discarded operand");
-                runtime
-                    .release_jsvalue(taken)
-                    .map_err(runtime_error_to_vm_error)?;
+            for slot in discarded.iter_mut() {
+                if let Some(taken) = slot.take() {
+                    runtime
+                        .release_jsvalue(taken)
+                        .map_err(runtime_error_to_vm_error)?;
+                }
             }
             publish_read_result(
                 &mut slots,
@@ -681,7 +684,11 @@ fn read_pending(
                 )? {
                     NativeConversion::Value(call) => call,
                     NativeConversion::Throw(value) => {
-                        return Ok(CallStep::Complete(Completion::Throw(value)));
+                        return Ok(CallStep::Complete(Completion::Throw(
+                            runtime
+                                .into_jsvalue(value)
+                                .map_err(runtime_error_to_vm_error)?,
+                        )));
                     }
                 };
                 let normal = match &classification {
@@ -787,7 +794,9 @@ fn read_pending(
     if let Some((call, receiver)) = ordinary_callback {
         let entry = call.prepare_callback(
             &mut execution.call_storage,
-            receiver,
+            runtime
+                .into_jsvalue(receiver)
+                .map_err(runtime_error_to_vm_error)?,
             Vec::new(),
             realm,
             ReturnTarget {

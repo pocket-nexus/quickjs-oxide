@@ -8,7 +8,7 @@ use crate::engine::{
         CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
         operations::InternalDefineResult,
     },
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -81,10 +81,15 @@ impl FlattenStep {
                 "Array flatten requires generic invocation",
             ));
         };
-        let source = match runtime.native_to_object(realm, this_value.clone())? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-        };
+        let source =
+            match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
         Ok(Self::request_read(
             source.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
@@ -97,18 +102,16 @@ impl FlattenStep {
                 source_index: 0,
                 source_length: 0,
                 depth: 1,
-                argument: arguments
-                    .readable
-                    .first()
-                    .cloned()
-                    .unwrap_or(Value::Undefined),
+                argument: match arguments.readable.first() {
+                    Some(value) => runtime.root_value(value)?,
+                    None => Value::Undefined,
+                },
                 mapper: None,
                 mapper_this: if arguments.actual_arg_count > 1 {
-                    arguments
-                        .readable
-                        .get(1)
-                        .cloned()
-                        .unwrap_or(Value::Undefined)
+                    match arguments.readable.get(1) {
+                        Some(value) => runtime.root_value(value)?,
+                        None => Value::Undefined,
+                    }
                 } else {
                     Value::Undefined
                 },
@@ -166,13 +169,13 @@ impl FlattenResume {
         result: Completion,
     ) -> Result<FlattenStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(FlattenStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(FlattenStep::request_number(value, self))
+                Ok(FlattenStep::request_number(runtime.into_jsvalue(value)?, self))
             }
             Phase::Species => {
                 let Value::Object(target) = value else {
@@ -198,11 +201,11 @@ impl FlattenResume {
                             .as_ref()
                             .ok_or(RuntimeError::Invariant("flatten mapper missing"))?
                             .clone(),
-                        self.0.mapper_this.clone(),
+                        runtime.into_jsvalue(self.0.mapper_this.clone())?,
                         vec![
-                            value,
-                            Value::number(self.0.source_index as f64),
-                            Value::Object(self.0.source.clone()),
+                            runtime.into_jsvalue(value)?,
+                            runtime.into_jsvalue(Value::number(self.0.source_index as f64))?,
+                            runtime.into_jsvalue(Value::Object(self.0.source.clone()))?,
                         ],
                         self,
                     ));
@@ -212,7 +215,7 @@ impl FlattenResume {
             Phase::Mapper => self.visit(runtime, value),
             Phase::NestedLength => {
                 self.0.phase = Phase::NestedNumber;
-                Ok(FlattenStep::request_number(value, self))
+                Ok(FlattenStep::request_number(runtime.into_jsvalue(value)?, self))
             }
             _ => Err(RuntimeError::Invariant(
                 "Array flatten value phase mismatch",
@@ -227,7 +230,9 @@ impl FlattenResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(FlattenStep::Complete(Completion::Throw(value)));
+                return Ok(FlattenStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -237,7 +242,10 @@ impl FlattenResume {
                     self.0.mapper = Some(runtime.callable_from_value(self.0.argument.clone())?);
                 } else if !matches!(self.0.argument, Value::Undefined) {
                     self.0.phase = Phase::Depth;
-                    return Ok(FlattenStep::request_number(self.0.argument.clone(), self));
+                    return Ok(FlattenStep::request_number(
+                        runtime.into_jsvalue(self.0.argument.clone())?,
+                        self,
+                    ));
                 }
                 self.species()
             }
@@ -293,16 +301,17 @@ impl FlattenResume {
     fn next(mut self, runtime: &Runtime) -> Result<FlattenStep, RuntimeError> {
         loop {
             let Some(frame) = self.0.frames.last_mut() else {
+                let value = if self.0.return_count {
+                    Value::number(self.0.target_index as f64)
+                } else {
+                    Value::Object(
+                        self.0
+                            .target
+                            .ok_or(RuntimeError::Invariant("flatten target missing"))?,
+                    )
+                };
                 return Ok(FlattenStep::Complete(Completion::Return(
-                    if self.0.return_count {
-                        Value::number(self.0.target_index as f64)
-                    } else {
-                        Value::Object(
-                            self.0
-                                .target
-                                .ok_or(RuntimeError::Invariant("flatten target missing"))?,
-                        )
-                    },
+                    runtime.into_jsvalue(value)?,
                 )));
             };
             if frame.next_index == frame.length {
@@ -334,7 +343,9 @@ impl FlattenResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(FlattenStep::Complete(Completion::Throw(value)));
+                return Ok(FlattenStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         if !value {
@@ -352,7 +363,9 @@ impl FlattenResume {
             match runtime.internal_is_array(self.0.realm, &element)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(FlattenStep::Complete(Completion::Throw(value)));
+                    return Ok(FlattenStep::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
             }
         } else {
@@ -410,7 +423,9 @@ impl FlattenResume {
             self.0.target_index,
             result,
         )? {
-            return Ok(FlattenStep::Complete(Completion::Throw(value)));
+            return Ok(FlattenStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
         self.0.target_index += 1;
         self.next(runtime)
@@ -433,7 +448,7 @@ pub(crate) fn finish(
                 )?
             }
             FlattenStep::Number { mut resume } => {
-                let value = resume.take_number_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             FlattenStep::Has { mut resume } => {
@@ -457,8 +472,12 @@ pub(crate) fn finish(
             }
             FlattenStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, receiver, &arguments)?,
@@ -481,13 +500,13 @@ pub(crate) fn finish(
 struct FlattenStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    number_value: Option<Value>,
+    number_value: Option<JsValue>,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
     species_source: Option<ObjectRef>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
@@ -502,7 +521,7 @@ impl FlattenStep {
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: FlattenResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: FlattenResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
@@ -521,8 +540,8 @@ impl FlattenStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: FlattenResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -557,7 +576,7 @@ impl FlattenResume {
             .take()
             .expect("FlattenStep Read key")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value
@@ -592,14 +611,14 @@ impl FlattenResume {
             .take()
             .expect("FlattenStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("FlattenStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

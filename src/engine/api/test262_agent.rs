@@ -624,13 +624,19 @@ impl Runtime {
             step = match step {
                 AgentStep::Complete(result) => return Ok(result),
                 AgentStep::String { value, resume } => {
+                    let value = self.root_and_release_jsvalue(value)?;
                     let result = match self.native_to_js_string(realm, &value)? {
-                        NativeConversion::Value(value) => Completion::Return(Value::String(value)),
-                        NativeConversion::Throw(value) => Completion::Throw(value),
+                        NativeConversion::Value(value) => {
+                            Completion::Return(self.into_jsvalue(Value::String(value))?)
+                        }
+                        NativeConversion::Throw(value) => {
+                            Completion::Throw(self.into_jsvalue(value)?)
+                        }
                     };
                     resume.resume(self, result)?
                 }
                 AgentStep::Number { value, resume } => {
+                    let value = self.root_and_release_jsvalue(value)?;
                     resume.number(self, self.native_to_number(realm, &value)?)?
                 }
             };

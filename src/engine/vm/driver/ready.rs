@@ -190,10 +190,10 @@ pub(super) fn run(
                 let frame = execution.frames.current_mut(id)?;
                 if !matches!(
                     execution.slots.peek(&frame.window, 1)?,
-                    crate::engine::value::Value::Null | crate::engine::value::Value::Undefined
+                    crate::engine::value::JsValue::Null | crate::engine::value::JsValue::Undefined
                 ) && matches!(
                     execution.slots.peek(&frame.window, 0)?,
-                    crate::engine::value::Value::Object(_)
+                    crate::engine::value::JsValue::Object(_)
                 ) {
                     return Ok(Boundary::Exit(exit));
                 }
@@ -213,7 +213,7 @@ pub(super) fn run(
                 if key.is_none()
                     && matches!(
                         execution.slots.peek(&frame.window, 1)?,
-                        crate::engine::value::Value::Object(_)
+                        crate::engine::value::JsValue::Object(_)
                     )
                 {
                     return Ok(Boundary::Exit(exit));

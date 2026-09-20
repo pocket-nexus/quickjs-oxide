@@ -18,6 +18,7 @@ use crate::engine::builtins::native::{
 use std::time::Duration;
 
 use super::*;
+use crate::engine::value::JsValue;
 
 mod operation;
 #[cfg(test)]
@@ -435,14 +436,14 @@ impl Runtime {
                 "Atomics.pause hint was not readable",
             ))?;
             let valid = match value {
-                Value::Undefined | Value::Int(_) => true,
-                Value::Float(value) => value.is_finite() && value.fract() == 0.0,
-                Value::Null
-                | Value::Bool(_)
-                | Value::BigInt(_)
-                | Value::String(_)
-                | Value::Symbol(_)
-                | Value::Object(_) => false,
+                JsValue::Undefined | JsValue::Int(_) => true,
+                JsValue::Float(value) => value.is_finite() && value.fract() == 0.0,
+                JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::BigInt(_)
+                | JsValue::String(_)
+                | JsValue::Symbol(_)
+                | JsValue::Object(_) => false,
             };
             if !valid {
                 return Ok(Completion::Throw(self.new_native_error_jsvalue(
@@ -453,7 +454,7 @@ impl Runtime {
             }
         }
         std::hint::spin_loop();
-        Ok(Completion::Return(Value::Undefined))
+        Ok(Completion::Return(JsValue::Undefined))
     }
 
     fn call_atomics_wait(
@@ -491,7 +492,7 @@ impl Runtime {
         let width = usize::from(access.snapshot.element.byte_length());
         let offset = atomic_absolute_byte_offset(access)?;
         with_atomics_seq_cst(|| self.write_buffer_word(&access.buffer, offset, &bytes[..width]))?;
-        Ok(Completion::Return(stored_value))
+        Ok(Completion::Return(self.into_jsvalue(stored_value)?))
     }
     fn atomics_wait_converted(
         &self,
@@ -529,9 +530,9 @@ impl Runtime {
             waiter::WaitOutcome::Ok => "ok",
             waiter::WaitOutcome::TimedOut => "timed-out",
         };
-        Ok(Completion::Return(Value::String(JsString::from_static(
-            result,
-        ))))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(
+            JsString::from_static(result),
+        ))?))
     }
     fn atomics_notify_converted(
         &self,
@@ -539,7 +540,7 @@ impl Runtime {
         count: i32,
     ) -> Result<Completion, RuntimeError> {
         if count == 0 || !access.buffer.is_shared() {
-            return Ok(Completion::Return(Value::Int(0)));
+            return Ok(Completion::Return(JsValue::Int(0)));
         }
         let backing_id = access
             .buffer
@@ -554,7 +555,7 @@ impl Runtime {
         );
         let notified = i32::try_from(notified)
             .map_err(|_| RuntimeError::Invariant("Atomics.notify waiter count overflowed i32"))?;
-        Ok(Completion::Return(Value::Int(notified)))
+        Ok(Completion::Return(JsValue::Int(notified)))
     }
 }
 

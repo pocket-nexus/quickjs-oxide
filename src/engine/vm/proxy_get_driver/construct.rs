@@ -29,7 +29,14 @@ pub(super) fn start(
         NativeConversion::Value(result) => result,
         NativeConversion::Throw(value) => {
             return resume
-                .resume(runtime, Completion::Throw(value))
+                .resume(
+                    runtime,
+                    Completion::Throw(
+                        runtime
+                            .into_jsvalue(value)
+                            .map_err(runtime_error_to_vm_error)?,
+                    ),
+                )
                 .map_err(runtime_error_to_vm_error);
         }
     };
@@ -93,7 +100,7 @@ pub(super) fn prepared(
                 .map_err(|error| Error::internal(error.to_string()))?
                 .metadata
                 .constructor_kind;
-            let request = Box::new(BytecodeCallRequest {
+            let mut request = Box::new(BytecodeCallRequest {
                 callable,
                 receiver: JsValue::Undefined,
                 new_target: new_target.into_value(),
@@ -127,14 +134,10 @@ pub(super) fn prepared(
                     )
                 }
                 ConstructorKind::Base => Ok(Step::ReadValue {
-                    receiver: Some(
-                        runtime
-                            .root_and_release_jsvalue(std::mem::replace(
-                                &mut request.new_target,
-                                JsValue::Undefined,
-                            ))
-                            .map_err(runtime_error_to_vm_error)?,
-                    ),
+                    receiver: Some(std::mem::replace(
+                        &mut request.new_target,
+                        JsValue::Undefined,
+                    )),
                     key: Some(
                         runtime
                             .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)
@@ -156,12 +159,11 @@ pub(super) fn prototype(
     completion: Completion,
     resume: Resume,
 ) -> Result<Step, Error> {
+    let new_target = runtime
+        .root_value(&request.new_target)
+        .map_err(runtime_error_to_vm_error)?;
     let receiver = runtime
-        .create_from_constructor_prototype_reply(
-            request.caller_realm,
-            &request.new_target,
-            completion,
-        )
+        .create_from_constructor_prototype_reply(request.caller_realm, &new_target, completion)
         .map_err(runtime_error_to_vm_error)?;
     Ok(Step::ConstructorReady {
         request: Some(request),

@@ -1,7 +1,7 @@
 //! Move a suspended owned frame across the heap-publication boundary.
 use super::{VmActivationResume, VmRunOutcome};
 use crate::engine::api::{Error, runtime::Runtime, runtime_error::RuntimeError};
-use crate::engine::value::Value;
+use crate::engine::value::JsValue;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::{FrameEntry, FrameId};
 use crate::engine::vm::{VmResume, VmSuspendKind};
@@ -41,7 +41,7 @@ impl OwnedSuspension {
             ));
         }
         let mut frame = execution.frames.pop(id)?;
-        let storage = execution.slots.take_frame(frame.window.take())?;
+        let storage = execution.slots.take_frame(&runtime, frame.window.take())?;
         if let Some(guard) = frame.cold.entry_guard.take() {
             guard
                 .finish()
@@ -80,7 +80,7 @@ impl OwnedSuspension {
         } = *self;
         let mut entry = entry;
         let value = if kind == VmSuspendKind::Initial {
-            Value::Undefined
+            JsValue::Undefined
         } else {
             std::mem::replace(
                 entry
@@ -88,7 +88,7 @@ impl OwnedSuspension {
                     .operands
                     .last_mut()
                     .ok_or(RuntimeError::Invariant("suspension has no output operand"))?,
-                Value::Undefined,
+                JsValue::Undefined,
             )
         };
         Ok(VmRunOutcome::Suspend {
@@ -99,6 +99,7 @@ impl OwnedSuspension {
 }
 
 pub(super) fn prepare(
+    runtime: &Runtime,
     mut entry: FrameEntry,
     kind: VmSuspendKind,
     pc: usize,
@@ -131,7 +132,7 @@ pub(super) fn prepare(
         }
     };
     if kind != VmSuspendKind::Initial
-        && !matches!(entry.storage.operands.last(), Some(Value::Undefined))
+        && !matches!(entry.storage.operands.last(), Some(JsValue::Undefined))
     {
         return Err(RuntimeError::Invariant(
             "suspension resume operand was not cleared",
@@ -149,10 +150,13 @@ pub(super) fn prepare(
                 .operands
                 .try_reserve(1)
                 .map_err(|_| RuntimeError::Invariant("resume operand allocation failed"))?;
-            entry.storage.operands.push(Value::Int(magic));
+            entry.storage.operands.push(JsValue::Int(magic));
         }
     }
-    entry.cold.resume_throw = abrupt;
+    entry.cold.resume_throw = match abrupt {
+        Some(value) => Some(runtime.root_and_release_jsvalue(value)?),
+        None => None,
+    };
     Ok(PreparedResume { entry, pc })
 }
 

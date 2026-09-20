@@ -4,7 +4,7 @@ use crate::engine::{
     builtins::native::ArrayIteratorKind,
     heap::{ContextId, HeapError},
     object::{ObjectRef, PropertyKey},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeInvocation, NativeInvokeOutcome},
@@ -40,7 +40,7 @@ pub(crate) struct ArrayNextResumeState {
     phase: Phase,
     requested_object: Option<ObjectRef>,
     requested_key: Option<PropertyKey>,
-    requested_value: Option<Value>,
+    requested_value: Option<JsValue>,
 
     requested_read: Option<crate::engine::object::OrdinaryRead>,
 }
@@ -60,9 +60,10 @@ impl ArrayNextStep {
                 "Array Iterator next did not receive an iterator-next invocation",
             ));
         };
-        let Value::Object(iterator) = this_value else {
+        let JsValue::Object(iterator_id) = this_value else {
             return Self::wrong_receiver(runtime, realm);
         };
+        let iterator = ObjectRef::from_borrowed_handle(runtime.clone(), *iterator_id)?;
         let state = runtime
             .0
             .state
@@ -76,18 +77,18 @@ impl ArrayNextStep {
         };
         let Some(source) = source else {
             return Ok(Self::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value: Value::Undefined,
+                value: JsValue::Undefined,
                 done: true,
             }));
         };
 
-        if let Some(value) = Self::dense_immediate_next(runtime, iterator, source, index, kind)? {
+        if let Some(value) = Self::dense_immediate_next(runtime, &iterator, source, index, kind)? {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "array_next_dense_immediate_leaf",
             );
             return Ok(Self::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value,
+                value: runtime.into_jsvalue(value)?,
                 done: false,
             }));
         }
@@ -109,7 +110,9 @@ impl ArrayNextStep {
             let action = match runtime.typed_array_validated_length(realm, &resume.source)? {
                 NativeConversion::Value(length) => resume.length(runtime, length)?,
                 NativeConversion::Throw(value) => {
-                    NextAction::Complete(NativeInvokeOutcome::Completion(Completion::Throw(value)))
+                    NextAction::Complete(NativeInvokeOutcome::Completion(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )))
                 }
             };
             return resume.drive(runtime, action);
@@ -140,7 +143,7 @@ impl ArrayNextResume {
         reply: Completion,
     ) -> Result<NextAction, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(NextAction::Complete(NativeInvokeOutcome::Completion(
                     Completion::Throw(value),
@@ -162,7 +165,7 @@ impl ArrayNextResume {
                     value
                 };
                 Ok(NextAction::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                    value,
+                    value: runtime.into_jsvalue(value)?,
                     done: false,
                 }))
             }
@@ -186,7 +189,7 @@ impl ArrayNextResume {
                 self.length(runtime, Runtime::to_uint32_number(value))
             }
             NativeConversion::Throw(value) => Ok(NextAction::Complete(
-                NativeInvokeOutcome::Completion(Completion::Throw(value)),
+                NativeInvokeOutcome::Completion(Completion::Throw(runtime.into_jsvalue(value)?)),
             )),
         }
     }
@@ -198,7 +201,7 @@ impl ArrayNextResume {
                 .finish_array_iterator(self.0.iterator.object_id())?;
             state.apply_cleanup(cleanup)?;
             return Ok(NextAction::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value: Value::Undefined,
+                value: JsValue::Undefined,
                 done: true,
             }));
         };
@@ -210,7 +213,7 @@ impl ArrayNextResume {
             .set_array_iterator_index(self.0.iterator.object_id(), next_index)?;
         if self.0.kind == ArrayIteratorKind::Key {
             return Ok(NextAction::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value: Runtime::array_length_value(self.0.index),
+                value: runtime.into_jsvalue(Runtime::array_length_value(self.0.index))?,
                 done: false,
             }));
         }
@@ -256,7 +259,7 @@ impl ArrayNextResume {
                         )? {
                             OrdinaryRead::Complete(value) => self.resume_once(
                                 runtime,
-                                Completion::Return(value.unwrap_or(Value::Undefined)),
+                                Completion::Return(value.unwrap_or(JsValue::Undefined)),
                             )?,
                             read => {
                                 return Ok(self.prepared(read, key));
@@ -273,7 +276,7 @@ impl ArrayNextResume {
                         };
                         self.number_once(runtime, reply)?
                     }
-                    action => return Ok(self.wait(action)),
+                    action => return self.wait(runtime, action),
                 };
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
@@ -308,20 +311,24 @@ impl ArrayNextResume {
             self.requested_key.take().expect("array next key"),
         )
     }
-    pub(crate) fn take_number(&mut self) -> Value {
+    pub(crate) fn take_number(&mut self) -> JsValue {
         self.requested_value.take().expect("array next number")
     }
-    fn wait(mut self, action: NextAction) -> ArrayNextStep {
+    fn wait(
+        mut self,
+        runtime: &Runtime,
+        action: NextAction,
+    ) -> Result<ArrayNextStep, RuntimeError> {
         match action {
-            NextAction::Complete(result) => ArrayNextStep::Complete(result),
+            NextAction::Complete(result) => Ok(ArrayNextStep::Complete(result)),
             NextAction::Read(key) => {
                 self.requested_object = Some(self.source.clone());
                 self.requested_key = Some(key);
-                ArrayNextStep::Read { resume: self }
+                Ok(ArrayNextStep::Read { resume: self })
             }
             NextAction::Number(value) => {
-                self.requested_value = Some(value);
-                ArrayNextStep::Number { resume: self }
+                self.requested_value = Some(runtime.into_jsvalue(value)?);
+                Ok(ArrayNextStep::Number { resume: self })
             }
         }
     }
@@ -347,9 +354,11 @@ pub(crate) fn finish(
                 let key = resume.take_key();
                 let completion = match runtime.finish_prepared_read(realm, &key, read)? {
                     NativeConversion::Value(value) => {
-                        Completion::Return(value.unwrap_or(Value::Undefined))
+                        Completion::Return(runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?)
                     }
-                    NativeConversion::Throw(value) => Completion::Throw(value),
+                    NativeConversion::Throw(value) => {
+                        Completion::Throw(runtime.into_jsvalue(value)?)
+                    }
                 };
                 resume.resume(runtime, completion)?
             }
@@ -361,7 +370,7 @@ pub(crate) fn finish(
                 )?
             }
             ArrayNextStep::Number { mut resume } => {
-                let value = resume.take_number();
+                let value = runtime.root_and_release_jsvalue(resume.take_number())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
         };

@@ -632,13 +632,14 @@ mod owned_cell_tests {
             .try_read_unresolved_global(&root, context.realm, atom)
             .unwrap()
             .unwrap();
-        assert!(matches!(first, Value::Object(_)));
+        assert!(matches!(&first, JsValue::Object(_)));
+        runtime.release_jsvalue(first).unwrap();
         context.eval("nativeLeaf = 7").unwrap();
         assert_eq!(
             runtime
                 .try_read_unresolved_global(&root, context.realm, atom)
                 .unwrap(),
-            Some(Value::Int(7))
+            Some(JsValue::Int(7))
         );
         context.eval("Object.defineProperty(globalThis, 'nativeLeaf', { get() { throw 99; }, configurable: true })").unwrap();
         assert!(
@@ -680,7 +681,7 @@ mod owned_cell_tests {
         for source in ["({})", "Symbol('cell')", "'cell'", "123456789012345678901n"] {
             let value = context.eval(source).unwrap();
             let root = runtime
-                .new_var_ref(value.clone(), false, false, ClosureVariableKind::Normal)
+                .new_var_ref_rooted(value.clone(), false, false, ClosureVariableKind::Normal)
                 .unwrap();
             let object_id = match &value {
                 Value::Object(object) => Some(object.object_id()),
@@ -696,7 +697,7 @@ mod owned_cell_tests {
                     .unwrap()
             });
             let copied = runtime.try_read_owned_var_ref(&root).unwrap().unwrap();
-            assert_eq!(copied, value);
+            assert_eq!(runtime.root_value(&copied).unwrap(), value);
             if let (Some(id), Some(before)) = (object_id, before) {
                 assert_eq!(
                     runtime
@@ -710,12 +711,12 @@ mod owned_cell_tests {
                 );
             }
             drop(value);
-            runtime.write_var_ref(&root, Value::Int(1)).unwrap();
+            runtime.write_var_ref(&root, JsValue::Int(1)).unwrap();
             runtime.run_gc().unwrap();
             if let Some(id) = object_id {
                 assert!(runtime.0.state.borrow().heap.object(id).is_ok());
             }
-            drop(copied);
+            runtime.release_jsvalue(copied).unwrap();
             runtime.run_gc().unwrap();
             if let Some(id) = object_id {
                 assert!(runtime.0.state.borrow().heap.object(id).is_err());
@@ -728,7 +729,7 @@ mod owned_cell_tests {
         let runtime = Runtime::new();
         let foreign = Runtime::new();
         let root = runtime
-            .new_var_ref(
+            .new_var_ref_rooted(
                 Value::Object(runtime.new_object(None).unwrap()),
                 false,
                 false,
@@ -773,7 +774,11 @@ mod owned_cell_tests {
             let cleanup = state.heap.drain_zero_queue().unwrap();
             state.apply_cleanup(cleanup).unwrap();
         }
-        assert!(runtime.try_read_owned_var_ref(&root).unwrap().is_some());
+        let read = runtime.try_read_owned_var_ref(&root).unwrap();
+        assert!(read.is_some());
+        if let Some(value) = read {
+            runtime.release_jsvalue(value).unwrap();
+        }
         runtime.reset_var_ref_uninitialized(&root).unwrap();
         assert!(runtime.try_read_owned_var_ref(&root).unwrap().is_none());
     }
@@ -784,7 +789,7 @@ mod owned_cell_tests {
         let value = runtime.new_object(None).unwrap();
         let id = value.object_id();
         let root = runtime
-            .new_var_ref(
+            .new_var_ref_rooted(
                 Value::Object(value),
                 false,
                 false,

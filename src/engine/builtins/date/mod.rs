@@ -75,11 +75,13 @@ impl Runtime {
         let utc_string_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToUTCString)?;
         let utc_string = match self.get_property_in_realm(realm, date_prototype, &utc_string_key)? {
-            Completion::Return(value @ Value::Object(_)) => value,
-            Completion::Return(_) => {
-                return Err(RuntimeError::Invariant(
-                    "Date.prototype.toUTCString did not materialize as an object",
-                ));
+            Completion::Return(value) => {
+                if !matches!(value, crate::engine::value::JsValue::Object(_)) {
+                    return Err(RuntimeError::Invariant(
+                        "Date.prototype.toUTCString did not materialize as an object",
+                    ));
+                }
+                self.root_and_release_jsvalue(value)?
             }
             Completion::Throw(_) => {
                 return Err(RuntimeError::Invariant(

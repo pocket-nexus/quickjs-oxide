@@ -11,7 +11,7 @@ use crate::engine::{
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::ObjectRef,
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -58,15 +58,19 @@ impl Runtime {
         let target =
             match self.typed_array_copy_to_default(realm, &source, element, initial_length)? {
                 NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                NativeConversion::Throw(value) => {
+                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                }
             };
         let index = u64::try_from(index)
             .map_err(|_| RuntimeError::Invariant("validated TypedArray.with index was negative"))?;
         match self.typed_array_set_index(realm, &target, index, &replacement)? {
             NativeConversion::Value(()) => {}
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         }
-        Ok(Completion::Return(Value::Object(target)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(target))?))
     }
 
     pub(crate) fn call_typed_array_to_reversed(
@@ -79,9 +83,12 @@ impl Runtime {
                 "TypedArray.prototype.toReversed received a constructor invocation",
             ));
         };
-        let source = match self.require_typed_array_borrowed(realm, this_value)? {
+        let this_value = self.root_value(this_value)?;
+        let source = match self.require_typed_array_borrowed(realm, &this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let state = self.typed_array_state(source)?;
         let target = match self.typed_array_copy_to_default(
@@ -91,7 +98,9 @@ impl Runtime {
             u64::from(state.length),
         )? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let target_state = self.typed_array_state(&target)?;
         if target_state.length > 1 {
@@ -113,7 +122,7 @@ impl Runtime {
                 }
             })?;
         }
-        Ok(Completion::Return(Value::Object(target)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(target))?))
     }
 
     /// QuickJS's internal same-class TypedArray constructor used by copying
@@ -210,7 +219,7 @@ impl Runtime {
 pub(crate) enum TypedWithStep {
     Complete(Completion),
     Primitive {
-        value: Value,
+        value: JsValue,
         resume: TypedWithResume,
     },
 }
@@ -250,9 +259,13 @@ impl TypedWithStep {
                 "TypedArray.prototype.with received a constructor invocation",
             ));
         };
-        let source = match runtime.require_typed_array(realm, this_value.clone())? {
+        let source = match runtime.require_typed_array(realm, runtime.root_value(this_value)?)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         let initial = runtime.typed_array_state(&source)?;
         if initial.out_of_bounds {
@@ -264,21 +277,13 @@ impl TypedWithStep {
                 )?,
             )));
         }
-        let replacement = arguments
-            .readable
-            .get(1)
-            .ok_or(RuntimeError::Invariant(
-                "TypedArray.with replacement argv was not padded",
-            ))?
-            .clone();
+        let replacement = runtime.root_value(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("TypedArray.with replacement argv was not padded"),
+        )?)?;
         Ok(Self::Primitive {
-            value: arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "TypedArray.with index argv was not padded",
-                ))?
-                .clone(),
+            value: runtime.dup_jsvalue(arguments.readable.first().ok_or(
+                RuntimeError::Invariant("TypedArray.with index argv was not padded"),
+            )?)?,
             resume: TypedWithResume(Box::new(TypedWithResumeState {
                 realm,
                 source,
@@ -296,7 +301,7 @@ impl TypedWithResume {
         result: Completion,
     ) -> Result<TypedWithStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(TypedWithStep::Complete(Completion::Throw(value)));
             }
@@ -306,7 +311,9 @@ impl TypedWithResume {
                 let index = match runtime.native_to_int64_sat(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedWithStep::Complete(Completion::Throw(value)));
+                        return Ok(TypedWithStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let index = if index < 0 {
@@ -315,7 +322,7 @@ impl TypedWithResume {
                     index
                 };
                 Ok(TypedWithStep::Primitive {
-                    value: replacement,
+                    value: runtime.into_jsvalue(replacement)?,
                     resume: {
                         let updated_0 = WithPhase::Replacement(index);
                         self.0.phase = updated_0;
@@ -345,8 +352,8 @@ fn finish(
         step = match step {
             TypedWithStep::Complete(result) => return Ok(result),
             TypedWithStep::Primitive { value, resume } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::Number)?
+                let result = if matches!(value, JsValue::Object(_)) {
+                    runtime.to_primitive_jsvalue(realm, value, ToPrimitiveHint::Number)?
                 } else {
                     Completion::Return(value)
                 };

@@ -6,7 +6,7 @@ use crate::engine::{
         DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
         operations::{ArrayLengthConversion, InternalSetResult, PropertyDefineOutcome},
     },
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -55,16 +55,19 @@ impl ConstructorStep {
             pending_effect: ConstructorStepPending::default(),
             scheduler_set_key: None,
             realm,
-            new_target: new_target.clone(),
-            arguments: arguments.readable[..arguments.actual_arg_count].to_vec(),
+            new_target: runtime.root_value(new_target)?,
+            arguments: arguments.readable[..arguments.actual_arg_count]
+                .iter()
+                .map(|value| runtime.root_value(value))
+                .collect::<Result<Vec<_>, _>>()?,
             array: None,
             index: 0,
         }));
-        if matches!(new_target, Value::Undefined) {
-            resume.resume(runtime, Completion::Return(Value::Undefined))
+        if matches!(new_target, JsValue::Undefined) {
+            resume.resume(runtime, Completion::Return(JsValue::Undefined))
         } else {
             Ok(Self::request_read(
-                new_target.clone(),
+                runtime.dup_jsvalue(new_target)?,
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?,
                 resume,
             ))
@@ -94,27 +97,31 @@ impl ConstructorResume {
             Completion::Throw(value) => {
                 return Ok(ConstructorStep::Complete(Completion::Throw(value)));
             }
-            Completion::Return(Value::Object(object)) => object,
-            Completion::Return(_) => {
-                let realm = if matches!(self.0.new_target, Value::Undefined) {
-                    self.0.realm
-                } else {
-                    match runtime.function_realm_from_value(self.0.realm, &self.0.new_target)? {
-                        NativeConversion::Value(realm) => realm,
-                        NativeConversion::Throw(value) => {
-                            return Ok(ConstructorStep::Complete(Completion::Throw(value)));
+            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
+                Value::Object(object) => object,
+                _ => {
+                    let realm = if matches!(self.0.new_target, Value::Undefined) {
+                        self.0.realm
+                    } else {
+                        match runtime.function_realm_from_value(self.0.realm, &self.0.new_target)? {
+                            NativeConversion::Value(realm) => realm,
+                            NativeConversion::Throw(value) => {
+                                return Ok(ConstructorStep::Complete(Completion::Throw(
+                                    runtime.into_jsvalue(value)?,
+                                )));
+                            }
                         }
-                    }
-                };
-                let prototype = runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .context(realm)?
-                    .array_prototype;
-                ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?
-            }
+                    };
+                    let prototype = runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .context(realm)?
+                        .array_prototype;
+                    ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?
+                }
+            },
         };
         let array = runtime.new_empty_array_with_prototype(&prototype)?;
         if self.0.arguments.len() == 1
@@ -124,7 +131,9 @@ impl ConstructorResume {
                 match runtime.array_constructor_length(self.0.realm, &self.0.arguments[0])? {
                     ArrayLengthConversion::Length(length) => length,
                     ArrayLengthConversion::Throw(value) => {
-                        return Ok(ConstructorStep::Complete(Completion::Throw(value)));
+                        return Ok(ConstructorStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
             let key =
@@ -146,11 +155,13 @@ impl ConstructorResume {
                     ));
                 }
                 PropertyDefineOutcome::Throw(value) => {
-                    return Ok(ConstructorStep::Complete(Completion::Throw(value)));
+                    return Ok(ConstructorStep::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
                 }
             }
             return Ok(ConstructorStep::Complete(Completion::Return(
-                Value::Object(array),
+                runtime.into_jsvalue(Value::Object(array))?,
             )));
         }
         self.0.array = Some(array);
@@ -162,7 +173,7 @@ impl ConstructorResume {
         ))?;
         let Some(value) = self.0.arguments.get(self.0.index).cloned() else {
             return Ok(ConstructorStep::Complete(Completion::Return(
-                Value::Object(object),
+                runtime.into_jsvalue(Value::Object(object))?,
             )));
         };
         let index = u32::try_from(self.0.index)
@@ -170,7 +181,7 @@ impl ConstructorResume {
         Ok(ConstructorStep::request_set(
             object,
             runtime.property_key_for_index(u64::from(index))?,
-            value,
+            runtime.into_jsvalue(value)?,
             self,
         ))
     }
@@ -186,7 +197,9 @@ impl ConstructorResume {
             ));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(ConstructorStep::Complete(Completion::Throw(value)));
+            return Ok(ConstructorStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
         self.0.index += 1;
         self.next(runtime)
@@ -201,7 +214,7 @@ pub(crate) fn finish(
         step = match step {
             ConstructorStep::Complete(result) => return Ok(result),
             ConstructorStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -211,7 +224,7 @@ pub(crate) fn finish(
             ConstructorStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 {
                     let result = runtime.internal_set(
                         realm,
@@ -239,11 +252,15 @@ mod tests {
         let argument = runtime.new_object(None).unwrap();
         let ids = [target.object_id(), argument.object_id()];
         let invocation = NativeInvocation::Construct {
-            new_target: Value::Object(target),
+            new_target: runtime
+                .unroot_value(&Value::Object(target.clone()))
+                .unwrap(),
         };
         let arguments = NativeArguments {
             actual_arg_count: 1,
-            readable: vec![Value::Object(argument)],
+            readable: vec![runtime
+                .unroot_value(&Value::Object(argument.clone()))
+                .unwrap()],
         };
         let ConstructorStep::Read { mut resume } =
             ConstructorStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()
@@ -253,8 +270,15 @@ mod tests {
         let _ = resume.take_read_receiver();
         let _ = resume.take_read_key();
 
-        drop(arguments);
-        drop(invocation);
+        let NativeInvocation::Construct { new_target } = invocation else {
+            unreachable!()
+        };
+        runtime.release_jsvalue(new_target).unwrap();
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        drop(target);
+        drop(argument);
         runtime.run_gc().unwrap();
         for id in ids {
             assert!(runtime.0.state.borrow().heap.object(id).is_ok());
@@ -272,15 +296,15 @@ mod tests {
 
 #[derive(Default)]
 struct ConstructorStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
+    set_value: Option<JsValue>,
 }
 impl ConstructorStep {
     pub(crate) fn request_read(
-        receiver: Value,
+        receiver: JsValue,
         key: PropertyKey,
         mut resume: ConstructorResume,
     ) -> Self {
@@ -291,7 +315,7 @@ impl ConstructorStep {
     pub(crate) fn request_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: ConstructorResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -301,7 +325,7 @@ impl ConstructorStep {
     }
 }
 impl ConstructorResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -329,7 +353,7 @@ impl ConstructorResume {
             .take()
             .expect("ConstructorStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value

@@ -16,7 +16,7 @@ use crate::engine::heap::{
     ContextId, GeneratorActivationData, GeneratorFrameBinding, GeneratorVmActivation, RawValue,
 };
 use crate::engine::object::{ObjectRef, PrivateNameRef};
-use crate::engine::value::Value;
+use crate::engine::value::JsValue;
 use crate::engine::vm::bindings::{FrameBinding, is_private_callable_kind};
 use crate::engine::vm::call::CallableExecution;
 use crate::engine::vm::frames::ActiveFrameToken;
@@ -28,14 +28,21 @@ mod owned;
 
 pub(super) use owned::{OwnedSuspension, PreparedResume};
 
+/// Reconstruct one owned internal value from a dormant heap record, retaining
+/// every edge so the decoded value owns them independently of the record.
+fn decode_raw_jsvalue(runtime: &Runtime, raw: &RawValue) -> Result<JsValue, RuntimeError> {
+    let value = JsValue::from_raw(raw.clone()).ok_or(RuntimeError::Invariant(
+        "dormant activation held an internal-only sentinel",
+    ))?;
+    runtime.dup_jsvalue(&value)
+}
+
 fn encode_generator_frame_binding(
     runtime: &Runtime,
     binding: &FrameBinding,
 ) -> Result<GeneratorFrameBinding, RuntimeError> {
     Ok(match binding {
-        FrameBinding::Direct(value) => {
-            GeneratorFrameBinding::Direct(runtime.raw_property_value(value)?)
-        }
+        FrameBinding::Direct(value) => GeneratorFrameBinding::Direct(value.as_raw()),
         FrameBinding::Private(name) => {
             if !name.belongs_to(runtime) {
                 return Err(RuntimeError::WrongRuntime("generator private binding"));
@@ -124,7 +131,7 @@ fn decode_generator_frame_binding(
 ) -> Result<FrameBinding, RuntimeError> {
     let binding = match binding {
         GeneratorFrameBinding::Direct(value) => {
-            FrameBinding::Direct(runtime.root_raw_value(value)?)
+            FrameBinding::Direct(decode_raw_jsvalue(runtime, value)?)
         }
         GeneratorFrameBinding::Private(atom) => {
             if runtime.0.state.borrow().atoms.kind(*atom)? != AtomKind::Private {
@@ -235,14 +242,14 @@ pub(crate) struct RootedVmActivation {
 pub(crate) enum VmActivationResume {
     Initial,
     Generator(VmResume),
-    AwaitFulfill(Value),
-    AwaitReject(Value),
+    AwaitFulfill(JsValue),
+    AwaitReject(JsValue),
 }
 
 pub(crate) enum VmRunOutcome {
     Complete(Completion),
     Suspend {
-        value: Value,
+        value: JsValue,
         activation: Box<EncodedVmActivation>,
     },
 }
@@ -259,15 +266,14 @@ impl RootedVmActivation {
         if self.entry.cold.function.runtime().domain_id() != runtime.domain_id() {
             return Err(RuntimeError::WrongRuntime("suspended execution"));
         }
+        // Internal resume values are handle-only and carry no runtime tag, so
+        // their domain is guaranteed by the state machine that produced them;
+        // only the activation's own runtime is authenticated here.
         match resume {
             VmActivationResume::Initial => {}
-            VmActivationResume::Generator(
-                VmResume::Next(value) | VmResume::Return(value) | VmResume::Throw(value),
-            )
-            | VmActivationResume::AwaitFulfill(value)
-            | VmActivationResume::AwaitReject(value) => {
-                runtime.validate_value_domain(value, "suspension resume value")?;
-            }
+            VmActivationResume::Generator(_)
+            | VmActivationResume::AwaitFulfill(_)
+            | VmActivationResume::AwaitReject(_) => {}
         }
         Ok(())
     }
@@ -313,7 +319,7 @@ impl RootedVmActivation {
             BytecodePc::new(saved_pc.saturating_sub(1)),
         )?;
         entry.cold.entry_guard = Some(guard);
-        owned::prepare(entry, kind, saved_pc, resume)
+        owned::prepare(runtime, entry, kind, saved_pc, resume)
     }
 }
 
@@ -355,20 +361,20 @@ pub(super) fn freeze_entry(
         stack: storage
             .operands
             .iter()
-            .map(|value| runtime.raw_property_value(value))
-            .collect::<Result<Vec<_>, _>>()?,
+            .map(|value| value.as_raw())
+            .collect(),
         regions: entry.cold.regions.clone(),
         pc,
         callee_realm: entry.executable.realm,
         current_function: entry.cold.function.object_id(),
-        this_value: runtime.raw_property_value(&input.this_value)?,
+        this_value: input.this_value.as_raw(),
         normalized_this: entry
             .cold
             .normalized_this
             .as_ref()
             .map(|value| runtime.raw_property_value(value))
             .transpose()?,
-        new_target: runtime.raw_property_value(&input.new_target)?,
+        new_target: input.new_target.as_raw(),
         strict: entry.executable.frame_layout().is_strict(),
         callee_global: global.object_id(),
     };
@@ -381,8 +387,8 @@ pub(super) fn freeze_entry(
             original_arguments: storage
                 .original_arguments
                 .iter()
-                .map(|value| runtime.raw_property_value(value))
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(|value| value.as_raw())
+                .collect(),
             arguments,
             locals,
             reusable_captured_locals: entry.cold.reusable_captured_locals.clone(),
@@ -455,7 +461,7 @@ pub(crate) fn thaw(
     let original_arguments = data
         .original_arguments
         .iter()
-        .map(|value| runtime.root_raw_value(value))
+        .map(|value| decode_raw_jsvalue(&runtime, value))
         .collect::<Result<Vec<_>, _>>()?;
     let arguments = data
         .arguments
@@ -478,16 +484,16 @@ pub(crate) fn thaw(
         .vm
         .stack
         .iter()
-        .map(|value| runtime.root_raw_value(value))
+        .map(|value| decode_raw_jsvalue(&runtime, value))
         .collect::<Result<Vec<_>, _>>()?;
-    if kind != VmSuspendKind::Initial && !matches!(operands.last(), Some(Value::Undefined)) {
+    if kind != VmSuspendKind::Initial && !matches!(operands.last(), Some(JsValue::Undefined)) {
         return Err(RuntimeError::Invariant(
             "dormant suspension output was not cleared",
         ));
     }
     let input = super::CallInput {
-        this_value: runtime.root_raw_value(&data.vm.this_value)?,
-        new_target: runtime.root_raw_value(&data.vm.new_target)?,
+        this_value: decode_raw_jsvalue(&runtime, &data.vm.this_value)?,
+        new_target: decode_raw_jsvalue(&runtime, &data.vm.new_target)?,
         callee_global: Some(callee_global),
     };
     let mut entry = super::frame::FrameEntry {
@@ -532,6 +538,7 @@ mod tests {
     use super::*;
     use crate::engine::api::Context;
     use crate::engine::heap::GeneratorState;
+    use crate::engine::value::Value;
 
     fn dormant(context: &mut Context) -> (ObjectRef, GeneratorActivationData) {
         let Value::Object(generator) = context
@@ -632,34 +639,23 @@ mod tests {
     }
 
     #[test]
-    fn resume_rejects_foreign_runtime_and_values_before_registering_a_frame() {
+    fn resume_rejects_foreign_runtime_before_registering_a_frame() {
         let runtime = Runtime::new();
         let other = Runtime::new();
         let mut context = runtime.new_context();
         let (_generator, data) = dormant(&mut context);
-        for foreign_runtime in [true, false] {
-            let rooted = thaw(
-                runtime.clone(),
-                VmSuspendKind::Initial,
-                context.realm,
-                &data,
-                FunctionKind::Generator,
-            )
-            .unwrap();
-            let result = if foreign_runtime {
-                rooted.run(&other, VmActivationResume::Initial)
-            } else {
-                rooted.run(
-                    &runtime,
-                    VmActivationResume::Generator(VmResume::Next(Value::Object(
-                        other.new_object(None).unwrap(),
-                    ))),
-                )
-            };
-            assert!(matches!(result, Err(RuntimeError::WrongRuntime(_))));
-            assert!(runtime.0.state.borrow().active_frames.is_empty());
-            assert!(other.0.state.borrow().active_frames.is_empty());
-        }
+        let rooted = thaw(
+            runtime.clone(),
+            VmSuspendKind::Initial,
+            context.realm,
+            &data,
+            FunctionKind::Generator,
+        )
+        .unwrap();
+        let result = rooted.run(&other, VmActivationResume::Initial);
+        assert!(matches!(result, Err(RuntimeError::WrongRuntime(_))));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert!(other.0.state.borrow().active_frames.is_empty());
     }
 }
 

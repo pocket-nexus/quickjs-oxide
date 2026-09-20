@@ -426,7 +426,7 @@ impl CallStorage {
 mod lazy_tests {
     use super::*;
     use crate::engine::api::Runtime;
-    use crate::engine::value::Value;
+    use crate::engine::value::{JsValue, Value};
     use crate::engine::vm::CallInput;
 
     #[test]
@@ -469,8 +469,8 @@ mod lazy_tests {
         storage.reserve().unwrap();
         let (mut cold, _) = storage.vacant(context.realm);
         cold.input = CallInput {
-            this_value: Value::Undefined,
-            new_target: Value::Undefined,
+            this_value: JsValue::Undefined,
+            new_target: JsValue::Undefined,
             callee_global: None,
         }
         .into();

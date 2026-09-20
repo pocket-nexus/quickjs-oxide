@@ -798,15 +798,19 @@ fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs
             )
             .unwrap()
     );
+    let completion = runtime
+        .to_primitive(
+            context.realm,
+            Value::Object(conversion_wrapper.clone()),
+            ToPrimitiveHint::String,
+        )
+        .unwrap();
+    let Completion::Return(value) = completion else {
+        panic!("expected return completion");
+    };
     assert_eq!(
-        runtime
-            .to_primitive(
-                context.realm,
-                Value::Object(conversion_wrapper.clone()),
-                ToPrimitiveHint::String,
-            )
-            .unwrap(),
-        Completion::Return(Value::String(JsString::from_static("override")))
+        runtime.root_and_release_jsvalue(value).unwrap(),
+        Value::String(JsString::from_static("override"))
     );
     assert_eq!(
         context

@@ -118,12 +118,14 @@ impl Runtime {
         for name in ["parseInt", "parseFloat"] {
             let key = self.intern_property_key(name)?;
             let value = match self.get_property_in_realm(realm, global_object, &key)? {
-                Completion::Return(value @ Value::Object(_)) => value,
-                Completion::Return(_) => {
-                    return Err(RuntimeError::Invariant(
-                        "global numeric parser was not an object during Number bootstrap",
-                    ));
-                }
+                Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
+                    value @ Value::Object(_) => value,
+                    _ => {
+                        return Err(RuntimeError::Invariant(
+                            "global numeric parser was not an object during Number bootstrap",
+                        ));
+                    }
+                },
                 Completion::Throw(_) => {
                     return Err(RuntimeError::Invariant(
                         "global numeric parser lookup threw during Number bootstrap",

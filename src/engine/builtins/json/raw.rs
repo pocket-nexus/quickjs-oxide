@@ -6,7 +6,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::heap::{ContextId, ObjectData, ObjectPayload};
 use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::NativeArguments;
@@ -17,17 +17,20 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         let branded = match &arguments.readable[0] {
-            Value::Object(object) => self.is_raw_json_object(object)?,
-            Value::Undefined
-            | Value::Null
-            | Value::Bool(_)
-            | Value::Int(_)
-            | Value::Float(_)
-            | Value::BigInt(_)
-            | Value::String(_)
-            | Value::Symbol(_) => false,
+            JsValue::Object(id) => {
+                let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+                self.is_raw_json_object(&object)?
+            }
+            JsValue::Undefined
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::BigInt(_)
+            | JsValue::String(_)
+            | JsValue::Symbol(_) => false,
         };
-        Ok(Completion::Return(Value::Bool(branded)))
+        Ok(Completion::Return(JsValue::Bool(branded)))
     }
 
     pub(crate) fn call_json_raw_json(
@@ -35,10 +38,8 @@ impl Runtime {
         realm: ContextId,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        RawResume { realm }.string(
-            self,
-            self.native_to_js_string(realm, &arguments.readable[0])?,
-        )
+        let argument = self.root_value(&arguments.readable[0])?;
+        RawResume { realm }.string(self, self.native_to_js_string(realm, &argument)?)
     }
 
     fn raw_json_from_string(
@@ -81,7 +82,7 @@ impl Runtime {
             ));
         }
         self.prevent_extensions(&object)?;
-        Ok(Completion::Return(Value::Object(object)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(object))?))
     }
 
     pub(crate) fn is_raw_json_object(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
@@ -146,7 +147,9 @@ impl RawResume {
     ) -> Result<Completion, RuntimeError> {
         match reply {
             NativeConversion::Value(source) => runtime.raw_json_from_string(self.realm, source),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                Ok(Completion::Throw(runtime.into_jsvalue(value)?))
+            }
         }
     }
 }

@@ -31,7 +31,7 @@ use crate::engine::{
         AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
         OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
     },
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -432,8 +432,8 @@ impl Runtime {
         let to_string_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?;
         let to_string = match self.get_property_in_realm(realm, &array_prototype, &to_string_key)? {
-            Completion::Return(value @ Value::Object(_)) => value,
-            Completion::Return(_) | Completion::Throw(_) => {
+            Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+            Completion::Throw(_) => {
                 return Err(RuntimeError::Invariant(
                     "Array.prototype.toString was unavailable during TypedArray bootstrap",
                 ));
@@ -458,8 +458,8 @@ impl Runtime {
         let values_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, &base_prototype, &values_key)? {
-            Completion::Return(value @ Value::Object(_)) => value,
-            Completion::Return(_) | Completion::Throw(_) => {
+            Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+            Completion::Throw(_) => {
                 return Err(RuntimeError::Invariant(
                     "TypedArray values was unavailable during iterator alias bootstrap",
                 ));
@@ -713,7 +713,7 @@ impl Runtime {
                 "TypedArray species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value.clone()))
+        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(in crate::engine::builtins) fn call_typed_array_getter(
@@ -728,19 +728,23 @@ impl Runtime {
             ));
         };
         if kind == TypedArrayNativeKind::ToStringTag {
+            let this_value = self.root_value(this_value)?;
             let Value::Object(object) = this_value else {
-                return Ok(Completion::Return(Value::Undefined));
+                return Ok(Completion::Return(JsValue::Undefined));
             };
-            let Some(snapshot) = self.typed_array_snapshot_if_branded(object)? else {
-                return Ok(Completion::Return(Value::Undefined));
+            let Some(snapshot) = self.typed_array_snapshot_if_branded(&object)? else {
+                return Ok(Completion::Return(JsValue::Undefined));
             };
-            return Ok(Completion::Return(Value::String(JsString::from_static(
-                snapshot.element.name(),
-            ))));
+            return Ok(Completion::Return(self.into_jsvalue(Value::String(
+                JsString::from_static(snapshot.element.name()),
+            ))?));
         }
-        let object = match self.require_typed_array_borrowed(realm, this_value)? {
+        let this_value = self.root_value(this_value)?;
+        let object = match self.require_typed_array_borrowed(realm, &this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let state = self.typed_array_state(object)?;
         let result = match kind {
@@ -761,7 +765,7 @@ impl Runtime {
                 ));
             }
         };
-        Ok(Completion::Return(result))
+        Ok(Completion::Return(self.into_jsvalue(result)?))
     }
 
     pub(in crate::engine::builtins) fn call_typed_array_iterator(
@@ -775,17 +779,22 @@ impl Runtime {
                 "TypedArray iterator factory received a constructor invocation",
             ));
         };
-        let object = match self.require_typed_array_borrowed(realm, this_value)? {
+        let this_value = self.root_value(this_value)?;
+        let object = match self.require_typed_array_borrowed(realm, &this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
-        match self.typed_array_validated_length(realm, object)? {
+        match self.typed_array_validated_length(realm, &object)? {
             NativeConversion::Value(_) => {}
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         }
-        Ok(Completion::Return(Value::Object(
-            self.new_array_iterator(realm, object, kind)?,
-        )))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(
+            self.new_array_iterator(realm, &object, kind)?,
+        ))?))
     }
 
     fn call_typed_array_from(
@@ -886,11 +895,13 @@ impl Runtime {
                     .unwrap_or(Value::Undefined);
                 match self.typed_array_set_index(realm, target, offset + index, &value)? {
                     NativeConversion::Value(()) => {}
-                    NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                    NativeConversion::Throw(value) => {
+                        return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    }
                 }
             }
         }
-        Ok(Completion::Return(Value::Undefined))
+        Ok(Completion::Return(JsValue::Undefined))
     }
 
     fn require_typed_array(
@@ -1046,7 +1057,7 @@ impl Runtime {
         collect::finish_collect(
             self,
             realm,
-            collect::TypedCollectStep::start(realm, source, method.clone(), element),
+            collect::TypedCollectStep::start(self, realm, source, method.clone(), element)?,
         )
     }
 
@@ -1320,7 +1331,7 @@ impl Runtime {
         element: TypedArrayElementKind,
         value: &Value,
     ) -> Result<NativeConversion<[u8; 8]>, RuntimeError> {
-        element::ElementStep::start(self, realm, element, value.clone())?.finish_sync(self, realm)
+        element::ElementStep::start(self, realm, element, self.unroot_value(value)?)?.finish_sync(self, realm)
     }
 
     /// Convert a primitive descriptor value for the public context-free
