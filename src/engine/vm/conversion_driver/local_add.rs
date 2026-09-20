@@ -128,15 +128,26 @@ pub(in crate::engine::vm) fn complete_local_add(
             super::super::numeric::add_primitives_ref(runtime, left, right),
         ))
     };
+    let mut constant_operand = None;
     let prepared = match operands {
         Operands::Locals(left, right) => transaction.with_local_add_inputs(left, right, consume)?,
         Operands::LocalConstant(right) => {
-            transaction.with_local_add_constant(store, &right, consume)?
+            let prepared = transaction.with_local_add_constant(store, &right, consume)?;
+            constant_operand = Some(right);
+            prepared
         }
-        Operands::ConstantLocal(constant) => {
-            transaction.with_local_add_constant_left(store, constant, consume)?
+        Operands::ConstantLocal(mut constant) => {
+            let prepared =
+                transaction.with_local_add_constant_left(store, &mut constant, consume)?;
+            constant_operand = Some(constant);
+            prepared
         }
     };
+    if let Some(constant) = constant_operand {
+        runtime
+            .release_jsvalue(constant)
+            .map_err(runtime_error_to_vm_error)?;
+    }
     let Some(prepared) = prepared else {
         return Ok(PrimitiveCompletion::Declined);
     };
@@ -205,7 +216,7 @@ pub(in crate::engine::vm) fn complete_local_add(
                 return Err(error);
             }
         };
-        drop(old);
+        super::super::bindings::release_frame_binding(runtime, old)?;
     }
     (frame.fault_pc, frame.resume_pc) = (start + span - 1, start + span);
     #[cfg(feature = "profiling")]

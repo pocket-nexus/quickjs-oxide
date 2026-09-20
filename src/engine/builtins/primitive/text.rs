@@ -185,19 +185,18 @@ impl ScalarTextResume {
                         runtime.unroot_value(&Value::String(self.0.string))?,
                     )));
                 }
-                Some(value) => match &value {
-                    JsValue::String(id) => {
-                        let chunk = runtime.0.state.borrow().heap.string(*id)?.clone();
-                        self.0.string = self.0.string.try_concat(&chunk).map_err(Error::from)?;
-                    }
-                    _ => {
-                        self.0.phase = Phase::Chunk;
-                        return Ok(ScalarTextStep::String {
-                            value,
-                            resume: self,
-                        });
-                    }
-                },
+                Some(JsValue::String(id)) => {
+                    let chunk = runtime.0.state.borrow().heap.string(id)?.clone();
+                    runtime.release_jsvalue(JsValue::String(id))?;
+                    self.0.string = self.0.string.try_concat(&chunk).map_err(Error::from)?;
+                }
+                Some(value) => {
+                    self.0.phase = Phase::Chunk;
+                    return Ok(ScalarTextStep::String {
+                        value,
+                        resume: self,
+                    });
+                }
             }
         }
     }

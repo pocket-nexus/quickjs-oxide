@@ -304,7 +304,7 @@ fn release_displaced(
 /// without materialization or active-PC publication. Symbols stay conservative
 /// because their atom release touches runtime tables.
 fn primitive_release_owner(value: &JsValue) -> bool {
-    !matches!(value, JsValue::Object(_) | JsValue::Symbol(_))
+    immediate(value)
 }
 
 // Explicit drops end the NoJs slot borrow before publication or owner release.

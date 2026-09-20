@@ -254,6 +254,15 @@ impl Runtime {
                     .borrow_mut()
                     .heap
                     .allocate_bigint(bigint.clone())?;
+                #[cfg(debug_assertions)]
+                if std::env::var("QJS_TRACE_BIGINT_ID")
+                    .is_ok_and(|value| format!("{id:?}").contains(&format!("index: {value},")))
+                {
+                    eprintln!(
+                        "[unroot-b] {id:?}\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
                 JsValue::BigInt(id)
             }
         })
@@ -298,6 +307,15 @@ impl Runtime {
             }
             Value::BigInt(bigint) => {
                 let id = self.0.state.borrow_mut().heap.allocate_bigint(bigint)?;
+                #[cfg(debug_assertions)]
+                if std::env::var("QJS_TRACE_BIGINT_ID")
+                    .is_ok_and(|value| format!("{id:?}").contains(&format!("index: {value},")))
+                {
+                    eprintln!(
+                        "[into-b] {id:?}\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
                 JsValue::BigInt(id)
             }
         })
