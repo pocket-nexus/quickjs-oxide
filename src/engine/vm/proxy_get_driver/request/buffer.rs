@@ -1,4 +1,5 @@
 //! Mechanical adapters for buffer domain requests.
+use super::JsValue;
 use super::{DirectCallTarget, ElementStep, Resume, Step, TypedWriteStep, Value};
 
 impl From<ElementStep> for Step {
@@ -9,7 +10,7 @@ impl From<ElementStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::Element(resume)),
@@ -105,7 +106,7 @@ impl From<crate::engine::builtins::TypedSpeciesStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::TypedSpecies(resume)),
@@ -135,7 +136,7 @@ impl From<crate::engine::builtins::TypedIterationStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::TypedIteration(resume)),
@@ -187,7 +188,7 @@ impl From<crate::engine::builtins::TypedSortStep> for Step {
                 resume,
             } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(Value::Undefined),
+                receiver: Some(JsValue::Undefined),
                 arguments: Some(arguments),
                 resume: Some(Resume::TypedSort(resume)),
             },
@@ -209,7 +210,7 @@ impl From<crate::engine::builtins::BufferConstructorStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::BufferConstructor(resume)),
@@ -255,7 +256,7 @@ impl From<crate::engine::builtins::TypedSetStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::TypedSet(resume)),
@@ -405,7 +406,7 @@ impl From<crate::engine::builtins::BufferSliceStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::BufferSlice(resume)),
@@ -455,7 +456,7 @@ impl From<crate::engine::builtins::Uint8CodecStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::Uint8Codec(resume)),
@@ -492,7 +493,7 @@ impl From<crate::engine::builtins::TypedCollectStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::TypedCollect(resume)),

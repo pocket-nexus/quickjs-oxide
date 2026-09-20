@@ -208,9 +208,11 @@ impl Runtime {
                 &key,
             )? {
                 Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(Err(value)),
+                Completion::Throw(value) => {
+                    return Ok(Err(self.root_and_release_jsvalue(value)?));
+                }
             };
-            match named_substitution_capture(buffer, capture) {
+            match named_substitution_capture(buffer, self.root_and_release_jsvalue(capture)?) {
                 NamedSubstitutionCapture::Skip => continue,
                 NamedSubstitutionCapture::Failed => {
                     return Ok(Ok(SubstitutionStatus::BufferFailed));

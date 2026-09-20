@@ -13,7 +13,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::NativeFunctionId;
 
 use crate::engine::object::{CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -48,7 +48,8 @@ impl Runtime {
             if index != 0 {
                 line.push(b' ');
             }
-            if let Value::String(value) = argument {
+            if let JsValue::String(id) = argument {
+                let value = self.0.state.borrow().heap.string(*id)?.clone();
                 value.try_append_wtf8_bytes(&mut line).map_err(|_| {
                     RuntimeError::Engine(Error::new(
                         ErrorKind::Internal,
@@ -64,7 +65,7 @@ impl Runtime {
         // Upstream deliberately ignores fwrite/putchar/fflush failures. Keep
         // host I/O outside JavaScript completion semantics for exact parity.
         self.with_host_callback(|| self.0.host_services.write_output(&line, flush))?;
-        Ok(Completion::Return(Value::Undefined))
+        Ok(Completion::Return(JsValue::Undefined))
     }
 }
 

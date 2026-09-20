@@ -56,7 +56,10 @@ impl Runtime {
                         &parent_constructor,
                         &prototype_key,
                     )? {
-                        Completion::Return(value) => Self::class_parent_prototype(value)?,
+                        Completion::Return(value) => {
+                            let value = self.root_and_release_jsvalue(value)?;
+                            Self::class_parent_prototype(value)?
+                        }
                         Completion::Throw(value) => {
                             return Ok(DefineClassOutcome::Throw(value));
                         }
@@ -191,8 +194,8 @@ impl Runtime {
         )?;
 
         Ok(DefineClassOutcome::Defined {
-            constructor: Value::Object(constructor.as_object().clone()),
-            prototype: Value::Object(prototype),
+            constructor: self.unroot_value(&Value::Object(constructor.as_object().clone()))?,
+            prototype: self.unroot_value(&Value::Object(prototype))?,
         })
     }
 
@@ -375,10 +378,11 @@ mod tests {
             panic!("base class definition unexpectedly threw")
         };
         assert_eq!(
-            returned_constructor,
+            runtime.root_and_release_jsvalue(returned_constructor).unwrap(),
             Value::Object(constructor.as_object().clone())
         );
-        let Value::Object(prototype) = returned_prototype else {
+        let Value::Object(prototype) = runtime.root_and_release_jsvalue(returned_prototype).unwrap()
+        else {
             panic!("class prototype was not an object")
         };
 

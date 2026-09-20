@@ -79,21 +79,22 @@ impl Runtime {
                 "RegExp.escape did not receive a generic invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .ok_or(RuntimeError::Invariant("RegExp.escape argv was not padded"))?;
-        let Value::String(source) = argument else {
+        let argument = self.root_value(
+            arguments
+                .readable
+                .first()
+                .ok_or(RuntimeError::Invariant("RegExp.escape argv was not padded"))?,
+        )?;
+        let Value::String(source) = &argument else {
             return Ok(Completion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a string",
             )?));
         };
-        Ok(Completion::Return(Value::String(regexp_escape_with_limit(
-            source,
-            JsString::MAX_LEN,
-        )?)))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(
+            regexp_escape_with_limit(source, JsString::MAX_LEN)?,
+        ))?))
     }
 }
 

@@ -96,6 +96,9 @@ pub(super) fn eval_variable_object<'a>(
                 .map_err(runtime_error_to_vm_error)?
         }
     };
+    let value = runtime
+        .root_and_release_jsvalue(value)
+        .map_err(runtime_error_to_vm_error)?;
     let Value::Object(object) = value else {
         return Err(Error::internal(
             "eval variable-object binding did not contain an Object",
@@ -191,6 +194,9 @@ pub(super) fn with_object<'a>(
                 .map_err(runtime_error_to_vm_error)?
         }
     };
+    let value = runtime
+        .root_and_release_jsvalue(value)
+        .map_err(runtime_error_to_vm_error)?;
     let Value::Object(object) = value else {
         return Err(Error::internal(
             "with-object binding did not contain an Object",

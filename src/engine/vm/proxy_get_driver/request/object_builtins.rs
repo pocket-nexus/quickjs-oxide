@@ -1,5 +1,5 @@
 //! Mechanical adapters for object builtins domain requests.
-use super::{DirectCallTarget, Resume, Step, Value};
+use super::{DirectCallTarget, JsValue, Resume, Step, Value};
 
 impl From<crate::engine::builtins::BuiltinPrototypeStep> for Step {
     fn from(step: crate::engine::builtins::BuiltinPrototypeStep) -> Self {
@@ -210,7 +210,7 @@ impl From<crate::engine::builtins::DefinitionsStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::Definitions(resume)),
@@ -355,7 +355,7 @@ impl From<crate::engine::builtins::ObjectCopyStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::ObjectCopy(resume)),
@@ -399,7 +399,7 @@ impl From<crate::engine::builtins::JsonParseStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::JsonParse(resume)),

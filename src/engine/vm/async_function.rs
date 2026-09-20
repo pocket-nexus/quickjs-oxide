@@ -41,10 +41,15 @@ impl Runtime {
         &self,
         caller_realm: ContextId,
     ) -> Result<Completion, RuntimeError> {
-        let reason =
-            self.new_native_error_jsvalue(caller_realm, NativeErrorKind::Internal, "stack overflow")?;
+        let reason = self.new_native_error_jsvalue(
+            caller_realm,
+            NativeErrorKind::Internal,
+            "stack overflow",
+        )?;
         let promise = self.new_rejected_default_promise(caller_realm, reason)?;
-        Ok(Completion::Return(Value::Object(promise)))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(promise))?,
+        ))
     }
 
     pub(crate) fn initialize_async_function_intrinsic(
@@ -238,7 +243,8 @@ impl Runtime {
         let argument = arguments
             .readable
             .first()
-            .cloned()
+            .map(|value| self.dup_jsvalue(value))
+            .transpose()?
             .ok_or(RuntimeError::Invariant(
                 "AsyncFunction resume callback argv was not padded",
             ))?;

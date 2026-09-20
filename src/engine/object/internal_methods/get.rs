@@ -7,7 +7,7 @@ use super::{
 use crate::engine::api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyGetStep {
@@ -64,7 +64,7 @@ enum Phase {
     },
     Invariant {
         _rooted: RootedProxy,
-        result: Value,
+        result: JsValue,
     },
 }
 
@@ -112,7 +112,7 @@ fn method(
                 None => ProxyGetStep::request_read(
                     rooted.target.clone(),
                     key,
-                    receiver,
+                    runtime.into_jsvalue(receiver)?,
                     ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
                         pending_effect: ProxyGetStepPending::default(),
                         realm,
@@ -122,9 +122,15 @@ fn method(
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
                     arguments.extend([Value::Object(rooted.target.clone()), key_value, receiver]);
+                    let receiver = runtime
+                        .into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let arguments = arguments
+                        .into_iter()
+                        .map(|value| runtime.into_jsvalue(value))
+                        .collect::<Result<Vec<_>, _>>()?;
                     ProxyGetStep::request_call(
                         target,
-                        Value::Object(rooted.handler.clone()),
+                        receiver,
                         arguments,
                         ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
                             pending_effect: ProxyGetStepPending::default(),
@@ -254,17 +260,19 @@ fn get_invariant_violation(
 fn complete_get_invariant(
     runtime: &Runtime,
     realm: ContextId,
-    result: Value,
+    result: JsValue,
     descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
 ) -> Result<ProxyGetStep, RuntimeError> {
     let descriptor = match descriptor {
         NativeConversion::Value(descriptor) => descriptor,
         NativeConversion::Throw(value) => {
-            return Ok(ProxyGetStep::Complete(Completion::Throw(value)));
+            return Ok(ProxyGetStep::Complete(Completion::Throw(
+                runtime.unroot_value(&value)?,
+            )));
         }
     };
     Ok(ProxyGetStep::Complete(
-        if get_invariant_violation(&result, &descriptor) {
+        if get_invariant_violation(&runtime.root_value(&result)?, &descriptor) {
             Completion::Throw(runtime.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
@@ -355,10 +363,10 @@ mod tests {
 struct ProxyGetStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
 }
@@ -366,7 +374,7 @@ impl ProxyGetStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ProxyGetResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -376,8 +384,8 @@ impl ProxyGetStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxyGetResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -410,7 +418,7 @@ impl ProxyGetResume {
             .take()
             .expect("ProxyGetStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -424,14 +432,14 @@ impl ProxyGetResume {
             .take()
             .expect("ProxyGetStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxyGetStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

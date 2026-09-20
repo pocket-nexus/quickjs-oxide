@@ -7,7 +7,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, HeapError, IteratorResumeKind},
     object::{CallableRef, ObjectRef, PropertyKey},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::NativeInvocation},
 };
 pub(crate) enum WrapStep {
@@ -49,9 +49,13 @@ impl WrapStep {
         mode: IteratorResumeKind,
         invocation: &NativeInvocation,
     ) -> Result<Self, RuntimeError> {
-        let receiver = match runtime.iterator_receiver(realm, invocation.clone())? {
+        let receiver = match runtime.iterator_receiver(realm, invocation)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         let state = {
             runtime
@@ -83,7 +87,7 @@ impl WrapStep {
         }));
         match mode {
             IteratorResumeKind::Return => Ok({
-                let __pending_field_receiver = source;
+                let __pending_field_receiver = runtime.into_jsvalue(source)?;
                 let __pending_field_key =
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?;
                 let __pending_field_resume = resume;
@@ -98,7 +102,7 @@ impl WrapStep {
                 if let Value::Object(iterator) = source {
                     return Ok({
                         let __pending_field_iterator = iterator;
-                        let __pending_field_method = method;
+                        let __pending_field_method = runtime.into_jsvalue(method)?;
                         let __pending_field_resume = {
                             let updated_0 = Phase::Next;
                             let mut resident = resume;
@@ -112,15 +116,17 @@ impl WrapStep {
                         )
                     });
                 }
-                let callable = match runtime.iterator_callable_value(realm, method)? {
+                let callable = match runtime.iterator_callable_value(realm, &method)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(value)));
+                        return Ok(Self::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = source;
+                    let __pending_field_receiver = runtime.into_jsvalue(source)?;
                     let __pending_field_resume = {
                         let updated_0 = Phase::NextResult;
                         let mut resident = resume;
@@ -152,26 +158,35 @@ impl WrapResume {
             });
         }
         let value = match reply {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(WrapStep::Complete(Completion::Throw(value))),
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Throw(value) => {
+                return Ok(WrapStep::Complete(Completion::Throw(value)));
+            }
         };
         match self.0.phase {
             Phase::ReturnMethod => {
                 if matches!(value, Value::Undefined | Value::Null) {
-                    return Ok(WrapStep::Complete(Completion::Return(Value::Object(
-                        runtime.new_iterator_result(self.0.realm, Value::Undefined, true)?,
-                    ))));
+                    return Ok(WrapStep::Complete(Completion::Return(runtime.into_jsvalue(
+                        Value::Object(runtime.new_iterator_result(
+                            self.0.realm,
+                            Value::Undefined,
+                            true,
+                        )?),
+                    )?)));
                 }
-                let callable = match runtime.iterator_callable_value(self.0.realm, value)? {
+                let callable = match runtime.iterator_callable_value(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(WrapStep::Complete(Completion::Throw(value)));
+                        return Ok(WrapStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 self.0.phase = Phase::ReturnResult;
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = self.0.source.clone();
+                    let __pending_field_receiver =
+                        runtime.into_jsvalue(self.0.source.clone())?;
                     let __pending_field_resume = self;
                     WrapStep::request_call(
                         __pending_field_callable,
@@ -181,7 +196,7 @@ impl WrapResume {
                 })
             }
             Phase::ReturnResult => Ok(WrapStep::Complete(if matches!(value, Value::Object(_)) {
-                Completion::Return(value)
+                Completion::Return(runtime.into_jsvalue(value)?)
             } else {
                 Completion::Throw(runtime.new_native_error_jsvalue(
                     self.0.realm,
@@ -206,12 +221,12 @@ impl WrapResume {
             ObjectIteratorStep::Throw(value) => {
                 return Ok(WrapStep::Complete(Completion::Throw(value)));
             }
-            ObjectIteratorStep::Yield(value) => (value, false),
+            ObjectIteratorStep::Yield(value) => (runtime.root_and_release_jsvalue(value)?, false),
             ObjectIteratorStep::Done => (Value::Undefined, true),
         };
-        Ok(WrapStep::Complete(Completion::Return(Value::Object(
-            runtime.new_iterator_result(self.0.realm, value, done)?,
-        ))))
+        Ok(WrapStep::Complete(Completion::Return(runtime.into_jsvalue(
+            Value::Object(runtime.new_iterator_result(self.0.realm, value, done)?),
+        )?)))
     }
 }
 pub(crate) fn finish(
@@ -223,7 +238,7 @@ pub(crate) fn finish(
         step = match step {
             WrapStep::Complete(result) => return Ok(result),
             WrapStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -232,7 +247,7 @@ pub(crate) fn finish(
             }
             WrapStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, receiver, &[])?,
@@ -240,7 +255,7 @@ pub(crate) fn finish(
             }
             WrapStep::Next { mut resume } => {
                 let iterator = resume.take_next_iterator();
-                let method = resume.take_next_method();
+                let method = runtime.root_and_release_jsvalue(resume.take_next_method())?;
                 resume.next(
                     runtime,
                     finish_next(
@@ -267,30 +282,30 @@ pub(crate) fn finish(
 
 #[derive(Default)]
 struct WrapStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
+    call_receiver: Option<JsValue>,
     next_iterator: Option<ObjectRef>,
-    next_method: Option<Value>,
+    next_method: Option<JsValue>,
     parse_result: Option<Completion>,
 }
 impl WrapStep {
-    pub(crate) fn request_read(receiver: Value, key: PropertyKey, mut resume: WrapResume) -> Self {
+    pub(crate) fn request_read(receiver: JsValue, key: PropertyKey, mut resume: WrapResume) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: WrapResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
         resume.0.pending_effect.call_receiver = Some(receiver);
         Self::Call { resume }
     }
-    pub(crate) fn request_next(iterator: ObjectRef, method: Value, mut resume: WrapResume) -> Self {
+    pub(crate) fn request_next(iterator: ObjectRef, method: JsValue, mut resume: WrapResume) -> Self {
         resume.0.pending_effect.next_iterator = Some(iterator);
         resume.0.pending_effect.next_method = Some(method);
         Self::Next { resume }
@@ -301,7 +316,7 @@ impl WrapStep {
     }
 }
 impl WrapResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -322,7 +337,7 @@ impl WrapResume {
             .take()
             .expect("WrapStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
@@ -336,7 +351,7 @@ impl WrapResume {
             .take()
             .expect("WrapStep Next iterator")
     }
-    pub(crate) fn take_next_method(&mut self) -> Value {
+    pub(crate) fn take_next_method(&mut self) -> JsValue {
         self.0
             .pending_effect
             .next_method

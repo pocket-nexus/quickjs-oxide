@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{ConstructorRef, NativeArguments, NativeInvocation},
@@ -17,7 +17,7 @@ pub(crate) enum BufferSliceKind {
 pub(crate) enum BufferSliceStep {
     Complete(Completion),
     Primitive {
-        value: Value,
+        value: JsValue,
         resume: BufferSliceResume,
     },
     Read {
@@ -27,7 +27,7 @@ pub(crate) enum BufferSliceStep {
     },
     Construct {
         constructor: ConstructorRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         resume: BufferSliceResume,
     },
 }
@@ -71,41 +71,32 @@ impl BufferSliceStep {
                 "Buffer slice received a constructor invocation",
             ));
         };
+        let this_value = runtime.root_value(this_value)?;
         let source = match kind {
-            BufferSliceKind::Array => {
-                runtime.array_buffer_slice_source(realm, this_value.clone())?
-            }
-            BufferSliceKind::Shared => {
-                runtime.shared_array_buffer_slice_source(realm, this_value.clone())?
-            }
+            BufferSliceKind::Array => runtime.array_buffer_slice_source(realm, this_value)?,
+            BufferSliceKind::Shared => runtime.shared_array_buffer_slice_source(realm, this_value)?,
         };
         let (source, length) = match source {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         let end = if (matches!(kind, BufferSliceKind::Array) && arguments.actual_arg_count < 2)
-            || matches!(arguments.readable.get(1), Some(Value::Undefined))
+            || matches!(arguments.readable.get(1), Some(JsValue::Undefined))
         {
             None
         } else {
-            Some(
-                arguments
-                    .readable
-                    .get(1)
-                    .ok_or(RuntimeError::Invariant(
-                        "Buffer slice end argument was not padded",
-                    ))?
-                    .clone(),
-            )
+            Some(runtime.root_value(arguments.readable.get(1).ok_or(
+                RuntimeError::Invariant("Buffer slice end argument was not padded"),
+            )?)?)
         };
         Ok(Self::Primitive {
-            value: arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "Buffer slice start argument was not padded",
-                ))?
-                .clone(),
+            value: runtime.dup_jsvalue(arguments.readable.first().ok_or(
+                RuntimeError::Invariant("Buffer slice start argument was not padded"),
+            )?)?,
             resume: BufferSliceResume(Box::new(BufferSliceResumeState {
                 realm,
                 source,
@@ -151,7 +142,9 @@ impl BufferSliceResume {
         let target = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
+                return Ok(BufferSliceStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         self.copy(runtime, target, start, count)
@@ -186,7 +179,7 @@ impl BufferSliceResume {
         result: Completion,
     ) -> Result<BufferSliceStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
             }
@@ -202,12 +195,14 @@ impl BufferSliceResume {
                 )? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
+                        return Ok(BufferSliceStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 if let Some(value) = end {
                     Ok(BufferSliceStep::Primitive {
-                        value: value.clone(),
+                        value: runtime.into_jsvalue(value.clone())?,
                         resume: {
                             let updated_0 = Phase::End(start);
                             self.0.phase = updated_0;
@@ -229,7 +224,9 @@ impl BufferSliceResume {
                 )? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
+                        return Ok(BufferSliceStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 self.select(runtime, start, end)
@@ -263,13 +260,17 @@ impl BufferSliceResume {
                 }
                 if !matches!(value, Value::Object(_)) {
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
-                        runtime.new_not_constructor_error(self.0.realm, &value)?,
+                        runtime.into_jsvalue(
+                            runtime.new_not_constructor_error(self.0.realm, &value)?,
+                        )?,
                     )));
                 }
                 let constructor = match runtime.constructor_from_value(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
+                        return Ok(BufferSliceStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let mut arguments = Vec::new();
@@ -282,7 +283,7 @@ impl BufferSliceResume {
                         )?,
                     )));
                 }
-                arguments.push(Value::Int(
+                arguments.push(JsValue::Int(
                     i32::try_from(count).expect("Buffer slice length is bounded by i32::MAX"),
                 ));
                 Ok(BufferSliceStep::Construct {
@@ -322,8 +323,8 @@ pub(in crate::engine::builtins) fn finish(
         step = match step {
             BufferSliceStep::Complete(result) => return Ok(result),
             BufferSliceStep::Primitive { value, resume } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::Number)?
+                let result = if matches!(value, JsValue::Object(_)) {
+                    runtime.to_primitive_jsvalue(realm, value, ToPrimitiveHint::Number)?
                 } else {
                     Completion::Return(value)
                 };
@@ -341,15 +342,21 @@ pub(in crate::engine::builtins) fn finish(
                 constructor,
                 arguments,
                 resume,
-            } => resume.resume(
-                runtime,
-                runtime.construct_constructor_internal(
-                    realm,
-                    &constructor,
-                    &constructor,
-                    &arguments,
-                )?,
-            )?,
+            } => {
+                let arguments = arguments
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                resume.resume(
+                    runtime,
+                    runtime.construct_constructor_internal(
+                        realm,
+                        &constructor,
+                        &constructor,
+                        &arguments,
+                    )?,
+                )?
+            }
         };
     }
 }

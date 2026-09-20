@@ -8,7 +8,7 @@ use crate::engine::object::{
     DescriptorField, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -22,7 +22,7 @@ impl Runtime {
                 "Iterator.prototype iterator did not receive a generic invocation",
             ));
         };
-        Ok(Completion::Return(this_value.clone()))
+        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(crate) fn call_iterator_prototype_to_string_tag_getter(
@@ -34,9 +34,9 @@ impl Runtime {
                 "Iterator.prototype toStringTag getter received the wrong native invocation",
             ));
         };
-        Ok(Completion::Return(Value::String(JsString::from_static(
-            "Iterator",
-        ))))
+        Ok(Completion::Return(self.into_jsvalue(Value::String(
+            JsString::from_static("Iterator"),
+        ))?))
     }
 
     pub(crate) fn call_iterator_prototype_to_string_tag_setter(
@@ -75,6 +75,7 @@ const _: () = assert!(std::mem::size_of::<TagSetterResume>() <= 8);
 pub(crate) struct TagSetterResumeState {
     pending_effect: TagSetterStepPending,
     realm: ContextId,
+    runtime: Runtime,
     receiver: crate::engine::object::ObjectRef,
     key: PropertyKey,
     value: Value,
@@ -91,19 +92,21 @@ impl TagSetterStep {
                 "Iterator.prototype toStringTag setter received the wrong native invocation",
             ));
         };
-        let Value::Object(receiver) = this_value else {
+        let JsValue::Object(receiver_id) = this_value else {
             return Err(RuntimeError::Engine(Error::new(
                 ErrorKind::Type,
                 "not an object",
             )));
         };
-        let value = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
+        let receiver = crate::engine::object::ObjectRef::from_borrowed_handle(
+            runtime.clone(),
+            *receiver_id,
+        )?;
+        let value = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant(
                 "Iterator.prototype toStringTag setter argv was not padded",
-            ))?;
+            ),
+        )?)?;
         let iterator_prototype = runtime
             .0
             .state
@@ -124,6 +127,7 @@ impl TagSetterStep {
             let __pending_field_resume = TagSetterResume(Box::new(TagSetterResumeState {
                 pending_effect: TagSetterStepPending::default(),
                 realm,
+                runtime: runtime.clone(),
                 receiver: receiver.clone(),
                 key,
                 value,
@@ -142,11 +146,13 @@ impl TagSetterResume {
         reply: NativeConversion<bool>,
     ) -> Result<TagSetterStep, RuntimeError> {
         match reply {
-            NativeConversion::Throw(value) => Ok(TagSetterStep::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => Ok(TagSetterStep::Complete(Completion::Throw(
+                self.0.runtime.into_jsvalue(value)?,
+            ))),
             NativeConversion::Value(true) => Ok({
                 let __pending_field_object = self.0.receiver.clone();
                 let __pending_field_key = self.0.key.clone();
-                let __pending_field_value = self.0.value.clone();
+                let __pending_field_value = self.0.runtime.into_jsvalue(self.0.value.clone())?;
                 let __pending_field_resume = self;
                 TagSetterStep::request_set(
                     __pending_field_object,
@@ -182,7 +188,7 @@ impl TagSetterResume {
     ) -> Result<TagSetterStep, RuntimeError> {
         Ok(TagSetterStep::Complete(match reply {
             NativeConversion::Value(InternalDefineResult::Defined) => {
-                Completion::Return(Value::Undefined)
+                Completion::Return(JsValue::Undefined)
             }
             NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
                 Completion::Throw(runtime.new_native_error_jsvalue(
@@ -205,7 +211,7 @@ impl TagSetterResume {
                     message,
                 )?)
             }
-            NativeConversion::Throw(value) => Completion::Throw(value),
+            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
         }))
     }
     pub(crate) fn set(
@@ -215,8 +221,8 @@ impl TagSetterResume {
     ) -> Result<TagSetterStep, RuntimeError> {
         Ok(TagSetterStep::Complete(
             match runtime.finish_set_property_or_throw(self.0.realm, &self.0.key, reply)? {
-                Some(value) => Completion::Throw(value),
-                None => Completion::Return(Value::Undefined),
+                Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                None => Completion::Return(JsValue::Undefined),
             },
         ))
     }
@@ -246,7 +252,7 @@ pub(crate) fn finish_tag(
             TagSetterStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 resume.set(
                     runtime,
                     runtime.internal_set(
@@ -271,7 +277,7 @@ struct TagSetterStepPending {
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
     set_object: Option<crate::engine::object::ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
+    set_value: Option<JsValue>,
 }
 impl TagSetterStep {
     pub(crate) fn request_own(
@@ -297,7 +303,7 @@ impl TagSetterStep {
     pub(crate) fn request_set(
         object: crate::engine::object::ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: TagSetterResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -356,7 +362,7 @@ impl TagSetterResume {
             .take()
             .expect("TagSetterStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value

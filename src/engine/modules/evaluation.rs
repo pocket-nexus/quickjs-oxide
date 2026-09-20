@@ -8,7 +8,7 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::builtins::promise::RootedPromiseCapability;
 use crate::engine::heap::{ContextId, RawModuleRef, RawModuleTransition};
 use crate::engine::object::{CallableRef, ObjectRef};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 pub(crate) enum EvaluationStep {
@@ -19,7 +19,7 @@ pub(crate) enum EvaluationStep {
     },
     Call {
         callable: CallableRef,
-        value: Value,
+        value: JsValue,
         resume: Box<EvaluationResume>,
     },
 }
@@ -74,7 +74,9 @@ impl EvaluationStep {
                 | ModuleEvaluationState::Evaluated
                 | ModuleEvaluationState::Errored(_) => {
                     ObjectRef::from_borrowed_handle(runtime.clone(), promise)
-                        .map(|promise| Self::Complete(Completion::Return(Value::Object(promise))))
+                        .map_err(RuntimeError::from)
+                        .and_then(|promise| runtime.into_jsvalue(Value::Object(promise)))
+                        .map(|value| Self::Complete(Completion::Return(value)))
                         .map_err(Into::into)
                 }
                 ModuleEvaluationState::Unevaluated => Err(RuntimeError::Invariant(
@@ -141,9 +143,9 @@ impl EvaluationStep {
             ModuleEvaluationState::Errored(reason) => {
                 resume.settle(false, runtime.root_raw_value(&reason)?)
             }
-            ModuleEvaluationState::EvaluatingAsync => {
-                Ok(Self::Complete(Completion::Return(Value::Object(promise))))
-            }
+            ModuleEvaluationState::EvaluatingAsync => Ok(Self::Complete(Completion::Return(
+                runtime.into_jsvalue(Value::Object(promise))?,
+            ))),
             ModuleEvaluationState::Evaluating => Err(RuntimeError::Invariant(
                 "module evaluation Promise was requested during evaluation",
             )),
@@ -165,10 +167,18 @@ impl EvaluationStep {
         .map_err(RuntimeError::Engine)?;
 
         match completion {
-            Completion::Return(Value::Object(promise)) => Ok(promise),
-            _ => Err(RuntimeError::Invariant(
-                "module evaluation did not return a Promise",
-            )),
+            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
+                Value::Object(promise) => Ok(promise),
+                _ => Err(RuntimeError::Invariant(
+                    "module evaluation did not return a Promise",
+                )),
+            },
+            Completion::Throw(value) => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "module evaluation did not return a Promise",
+                ))
+            }
         }
     }
 }
@@ -187,7 +197,7 @@ impl EvaluationResume {
         };
         Ok(EvaluationStep::Call {
             callable,
-            value,
+            value: self.runtime.into_jsvalue(value)?,
             resume: self,
         })
     }
@@ -198,7 +208,8 @@ impl EvaluationResume {
         if self.settling {
             return match completion {
                 Completion::Return(_) => Ok(EvaluationStep::Complete(Completion::Return(
-                    Value::Object(self.capability.promise.clone()),
+                    self.runtime
+                        .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
                 ))),
                 Completion::Throw(_) => Err(RuntimeError::Invariant(
                     "intrinsic module Promise resolving function threw",
@@ -256,9 +267,12 @@ impl EvaluationResume {
                 }
                 self.armed = false;
                 match self.runtime.module_record(self.root.raw)?.evaluation {
-                    ModuleEvaluationState::EvaluatingAsync => Ok(EvaluationStep::Complete(
-                        Completion::Return(Value::Object(self.capability.promise.clone())),
-                    )),
+                    ModuleEvaluationState::EvaluatingAsync => {
+                        Ok(EvaluationStep::Complete(Completion::Return(
+                            self.runtime
+                                .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
+                        )))
+                    }
                     ModuleEvaluationState::Evaluated => self.settle(true, Value::Undefined),
                     ModuleEvaluationState::Errored(reason) => {
                         let reason = self.runtime.root_raw_value(&reason)?;
@@ -437,7 +451,7 @@ impl EvaluationResume {
                     dfs,
                     frames,
                     frame,
-                    Completion::Return(Value::Undefined),
+                    Completion::Return(JsValue::Undefined),
                 )?;
                 continue;
             }
@@ -467,7 +481,7 @@ impl EvaluationResume {
         completion: Completion,
     ) -> Result<(), RuntimeError> {
         match completion {
-            Completion::Return(Value::Undefined) => {
+            Completion::Return(JsValue::Undefined) => {
                 let entry = dfs.entries.get(&frame.module.module).copied().ok_or(
                     RuntimeError::Invariant("evaluated module lost its DFS entry"),
                 )?;
@@ -519,6 +533,7 @@ impl EvaluationResume {
                 ));
             }
             Completion::Throw(exception) => {
+                let exception = runtime.root_and_release_jsvalue(exception)?;
                 if dfs.exception.replace(exception).is_some() {
                     return Err(RuntimeError::Invariant(
                         "module evaluation recorded more than one exception",

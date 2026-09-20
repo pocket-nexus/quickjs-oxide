@@ -4,7 +4,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -55,7 +55,10 @@ impl BindStep {
             ));
         };
         let target = match this_value {
-            Value::Object(object) => runtime.as_callable(object)?,
+            JsValue::Object(id) => {
+                let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
+                runtime.as_callable(&object)?
+            }
             _ => None,
         };
         let Some(target) = target else {
@@ -64,13 +67,17 @@ impl BindStep {
             )));
         };
         let count = arguments.actual_arg_count.saturating_sub(1);
-        let forwarded = if arguments.actual_arg_count > 1 {
-            &arguments.readable[1..arguments.actual_arg_count]
-        } else {
-            &[]
-        };
-        let bound =
-            runtime.new_bound_function(realm, &target, &arguments.readable[0], forwarded)?;
+        let mut forwarded = Vec::new();
+        if arguments.actual_arg_count > 1 {
+            forwarded
+                .try_reserve_exact(count)
+                .map_err(|_| RuntimeError::Invariant("bind argv allocation failed"))?;
+            for value in &arguments.readable[1..arguments.actual_arg_count] {
+                forwarded.push(runtime.root_value(value)?);
+            }
+        }
+        let this_argument = runtime.root_value(&arguments.readable[0])?;
+        let bound = runtime.new_bound_function(realm, &target, &this_argument, &forwarded)?;
         Ok(Self::Own {
             object: target.as_object().clone(),
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
@@ -90,7 +97,9 @@ impl BindResume {
         result: NativeConversion<bool>,
     ) -> Result<BindStep, RuntimeError> {
         match result {
-            NativeConversion::Throw(value) => Ok(BindStep::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => Ok(BindStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            ))),
             NativeConversion::Value(true) => Ok(BindStep::Read {
                 object: self.0.target.clone(),
                 key: runtime
@@ -121,7 +130,7 @@ impl BindResume {
         result: Completion,
     ) -> Result<BindStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             result @ Completion::Throw(_) => return Ok(BindStep::Complete(result)),
         };
         if !self.0.name {
@@ -140,8 +149,8 @@ impl BindResume {
             false,
             true,
         )?;
-        Ok(BindStep::Complete(Completion::Return(Value::Object(
-            self.0.bound.into_object(),
+        Ok(BindStep::Complete(Completion::Return(JsValue::Object(
+            self.0.bound.into_object().into_handle(),
         ))))
     }
 }

@@ -3,7 +3,7 @@ use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::ConstructorRef},
 };
 pub(crate) enum SpeciesStep {
@@ -15,7 +15,7 @@ pub(crate) enum SpeciesStep {
     },
     Construct {
         target: ConstructorRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
     },
 }
 enum Phase {
@@ -35,7 +35,9 @@ impl SpeciesStep {
         length: u64,
     ) -> Result<Self, RuntimeError> {
         match runtime.internal_is_array(realm, &Value::Object(source.clone()))? {
-            NativeConversion::Throw(value) => Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => Ok(Self::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            ))),
             NativeConversion::Value(false) => allocate(runtime, realm, length),
             NativeConversion::Value(true) => Ok(Self::Read {
                 object: source.clone(),
@@ -64,7 +66,7 @@ impl SpeciesResume {
         result: Completion,
     ) -> Result<SpeciesStep, RuntimeError> {
         let mut constructor = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(SpeciesStep::Complete(Completion::Throw(value))),
         };
         if matches!(self.phase, Phase::Constructor) {
@@ -75,7 +77,9 @@ impl SpeciesResume {
                     match runtime.function_realm_from_value(self.realm, &constructor)? {
                         NativeConversion::Value(realm) => realm,
                         NativeConversion::Throw(value) => {
-                            return Ok(SpeciesStep::Complete(Completion::Throw(value)));
+                            return Ok(SpeciesStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
                         }
                     };
                 if constructor_realm != self.realm
@@ -108,9 +112,11 @@ impl SpeciesResume {
         match runtime.constructor_from_value(self.realm, constructor)? {
             NativeConversion::Value(target) => Ok(SpeciesStep::Construct {
                 target,
-                arguments: vec![Value::number(self.length as f64)],
+                arguments: vec![runtime.into_jsvalue(Value::number(self.length as f64))?],
             }),
-            NativeConversion::Throw(value) => Ok(SpeciesStep::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => Ok(SpeciesStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            ))),
         }
     }
 }
@@ -131,6 +137,10 @@ pub(crate) fn finish(
                 runtime.get_property_in_realm(realm, &object, &key)?,
             )?,
             SpeciesStep::Construct { target, arguments } => {
+                let arguments = arguments
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 return runtime.construct_constructor_internal(realm, &target, &target, &arguments);
             }
         };

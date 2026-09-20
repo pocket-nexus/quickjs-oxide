@@ -71,19 +71,23 @@ fn unified_active_frames_preserve_order_caller_pc_and_defining_realms() {
         (outer_bytecode, *bytecode)
     };
 
+    let completion = runtime
+        .call_internal(
+            outer_context.realm,
+            &outer,
+            Value::Undefined,
+            &[
+                Value::Object(probe.as_object().clone()),
+                Value::Object(callback.as_object().clone()),
+            ],
+        )
+        .unwrap();
+    let Completion::Return(value) = completion else {
+        panic!("expected return completion");
+    };
     assert_eq!(
-        runtime
-            .call_internal(
-                outer_context.realm,
-                &outer,
-                Value::Undefined,
-                &[
-                    Value::Object(probe.as_object().clone()),
-                    Value::Object(callback.as_object().clone()),
-                ],
-            )
-            .unwrap(),
-        Completion::Return(Value::Undefined)
+        runtime.root_and_release_jsvalue(value).unwrap(),
+        Value::Undefined
     );
 
     let snapshot = runtime

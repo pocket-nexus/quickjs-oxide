@@ -4,7 +4,7 @@
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::heap::{BytecodeConstant, RawValue, SlotReleaseReadiness};
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
 use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::exception::{heap_error_to_vm_error, runtime_error_to_vm_error};
@@ -202,7 +202,7 @@ pub(super) fn test_complete_numeric(
     realm: crate::engine::heap::ContextId,
     transaction: &mut super::stack::FrameTransaction<'_>,
     kind: super::numeric::operation::NumericKind,
-    thrown: &mut Option<Value>,
+    thrown: &mut Option<JsValue>,
     active_frame: super::frames::ActiveFrameToken,
     fault_pc: usize,
 ) -> Result<bool, Error> {
@@ -1589,15 +1589,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::Dup => {
-                slots.insert_copy(0, 0)?;
+                slots.insert_copy(runtime, 0, 0)?;
                 true
             }
             Instruction::Dup1 => {
-                slots.insert_copy(1, 1)?;
+                slots.insert_copy(runtime, 1, 1)?;
                 true
             }
             Instruction::Dup3 => {
-                slots.duplicate_operands(3)?;
+                slots.duplicate_operands(runtime, 3)?;
                 true
             }
             Instruction::Insert2 | Instruction::Insert3 | Instruction::Insert4 => {
@@ -1607,7 +1607,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     _ => 4,
                 };
                 slots.peek(count - 1)?;
-                slots.insert_copy(0, count)?;
+                slots.insert_copy(runtime, 0, count)?;
                 true
             }
             Instruction::Perm3 | Instruction::Perm4 | Instruction::Perm5 => {
@@ -2506,6 +2506,7 @@ mod tests {
 /// result is known, then release them outside the resident instruction match.
 #[inline(never)]
 pub(super) fn strict_comparison(
+    runtime: &crate::engine::api::runtime::Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
     negate: bool,
@@ -2515,10 +2516,18 @@ pub(super) fn strict_comparison(
     let depth = execution.slots.depth(&frame.window);
     let right = execution.slots.pop(&mut frame.window)?;
     let left = execution.slots.pop(&mut frame.window)?;
-    let equal = left.strict_equal(&right);
+    let equal = runtime
+        .strict_equal_jsvalue(&left, &right)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .release_jsvalue(left)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .release_jsvalue(right)
+        .map_err(runtime_error_to_vm_error)?;
     execution
         .slots
-        .push(&mut frame.window, Value::Bool(equal != negate))?;
+        .push(&mut frame.window, JsValue::Bool(equal != negate))?;
     frame.resume_pc = frame
         .fault_pc
         .checked_add(1)

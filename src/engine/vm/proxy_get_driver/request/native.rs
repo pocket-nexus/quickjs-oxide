@@ -1,5 +1,5 @@
 //! Mechanical adapters for native domain requests.
-use super::{Completion, Resume, Step, Value};
+use super::{Completion, JsValue, Resume, Step, Value};
 
 impl From<crate::engine::builtins::continuation::NativeStep> for Step {
     fn from(step: crate::engine::builtins::continuation::NativeStep) -> Self {
@@ -48,7 +48,7 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
                     source: Some(source),
                     resume: Some(Resume::Identity),
                 },
-                input => Self::Complete(Some(Completion::Return(input))),
+                _ => unreachable!("global eval non-string is completed before scheduling"),
             },
             NativeStep::JsonRaw { value, resume } => Self::String {
                 value: Some(value),

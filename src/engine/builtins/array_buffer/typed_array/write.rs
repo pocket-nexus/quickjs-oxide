@@ -5,14 +5,14 @@ use crate::engine::{
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
 };
 
 pub(crate) enum TypedWriteStep {
     Complete(NativeConversion<bool>),
     Element {
         element: TypedArrayElementKind,
-        value: Value,
+        value: JsValue,
         resume: TypedWriteResume,
     },
 }
@@ -44,7 +44,7 @@ impl TypedWriteStep {
         let element = runtime.typed_array_snapshot(&object)?.element;
         Ok(Self::Element {
             element,
-            value: value.clone(),
+            value: runtime.into_jsvalue(value.clone())?,
             resume: TypedWriteResume(Box::new(TypedWriteResumeState {
                 object,
                 index,
@@ -78,7 +78,7 @@ impl TypedWriteStep {
             ));
         }
         let element = runtime.typed_array_snapshot(object)?.element;
-        let result = super::element::encode_primitive(runtime, realm, element, value.clone())?;
+        let result = super::element::encode_primitive(runtime, realm, element, runtime.unroot_value(value)?)?;
         finish_element(runtime, object, index, result)
     }
     pub(crate) fn define(
@@ -104,7 +104,7 @@ impl TypedWriteStep {
         };
         Ok(Self::Element {
             element: state.snapshot.element,
-            value: value.clone(),
+            value: runtime.into_jsvalue(value.clone())?,
             resume: TypedWriteResume(Box::new(TypedWriteResumeState {
                 object,
                 index: Some(index),
@@ -124,7 +124,7 @@ impl TypedWriteStep {
                 element,
                 value,
                 resume,
-            } if !matches!(value, Value::Object(_)) => {
+            } if !matches!(value, JsValue::Object(_)) => {
                 let ElementStep::Complete(result) =
                     ElementStep::start(runtime, realm, element, value)?
                 else {

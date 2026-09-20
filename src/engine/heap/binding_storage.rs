@@ -157,7 +157,7 @@ mod immediate_write_tests {
         let runtime = crate::engine::api::runtime::Runtime::new();
         let root = runtime
             .new_var_ref(
-                crate::engine::value::Value::Int(1),
+                crate::engine::value::JsValue::Int(1),
                 false,
                 false,
                 ClosureVariableKind::Normal,

@@ -1016,7 +1016,11 @@ impl Runtime {
             if first.atom == AtomIdx::from_raw(atom.raw()) {
                 let (length, _) =
                     Self::array_length_state_in_heap(&state.heap, id, atom).ok()??;
-                return Some(Self::array_length_value(length));
+                return Some(if let Ok(length) = i32::try_from(length) {
+                    JsValue::Int(length)
+                } else {
+                    JsValue::Float(f64::from(length))
+                });
             }
             return None;
         }
@@ -1038,7 +1042,10 @@ impl Runtime {
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         index: u32,
     ) -> Result<Option<crate::engine::object::OrdinaryRead>, RuntimeError> {
-        self.prepare_linked_own_read_selected(base, executable, index, None)
+        let internal = self.unroot_value(base)?;
+        let result = self.prepare_linked_own_read_selected(&internal, executable, index, None);
+        self.release_jsvalue(internal)?;
+        result
     }
 
     pub(crate) fn prepare_linked_own_read_selected(
@@ -1147,7 +1154,7 @@ impl Runtime {
     /// Every decline leaves owners and storage untouched; the general property
     /// lookup retains all missing/exotic/reference-valued cases.
     #[cfg(test)]
-    pub(crate) fn try_dense_array_immediate_read(&self, base: &Value, index: u32) -> Option<Value> {
+    pub(crate) fn try_dense_array_immediate_read(&self, base: &JsValue, index: u32) -> Option<JsValue> {
         self.try_array_immediate_read_kind(base, index, false)
     }
 
@@ -1194,10 +1201,10 @@ impl Runtime {
                 PropertySlot::Accessor { .. } | PropertySlot::AutoInit(_) => None,
             };
         }
-        let raw = Self::typed_array_number_read_raw_in_heap(&mut state.heap, *object, index)?;
+        let value = Self::typed_array_number_read_in_heap(&mut state.heap, *object, index)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("typed_array_number_read_leaf");
-        Some(JsValue::Float(raw))
+        Some(value)
     }
 }
 
@@ -1216,17 +1223,20 @@ mod dense_array_read_tests {
     #[test]
     fn dense_array_read_leaf_reads_scalars_without_changing_owners() {
         let runtime = Runtime::new();
-        let base = receiver(&runtime, "[undefined,null,true,17,-0,NaN]");
-        let keep = base.clone();
-        let Value::Object(object) = &base else {
+        let base = runtime
+            .into_jsvalue(receiver(&runtime, "[undefined,null,true,17,-0,NaN]"))
+            .unwrap();
+        let keep = runtime.dup_jsvalue(&base).unwrap();
+        let JsValue::Object(object) = &base else {
             panic!("array");
         };
+        let object = *object;
         let count = runtime
             .0
             .state
             .borrow()
             .heap
-            .object_strong_count(object.object_id());
+            .object_strong_count(object);
         for (index, expected) in [
             Value::Undefined,
             Value::Null,
@@ -1240,31 +1250,24 @@ mod dense_array_read_tests {
             let result = runtime
                 .try_dense_array_immediate_read(&base, index as u32)
                 .unwrap();
-            assert!(result.same_quickjs_representation(expected));
+            assert!(
+                runtime
+                    .root_value(&result)
+                    .unwrap()
+                    .same_quickjs_representation(expected)
+            );
         }
         assert!(
-            matches!(runtime.try_dense_array_immediate_read(&base, 5), Some(Value::Float(v)) if v.is_nan())
+            matches!(runtime.try_dense_array_immediate_read(&base, 5), Some(JsValue::Float(v)) if v.is_nan())
         );
         assert_eq!(
-            runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .object_strong_count(object.object_id()),
+            runtime.0.state.borrow().heap.object_strong_count(object),
             count
         );
-        drop(keep);
+        runtime.release_jsvalue(keep).unwrap();
         assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
-        assert!(
-            runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .object(object.object_id())
-                .is_ok()
-        );
+        assert!(runtime.0.state.borrow().heap.object(object).is_ok());
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
@@ -1282,44 +1285,35 @@ mod dense_array_read_tests {
             "({0:1,length:1})",
         ] {
             let runtime = Runtime::new();
-            let base = receiver(&runtime, expression);
-            let keep = base.clone();
-            let Value::Object(object) = &base else {
+            let base = runtime
+                .into_jsvalue(receiver(&runtime, expression))
+                .unwrap();
+            let keep = runtime.dup_jsvalue(&base).unwrap();
+            let JsValue::Object(object) = &base else {
                 panic!("object");
             };
+            let object = *object;
             let count = runtime
                 .0
                 .state
                 .borrow()
                 .heap
-                .object_strong_count(object.object_id());
+                .object_strong_count(object);
             assert!(
                 runtime.try_dense_array_immediate_read(&base, 0).is_none(),
                 "{expression}"
             );
             assert_eq!(
-                runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .object_strong_count(object.object_id()),
+                runtime.0.state.borrow().heap.object_strong_count(object),
                 count
             );
-            assert!(
-                runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .object(object.object_id())
-                    .is_ok()
-            );
-            drop(keep);
+            assert!(runtime.0.state.borrow().heap.object(object).is_ok());
+            runtime.release_jsvalue(keep).unwrap();
+            runtime.release_jsvalue(base).unwrap();
         }
         let runtime = Runtime::new();
-        let base = receiver(&runtime, "[1]");
-        let _keep = base.clone();
+        let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
+        let keep = runtime.dup_jsvalue(&base).unwrap();
         assert!(runtime.try_dense_array_immediate_read(&base, 1).is_none());
         assert!(
             runtime
@@ -1328,14 +1322,20 @@ mod dense_array_read_tests {
         );
         let other = Runtime::new();
         assert!(other.try_dense_array_immediate_read(&base, 0).is_none());
+        runtime.release_jsvalue(keep).unwrap();
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
     fn dense_array_read_leaf_keeps_frozen_materialized_values_on_canonical_path() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let base = context
-            .eval("globalThis.frozenRead = Object.freeze([7, -0])")
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("globalThis.frozenRead = Object.freeze([7, -0])")
+                    .unwrap(),
+            )
             .unwrap();
         runtime.run_gc().unwrap();
         assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
@@ -1345,13 +1345,14 @@ mod dense_array_read_tests {
                 .unwrap(),
             Value::Bool(true)
         );
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
     fn dense_array_read_leaf_does_not_drain_deferred_or_borrowed_state() {
         let runtime = Runtime::new();
-        let base = receiver(&runtime, "[1]");
-        let _keep = base.clone();
+        let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
+        let keep = runtime.dup_jsvalue(&base).unwrap();
         {
             let _borrow = runtime.0.state.borrow();
             assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
@@ -1369,8 +1370,10 @@ mod dense_array_read_tests {
         runtime.run_gc().unwrap();
         assert!(matches!(
             runtime.try_dense_array_immediate_read(&base, 0),
-            Some(Value::Int(1))
+            Some(JsValue::Int(1))
         ));
+        runtime.release_jsvalue(keep).unwrap();
+        runtime.release_jsvalue(base).unwrap();
     }
 }
 
@@ -1378,6 +1381,7 @@ mod dense_array_read_tests {
 mod ordinary_field_leaf_tests {
     use super::*;
     use crate::engine::code::{bytecode::Instruction, runtime::PublishedFunctionSnapshot};
+    use crate::engine::object::OrdinaryRead;
 
     fn executable(runtime: &Runtime, field: &str) -> (PublishedFunctionSnapshot, u32) {
         let mut context = runtime.new_context();
@@ -1405,6 +1409,12 @@ mod ordinary_field_leaf_tests {
         (executable, index)
     }
 
+    fn release_read(runtime: &Runtime, read: Option<OrdinaryRead>) {
+        if let Some(OrdinaryRead::Complete(Some(value))) = read {
+            runtime.release_jsvalue(value).unwrap();
+        }
+    }
+
     #[test]
     fn ordinary_field_leaf_preserves_scalar_values_flags_and_declines_nonlocal_rules() {
         let runtime = Runtime::new();
@@ -1418,8 +1428,10 @@ mod ordinary_field_leaf_tests {
             "({x:1.5})",
             "({x:-0})",
         ] {
-            let base = context.eval(source).unwrap();
-            let _retained = base.clone();
+            let base = runtime
+                .into_jsvalue(context.eval(source).unwrap())
+                .unwrap();
+            let retained = runtime.dup_jsvalue(&base).unwrap();
             assert!(
                 runtime
                     .try_ordinary_field_immediate_read(&base, &executable, index)
@@ -1429,12 +1441,14 @@ mod ordinary_field_leaf_tests {
                 &base,
                 &executable,
                 index,
-                &Value::Int(17)
+                &JsValue::Int(17)
             ));
             assert_eq!(
                 runtime.try_ordinary_field_immediate_read(&base, &executable, index),
-                Some(Value::Int(17))
+                Some(JsValue::Int(17))
             );
+            runtime.release_jsvalue(retained).unwrap();
+            runtime.release_jsvalue(base).unwrap();
         }
         for source in [
             "({get x(){throw 42}})",
@@ -1448,8 +1462,10 @@ mod ordinary_field_leaf_tests {
             "new Uint8Array(1)",
             "globalThis",
         ] {
-            let base = context.eval(source).unwrap();
-            let _retained = base.clone();
+            let base = runtime
+                .into_jsvalue(context.eval(source).unwrap())
+                .unwrap();
+            let retained = runtime.dup_jsvalue(&base).unwrap();
             assert!(
                 runtime
                     .try_ordinary_field_immediate_read(&base, &executable, index)
@@ -1461,31 +1477,37 @@ mod ordinary_field_leaf_tests {
                     &base,
                     &executable,
                     index,
-                    &Value::Int(17)
+                    &JsValue::Int(17)
                 ),
                 "{source}"
             );
+            runtime.release_jsvalue(retained).unwrap();
+            runtime.release_jsvalue(base).unwrap();
         }
         for source in [
             "Object.freeze({x:42})",
             "Object.defineProperty({},'x',{value:42,writable:false})",
         ] {
-            let base = context.eval(source).unwrap();
-            let _retained = base.clone();
+            let base = runtime
+                .into_jsvalue(context.eval(source).unwrap())
+                .unwrap();
+            let retained = runtime.dup_jsvalue(&base).unwrap();
             assert_eq!(
                 runtime.try_ordinary_field_immediate_read(&base, &executable, index),
-                Some(Value::Int(42))
+                Some(JsValue::Int(42))
             );
             assert!(!runtime.try_ordinary_field_immediate_write(
                 &base,
                 &executable,
                 index,
-                &Value::Int(17)
+                &JsValue::Int(17)
             ));
             assert_eq!(
                 runtime.try_ordinary_field_immediate_read(&base, &executable, index),
-                Some(Value::Int(42))
+                Some(JsValue::Int(42))
             );
+            runtime.release_jsvalue(retained).unwrap();
+            runtime.release_jsvalue(base).unwrap();
         }
     }
 
@@ -1496,14 +1518,16 @@ mod ordinary_field_leaf_tests {
         let mut context = runtime.new_context();
         let (code, index) = executable(&runtime, "x");
         let (foreign_code, foreign_index) = executable(&foreign, "x");
-        let base = context.eval("({x:42})").unwrap();
+        let base = runtime
+            .into_jsvalue(context.eval("({x:42})").unwrap())
+            .unwrap();
         assert!(
             runtime
                 .try_ordinary_field_immediate_read(&base, &code, index)
                 .is_none()
         );
-        assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, index, &Value::Int(17)));
-        let _retained = base.clone();
+        assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, index, &JsValue::Int(17)));
+        let retained = runtime.dup_jsvalue(&base).unwrap();
         assert!(
             runtime
                 .try_ordinary_field_immediate_read(&base, &foreign_code, foreign_index)
@@ -1513,7 +1537,7 @@ mod ordinary_field_leaf_tests {
             &base,
             &foreign_code,
             foreign_index,
-            &Value::Int(17)
+            &JsValue::Int(17)
         ));
         assert!(
             runtime
@@ -1538,7 +1562,7 @@ mod ordinary_field_leaf_tests {
                 &base,
                 &code,
                 index,
-                &Value::Int(17)
+                &JsValue::Int(17)
             ));
             drop(queued);
         }
@@ -1547,21 +1571,25 @@ mod ordinary_field_leaf_tests {
                 .try_ordinary_field_immediate_read(&base, &code, index)
                 .is_none()
         );
-        assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, index, &Value::Int(17)));
+        assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, index, &JsValue::Int(17)));
         assert!(runtime.0.deferred_references.has_pending());
         runtime.drain_deferred_references().unwrap();
         assert_eq!(
             runtime.try_ordinary_field_immediate_read(&base, &code, index),
-            Some(Value::Int(42))
+            Some(JsValue::Int(42))
         );
-        let object_value = Value::Object(runtime.new_object(None).unwrap());
+        let object_value = runtime
+            .into_jsvalue(Value::Object(runtime.new_object(None).unwrap()))
+            .unwrap();
         assert!(!runtime.try_ordinary_field_immediate_write(&base, &code, index, &object_value));
         assert_eq!(
             runtime.try_ordinary_field_immediate_read(&base, &code, index),
-            Some(Value::Int(42))
+            Some(JsValue::Int(42))
         );
         let (lazy_code, lazy_index) = executable(&runtime, "min");
-        let math = context.eval("Math").unwrap();
+        let math = runtime
+            .into_jsvalue(context.eval("Math").unwrap())
+            .unwrap();
         assert!(
             runtime
                 .try_ordinary_field_immediate_read(&math, &lazy_code, lazy_index)
@@ -1571,12 +1599,16 @@ mod ordinary_field_leaf_tests {
             &math,
             &lazy_code,
             lazy_index,
-            &Value::Int(17)
+            &JsValue::Int(17)
         ));
         assert!(matches!(
             context.eval("typeof Math.min").unwrap(),
             Value::String(_)
         ));
+        runtime.release_jsvalue(retained).unwrap();
+        runtime.release_jsvalue(base).unwrap();
+        runtime.release_jsvalue(object_value).unwrap();
+        runtime.release_jsvalue(math).unwrap();
     }
     #[test]
     fn recovery_length_leaf_preserves_utf16_brand_and_final_owner_boundaries() {
@@ -1584,62 +1616,76 @@ mod ordinary_field_leaf_tests {
         let mut context = runtime.new_context();
         let (code, index) = executable(&runtime, "length");
         for (source, expected) in [("[1,,3]", 3), ("'a\\ud83d\\ude00'", 3)] {
-            let base = context.eval(source).unwrap();
-            let retained = base.clone();
-            assert_eq!(
-                runtime.try_ordinary_field_immediate_read(&base, &code, index),
-                Some(Value::Int(expected))
-            );
-            drop(retained);
+            let base = runtime
+                .into_jsvalue(context.eval(source).unwrap())
+                .unwrap();
+            let retained = runtime.dup_jsvalue(&base).unwrap();
+            let actual = runtime
+                .try_ordinary_field_immediate_read(&base, &code, index)
+                .unwrap();
+            assert_eq!(runtime.root_value(&actual).unwrap(), Value::Int(expected));
+            runtime.release_jsvalue(retained).unwrap();
+            runtime.release_jsvalue(base).unwrap();
         }
-        let proxy = context.eval("new Proxy([], {get(){throw 91}})").unwrap();
-        let _retained = proxy.clone();
+        let proxy = runtime
+            .into_jsvalue(context.eval("new Proxy([], {get(){throw 91}})").unwrap())
+            .unwrap();
+        let proxy_retained = runtime.dup_jsvalue(&proxy).unwrap();
         assert!(
             runtime
                 .try_ordinary_field_immediate_read(&proxy, &code, index)
                 .is_none()
         );
-        let unique = Value::String(crate::engine::value::JsString::from_owned_utf16(vec![
-            97, 0xd800,
-        ]));
+        let unique = runtime
+            .into_jsvalue(Value::String(crate::engine::value::JsString::from_owned_utf16(vec![
+                97, 0xd800,
+            ])))
+            .unwrap();
         assert!(
             runtime
                 .try_ordinary_field_immediate_read(&unique, &code, index)
                 .is_none()
         );
-        let retained = unique.clone();
-        assert_eq!(
-            runtime.try_ordinary_field_immediate_read(&unique, &code, index),
-            Some(Value::Int(2))
-        );
-        drop(retained);
+        let unique_retained = runtime.dup_jsvalue(&unique).unwrap();
+        let actual = runtime
+            .try_ordinary_field_immediate_read(&unique, &code, index)
+            .unwrap();
+        assert_eq!(runtime.root_value(&actual).unwrap(), Value::Int(2));
+        runtime.release_jsvalue(proxy_retained).unwrap();
+        runtime.release_jsvalue(proxy).unwrap();
+        runtime.release_jsvalue(unique_retained).unwrap();
+        runtime.release_jsvalue(unique).unwrap();
     }
 
     #[test]
     fn recovery_arguments_leaf_reads_current_cell_and_declines_redefinitions() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let base = context
-            .eval(
-                "globalThis.args=(function(a){globalThis.change=x=>a=x;return arguments})(1);args",
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval(
+                        "globalThis.args=(function(a){globalThis.change=x=>a=x;return arguments})(1);args",
+                    )
+                    .unwrap(),
             )
             .unwrap();
-        let _retained = base.clone();
+        let retained = runtime.dup_jsvalue(&base).unwrap();
         assert_eq!(
             runtime.try_array_immediate_read(&base, 0),
-            Some(Value::Int(1))
+            Some(JsValue::Int(1))
         );
         context.eval("change(7)").unwrap();
         assert_eq!(
             runtime.try_array_immediate_read(&base, 0),
-            Some(Value::Int(7))
+            Some(JsValue::Int(7))
         );
         context
             .eval("Object.defineProperty(args,'0',{value:8,writable:false});change(9)")
             .unwrap();
         assert_eq!(
             runtime.try_array_immediate_read(&base, 0),
-            Some(Value::Int(8))
+            Some(JsValue::Int(8))
         );
         context
             .eval("Object.defineProperty(args,'0',{get(){return 11},configurable:true})")
@@ -1648,23 +1694,31 @@ mod ordinary_field_leaf_tests {
         assert_eq!(context.eval("args[0]").unwrap(), Value::Int(11));
         context.eval("delete args[0]").unwrap();
         assert!(runtime.try_array_immediate_read(&base, 0).is_none());
+        runtime.release_jsvalue(retained).unwrap();
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
     fn linked_native_fact_is_bound_to_the_selected_callee_not_a_property_cache() {
         use crate::engine::builtins::native::{MathMinMaxKind, NativeFunctionId};
-        use crate::engine::object::OrdinaryRead;
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let (code, index) = executable(&runtime, "x");
-        let base = context
-            .eval("globalThis.selectedNative={x:Math.min};selectedNative")
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("globalThis.selectedNative={x:Math.min};selectedNative")
+                    .unwrap(),
+            )
             .unwrap();
         let mut fact = None;
-        let Some(OrdinaryRead::Complete(Some(Value::Object(callee)))) = runtime
+        let Some(OrdinaryRead::Complete(Some(value))) = runtime
             .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
             .unwrap()
         else {
+            panic!("own native")
+        };
+        let Value::Object(callee) = runtime.root_and_release_jsvalue(value).unwrap() else {
             panic!("own native")
         };
         context.eval("selectedNative.x=Math.max").unwrap();
@@ -1673,19 +1727,26 @@ mod ordinary_field_leaf_tests {
             data.target,
             NativeFunctionId::MathMinMax(MathMinMaxKind::Min)
         );
-        let _new_read = runtime
-            .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
-            .unwrap();
+        release_read(
+            &runtime,
+            runtime
+                .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
+                .unwrap(),
+        );
         assert!(fact.take().unwrap().into_parts(&callee).is_none());
-        let _new_read = runtime
-            .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
-            .unwrap();
+        release_read(
+            &runtime,
+            runtime
+                .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
+                .unwrap(),
+        );
         let foreign = Runtime::new();
         let mut foreign_context = foreign.new_context();
         let Value::Object(foreign_callee) = foreign_context.eval("Math.max").unwrap() else {
             panic!("native")
         };
         assert!(fact.take().unwrap().into_parts(&foreign_callee).is_none());
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
@@ -1719,3 +1780,4 @@ mod ordinary_field_leaf_tests {
         assert_eq!(context.eval("readLog").unwrap(), Value::Int(1));
     }
 }
+

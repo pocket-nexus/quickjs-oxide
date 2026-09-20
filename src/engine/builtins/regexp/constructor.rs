@@ -16,7 +16,7 @@ use crate::engine::heap::{
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use crate::engine::object::{ObjectRef, PropertyKey, WellKnownSymbol};
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::call::{
     ConstructorPrototypeSource, ConstructorRef, NativeArguments, NativeInvocation,
     prototype::{ProtoSourceStep, finish as finish_source},
@@ -88,7 +88,7 @@ impl Runtime {
                 "RegExp species did not receive a getter invocation",
             ));
         };
-        Ok(Completion::Return(this_value.clone()))
+        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(crate) fn genuine_regexp(
@@ -251,11 +251,11 @@ pub(crate) enum RegExpConstructorStep {
         resume: RegExpConstructorResume,
     },
     Primitive {
-        value: Value,
+        value: JsValue,
         resume: RegExpConstructorResume,
     },
     Prototype {
-        new_target: Value,
+        new_target: JsValue,
         resume: RegExpConstructorResume,
     },
 }
@@ -308,23 +308,16 @@ impl RegExpConstructorStep {
                 "RegExp constructor did not receive constructor-or-function invocation",
             ));
         };
-        let pattern = arguments
-            .readable
-            .first()
-            .ok_or(RuntimeError::Invariant(
-                "RegExp constructor pattern argv was not padded",
-            ))?
-            .clone();
-        let flags = arguments
-            .readable
-            .get(1)
-            .ok_or(RuntimeError::Invariant(
-                "RegExp constructor flags argv was not padded",
-            ))?
-            .clone();
+        let new_target = runtime.root_value(new_target)?;
+        let pattern = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("RegExp constructor pattern argv was not padded"),
+        )?)?;
+        let flags = runtime.root_value(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("RegExp constructor flags argv was not padded"),
+        )?)?;
         let resume = RegExpConstructorResume(Box::new(RegExpConstructorResumeState {
             realm,
-            new_target: new_target.clone(),
+            new_target,
             pattern,
             flags,
             is_regexp: false,
@@ -377,11 +370,11 @@ impl RegExpConstructorResume {
         if matches!(self.0.flags, Value::Undefined)
             && let Some(genuine) = genuine.as_ref()
         {
-            return Ok(self.lookup(RegExpPublication::Copy(genuine.clone())));
+            return self.lookup(runtime, RegExpPublication::Copy(genuine.clone()));
         }
         if let Some(genuine) = genuine {
             let flags = self.0.flags.clone();
-            self.pattern_value(Value::String(genuine.pattern), flags)
+            self.pattern_value(runtime, Value::String(genuine.pattern), flags)
         } else if self.0.is_regexp {
             let Value::Object(object) = &self.0.pattern else {
                 return Err(RuntimeError::Invariant(
@@ -401,22 +394,26 @@ impl RegExpConstructorResume {
         } else {
             let pattern = self.0.pattern.clone();
             let flags = self.0.flags.clone();
-            self.pattern_value(pattern, flags)
+            self.pattern_value(runtime, pattern, flags)
         }
     }
     fn pattern_value(
         mut self,
+        runtime: &Runtime,
         pattern: Value,
         flags: Value,
     ) -> Result<RegExpConstructorStep, RuntimeError> {
         if matches!(pattern, Value::Undefined) {
-            Ok(self.lookup(RegExpPublication::Compile {
-                pattern: JsString::from_static(""),
-                flags,
-            }))
+            self.lookup(
+                runtime,
+                RegExpPublication::Compile {
+                    pattern: JsString::from_static(""),
+                    flags,
+                },
+            )
         } else {
             Ok(RegExpConstructorStep::Primitive {
-                value: pattern,
+                value: runtime.into_jsvalue(pattern)?,
                 resume: {
                     let updated_0 = RegExpConstructorPhase::Pattern(flags);
                     self.0.phase = updated_0;
@@ -425,15 +422,19 @@ impl RegExpConstructorResume {
             })
         }
     }
-    fn lookup(mut self, publication: RegExpPublication) -> RegExpConstructorStep {
-        RegExpConstructorStep::Prototype {
-            new_target: self.0.new_target.clone(),
+    fn lookup(
+        mut self,
+        runtime: &Runtime,
+        publication: RegExpPublication,
+    ) -> Result<RegExpConstructorStep, RuntimeError> {
+        Ok(RegExpConstructorStep::Prototype {
+            new_target: runtime.into_jsvalue(self.0.new_target.clone())?,
             resume: {
                 let updated_0 = RegExpConstructorPhase::Prototype(publication);
                 self.0.phase = updated_0;
                 self
             },
-        }
+        })
     }
     fn publish(
         runtime: &Runtime,
@@ -444,7 +445,7 @@ impl RegExpConstructorResume {
         let program = Runtime::compile_regexp_program(&pattern, &flags)?;
         runtime.publish_regexp(&object, pattern, program)?;
         Ok(RegExpConstructorStep::Complete(Completion::Return(
-            Value::Object(object),
+            runtime.into_jsvalue(Value::Object(object))?,
         )))
     }
     pub(crate) fn prototype(
@@ -461,7 +462,9 @@ impl RegExpConstructorResume {
                 )?
             }
             NativeConversion::Throw(value) => {
-                return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
+                return Ok(RegExpConstructorStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let object = runtime.new_uninitialized_regexp(&prototype)?;
@@ -474,7 +477,7 @@ impl RegExpConstructorResume {
             RegExpPublication::Copy(genuine) => {
                 runtime.publish_regexp(&object, genuine.pattern, genuine.program)?;
                 Ok(RegExpConstructorStep::Complete(Completion::Return(
-                    Value::Object(object),
+                    runtime.into_jsvalue(Value::Object(object))?,
                 )))
             }
             RegExpPublication::Compile { pattern, flags } => {
@@ -482,7 +485,7 @@ impl RegExpConstructorResume {
                     Self::publish(runtime, object, pattern, JsString::from_static(""))
                 } else {
                     Ok(RegExpConstructorStep::Primitive {
-                        value: flags,
+                        value: runtime.into_jsvalue(flags)?,
                         resume: {
                             let updated_0 = RegExpConstructorPhase::Flags { object, pattern };
                             self.0.phase = updated_0;
@@ -499,7 +502,7 @@ impl RegExpConstructorResume {
         result: Completion,
     ) -> Result<RegExpConstructorStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
             }
@@ -517,7 +520,7 @@ impl RegExpConstructorResume {
             RegExpConstructorPhase::Identity(active) => {
                 if value.same_value(&Value::Object(active)) {
                     Ok(RegExpConstructorStep::Complete(Completion::Return(
-                        self.0.pattern,
+                        runtime.into_jsvalue(self.0.pattern)?,
                     )))
                 } else {
                     {
@@ -547,7 +550,7 @@ impl RegExpConstructorResume {
                     })
                 } else {
                     let flags = self.0.flags.clone();
-                    self.pattern_value(value, flags)
+                    self.pattern_value(runtime, value, flags)
                 }
             }
             RegExpConstructorPhase::SourceFlags(pattern) => {
@@ -555,7 +558,7 @@ impl RegExpConstructorResume {
                 self.0.phase = updated_0;
                 self
             }
-            .pattern_value(pattern, value),
+            .pattern_value(runtime, pattern, value),
             RegExpConstructorPhase::Pattern(flags) => {
                 if matches!(value, Value::Object(_)) {
                     return Err(RuntimeError::Invariant(
@@ -565,7 +568,9 @@ impl RegExpConstructorResume {
                 let pattern = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
+                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 Ok({
@@ -573,7 +578,7 @@ impl RegExpConstructorResume {
                     self.0.phase = updated_0;
                     self
                 }
-                .lookup(RegExpPublication::Compile { pattern, flags }))
+                .lookup(runtime, RegExpPublication::Compile { pattern, flags })?)
             }
             RegExpConstructorPhase::Flags { object, pattern } => {
                 if matches!(value, Value::Object(_)) {
@@ -584,7 +589,9 @@ impl RegExpConstructorResume {
                 let flags = match runtime.native_to_js_string(self.0.realm, &value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
+                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 Self::publish(runtime, object, pattern, flags)
@@ -612,8 +619,8 @@ fn finish_constructor(
                 runtime.get_property_in_realm(realm, &object, &key)?,
             )?,
             RegExpConstructorStep::Primitive { value, resume } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::String)?
+                let result = if matches!(value, JsValue::Object(_)) {
+                    runtime.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)?
                 } else {
                     Completion::Return(value)
                 };
@@ -624,7 +631,11 @@ fn finish_constructor(
                 finish_source(
                     runtime,
                     realm,
-                    ProtoSourceStep::start(runtime, realm, new_target)?,
+                    ProtoSourceStep::start(
+                        runtime,
+                        realm,
+                        runtime.root_and_release_jsvalue(new_target)?,
+                    )?,
                 )?,
             )?,
         };
@@ -645,12 +656,16 @@ mod tests {
         let new_target = context.eval("(function(){})").unwrap();
         let flags = runtime.new_object(None).unwrap();
         let flags_id = flags.object_id();
-        let invocation = NativeInvocation::Construct { new_target };
+        let invocation = NativeInvocation::Construct {
+            new_target: runtime.into_jsvalue(new_target).unwrap(),
+        };
         let arguments = NativeArguments {
             actual_arg_count: 2,
             readable: vec![
-                Value::String(JsString::from_static("a")),
-                Value::Object(flags),
+                runtime
+                    .into_jsvalue(Value::String(JsString::from_static("a")))
+                    .unwrap(),
+                runtime.into_jsvalue(Value::Object(flags)).unwrap(),
             ],
         };
         let RegExpConstructorStep::Primitive { resume, .. } =
@@ -663,7 +678,11 @@ mod tests {
         let RegExpConstructorStep::Prototype { resume, .. } = resume
             .resume(
                 &runtime,
-                Completion::Return(Value::String(JsString::from_static("a"))),
+                Completion::Return(
+                    runtime
+                        .into_jsvalue(Value::String(JsString::from_static("a")))
+                        .unwrap(),
+                ),
             )
             .unwrap()
         else {

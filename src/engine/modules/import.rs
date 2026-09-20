@@ -8,13 +8,13 @@ use crate::engine::code::{
 };
 use crate::engine::heap::ContextId;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{JsString, Value, conversion::NativeConversion};
+use crate::engine::value::{JsString, JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::Completion;
 
 pub(crate) enum ImportStep {
     Complete(Completion),
     String {
-        value: Value,
+        value: JsValue,
         resume: Box<ImportResume>,
     },
     Read {
@@ -33,7 +33,7 @@ pub(crate) enum ImportStep {
     },
     Call {
         callable: CallableRef,
-        reason: Value,
+        reason: JsValue,
         resume: Box<ImportResume>,
     },
 }
@@ -71,7 +71,7 @@ impl ImportStep {
         let base_name = runtime.active_script_or_module_name()?;
         let capability = runtime.new_default_promise_capability(realm)?;
         Ok(Self::String {
-            value: specifier,
+            value: runtime.into_jsvalue(specifier)?,
             resume: Box::new(ImportResume {
                 realm,
                 base_name,
@@ -89,13 +89,17 @@ impl ImportStep {
     }
 }
 impl ImportResume {
-    fn reject(mut self: Box<Self>, reason: Value) -> ImportStep {
+    fn reject(
+        mut self: Box<Self>,
+        runtime: &Runtime,
+        reason: Value,
+    ) -> Result<ImportStep, RuntimeError> {
         self.phase = Phase::Reject;
-        ImportStep::Call {
+        Ok(ImportStep::Call {
             callable: self.capability.reject.clone(),
-            reason,
+            reason: runtime.into_jsvalue(reason)?,
             resume: self,
-        }
+        })
     }
     fn type_error(
         self: Box<Self>,
@@ -103,7 +107,7 @@ impl ImportResume {
         message: &str,
     ) -> Result<ImportStep, RuntimeError> {
         let reason = runtime.new_native_error(self.realm, NativeErrorKind::Type, message)?;
-        Ok(self.reject(reason))
+        self.reject(runtime, reason)
     }
     fn enqueue(
         mut self: Box<Self>,
@@ -120,9 +124,9 @@ impl ImportResume {
             specifier,
             attributes,
         )?;
-        Ok(ImportStep::Complete(Completion::Return(Value::Object(
-            self.capability.promise,
-        ))))
+        Ok(ImportStep::Complete(Completion::Return(
+            runtime.into_jsvalue(Value::Object(self.capability.promise))?,
+        )))
     }
     pub(crate) fn resume(
         mut self: Box<Self>,
@@ -132,7 +136,7 @@ impl ImportResume {
         if matches!(self.phase, Phase::Reject) {
             return match completion {
                 Completion::Return(_) => Ok(ImportStep::Complete(Completion::Return(
-                    Value::Object(self.capability.promise),
+                    runtime.into_jsvalue(Value::Object(self.capability.promise))?,
                 ))),
                 Completion::Throw(_) => Err(RuntimeError::Invariant(
                     "intrinsic dynamic import reject function threw",
@@ -140,8 +144,11 @@ impl ImportResume {
             };
         }
         let value = match completion {
-            Completion::Throw(reason) => return Ok(self.reject(reason)),
-            Completion::Return(value) => value,
+            Completion::Throw(reason) => {
+                let reason = runtime.root_and_release_jsvalue(reason)?;
+                return self.reject(runtime, reason);
+            }
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
         };
         match std::mem::replace(&mut self.phase, Phase::With) {
             Phase::Specifier(options) => {
@@ -203,7 +210,7 @@ impl ImportResume {
     ) -> Result<ImportStep, RuntimeError> {
         let keys = match result {
             NativeConversion::Value(keys) => keys,
-            NativeConversion::Throw(reason) => return Ok(self.reject(reason)),
+            NativeConversion::Throw(reason) => return self.reject(runtime, reason),
         };
         if !matches!(self.phase, Phase::Descriptors) {
             return Err(RuntimeError::Invariant(
@@ -231,7 +238,7 @@ impl ImportResume {
     ) -> Result<ImportStep, RuntimeError> {
         let enumerable = match result {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(reason) => return Ok(self.reject(reason)),
+            NativeConversion::Throw(reason) => return self.reject(runtime, reason),
         };
         if !matches!(self.phase, Phase::Descriptors) {
             return Err(RuntimeError::Invariant(
@@ -276,7 +283,7 @@ impl ImportResume {
         }
         match runtime.check_dynamic_import_attributes(self.realm, &self.entries)? {
             NativeConversion::Value(()) => {}
-            NativeConversion::Throw(reason) => return Ok(self.reject(reason)),
+            NativeConversion::Throw(reason) => return self.reject(runtime, reason),
         }
         let entries = std::mem::take(&mut self.entries).into_boxed_slice();
         self.enqueue(runtime, ModuleImportAttributes::Present(entries))

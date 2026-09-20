@@ -9,7 +9,7 @@ use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
 #[cfg(test)]
 use crate::engine::value::JsString;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 
@@ -21,8 +21,8 @@ use crate::engine::vm::frames::ActiveFrameKind;
 
 // Adapted ABI variants transport the same input owner. Only borrowed inputs
 // whose variant actually changes need an additional root handle.
-fn native_invocation_input(invocation: std::borrow::Cow<'_, NativeInvocation>) -> Value {
-    match invocation.into_owned() {
+fn native_invocation_input(invocation: NativeInvocation) -> crate::engine::value::JsValue {
+    match invocation {
         NativeInvocation::Call { this_value }
         | NativeInvocation::Getter { this_value }
         | NativeInvocation::Setter { this_value } => this_value,
@@ -63,7 +63,7 @@ impl Runtime {
     pub(crate) fn concatenate_bound_arguments_jsvalue(
         &self,
         realm: ContextId,
-        bound_arguments: Vec<Value>,
+        bound_arguments: Vec<crate::engine::value::JsValue>,
         call_arguments: Vec<crate::engine::value::JsValue>,
     ) -> Result<NativeConversion<Vec<crate::engine::value::JsValue>>, RuntimeError> {
         const MAX_CALL_ARGUMENTS: usize = 65_534;
@@ -83,9 +83,7 @@ impl Runtime {
             )?));
         }
         let mut arguments = Vec::with_capacity(total);
-        for argument in bound_arguments {
-            arguments.push(self.into_jsvalue(argument)?);
-        }
+        arguments.extend(bound_arguments);
         arguments.extend(call_arguments);
         Ok(NativeConversion::Value(arguments))
     }
@@ -210,7 +208,7 @@ impl Runtime {
                                 }
                             }
                             NativeConversion::Throw(value) => {
-                                return Ok(Completion::Throw(value));
+                                return Ok(Completion::Throw(self.into_jsvalue(value)?));
                             }
                         }
                     }
@@ -240,17 +238,28 @@ impl Runtime {
                     this_value: bound_this,
                     arguments: bound_arguments,
                 } => {
+                    let mut bound_values = Vec::new();
+                    bound_values
+                        .try_reserve_exact(bound_arguments.len())
+                        .map_err(|_| {
+                            RuntimeError::Invariant("bound argument allocation failed")
+                        })?;
+                    for value in bound_arguments {
+                        bound_values.push(self.root_and_release_jsvalue(value)?);
+                    }
                     arguments = match self.concatenate_bound_arguments(
                         caller_realm,
-                        &bound_arguments,
+                        &bound_values,
                         &arguments[argument_start..],
                     )? {
                         NativeConversion::Value(arguments) => arguments,
-                        NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                        NativeConversion::Throw(value) => {
+                            return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                        }
                     };
                     argument_start = 0;
                     callable = target;
-                    this_value = bound_this;
+                    this_value = self.root_and_release_jsvalue(bound_this)?;
                 }
                 CallableExecution::Proxy => {
                     return self.call_proxy(
@@ -302,45 +311,26 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<NativeInvocationAdaptation, RuntimeError> {
-        match self.adapt_native_invocation_input(
-            target,
-            realm,
-            std::borrow::Cow::Owned(invocation),
-            arguments,
-        )? {
-            NativeInvocationAdaptation::Invoke(invocation) => {
-                Ok(NativeInvocationAdaptation::Invoke(invocation.into_owned()))
-            }
-            NativeInvocationAdaptation::Complete(completion) => {
-                Ok(NativeInvocationAdaptation::Complete(completion))
-            }
-        }
+        self.adapt_native_invocation_input(target, realm, invocation, arguments)
     }
 
-    pub(crate) fn adapt_native_invocation_borrowed<'a>(
+    pub(crate) fn adapt_native_invocation_borrowed(
         &self,
         target: NativeFunctionId,
         realm: ContextId,
-        invocation: &'a NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
-    ) -> Result<NativeInvocationAdaptation<std::borrow::Cow<'a, NativeInvocation>>, RuntimeError>
-    {
-        self.adapt_native_invocation_input(
-            target,
-            realm,
-            std::borrow::Cow::Borrowed(invocation),
-            arguments,
-        )
+    ) -> Result<NativeInvocationAdaptation, RuntimeError> {
+        self.adapt_native_invocation_input(target, realm, invocation.dup(self)?, arguments)
     }
 
-    fn adapt_native_invocation_input<'a>(
+    fn adapt_native_invocation_input(
         &self,
         target: NativeFunctionId,
         realm: ContextId,
-        invocation: std::borrow::Cow<'a, NativeInvocation>,
+        invocation: NativeInvocation,
         arguments: &NativeArguments,
-    ) -> Result<NativeInvocationAdaptation<std::borrow::Cow<'a, NativeInvocation>>, RuntimeError>
-    {
+    ) -> Result<NativeInvocationAdaptation, RuntimeError> {
         let frame =
             self.0
                 .state
@@ -372,20 +362,20 @@ impl Runtime {
         }
         // Some handlers do not inspect their adapted this/new-target input,
         // but keeping it rooted for the full dispatch is part of the ABI.
-        let invocation = match (target.descriptor().cproto, invocation.as_ref()) {
+        let invocation = match (target.descriptor().cproto, invocation) {
             (
                 NativeCProto::Generic
                 | NativeCProto::GenericMagic
                 | NativeCProto::UnaryF64
                 | NativeCProto::BinaryF64,
-                NativeInvocation::Call { .. },
+                invocation @ NativeInvocation::Call { .. },
             ) => invocation,
             (
                 NativeCProto::Generic
                 | NativeCProto::GenericMagic
                 | NativeCProto::UnaryF64
                 | NativeCProto::BinaryF64,
-                NativeInvocation::Construct { .. },
+                invocation @ NativeInvocation::Construct { .. },
             ) => {
                 // QuickJS's generic and floating-point ABIs receive
                 // new.target in their receiver slot when an embedding
@@ -393,20 +383,23 @@ impl Runtime {
                 // function object. Floating-point argument conversion stays
                 // in the handler so abrupt completions keep their defining
                 // realm and left-to-right order.
-                std::borrow::Cow::Owned(NativeInvocation::Call {
+                NativeInvocation::Call {
                     this_value: native_invocation_input(invocation),
-                })
+                }
             }
             (
                 NativeCProto::Constructor | NativeCProto::ConstructorMagic,
-                NativeInvocation::Construct { .. },
+                invocation @ NativeInvocation::Construct { .. },
             ) => invocation,
             (
                 NativeCProto::Constructor | NativeCProto::ConstructorMagic,
                 NativeInvocation::Call { .. },
             ) => {
-                let exception =
-                    self.new_native_error_jsvalue(realm, NativeErrorKind::Type, "must be called with new")?;
+                let exception = self.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    "must be called with new",
+                )?;
                 return Ok(NativeInvocationAdaptation::Complete(Completion::Throw(
                     exception,
                 )));
@@ -414,43 +407,35 @@ impl Runtime {
             (
                 NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
                 NativeInvocation::Call { .. },
-            ) => std::borrow::Cow::Owned(NativeInvocation::Construct {
-                new_target: Value::Undefined,
-            }),
+            ) => NativeInvocation::Construct {
+                new_target: crate::engine::value::JsValue::Undefined,
+            },
             (
                 NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
-                NativeInvocation::Construct { .. },
+                invocation @ NativeInvocation::Construct { .. },
             ) => invocation,
-            (NativeCProto::Getter | NativeCProto::GetterMagic, NativeInvocation::Call { .. }) => {
-                std::borrow::Cow::Owned(NativeInvocation::Getter {
-                    this_value: native_invocation_input(invocation),
-                })
-            }
             (
                 NativeCProto::Getter | NativeCProto::GetterMagic,
-                NativeInvocation::Construct { .. },
-            ) => std::borrow::Cow::Owned(NativeInvocation::Getter {
+                invocation @ (NativeInvocation::Call { .. }
+                | NativeInvocation::Construct { .. }),
+            ) => NativeInvocation::Getter {
                 this_value: native_invocation_input(invocation),
-            }),
-            (NativeCProto::Setter | NativeCProto::SetterMagic, NativeInvocation::Call { .. }) => {
-                std::borrow::Cow::Owned(NativeInvocation::Setter {
-                    this_value: native_invocation_input(invocation),
-                })
-            }
+            },
             (
                 NativeCProto::Setter | NativeCProto::SetterMagic,
-                NativeInvocation::Construct { .. },
-            ) => std::borrow::Cow::Owned(NativeInvocation::Setter {
+                invocation @ (NativeInvocation::Call { .. }
+                | NativeInvocation::Construct { .. }),
+            ) => NativeInvocation::Setter {
                 this_value: native_invocation_input(invocation),
-            }),
-            (NativeCProto::IteratorNext, NativeInvocation::Call { .. }) => invocation,
-            (NativeCProto::IteratorNext, NativeInvocation::Construct { .. }) => {
+            },
+            (NativeCProto::IteratorNext, invocation @ NativeInvocation::Call { .. }) => invocation,
+            (NativeCProto::IteratorNext, invocation @ NativeInvocation::Construct { .. }) => {
                 // Iterator-next functions are non-constructors by default.
                 // If an embedder independently enables [[Construct]], QuickJS
                 // passes new.target through the same native receiver slot.
-                std::borrow::Cow::Owned(NativeInvocation::Call {
+                NativeInvocation::Call {
                     this_value: native_invocation_input(invocation),
-                })
+                }
             }
             (_, NativeInvocation::Getter { .. } | NativeInvocation::Setter { .. }) => {
                 return Err(RuntimeError::Invariant(
@@ -525,7 +510,7 @@ impl Runtime {
             TypedArrayNativeKind as Ta,
         };
         match target {
-            NativeFunctionId::FunctionPrototype => Ok(Completion::Return(Value::Undefined)),
+            NativeFunctionId::FunctionPrototype => Ok(Completion::Return(JsValue::Undefined)),
             NativeFunctionId::Map(kind) => {
                 self.call_map_native_borrowed(realm, kind, invocation, arguments)
             }
@@ -640,32 +625,34 @@ impl Runtime {
             NativeFunctionId::ArgumentProbe
             | NativeFunctionId::ConstructorProbe
             | NativeFunctionId::ConstructorOrFunctionProbe => {
-                if matches!(arguments.readable.first(), Some(Value::Bool(false))) {
-                    return Ok(Completion::Throw(Value::String(JsString::from_static(
-                        "native probe throw",
-                    ))));
+                if matches!(arguments.readable.first(), Some(JsValue::Bool(false))) {
+                    return Ok(Completion::Throw(
+                        self.unroot_value(&Value::String(JsString::from_static(
+                            "native probe throw",
+                        )))?,
+                    ));
                 }
-                if matches!(arguments.readable.first(), Some(Value::Bool(true))) {
+                if matches!(arguments.readable.first(), Some(JsValue::Bool(true))) {
                     return Err(RuntimeError::Invariant("native probe engine error"));
                 }
                 let padded_undefined = arguments.readable[arguments.actual_arg_count..]
                     .iter()
-                    .filter(|value| matches!(value, Value::Undefined))
+                    .filter(|value| matches!(value, JsValue::Undefined))
                     .count();
                 let active_function = self.active_function()?.object_id();
                 let invocation_target_is_function = match invocation {
                     NativeInvocation::Call {
-                        this_value: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        this_value: JsValue::Object(object),
+                    } => *object == active_function,
                     NativeInvocation::Construct {
-                        new_target: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        new_target: JsValue::Object(object),
+                    } => *object == active_function,
                     NativeInvocation::Getter {
-                        this_value: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        this_value: JsValue::Object(object),
+                    } => *object == active_function,
                     NativeInvocation::Setter {
-                        this_value: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        this_value: JsValue::Object(object),
+                    } => *object == active_function,
                     NativeInvocation::Call { .. }
                     | NativeInvocation::Construct { .. }
                     | NativeInvocation::Getter { .. }
@@ -678,9 +665,9 @@ impl Runtime {
                     padded_undefined,
                     invocation_target_is_function
                 );
-                Ok(Completion::Return(Value::String(JsString::try_from_utf8(
-                    &result,
-                )?)))
+                Ok(Completion::Return(self.unroot_value(&Value::String(
+                    JsString::try_from_utf8(&result)?,
+                ))?))
             }
             _ => Err(RuntimeError::Invariant(
                 "unregistered synchronous native leaf",
@@ -696,7 +683,7 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         match target {
-            NativeFunctionId::FunctionPrototype => Ok(Completion::Return(Value::Undefined)),
+            NativeFunctionId::FunctionPrototype => Ok(Completion::Return(JsValue::Undefined)),
             NativeFunctionId::FunctionConstructor(kind) => {
                 self.call_function_constructor(realm, kind, invocation, arguments)
             }
@@ -1176,32 +1163,34 @@ impl Runtime {
             NativeFunctionId::ArgumentProbe
             | NativeFunctionId::ConstructorProbe
             | NativeFunctionId::ConstructorOrFunctionProbe => {
-                if matches!(arguments.readable.first(), Some(Value::Bool(false))) {
-                    return Ok(Completion::Throw(Value::String(JsString::from_static(
-                        "native probe throw",
-                    ))));
+                if matches!(arguments.readable.first(), Some(JsValue::Bool(false))) {
+                    return Ok(Completion::Throw(
+                        self.unroot_value(&Value::String(JsString::from_static(
+                            "native probe throw",
+                        )))?,
+                    ));
                 }
-                if matches!(arguments.readable.first(), Some(Value::Bool(true))) {
+                if matches!(arguments.readable.first(), Some(JsValue::Bool(true))) {
                     return Err(RuntimeError::Invariant("native probe engine error"));
                 }
                 let padded_undefined = arguments.readable[arguments.actual_arg_count..]
                     .iter()
-                    .filter(|value| matches!(value, Value::Undefined))
+                    .filter(|value| matches!(value, JsValue::Undefined))
                     .count();
                 let active_function = self.active_function()?.object_id();
                 let invocation_target_is_function = match invocation {
                     NativeInvocation::Call {
-                        this_value: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        this_value: JsValue::Object(object),
+                    } => object == active_function,
                     NativeInvocation::Construct {
-                        new_target: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        new_target: JsValue::Object(object),
+                    } => object == active_function,
                     NativeInvocation::Getter {
-                        this_value: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        this_value: JsValue::Object(object),
+                    } => object == active_function,
                     NativeInvocation::Setter {
-                        this_value: Value::Object(object),
-                    } => object.object_id() == active_function,
+                        this_value: JsValue::Object(object),
+                    } => object == active_function,
                     NativeInvocation::Call { .. }
                     | NativeInvocation::Construct { .. }
                     | NativeInvocation::Getter { .. }
@@ -1214,9 +1203,9 @@ impl Runtime {
                     padded_undefined,
                     invocation_target_is_function
                 );
-                Ok(Completion::Return(Value::String(JsString::try_from_utf8(
-                    &result,
-                )?)))
+                Ok(Completion::Return(self.unroot_value(&Value::String(
+                    JsString::try_from_utf8(&result)?,
+                ))?))
             }
         }
     }

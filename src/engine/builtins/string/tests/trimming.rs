@@ -69,16 +69,18 @@ fn string_trim_preserves_whitespace_sides_utf16_rope_identity_and_argument_ignor
     }
 
     let unchanged = JsString::try_from_utf16([0xd800, 0x20, 0x61, 0xdc00]).unwrap();
-    let Completion::Return(Value::String(identity)) = runtime
-        .call_string_prototype_trim(
-            context.realm,
-            StringTrimKind::Both,
-            NativeInvocation::Call {
-                this_value: Value::String(unchanged.clone()),
-            },
-        )
-        .unwrap()
-    else {
+    let Value::String(identity) = returned(
+        &runtime,
+        runtime
+            .call_string_prototype_trim(
+                context.realm,
+                StringTrimKind::Both,
+                NativeInvocation::Call {
+                    this_value: js(&runtime, Value::String(unchanged.clone())),
+                },
+            )
+            .unwrap(),
+    ) else {
         panic!("identity trim did not return a String");
     };
     assert!(
@@ -102,16 +104,18 @@ fn string_trim_preserves_whitespace_sides_utf16_rope_identity_and_argument_ignor
     .unwrap();
     let rope = left.try_concat(&right).unwrap();
     assert!(!rope.is_flat());
-    let Completion::Return(Value::String(trimmed)) = runtime
-        .call_string_prototype_trim(
-            context.realm,
-            StringTrimKind::Both,
-            NativeInvocation::Call {
-                this_value: Value::String(rope),
-            },
-        )
-        .unwrap()
-    else {
+    let Value::String(trimmed) = returned(
+        &runtime,
+        runtime
+            .call_string_prototype_trim(
+                context.realm,
+                StringTrimKind::Both,
+                NativeInvocation::Call {
+                    this_value: js(&runtime, Value::String(rope)),
+                },
+            )
+            .unwrap(),
+    ) else {
         panic!("rope trim did not return a String");
     };
     assert!(trimmed.is_flat());

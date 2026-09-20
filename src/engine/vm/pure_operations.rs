@@ -7,9 +7,39 @@ use crate::engine::{
     code::runtime::PublishedFunctionSnapshot,
     heap::ContextId,
     heap::{BytecodeConstant, ObjectPayload},
-    value::{JsString, Value},
+    value::{JsString, JsValue, Value},
     vm::{Completion, exception::runtime_error_to_vm_error},
 };
+
+fn allocate_string_node(runtime: &Runtime, string: JsString) -> Result<JsValue, Error> {
+    runtime
+        .unroot_value(&Value::String(string))
+        .map_err(runtime_error_to_vm_error)
+}
+
+fn value_is_html_dda(runtime: &Runtime, value: &JsValue) -> Result<bool, Error> {
+    if !matches!(value, JsValue::Object(_)) {
+        return Ok(false);
+    }
+    let rooted = runtime
+        .root_value(value)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .value_is_html_dda(&rooted)
+        .map_err(runtime_error_to_vm_error)
+}
+
+fn value_is_callable(runtime: &Runtime, value: &JsValue) -> Result<bool, Error> {
+    if !matches!(value, JsValue::Object(_)) {
+        return Ok(false);
+    }
+    let rooted = runtime
+        .root_value(value)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .value_is_callable(&rooted)
+        .map_err(runtime_error_to_vm_error)
+}
 
 /// Load a published value constant while its executable owns the raw edge.
 /// Template objects and Symbols need the same checked retain as the old host.
@@ -17,14 +47,18 @@ pub(super) fn load_value_constant(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
     index: u32,
-) -> Result<Value, Error> {
+) -> Result<JsValue, Error> {
     let constant = executable
         .constant(index)
         .ok_or_else(|| Error::internal("constant index is out of bounds"))?;
     match constant {
-        BytecodeConstant::Value(value) => runtime
-            .root_raw_value(value)
-            .map_err(|error| Error::internal(error.to_string())),
+        BytecodeConstant::Value(value) => {
+            let value = JsValue::from_raw(value.clone())
+                .ok_or_else(|| Error::internal("constant sentinel escaped"))?;
+            runtime
+                .dup_jsvalue(&value)
+                .map_err(runtime_error_to_vm_error)
+        }
         BytecodeConstant::Function(_) => Err(Error::internal(
             "child function bytecode was loaded with a value-constant opcode",
         )),
@@ -128,7 +162,7 @@ pub(super) fn create_regexp(
     let id = object.object_id();
     runtime
         .retain_object_handle(id)
-        .map_err(runtime_error_to_vm_error)?;
+        .map_err(|error| runtime_error_to_vm_error(error.into()))?;
     Ok(Completion::Return(JsValue::Object(id)))
 }
 
@@ -145,7 +179,7 @@ pub(super) fn set_object_prototype(
     let prototype = match prototype {
         JsValue::Object(prototype) => Some(
             crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), prototype)
-                .map_err(runtime_error_to_vm_error)?,
+                .map_err(|error| runtime_error_to_vm_error(error.into()))?,
         ),
         JsValue::Null => None,
         // Pinned QuickJS `OP_set_proto` consumes every primitive without
@@ -153,7 +187,7 @@ pub(super) fn set_object_prototype(
         _ => return Ok(Completion::Return(JsValue::Undefined)),
     };
     let object = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), object)
-        .map_err(runtime_error_to_vm_error)?;
+        .map_err(|error| runtime_error_to_vm_error(error.into()))?;
     let changed = runtime
         .set_prototype_of(&object, prototype.as_ref())
         .map_err(runtime_error_to_vm_error)?;
@@ -245,13 +279,17 @@ fn perform(
             value
         }
         P::IteratorCheckObject => {
-            super::iterator_support::check_result_object_jsvalue(slots.peek(&frame.window, 0)?)?;
+            let value = slots.peek(&frame.window, 0)?;
+            let rooted = runtime
+                .root_value(value)
+                .map_err(runtime_error_to_vm_error)?;
+            super::iterator_support::check_result_object(&rooted)?;
             return Ok(None);
         }
         P::IteratorMissingThrow => return Err(super::iterator_support::missing_throw()),
-        P::AtomValue(value) => runtime
-            .allocate_string_node(JsString::from_fresh_decimal_u32(value))
-            .map_err(runtime_error_to_vm_error)?,
+        P::AtomValue(value) => {
+            allocate_string_node(runtime, JsString::from_fresh_decimal_u32(value))?
+        }
         P::RegExp(index) => {
             match create_regexp(runtime, frame.executable.realm, &frame.executable, index)? {
                 Completion::Return(value) => value,
@@ -352,27 +390,17 @@ fn perform(
         | P::TypeOfIsFunction => {
             let value = slots.pop(&mut frame.window)?;
             let result = match operation {
-                P::TypeOf => runtime
-                    .allocate_string_node(type_of(runtime, &value)?)
-                    .map_err(runtime_error_to_vm_error)?,
+                P::TypeOf => allocate_string_node(runtime, type_of(runtime, &value)?)?,
                 P::IsUndefinedOrNull => {
                     JsValue::Bool(matches!(value, JsValue::Null | JsValue::Undefined))
                 }
                 P::IsUndefined => JsValue::Bool(matches!(value, JsValue::Undefined)),
                 P::IsNull => JsValue::Bool(matches!(value, JsValue::Null)),
                 P::TypeOfIsUndefined => JsValue::Bool(
-                    matches!(value, JsValue::Undefined)
-                        || runtime
-                            .value_is_html_dda_jsvalue(&value)
-                            .map_err(runtime_error_to_vm_error)?,
+                    matches!(value, JsValue::Undefined) || value_is_html_dda(runtime, &value)?,
                 ),
                 P::TypeOfIsFunction => JsValue::Bool(
-                    !runtime
-                        .value_is_html_dda_jsvalue(&value)
-                        .map_err(runtime_error_to_vm_error)?
-                        && runtime
-                            .value_is_callable_jsvalue(&value)
-                            .map_err(runtime_error_to_vm_error)?,
+                    !value_is_html_dda(runtime, &value)? && value_is_callable(runtime, &value)?,
                 ),
                 _ => unreachable!(),
             };

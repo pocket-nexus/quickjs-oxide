@@ -56,19 +56,17 @@ fn string_subrange_preserves_pinned_clamps_utf16_and_rope_copying() {
             context.realm,
             StringSubrangeKind::Slice,
             NativeInvocation::Call {
-                this_value: Value::String(rope),
+                this_value: js(&runtime, Value::String(rope)),
             },
             &NativeArguments {
                 actual_arg_count: 2,
-                readable: vec![Value::Int(4_999), Value::Int(5_002)],
+                readable: vec![JsValue::Int(4_999), JsValue::Int(5_002)],
             },
         )
         .unwrap();
     assert_eq!(
-        completion,
-        Completion::Return(Value::String(
-            JsString::try_from_utf16([0xd83d, 0xde00, u16::from(b'b')]).unwrap()
-        ))
+        returned(&runtime, completion),
+        Value::String(JsString::try_from_utf16([0xd83d, 0xde00, u16::from(b'b')]).unwrap())
     );
 }
 

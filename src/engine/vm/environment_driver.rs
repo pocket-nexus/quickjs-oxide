@@ -3,7 +3,10 @@ use super::driver::CallStep;
 use super::environment_bindings::operation::EnvironmentStep;
 use super::frame::ReturnValue;
 use super::{
-    Completion, exception::runtime_error_to_vm_error, execution::RunningExecution, frame::FrameId,
+    Completion,
+    exception::{heap_error_to_vm_error, runtime_error_to_vm_error},
+    execution::RunningExecution,
+    frame::FrameId,
 };
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::bytecode::{DynamicEnvironmentSource, EvalVariableSource};
@@ -146,8 +149,12 @@ pub(super) fn step(
                 )? {
                     GlobalReference::Lexical(object) => {
                         let id = object.object_id();
-                        runtime.retain_object_handle(id).map_err(runtime_error_to_vm_error)?;
-                        execution.slots.push(&mut frame.window, JsValue::Object(id))?
+                        runtime
+                            .retain_object_handle(id)
+                            .map_err(heap_error_to_vm_error)?;
+                        execution
+                            .slots
+                            .push(&mut frame.window, JsValue::Object(id))?
                     }
                     GlobalReference::Object { object, key } => {
                         query = Some((
@@ -201,7 +208,7 @@ pub(super) fn step(
                                 runtime.clone(),
                                 *object,
                             )
-                            .map_err(runtime_error_to_vm_error)?
+                            .map_err(heap_error_to_vm_error)?
                         }
                         JsValue::Undefined if strict => {
                             return Err(runtime
@@ -265,7 +272,9 @@ pub(super) fn step(
                 }
                 let key = linked_key(runtime, &frame.executable, name)?;
                 let value = execution.slots.pop(&mut frame.window)?;
-                let value_root = runtime.root_value(&value).map_err(runtime_error_to_vm_error)?;
+                let value_root = runtime
+                    .root_value(&value)
+                    .map_err(runtime_error_to_vm_error)?;
                 let defined = runtime
                     .define_own_property_in_realm(
                         Some(realm),
@@ -338,7 +347,7 @@ pub(super) fn step(
                                         runtime.clone(),
                                         *object,
                                     )
-                                    .map_err(runtime_error_to_vm_error)?
+                                    .map_err(heap_error_to_vm_error)?
                                 }
                                 JsValue::Undefined => {
                                     let key = linked_key(runtime, &frame.executable, name)?;
@@ -368,7 +377,9 @@ pub(super) fn step(
                     };
                     if matches!(op, Operation::Object(_)) {
                         let id = object.object_id();
-                        runtime.retain_object_handle(id).map_err(runtime_error_to_vm_error)?;
+                        runtime
+                            .retain_object_handle(id)
+                            .map_err(heap_error_to_vm_error)?;
                         BindingRead::Value(JsValue::Object(id))
                     } else {
                         read_binding(runtime, &frame.executable, &object, op)?
@@ -395,16 +406,24 @@ pub(super) fn step(
                     .new_array_from_values_jsvalue(realm, values)
                     .map_err(runtime_error_to_vm_error)?;
                 let id = array.object_id();
-                runtime.retain_object_handle(id).map_err(runtime_error_to_vm_error)?;
-                execution.slots.push(&mut frame.window, JsValue::Object(id))?;
+                runtime
+                    .retain_object_handle(id)
+                    .map_err(heap_error_to_vm_error)?;
+                execution
+                    .slots
+                    .push(&mut frame.window, JsValue::Object(id))?;
             }
             Operation::CreateObject => {
                 let object = runtime
                     .new_ordinary_object_in_realm(realm)
                     .map_err(runtime_error_to_vm_error)?;
                 let id = object.object_id();
-                runtime.retain_object_handle(id).map_err(runtime_error_to_vm_error)?;
-                execution.slots.push(&mut frame.window, JsValue::Object(id))?;
+                runtime
+                    .retain_object_handle(id)
+                    .map_err(heap_error_to_vm_error)?;
+                execution
+                    .slots
+                    .push(&mut frame.window, JsValue::Object(id))?;
             }
             Operation::CreateVariable => {
                 if frame
@@ -422,8 +441,12 @@ pub(super) fn step(
                     .new_object(None)
                     .map_err(runtime_error_to_vm_error)?;
                 let id = object.object_id();
-                runtime.retain_object_handle(id).map_err(runtime_error_to_vm_error)?;
-                execution.slots.push(&mut frame.window, JsValue::Object(id))?;
+                runtime
+                    .retain_object_handle(id)
+                    .map_err(heap_error_to_vm_error)?;
+                execution
+                    .slots
+                    .push(&mut frame.window, JsValue::Object(id))?;
             }
             Operation::ToObject => {
                 let value = execution.slots.pop(&mut frame.window)?;
@@ -433,8 +456,12 @@ pub(super) fn step(
                 {
                     NativeConversion::Value(object) => {
                         let id = object.object_id();
-                        runtime.retain_object_handle(id).map_err(runtime_error_to_vm_error)?;
-                        execution.slots.push(&mut frame.window, JsValue::Object(id))?
+                        runtime
+                            .retain_object_handle(id)
+                            .map_err(heap_error_to_vm_error)?;
+                        execution
+                            .slots
+                            .push(&mut frame.window, JsValue::Object(id))?
                     }
                     NativeConversion::Throw(value) => {
                         let value = runtime
@@ -626,14 +653,14 @@ pub(super) fn prepare_environment_read(
         .get_own_property(object, key)
         .map_err(runtime_error_to_vm_error)?
     {
-        Some(CompleteOrdinaryPropertyDescriptor::Data { value, .. }) => Ok(
-            OrdinaryRead::Complete(Some(
+        Some(CompleteOrdinaryPropertyDescriptor::Data { value, .. }) => {
+            Ok(OrdinaryRead::Complete(Some(
                 // The descriptor root transfers without a retain/release pair.
                 runtime
                     .into_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?,
-            )),
-        ),
+            )))
+        }
         Some(CompleteOrdinaryPropertyDescriptor::Accessor {
             get: Some(getter), ..
         }) => Ok(OrdinaryRead::Call { getter, receiver }),
@@ -782,7 +809,10 @@ mod tests {
                 .unwrap();
             let _costs = profile.snapshot();
             assert!(
-                matches!(completion, Completion::Return(Value::Int(42))),
+                matches!(
+                    completion,
+                    Completion::Return(crate::engine::value::JsValue::Int(42))
+                ),
                 "{source}: {completion:?}"
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());

@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{CallableRef, ObjectRef},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -32,7 +32,7 @@ pub(crate) struct EachResumeState {
     record: Option<ActiveCollectionRecordGuard>,
     set: ObjectRef,
     callback: CallableRef,
-    receiver: Value,
+    receiver: JsValue,
     index: usize,
 }
 impl EachStep {
@@ -44,13 +44,19 @@ impl EachStep {
     ) -> Result<Self, RuntimeError> {
         let set = match runtime.set_receiver(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "Set.prototype.forEach callback argv was not padded",
         ))?;
         let callback = match value {
-            Value::Object(object) => runtime.as_callable(object)?,
+            JsValue::Object(id) => {
+                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+            }
             _ => None,
         };
         let Some(callback) = callback else {
@@ -62,11 +68,10 @@ impl EachStep {
             pending_effect: EachStepPending::default(),
             set: set.clone(),
             callback,
-            receiver: arguments
-                .readable
-                .get(1)
-                .cloned()
-                .unwrap_or(Value::Undefined),
+            receiver: match arguments.readable.get(1) {
+                Some(value) => runtime.dup_jsvalue(value)?,
+                None => JsValue::Undefined,
+            },
             index: 0,
             record: None,
         }))
@@ -78,7 +83,7 @@ impl EachResume {
         let Some((record_index, value)) =
             runtime.next_live_set_record(&self.0.set, &mut self.0.index)?
         else {
-            return Ok(EachStep::Complete(Completion::Return(Value::Undefined)));
+            return Ok(EachStep::Complete(Completion::Return(JsValue::Undefined)));
         };
         self.0.record = Some(
             runtime.push_active_collection_record(ActiveCollectionRecord::Set {
@@ -88,8 +93,12 @@ impl EachResume {
         );
         Ok(EachStep::request_call(
             self.0.callback.clone(),
-            self.0.receiver.clone(),
-            vec![value.clone(), value, Value::Object(self.0.set.clone())],
+            runtime.dup_jsvalue(&self.0.receiver)?,
+            vec![
+                runtime.dup_jsvalue(&value)?,
+                value,
+                runtime.into_jsvalue(Value::Object(self.0.set.clone()))?,
+            ],
             self,
         ))
     }
@@ -117,8 +126,12 @@ pub(crate) fn finish(
             EachStep::Complete(result) => return Ok(result),
             EachStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, receiver, &arguments)?,
@@ -131,14 +144,14 @@ pub(crate) fn finish(
 #[derive(Default)]
 struct EachStepPending {
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
 }
 impl EachStep {
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: EachResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -155,14 +168,14 @@ impl EachResume {
             .take()
             .expect("EachStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("EachStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

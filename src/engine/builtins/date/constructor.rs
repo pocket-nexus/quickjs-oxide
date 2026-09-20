@@ -56,15 +56,18 @@ impl Runtime {
         let text = format_date_string(fields.as_ref(), DateStringKind::String).map_err(|_| {
             RuntimeError::Invariant("the host clock produced an invalid Date string")
         })?;
-        Ok(Completion::Return(Value::String(JsString::try_from_utf8(
-            &text,
-        )?)))
+        Ok(Completion::Return(self.unroot_value(&Value::String(
+            JsString::try_from_utf8(&text)?,
+        ))?))
     }
 
     fn call_date_now(&self) -> Result<Completion, RuntimeError> {
-        Ok(Completion::Return(Value::number(
-            self.date_now_millis() as f64
-        )))
+        Ok(Completion::Return(
+            crate::engine::value::number::operations::Number::compact(
+                self.date_now_millis() as f64,
+            )
+            .into(),
+        ))
     }
 
     fn genuine_date_value(&self, value: &Value) -> Result<Option<f64>, RuntimeError> {

@@ -1,5 +1,5 @@
 //! Mechanical adapters for string domain requests.
-use super::{Resume, Step, Value};
+use super::{JsValue, Resume, Step, Value};
 
 impl From<crate::engine::builtins::StringReplaceStep> for Step {
     fn from(step: crate::engine::builtins::StringReplaceStep) -> Self {
@@ -86,7 +86,7 @@ impl From<crate::engine::builtins::RegExpPresentationStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::RegExpPresentation(resume)),
@@ -182,7 +182,7 @@ impl From<crate::engine::builtins::StringSearchStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::StringSearch(resume)),
@@ -209,7 +209,7 @@ impl From<crate::engine::builtins::StringSplitStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::StringSplit(resume)),
@@ -249,7 +249,7 @@ impl From<crate::engine::builtins::RegExpConstructorStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::RegExpConstructor(resume)),
@@ -290,7 +290,7 @@ impl From<crate::engine::builtins::StringProtocolStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::StringProtocol(resume)),
@@ -340,7 +340,7 @@ impl From<crate::engine::builtins::RegExpSearchStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::RegExpSearch(resume)),
@@ -368,7 +368,7 @@ impl From<crate::engine::builtins::RegExpSearchStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     value: Some(value),
@@ -388,7 +388,7 @@ impl From<crate::engine::builtins::RegExpMatchStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::RegExpMatch(resume)),
@@ -417,7 +417,7 @@ impl From<crate::engine::builtins::RegExpMatchStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     value: Some(value),
@@ -437,7 +437,7 @@ impl From<crate::engine::builtins::RegExpMatchAllStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::RegExpMatchAll(resume)),
@@ -476,7 +476,7 @@ impl From<crate::engine::builtins::RegExpMatchAllStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     value: Some(value),
@@ -496,7 +496,7 @@ impl From<crate::engine::builtins::RegExpSplitStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::RegExpSplit(resume)),
@@ -535,7 +535,7 @@ impl From<crate::engine::builtins::RegExpSplitStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     value: Some(value),
@@ -565,7 +565,7 @@ impl From<crate::engine::builtins::RegExpSpeciesStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::RegExpSpecies(resume)),
@@ -583,7 +583,7 @@ impl From<crate::engine::builtins::RegExpIteratorStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::RegExpIterator(resume)),
@@ -618,7 +618,7 @@ impl From<crate::engine::builtins::RegExpIteratorStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key.clone()),
                     value: Some(value),
@@ -641,7 +641,7 @@ impl From<crate::engine::builtins::StringFactoryStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::StringFactory(resume)),

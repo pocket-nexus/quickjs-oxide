@@ -118,14 +118,14 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.prepare_promise_all_resolve_element(realm, invocation, arguments)?
+        self.prepare_promise_all_resolve_element(realm, &invocation, arguments)?
             .finish(self, realm)
     }
 
     pub(crate) fn prepare_promise_all_resolve_element(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<operation::PromiseStep, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
@@ -156,9 +156,7 @@ impl Runtime {
             ));
         };
         if already_called.replace(true) {
-            return Ok(operation::PromiseStep::Complete(Completion::Return(
-                Value::Undefined,
-            )));
+            return Ok(operation::PromiseStep::Complete(Completion::Return(JsValue::Undefined)));
         }
 
         let value = self.promise_aggregate_element_argument(arguments)?;
@@ -180,7 +178,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.prepare_promise_all_settled_element(target_outcome, realm, invocation, arguments)?
+        self.prepare_promise_all_settled_element(target_outcome, realm, &invocation, arguments)?
             .finish(self, realm)
     }
 
@@ -188,7 +186,7 @@ impl Runtime {
         &self,
         target_outcome: PromiseReactionKind,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<operation::PromiseStep, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
@@ -225,9 +223,7 @@ impl Runtime {
             ));
         }
         if already_called.replace(true) {
-            return Ok(operation::PromiseStep::Complete(Completion::Return(
-                Value::Undefined,
-            )));
+            return Ok(operation::PromiseStep::Complete(Completion::Return(JsValue::Undefined)));
         }
 
         let value = self.promise_aggregate_element_argument(arguments)?;
@@ -260,14 +256,14 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        self.prepare_promise_any_reject_element(realm, invocation, arguments)?
+        self.prepare_promise_any_reject_element(realm, &invocation, arguments)?
             .finish(self, realm)
     }
 
     pub(crate) fn prepare_promise_any_reject_element(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<operation::PromiseStep, RuntimeError> {
         let NativeInvocation::Call { .. } = invocation else {
@@ -298,9 +294,7 @@ impl Runtime {
             ));
         };
         if already_called.replace(true) {
-            return Ok(operation::PromiseStep::Complete(Completion::Return(
-                Value::Undefined,
-            )));
+            return Ok(operation::PromiseStep::Complete(Completion::Return(JsValue::Undefined)));
         }
 
         let reason = self.promise_aggregate_element_argument(arguments)?;
@@ -319,13 +313,9 @@ impl Runtime {
         &self,
         arguments: &NativeArguments,
     ) -> Result<Value, RuntimeError> {
-        arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise aggregate element argv was not padded",
-            ))
+        self.root_value(arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Promise aggregate element argv was not padded",
+        ))?)
     }
 
     fn define_fresh_aggregate_property(
@@ -368,7 +358,7 @@ impl Runtime {
         if let Some(value) =
             self.define_array_data_property_without_throw(realm, &values, index, value)?
         {
-            return Ok(operation::PromiseStep::Complete(Completion::Throw(value)));
+            return Ok(operation::PromiseStep::Complete(Completion::Throw(self.into_jsvalue(value)?)));
         }
 
         let count = remaining
@@ -379,9 +369,7 @@ impl Runtime {
             ))?;
         remaining.set(count);
         if count != 0 {
-            return Ok(operation::PromiseStep::Complete(Completion::Return(
-                Value::Undefined,
-            )));
+            return Ok(operation::PromiseStep::Complete(Completion::Return(JsValue::Undefined)));
         }
 
         let argument = match terminal {

@@ -1,5 +1,5 @@
 //! Mechanical adapters for vm domain requests.
-use super::{Completion, Resume, Step, Value};
+use super::{Completion, JsValue, Resume, Step, Value};
 
 impl From<crate::engine::vm::environment_bindings::operation::EnvironmentStep> for Step {
     fn from(step: crate::engine::vm::environment_bindings::operation::EnvironmentStep) -> Self {
@@ -40,7 +40,7 @@ impl From<crate::engine::vm::environment_bindings::operation::EnvironmentStep> f
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     value: Some(value),
@@ -128,7 +128,9 @@ impl From<crate::engine::vm::suspend::creation::CreationStep> for super::Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(crate::engine::value::Value::Object(object.clone())),
+                receiver: Some(crate::engine::value::JsValue::Object(
+                    object.clone().into_handle(),
+                )),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(super::Resume::GeneratorPrototype(resume)),
@@ -165,7 +167,7 @@ impl From<crate::engine::vm::async_function::AsyncStep> for super::Step {
                 let value = resume.take_call_value();
                 Self::Call {
                     target: Some(super::DirectCallTarget::Callable(callable)),
-                    receiver: Some(crate::engine::value::Value::Undefined),
+                    receiver: Some(crate::engine::value::JsValue::Undefined),
                     arguments: Some(vec![value]),
                     resume: Some(super::Resume::Async(resume)),
                 }
@@ -193,7 +195,7 @@ impl From<crate::engine::vm::async_generator::AsyncGeneratorStep> for super::Ste
                 let value = resume.take_call_value();
                 Self::Call {
                     target: Some(super::DirectCallTarget::Callable(callable)),
-                    receiver: Some(Value::Undefined),
+                    receiver: Some(JsValue::Undefined),
                     arguments: Some(vec![value]),
                     resume: Some(super::Resume::AsyncGenerator(resume)),
                 }

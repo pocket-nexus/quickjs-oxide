@@ -3,7 +3,10 @@ use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::object::PropertyKey;
 use crate::engine::value::Value;
 
-pub(super) fn canonical(runtime: &Runtime, value: &crate::engine::value::JsValue) -> Result<PropertyKey, Error> {
+pub(super) fn canonical(
+    runtime: &Runtime,
+    value: &crate::engine::value::JsValue,
+) -> Result<PropertyKey, Error> {
     if let Some(key) = runtime.immediate_numeric_property_key_jsvalue(value) {
         return Ok(key);
     }
@@ -123,10 +126,18 @@ pub(super) fn set_name(
                 // the trusted read clones the payload Rc without retaining.
                 runtime.0.state.borrow().heap.string_fast(*name).clone()
             }
-            None => computed_name(runtime, execution.slots.peek(&frame.window, 1)?)?,
+            None => {
+                let key = runtime
+                    .root_value(execution.slots.peek(&frame.window, 1)?)
+                    .map_err(runtime_error_to_vm_error)?;
+                computed_name(runtime, &key)?
+            }
         };
+        let target = runtime
+            .root_value(execution.slots.peek(&frame.window, 0)?)
+            .map_err(runtime_error_to_vm_error)?;
         runtime
-            .define_object_name(execution.slots.peek(&frame.window, 0)?, &name)
+            .define_object_name(&target, &name)
             .map_err(runtime_error_to_vm_error)
     })();
     match result {

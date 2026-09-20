@@ -7,8 +7,8 @@ mod ready;
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::code::function::metadata::FunctionKind;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, Value};
 #[cfg(all(test, feature = "profiling"))]
 use crate::engine::vm::BytecodePc;
 use crate::engine::vm::Completion;
@@ -38,7 +38,9 @@ pub(super) fn push_frame(
             entry.executable.metadata.function_name_local,
         )?
     } else {
-        execution.slots.push_frame(runtime, &entry.executable.frame_layout(), entry.storage)?
+        execution
+            .slots
+            .push_frame(runtime, &entry.executable.frame_layout(), entry.storage)?
     };
     let mut cold = entry.cold;
     cold.executable = entry.executable.into();
@@ -164,33 +166,32 @@ pub(super) fn enter_call(
     let callee = runtime
         .dup_jsvalue(execution.slots.peek(window, count)?)
         .map_err(runtime_error_to_vm_error)?;
-    let mut callable =
-        match runtime.direct_call_target_from_jsvalue(callee) {
-            Ok(super::call::DirectCallTarget::Callable(callable)) => callable,
-            Ok(super::call::DirectCallTarget::NonCallableProxy(proxy)) => {
-                // Pinned direct calls observe a non-callable Proxy's apply getter
-                // before reporting its missing [[Call]] capability.
-                let depth = execution.slots.depth(window);
-                let mut arguments = Vec::new();
-                arguments
-                    .try_reserve_exact(count)
-                    .map_err(|_| Error::internal("Proxy call arguments allocation failed"))?;
-                for _ in 0..count {
-                    arguments.push(execution.slots.pop(window)?);
-                }
-                arguments.reverse();
-                execution.slots.pop(window)?;
-                let receiver = if method {
-                    execution.slots.pop(window)?
-                } else {
-                    JsValue::Undefined
-                };
-                return super::proxy_get_driver::start_call(
-                    runtime, execution, id, proxy, receiver, arguments, tail, depth,
-                );
+    let mut callable = match runtime.direct_call_target_from_jsvalue(callee) {
+        Ok(super::call::DirectCallTarget::Callable(callable)) => callable,
+        Ok(super::call::DirectCallTarget::NonCallableProxy(proxy)) => {
+            // Pinned direct calls observe a non-callable Proxy's apply getter
+            // before reporting its missing [[Call]] capability.
+            let depth = execution.slots.depth(window);
+            let mut arguments = Vec::new();
+            arguments
+                .try_reserve_exact(count)
+                .map_err(|_| Error::internal("Proxy call arguments allocation failed"))?;
+            for _ in 0..count {
+                arguments.push(execution.slots.pop(window)?);
             }
-            Err(error) => return rejected_call(runtime, realm, runtime_error_to_vm_error(error)),
-        };
+            arguments.reverse();
+            execution.slots.pop(window)?;
+            let receiver = if method {
+                execution.slots.pop(window)?
+            } else {
+                JsValue::Undefined
+            };
+            return super::proxy_get_driver::start_call(
+                runtime, execution, id, proxy, receiver, arguments, tail, depth,
+            );
+        }
+        Err(error) => return rejected_call(runtime, realm, runtime_error_to_vm_error(error)),
+    };
     // Keep the existing rejection order and exception materialization until
     // general call errors join the owned unwind path. Nothing was consumed.
     if !execution
@@ -225,7 +226,9 @@ pub(super) fn enter_call(
                 defining_realm,
                 min_readable_args,
                 match bound_receiver {
-                    Some(bound) => runtime.root_and_release_jsvalue(bound).map_err(runtime_error_to_vm_error)?,
+                    Some(bound) => runtime
+                        .root_and_release_jsvalue(bound)
+                        .map_err(runtime_error_to_vm_error)?,
                     None => receiver,
                 },
                 match bound_arguments {
@@ -291,11 +294,7 @@ pub(super) fn enter_call(
                         }
                     },
                 );
-                bound_receiver = Some(
-                    runtime
-                        .into_jsvalue(this_value)
-                        .map_err(runtime_error_to_vm_error)?,
-                );
+                bound_receiver = Some(this_value);
                 callable = target;
             }
             CallableExecution::Proxy => {
@@ -349,7 +348,9 @@ pub(super) fn enter_call(
                     defining_realm,
                     min_readable_args,
                     match bound_receiver {
-                        Some(bound) => runtime.root_and_release_jsvalue(bound).map_err(runtime_error_to_vm_error)?,
+                        Some(bound) => runtime
+                            .root_and_release_jsvalue(bound)
+                            .map_err(runtime_error_to_vm_error)?,
                         None => receiver,
                     },
                     match bound_arguments {
@@ -420,10 +421,7 @@ pub(super) fn enter_call(
     if kind == FunctionKind::Normal && bound_arguments.is_none() {
         let frame = execution.frames.current_mut(id)?;
         let receiver = if method {
-            super::stack::copy_value(
-                runtime,
-                execution.slots.peek(&frame.window, count + 1)?,
-            )?
+            super::stack::copy_value(runtime, execution.slots.peek(&frame.window, count + 1)?)?
         } else {
             JsValue::Undefined
         };
@@ -570,11 +568,15 @@ pub(super) fn execute_root_descriptor(
         RunningExit::Complete(Completion::Throw(value)) => {
             // The internal exception crosses out to the public host adapter:
             // its root is duplicated and the internal edge is released.
-            let rooted = runtime.root_value(&value).map_err(runtime_error_to_vm_error)?;
+            let rooted = runtime
+                .root_value(&value)
+                .map_err(runtime_error_to_vm_error)?;
             runtime
                 .release_jsvalue(value)
                 .map_err(runtime_error_to_vm_error)?;
-            Ok(crate::engine::value::conversion::NativeConversion::Throw(rooted))
+            Ok(crate::engine::value::conversion::NativeConversion::Throw(
+                rooted,
+            ))
         }
         _ => Err(Error::internal(
             "descriptor entry returned an untyped terminal result",

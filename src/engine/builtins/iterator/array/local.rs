@@ -101,7 +101,9 @@ impl ArrayNextStep {
                     match read {
                         OrdinaryRead::Complete(value) => resume.resume(
                             runtime,
-                            Completion::Return(value.unwrap_or(Value::Undefined)),
+                            Completion::Return(
+                                value.unwrap_or(crate::engine::value::JsValue::Undefined),
+                            ),
                         )?,
                         read => {
                             // Lookup may have materialized a lazy descriptor.
@@ -111,9 +113,9 @@ impl ArrayNextStep {
                     }
                 }
                 Self::Number { mut resume }
-                    if !matches!(resume.requested_value, Some(Value::Object(_))) =>
+                    if !matches!(resume.requested_value, Some(JsValue::Object(_))) =>
                 {
-                    let value = resume.take_number();
+                    let value = runtime.root_and_release_jsvalue(resume.take_number())?;
                     let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant(
@@ -167,7 +169,7 @@ mod dense_immediate_tests {
             &runtime,
             context.realm,
             &NativeInvocation::Call {
-                this_value: iterator,
+                this_value: runtime.into_jsvalue(iterator).unwrap(),
             },
         )
         .unwrap() else {
@@ -183,12 +185,14 @@ mod dense_immediate_tests {
             panic!("length")
         };
         let ArrayNextStep::Number { mut resume } =
-            resume.resume(&runtime, Completion::Return(value)).unwrap()
+            resume.resume(&runtime, Completion::Return(runtime.into_jsvalue(value).unwrap())).unwrap()
         else {
             panic!("number")
         };
         assert_eq!(&*resume.0 as *const ArrayNextResumeState, address);
-        let value = resume.take_number();
+        let value = runtime
+            .root_and_release_jsvalue(resume.take_number())
+            .unwrap();
         let result = runtime.native_to_number(context.realm, &value).unwrap();
         let ArrayNextStep::PreparedRead { mut resume } = resume.number(&runtime, result).unwrap()
         else {
@@ -204,9 +208,9 @@ mod dense_immediate_tests {
             panic!("element")
         };
         assert!(matches!(
-            resume.resume(&runtime, Completion::Return(value)).unwrap(),
+            resume.resume(&runtime, Completion::Return(runtime.into_jsvalue(value).unwrap())).unwrap(),
             ArrayNextStep::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value: Value::Int(7),
+                value: JsValue::Int(7),
                 done: false
             })
         ));

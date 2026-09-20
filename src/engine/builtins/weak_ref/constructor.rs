@@ -4,7 +4,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, WeakCollectionKey},
     object::{CallableRef, ObjectRef},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{
@@ -16,7 +16,7 @@ use crate::engine::{
 pub(crate) enum WeakConstructorStep {
     Complete(Completion),
     Prototype {
-        new_target: Value,
+        new_target: JsValue,
         resume: WeakConstructorResume,
     },
 }
@@ -62,7 +62,7 @@ impl WeakConstructorStep {
                 }
             }));
         };
-        if matches!(new_target, Value::Undefined) {
+        if matches!(new_target, JsValue::Undefined) {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
                     realm,
@@ -71,16 +71,14 @@ impl WeakConstructorStep {
                 )?,
             )));
         }
-        let value = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(match kind {
+        let value = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant(match kind {
                 WeakIntrinsicKind::WeakRef => "WeakRef target argv was not padded",
                 WeakIntrinsicKind::FinalizationRegistry => {
                     "FinalizationRegistry callback argv was not padded"
                 }
-            }))?;
+            }),
+        )?)?;
         let input = match kind {
             WeakIntrinsicKind::WeakRef => {
                 let Some(key) = runtime.weak_target_key(&value, "WeakRef target")? else {
@@ -104,7 +102,7 @@ impl WeakConstructorStep {
             }
         };
         Ok(Self::Prototype {
-            new_target: new_target.clone(),
+            new_target: runtime.dup_jsvalue(new_target)?,
             resume: WeakConstructorResume(Box::new(WeakConstructorResumeState { realm, input })),
         })
     }
@@ -117,7 +115,9 @@ impl WeakConstructorResume {
     ) -> Result<WeakConstructorStep, RuntimeError> {
         let prototype = match reply {
             NativeConversion::Throw(value) => {
-                return Ok(WeakConstructorStep::Complete(Completion::Throw(value)));
+                return Ok(WeakConstructorStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => prototype,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {
@@ -138,7 +138,7 @@ impl WeakConstructorResume {
             }
         };
         Ok(WeakConstructorStep::Complete(Completion::Return(
-            Value::Object(object),
+            runtime.into_jsvalue(Value::Object(object))?,
         )))
     }
 }
@@ -150,14 +150,17 @@ pub(super) fn finish(
     loop {
         step = match step {
             WeakConstructorStep::Complete(result) => return Ok(result),
-            WeakConstructorStep::Prototype { new_target, resume } => resume.prototype(
-                runtime,
-                finish_source(
+            WeakConstructorStep::Prototype { new_target, resume } => {
+                let new_target = runtime.root_and_release_jsvalue(new_target)?;
+                resume.prototype(
                     runtime,
-                    realm,
-                    ProtoSourceStep::start(runtime, realm, new_target)?,
-                )?,
-            )?,
+                    finish_source(
+                        runtime,
+                        realm,
+                        ProtoSourceStep::start(runtime, realm, new_target)?,
+                    )?,
+                )?
+            }
         };
     }
 }

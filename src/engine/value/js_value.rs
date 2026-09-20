@@ -33,6 +33,7 @@ use crate::engine::value::Value;
 ///
 /// See the module documentation for the ownership contract.  A `JsValue` is
 /// 16 bytes (compile-time asserted below), half the public [`Value`].
+#[derive(PartialEq)]
 pub enum JsValue {
     Undefined,
     Null,

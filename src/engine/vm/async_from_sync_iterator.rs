@@ -34,16 +34,24 @@ impl Runtime {
         let async_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::AsyncIterator));
         let async_method =
             match self.get_value_property_in_realm(realm, iterable.clone(), &async_key)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+                Completion::Throw(value) => {
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
+                }
             };
 
         let iterator = if matches!(async_method, Value::Undefined | Value::Null) {
             let sync_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
             let sync_method =
                 match self.get_value_property_in_realm(realm, iterable.clone(), &sync_key)? {
-                    Completion::Return(value) => value,
-                    Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                    Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+                    Completion::Throw(value) => {
+                        return Ok(NativeConversion::Throw(
+                            self.root_and_release_jsvalue(value)?,
+                        ));
+                    }
                 };
             let sync_method =
                 match self.async_from_sync_callable(realm, sync_method, "not a function")? {
@@ -51,21 +59,31 @@ impl Runtime {
                     NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
                 };
             let sync_iterator = match self.call_internal(realm, &sync_method, iterable, &[])? {
-                Completion::Return(Value::Object(iterator)) => iterator,
-                Completion::Return(_) => {
-                    return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
-                        realm,
-                        NativeErrorKind::Type,
-                        "not an object",
-                    )?));
+                Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
+                    Value::Object(iterator) => iterator,
+                    _ => {
+                        return Ok(NativeConversion::Throw(self.new_native_error(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not an object",
+                        )?));
+                    }
+                },
+                Completion::Throw(value) => {
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
                 }
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
             };
             let next_key =
                 self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
             let next = match self.get_property_in_realm(realm, &sync_iterator, &next_key)? {
-                Completion::Return(value) => value,
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+                Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+                Completion::Throw(value) => {
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
+                }
             };
             Value::Object(self.new_async_from_sync_iterator(realm, &sync_iterator, &next)?)
         } else {
@@ -78,22 +96,32 @@ impl Runtime {
                 NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
             };
             match self.call_internal(realm, &async_method, iterable, &[])? {
-                Completion::Return(Value::Object(iterator)) => Value::Object(iterator),
-                Completion::Return(_) => {
-                    return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
-                        realm,
-                        NativeErrorKind::Type,
-                        "not an object",
-                    )?));
+                Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
+                    Value::Object(iterator) => Value::Object(iterator),
+                    _ => {
+                        return Ok(NativeConversion::Throw(self.new_native_error(
+                            realm,
+                            NativeErrorKind::Type,
+                            "not an object",
+                        )?));
+                    }
+                },
+                Completion::Throw(value) => {
+                    return Ok(NativeConversion::Throw(
+                        self.root_and_release_jsvalue(value)?,
+                    ));
                 }
-                Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
             }
         };
 
         let next_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
         let next = match self.get_value_property_in_realm(realm, iterator.clone(), &next_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+            Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+            Completion::Throw(value) => {
+                return Ok(NativeConversion::Throw(
+                    self.root_and_release_jsvalue(value)?,
+                ));
+            }
         };
         Ok(NativeConversion::Value((iterator, next)))
     }
@@ -286,13 +314,16 @@ impl Runtime {
         let value = arguments
             .readable
             .first()
-            .cloned()
+            .map(|value| self.dup_jsvalue(value))
+            .transpose()?
             .ok_or(RuntimeError::Invariant(
                 "Async-from-Sync unwrap argv was not padded",
             ))?;
-        Ok(Completion::Return(Value::Object(
-            self.new_iterator_result(realm, value, done)?,
-        )))
+        let value = self.root_and_release_jsvalue(value)?;
+        let result = self.new_iterator_result(realm, value, done)?;
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(result))?,
+        ))
     }
 
     pub(crate) fn call_async_from_sync_iterator_close(

@@ -13,7 +13,7 @@ use crate::engine::object::property::validate_and_apply_property_descriptor;
 use crate::engine::object::{
     CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
 };
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 type Descriptor = Option<CompleteOrdinaryPropertyDescriptor>;
@@ -64,7 +64,7 @@ enum Phase {
     },
     Extensible {
         rooted: RootedProxy,
-        result: Value,
+        result: JsValue,
         target: Descriptor,
     },
     Converted {
@@ -94,7 +94,9 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyOwnStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyOwnStep::Complete(NativeConversion::Throw(value)),
+        MethodStep::Throw(value) => ProxyOwnStep::Complete(NativeConversion::Throw(
+            runtime.root_and_release_jsvalue(value)?,
+        )),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -111,10 +113,16 @@ fn method(
                 ),
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let arguments = [Value::Object(rooted.target.clone()), key_value]
+                        .into_iter()
+                        .map(|value| runtime.into_jsvalue(value))
+                        .collect::<Result<Vec<_>, _>>()?;
                     ProxyOwnStep::request_call(
                         target,
-                        Value::Object(rooted.handler.clone()),
-                        vec![Value::Object(rooted.target.clone()), key_value],
+                        receiver,
+                        arguments,
                         ProxyOwnResume(Box::new(ProxyOwnResumeState {
                             pending_effect: ProxyOwnStepPending::default(),
                             realm,
@@ -150,7 +158,9 @@ impl ProxyOwnResume {
     ) -> Result<ProxyOwnStep, RuntimeError> {
         let value = match completion {
             Completion::Throw(value) => {
-                return Ok(ProxyOwnStep::Complete(NativeConversion::Throw(value)));
+                return Ok(ProxyOwnStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
             Completion::Return(value) => value,
         };
@@ -162,7 +172,7 @@ impl ProxyOwnResume {
                 resume.resume(runtime, Completion::Return(value))?,
             ),
             Phase::Trap { rooted, key } => {
-                if !matches!(value, Value::Undefined | Value::Object(_)) {
+                if !matches!(value, JsValue::Undefined | JsValue::Object(_)) {
                     return Ok(ProxyOwnStep::Complete(runtime.proxy_invariant_throw(
                         self.0.realm,
                         "getOwnPropertyDescriptor",
@@ -176,7 +186,7 @@ impl ProxyOwnResume {
                         realm: self.0.realm,
                         phase: Phase::Target {
                             rooted,
-                            result: value,
+                            result: runtime.root_and_release_jsvalue(value)?,
                         },
                     })),
                 ))
@@ -222,7 +232,7 @@ impl ProxyOwnResume {
                         realm: self.0.realm,
                         phase: Phase::Extensible {
                             rooted,
-                            result,
+                            result: runtime.into_jsvalue(result)?,
                             target,
                         },
                     })),
@@ -316,20 +326,20 @@ impl ProxyOwnResume {
 struct ProxyOwnStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
     extensible_object: Option<ObjectRef>,
-    convert_value: Option<Value>,
+    convert_value: Option<JsValue>,
 }
 impl ProxyOwnStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ProxyOwnResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -339,8 +349,8 @@ impl ProxyOwnStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxyOwnResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -361,7 +371,7 @@ impl ProxyOwnStep {
         resume.0.pending_effect.extensible_object = Some(object);
         Self::Extensible { resume }
     }
-    pub(crate) fn request_convert(value: Value, mut resume: ProxyOwnResume) -> Self {
+    pub(crate) fn request_convert(value: JsValue, mut resume: ProxyOwnResume) -> Self {
         resume.0.pending_effect.convert_value = Some(value);
         Self::Convert { resume }
     }
@@ -381,7 +391,7 @@ impl ProxyOwnResume {
             .take()
             .expect("ProxyOwnStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -395,14 +405,14 @@ impl ProxyOwnResume {
             .take()
             .expect("ProxyOwnStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxyOwnStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments
@@ -430,7 +440,7 @@ impl ProxyOwnResume {
             .take()
             .expect("ProxyOwnStep Extensible object")
     }
-    pub(crate) fn take_convert_value(&mut self) -> Value {
+    pub(crate) fn take_convert_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .convert_value

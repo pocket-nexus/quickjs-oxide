@@ -6,7 +6,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,
     heap::ContextId,
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -80,34 +80,32 @@ impl InvokeStep {
         };
         if matches!(kind, InvokeKind::ReflectConstruct) {
             let new_target = if arguments.actual_arg_count > 2 {
-                let value = arguments
-                    .readable
-                    .get(2)
-                    .cloned()
-                    .ok_or(RuntimeError::Invariant(
-                        "Reflect.construct newTarget argv was not readable",
-                    ))?;
+                let value = runtime.root_value(arguments.readable.get(2).ok_or(
+                    RuntimeError::Invariant("Reflect.construct newTarget argv was not readable"),
+                )?)?;
                 if !matches!(value, Value::Object(_)) {
                     return Ok(Self::Complete(Completion::Throw(
-                        runtime.new_not_constructor_error(realm, &value)?,
+                        runtime.into_jsvalue(runtime.new_not_constructor_error(realm, &value)?)?,
                     )));
                 }
                 Some(match runtime.constructor_from_value(realm, value)? {
                     NativeConversion::Value(target) => ConstructNewTarget::Validated(target),
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(value)));
+                        return Ok(Self::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 })
             } else {
                 None
             };
             return Ok({
-                let __pending_field_value = arguments.readable[1].clone();
+                let __pending_field_value = runtime.dup_jsvalue(&arguments.readable[1])?;
                 let __pending_field_resume = InvokeResume(Box::new(InvokeResumeState {
                     pending_effect: InvokeStepPending::default(),
                     realm,
                     target: ForwardTarget::Construct {
-                        target: arguments.readable[0].clone(),
+                        target: runtime.root_value(&arguments.readable[0])?,
                         new_target,
                     },
                 }));
@@ -117,25 +115,37 @@ impl InvokeStep {
         let (target, receiver, list) = match kind {
             InvokeKind::ReflectConstruct => unreachable!("constructor validation already handled"),
             InvokeKind::Call => {
-                let actual = &arguments.readable[..arguments.actual_arg_count];
+                let mut actual = Vec::new();
+                actual
+                    .try_reserve_exact(arguments.actual_arg_count)
+                    .map_err(|_| RuntimeError::Invariant("function.call argv allocation failed"))?;
+                for value in &arguments.readable[..arguments.actual_arg_count] {
+                    actual.push(runtime.root_value(value)?);
+                }
                 let (target, receiver) = match runtime.forward_function_prototype_call(
                     realm,
-                    this_value.clone(),
-                    actual,
+                    runtime.root_value(this_value)?,
+                    &actual,
                 )? {
                     NativeConversion::Value(result) => result,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(value)));
+                        return Ok(Self::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
-                let forwarded = actual.get(1..).unwrap_or(&[]).to_vec();
+                let forwarded = actual
+                    .into_iter()
+                    .skip(1)
+                    .map(|value| runtime.into_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 #[cfg(feature = "profiling")]
                 {
                     crate::engine::api::profiling::record_call_buffer_capacity(
                         "function.call_suffix",
                         0,
                         forwarded.capacity(),
-                        size_of::<Value>(),
+                        size_of::<JsValue>(),
                     );
                     crate::engine::api::profiling::record_call_buffer_copies(
                         "function.call_suffix",
@@ -144,13 +154,19 @@ impl InvokeStep {
                 }
                 return Ok(Self::Call(Box::new(InvokeCall {
                     target,
-                    receiver,
+                    receiver: runtime.into_jsvalue(receiver)?,
                     arguments: forwarded,
                 })));
             }
             InvokeKind::Apply => {
                 let target = match this_value {
-                    Value::Object(object) => runtime.as_callable(object)?,
+                    JsValue::Object(id) => {
+                        let object = crate::engine::object::ObjectRef::from_borrowed_handle(
+                            runtime.clone(),
+                            *id,
+                        )?;
+                        runtime.as_callable(&object)?
+                    }
                     _ => None,
                 };
                 let Some(target) = target else {
@@ -160,22 +176,22 @@ impl InvokeStep {
                 };
                 (
                     DirectCallTarget::Callable(target),
-                    arguments.readable[0].clone(),
-                    arguments.readable[1].clone(),
+                    runtime.root_value(&arguments.readable[0])?,
+                    runtime.dup_jsvalue(&arguments.readable[1])?,
                 )
             }
             InvokeKind::ReflectApply => (
                 DirectCallTarget::Callable(
-                    runtime.callable_from_value(arguments.readable[0].clone())?,
+                    runtime.callable_from_value(runtime.root_value(&arguments.readable[0])?)?,
                 ),
-                arguments.readable[1].clone(),
-                arguments.readable[2].clone(),
+                runtime.root_value(&arguments.readable[1])?,
+                runtime.dup_jsvalue(&arguments.readable[2])?,
             ),
         };
-        if matches!(kind, InvokeKind::Apply) && matches!(list, Value::Null | Value::Undefined) {
+        if matches!(kind, InvokeKind::Apply) && matches!(list, JsValue::Null | JsValue::Undefined) {
             return Ok(Self::Call(Box::new(InvokeCall {
                 target,
-                receiver,
+                receiver: runtime.into_jsvalue(receiver)?,
                 arguments: Vec::new(),
             })));
         }
@@ -203,7 +219,7 @@ impl InvokeStep {
         if matches!(value, Value::Null | Value::Undefined) {
             return Ok(Self::Call(Box::new(InvokeCall {
                 target: DirectCallTarget::Callable(callable),
-                receiver,
+                receiver: runtime.into_jsvalue(receiver)?,
                 arguments: Vec::new(),
             })));
         }
@@ -214,11 +230,11 @@ impl InvokeStep {
             },
             crate::engine::code::bytecode::ApplyKind::Construct => ForwardTarget::Construct {
                 target,
-                new_target: Some(ConstructNewTarget::Raw(receiver)),
+                new_target: Some(ConstructNewTarget::Raw(runtime.into_jsvalue(receiver)?)),
             },
         };
         Ok({
-            let __pending_field_value = value;
+            let __pending_field_value = runtime.into_jsvalue(value)?;
             let __pending_field_resume = InvokeResume(Box::new(InvokeResumeState {
                 pending_effect: InvokeStepPending::default(),
                 realm,
@@ -236,27 +252,34 @@ impl InvokeResume {
     ) -> Result<InvokeStep, RuntimeError> {
         let arguments = match result {
             NativeConversion::Throw(value) => {
-                return Ok(InvokeStep::Complete(Completion::Throw(value)));
+                return Ok(InvokeStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
-            NativeConversion::Value(arguments) => arguments,
+            NativeConversion::Value(arguments) => arguments
+                .into_iter()
+                .map(|value| runtime.into_jsvalue(value))
+                .collect::<Result<Vec<_>, _>>()?,
         };
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_call_buffer_observed(
             "invoke.argv_carrier",
             arguments.capacity(),
-            size_of::<Value>(),
+            size_of::<JsValue>(),
         );
         Ok(match self.0.target {
             ForwardTarget::Call { target, receiver } => InvokeStep::Call(Box::new(InvokeCall {
                 target,
-                receiver,
+                receiver: runtime.into_jsvalue(receiver)?,
                 arguments,
             })),
             ForwardTarget::Construct { target, new_target } => {
                 let target = match runtime.constructor_from_value(self.0.realm, target)? {
                     NativeConversion::Value(target) => target,
                     NativeConversion::Throw(value) => {
-                        return Ok(InvokeStep::Complete(Completion::Throw(value)));
+                        return Ok(InvokeStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let new_target =
@@ -281,7 +304,11 @@ pub(crate) fn finish(
             InvokeStep::Construct(request) => {
                 let target = request.target;
                 let new_target = request.new_target;
-                let arguments = request.arguments;
+                let arguments = request
+                    .arguments
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 {
                     return runtime.construct_internal_with_new_target(
                         realm, &target, new_target, &arguments,
@@ -292,13 +319,21 @@ pub(crate) fn finish(
                 let value = resume.take_arguments_value();
                 resume.arguments(
                     runtime,
-                    finish_arguments(runtime, realm, ArgumentsStep::start(runtime, realm, value)?)?,
+                    finish_arguments(
+                        runtime,
+                        realm,
+                        ArgumentsStep::start(runtime, realm, runtime.root_and_release_jsvalue(value)?)?,
+                    )?,
                 )?
             }
             InvokeStep::Call(request) => {
                 let target = request.target;
-                let receiver = request.receiver;
-                let arguments = request.arguments;
+                let receiver = runtime.root_and_release_jsvalue(request.receiver)?;
+                let arguments = request
+                    .arguments
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 {
                     return match target {
                         DirectCallTarget::Callable(target) => {
@@ -316,16 +351,16 @@ pub(crate) fn finish(
 
 #[derive(Default)]
 struct InvokeStepPending {
-    arguments_value: Option<Value>,
+    arguments_value: Option<JsValue>,
 }
 impl InvokeStep {
-    pub(crate) fn request_arguments(value: Value, mut resume: InvokeResume) -> Self {
+    pub(crate) fn request_arguments(value: JsValue, mut resume: InvokeResume) -> Self {
         resume.0.pending_effect.arguments_value = Some(value);
         Self::Arguments { resume }
     }
 }
 impl InvokeResume {
-    pub(crate) fn take_arguments_value(&mut self) -> Value {
+    pub(crate) fn take_arguments_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .arguments_value
@@ -337,14 +372,14 @@ const _: () = assert!(std::mem::size_of::<InvokeStep>() <= 64);
 
 pub(crate) struct InvokeCall {
     pub(crate) target: DirectCallTarget,
-    pub(crate) receiver: Value,
-    pub(crate) arguments: Vec<Value>,
+    pub(crate) receiver: JsValue,
+    pub(crate) arguments: Vec<JsValue>,
 }
 
 pub(crate) struct InvokeConstruct {
     pub(crate) target: ConstructorRef,
     pub(crate) new_target: ConstructNewTarget,
-    pub(crate) arguments: Vec<Value>,
+    pub(crate) arguments: Vec<JsValue>,
 }
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.

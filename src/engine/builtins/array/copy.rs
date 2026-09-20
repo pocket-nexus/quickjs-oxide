@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, operations::InternalSetResult},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::Completion,
 };
 pub(crate) enum CopyStep {
@@ -100,7 +100,7 @@ impl CopyResume {
     }
     fn next(mut self, runtime: &Runtime) -> Result<CopyStep, RuntimeError> {
         if self.0.offset == self.0.count {
-            return Ok(CopyStep::Complete(Completion::Return(Value::Undefined)));
+            return Ok(CopyStep::Complete(Completion::Return(JsValue::Undefined)));
         }
         self.0.phase = Phase::Has;
         Ok(CopyStep::request_has(
@@ -117,7 +117,9 @@ impl CopyResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(CopyStep::Complete(Completion::Throw(value)));
+                return Ok(CopyStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -183,7 +185,9 @@ impl CopyResume {
             return Err(RuntimeError::Invariant("Array copy set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(CopyStep::Complete(Completion::Throw(value)));
+            return Ok(CopyStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
         self.0.offset += 1;
         self.next(runtime)
@@ -216,7 +220,7 @@ pub(crate) fn finish(
             CopyStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 {
                     let result = runtime.internal_set(
                         realm,
@@ -248,7 +252,7 @@ struct CopyStepPending {
     read_key: Option<PropertyKey>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
+    set_value: Option<JsValue>,
     delete_object: Option<ObjectRef>,
     delete_key: Option<PropertyKey>,
 }
@@ -270,7 +274,7 @@ impl CopyStep {
     pub(crate) fn request_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: CopyResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -331,7 +335,7 @@ impl CopyResume {
             .take()
             .expect("CopyStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value

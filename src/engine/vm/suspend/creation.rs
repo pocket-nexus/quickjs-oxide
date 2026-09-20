@@ -76,7 +76,7 @@ impl GeneratorPrototype {
             Completion::Throw(value) => {
                 return Ok(CreationStep::Complete(Completion::Throw(value)));
             }
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
         };
         let prototype = if let Value::Object(prototype) = value {
             prototype
@@ -85,7 +85,9 @@ impl GeneratorPrototype {
                 match runtime.function_realm(self.creation.realm, &self.creation.callable)? {
                     NativeConversion::Value(realm) => realm,
                     NativeConversion::Throw(value) => {
-                        return Ok(CreationStep::Complete(Completion::Throw(value)));
+                        return Ok(CreationStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
             let id = {
@@ -114,9 +116,9 @@ impl GeneratorPrototype {
         } else {
             runtime.allocate_generator_object(&prototype, *self.activation)?
         };
-        Ok(CreationStep::Complete(Completion::Return(Value::Object(
-            generator,
-        ))))
+        Ok(CreationStep::Complete(Completion::Return(
+            runtime.into_jsvalue(Value::Object(generator))?,
+        )))
     }
 }
 

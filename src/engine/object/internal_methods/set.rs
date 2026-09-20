@@ -7,7 +7,7 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::operations::InternalSetResult;
 use crate::engine::object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxySetStep {
@@ -80,7 +80,9 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxySetStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxySetStep::Complete(NativeConversion::Throw(value)),
+        MethodStep::Throw(value) => ProxySetStep::Complete(NativeConversion::Throw(
+            runtime.root_and_release_jsvalue(value)?,
+        )),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let method_key = resume.take_read_key();
@@ -109,8 +111,8 @@ fn method(
                 None => ProxySetStep::request_set(
                     rooted.target.clone(),
                     key,
-                    value,
-                    receiver,
+                    runtime.into_jsvalue(value)?,
+                    runtime.into_jsvalue(receiver)?,
                     ProxySetResume(Box::new(ProxySetResumeState {
                         pending_effect: ProxySetStepPending::default(),
                         realm,
@@ -119,15 +121,21 @@ fn method(
                 ),
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
+                    let call_receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver = runtime.into_jsvalue(receiver)?;
+                    let arguments = [
+                        runtime.into_jsvalue(Value::Object(rooted.target.clone()))?,
+                        runtime.into_jsvalue(key_value)?,
+                        runtime.into_jsvalue(value.clone())?,
+                        receiver,
+                    ]
+                    .into_iter()
+                    .collect::<Vec<_>>();
                     ProxySetStep::request_call(
                         target,
-                        Value::Object(rooted.handler.clone()),
-                        vec![
-                            Value::Object(rooted.target.clone()),
-                            key_value,
-                            value.clone(),
-                            receiver,
-                        ],
+                        call_receiver,
+                        arguments,
                         ProxySetResume(Box::new(ProxySetResumeState {
                             pending_effect: ProxySetStepPending::default(),
                             realm,
@@ -147,7 +155,9 @@ impl ProxySetResume {
     ) -> Result<ProxySetStep, RuntimeError> {
         let result = match completion {
             Completion::Throw(value) => {
-                return Ok(ProxySetStep::Complete(NativeConversion::Throw(value)));
+                return Ok(ProxySetStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
             Completion::Return(value) => value,
         };
@@ -166,7 +176,7 @@ impl ProxySetResume {
                 resume.resume(runtime, Completion::Return(result))?,
             ),
             Phase::Trap { rooted, key, value } => {
-                if !runtime.value_to_boolean(&result)? {
+                if !runtime.value_to_boolean_jsvalue(&result)? {
                     return Ok(ProxySetStep::Complete(NativeConversion::Value(
                         InternalSetResult::RejectedProxyTrap,
                     )));
@@ -242,14 +252,14 @@ impl ProxySetResume {
 struct ProxySetStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
-    set_receiver: Option<Value>,
+    set_value: Option<JsValue>,
+    set_receiver: Option<JsValue>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
 }
@@ -257,7 +267,7 @@ impl ProxySetStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ProxySetResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -267,8 +277,8 @@ impl ProxySetStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxySetResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -279,8 +289,8 @@ impl ProxySetStep {
     pub(crate) fn request_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
-        receiver: Value,
+        value: JsValue,
+        receiver: JsValue,
         mut resume: ProxySetResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -314,7 +324,7 @@ impl ProxySetResume {
             .take()
             .expect("ProxySetStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -328,14 +338,14 @@ impl ProxySetResume {
             .take()
             .expect("ProxySetStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxySetStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments
@@ -356,14 +366,14 @@ impl ProxySetResume {
             .take()
             .expect("ProxySetStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value
             .take()
             .expect("ProxySetStep Set value")
     }
-    pub(crate) fn take_set_receiver(&mut self) -> Value {
+    pub(crate) fn take_set_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_receiver

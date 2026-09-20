@@ -23,9 +23,9 @@ pub(in crate::engine::vm) struct SlotStore {
     active_end: usize,
     // Outgoing synchronous call argument buffer (internal values).
     argument_buffer: Vec<JsValue>,
-    // Native-boundary argv buffers: operands are rooted into the public
-    // representation at the native dispatch boundary.
-    native_argument_buffers: Vec<Vec<Value>>,
+    // Native readable-argument buffers: internal values recycled across
+    // activations; the public boundary converts at the call site.
+    native_argument_buffers: Vec<Vec<JsValue>>,
     owner: Rc<()>,
     next_window: u64,
     windows: Vec<u64>,
@@ -150,7 +150,7 @@ impl SlotStore {
             let base = self.slots[index].replace(FrameBinding::Direct(value));
             // No reentry or cleanup queue mutation intervenes between the
             // runtime proof and this non-final receiver release.
-            if let FrameBinding::Direct(old) = base {
+            if let Some(FrameBinding::Direct(old)) = base {
                 runtime
                     .release_jsvalue(old)
                     .map_err(runtime_error_to_vm_error)?;
@@ -204,7 +204,7 @@ impl SlotStore {
     pub(in crate::engine::vm) fn take_native_argument_buffer(
         &mut self,
         count: usize,
-    ) -> Result<Vec<Value>, Error> {
+    ) -> Result<Vec<JsValue>, Error> {
         let mut arguments = self.native_argument_buffers.pop().unwrap_or_default();
         debug_assert!(arguments.is_empty());
         let _before = arguments.capacity();
@@ -243,7 +243,10 @@ impl SlotStore {
         count: usize,
         method: bool,
     ) -> Result<(Vec<Value>, Value), Error> {
-        let mut arguments = self.take_native_argument_buffer(count)?;
+        let mut arguments: Vec<Value> = Vec::new();
+        arguments
+            .try_reserve_exact(count)
+            .map_err(|_| Error::internal("native call arguments allocation failed"))?;
         for offset in 0..count + 1 + usize::from(method) {
             self.peek_current(window, offset)?;
         }
@@ -288,7 +291,7 @@ impl SlotStore {
 
     /// Cleanup cannot allocate or retain JavaScript owners. Producers outside
     /// the native caller path may supply extra buffers; discard excess capacity.
-    pub(in crate::engine::vm) fn recycle_native_argument_buffer(&mut self, arguments: Vec<Value>) {
+    pub(in crate::engine::vm) fn recycle_native_argument_buffer(&mut self, arguments: Vec<JsValue>) {
         debug_assert!(arguments.is_empty());
         if !arguments.is_empty() {
             return;
@@ -1442,9 +1445,9 @@ impl SlotStore {
         // for explicit legacy handoff without inventing reference owners.
         #[cfg(feature = "profiling")]
         let omitted = window.actual_count - taken.original_arguments.len();
-        taken
-            .original_arguments
-            .resize(window.actual_count, JsValue::Undefined);
+        while taken.original_arguments.len() < window.actual_count {
+            taken.original_arguments.push(JsValue::Undefined);
+        }
         for index in window.parameters() {
             taken.parameters.push(self.slots[index].take().unwrap());
         }
@@ -1603,19 +1606,21 @@ mod tests {
             panic!("object")
         };
         let mut native = None;
+        let base_internal = runtime.unroot_value(&base).unwrap();
         assert!(
             runtime
-                .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
+                .try_property_ic_read_owned(&base_internal, &code, pc, key, true, &mut native)
                 .unwrap()
                 .is_none()
         );
+        runtime.release_jsvalue(base_internal).unwrap();
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 1;
         let mut slots = SlotStore::new(2);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
-        slots.push(&mut window, base.clone()).unwrap();
+        slots.push(&mut window, into_internal(&runtime, base.clone())).unwrap();
         let count = runtime
             .0
             .state
@@ -1641,7 +1646,7 @@ mod tests {
             count
         );
         assert_eq!(window.depth, 1);
-        assert_eq!(slots.peek(&window, 0).unwrap(), &base);
+        assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), base);
         assert!(
             slots
                 .run_window(&mut window)
@@ -1650,13 +1655,13 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(window.depth, 1);
-        assert_eq!(slots.peek(&window, 0).unwrap(), &value);
-        slots.clear_frame(window).unwrap();
+        assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);
+        slots.clear_frame(&runtime, window).unwrap();
         owner.metadata.max_stack = 2;
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
-        slots.push(&mut window, base.clone()).unwrap();
+        slots.push(&mut window, into_internal(&runtime, base.clone())).unwrap();
         assert!(
             slots
                 .run_window(&mut window)
@@ -1665,16 +1670,31 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(window.depth, 2);
-        assert_eq!(slots.peek(&window, 0).unwrap(), &value);
-        assert_eq!(slots.peek(&window, 1).unwrap(), &base);
-        slots.clear_frame(window).unwrap();
+        assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);
+        assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), base);
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     use super::{FrameStorage, SlotStore};
     use crate::engine::api::Runtime;
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
-    use crate::engine::value::Value;
-    use crate::engine::vm::bindings::{FrameBinding, release_frame_binding as release_binding};
+    use crate::engine::value::{JsValue, Value};
+    use crate::engine::vm::bindings::FrameBinding;
+
+    fn into_internal(runtime: &Runtime, value: Value) -> JsValue {
+        match value {
+            Value::Object(object) => JsValue::Object(object.into_handle()),
+            other => runtime.into_jsvalue(other).unwrap(),
+        }
+    }
+
+    fn to_public(runtime: &Runtime, value: &JsValue) -> Value {
+        runtime.root_value(value).unwrap()
+    }
+
+    fn take_public(runtime: &Runtime, value: JsValue) -> Value {
+        runtime.root_and_release_jsvalue(value).unwrap()
+    }
 
     #[test]
     fn native_argument_transaction_preserves_order_and_surviving_owners() {
@@ -1684,7 +1704,7 @@ mod tests {
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let receiver = context.eval("({tag:1})").unwrap();
         let argument = context.eval("({tag:2})").unwrap();
@@ -1697,7 +1717,7 @@ mod tests {
             argument.clone(),
             Value::Int(3),
         ] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
         assert!(
             slots
@@ -1705,15 +1725,15 @@ mod tests {
                 .unwrap()
         );
         let (arguments, moved_receiver) = slots
-            .take_native_call_operands(&mut window, 3, true)
+            .take_native_call_operands(&runtime, &mut window, 3, true)
             .unwrap();
         assert_eq!(arguments, [Value::Int(1), argument, Value::Int(3)]);
         assert_eq!(moved_receiver, receiver);
         assert_eq!(slots.depth(&window), 1);
-        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(99));
+        assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(99));
         drop(arguments);
         drop(moved_receiver);
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     #[test]
@@ -1758,10 +1778,10 @@ mod tests {
             owner.metadata.max_stack = 3;
             let mut slots = SlotStore::new(3);
             let mut window = slots
-                .push_frame(&owner.frame_layout(), empty_storage())
+                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
-            slots.push(&mut window, Value::Int(99)).unwrap();
-            slots.push(&mut window, base).unwrap();
+            slots.push(&mut window, into_internal(&runtime, Value::Int(99))).unwrap();
+            slots.push(&mut window, into_internal(&runtime, base)).unwrap();
             assert!(
                 !slots
                     .run_window(&mut window)
@@ -1771,9 +1791,9 @@ mod tests {
             );
             assert_eq!(window.depth, 2);
             assert!(
-                matches!(slots.peek(&window,0).unwrap(),Value::Object(root) if root.object_id()==id)
+                matches!(slots.peek(&window, 0).unwrap(), JsValue::Object(handle) if *handle == id)
             );
-            slots.push(&mut window, Value::Int(17)).unwrap();
+            slots.push(&mut window, into_internal(&runtime, Value::Int(17))).unwrap();
             assert!(
                 !slots
                     .run_window(&mut window)
@@ -1782,12 +1802,12 @@ mod tests {
                     .unwrap()
             );
             assert_eq!(window.depth, 3);
-            assert_eq!(slots.peek(&window, 0).unwrap(), &Value::Int(17));
+            assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), Value::Int(17));
             assert!(
-                matches!(slots.peek(&window,1).unwrap(),Value::Object(root) if root.object_id()==id)
+                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
             );
-            assert_eq!(slots.peek(&window, 2).unwrap(), &Value::Int(99));
-            slots.clear_frame(window).unwrap();
+            assert_eq!(to_public(&runtime, slots.peek(&window, 2).unwrap()), Value::Int(99));
+            slots.clear_frame(&runtime, window).unwrap();
         }
     }
 
@@ -1805,7 +1825,7 @@ mod tests {
             owner.metadata.max_stack = 4;
             let mut slots = SlotStore::new(4);
             let mut window = slots
-                .push_frame(&owner.frame_layout(), empty_storage())
+                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
             let receiver = Value::Object(if foreign_receiver {
                 foreign.new_object(None).unwrap()
@@ -1824,7 +1844,7 @@ mod tests {
                 first,
                 Value::Object(foreign.new_object(None).unwrap()),
             ] {
-                slots.push(&mut window, value).unwrap();
+                slots.push(&mut window, into_internal(&runtime, value)).unwrap();
             }
             let removed_index = if malformed_first { 2 } else { 3 };
             let removed = slots.slots[removed_index].take();
@@ -1842,7 +1862,7 @@ mod tests {
             assert_eq!(window.depth, 4);
             assert!(slots.slots[removed_index].is_none());
             slots.slots[removed_index] = removed;
-            slots.clear_frame(window).unwrap();
+            slots.clear_frame(&runtime, window).unwrap();
         }
     }
 
@@ -1855,12 +1875,12 @@ mod tests {
         owner.metadata.max_stack = 3;
         let mut slots = SlotStore::new(3);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let local = runtime.new_object(None).unwrap();
         let id = local.object_id();
         for value in [Value::Int(0), Value::Object(local), Value::Int(42)] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
         {
             let state = runtime.0.state.borrow_mut();
@@ -1877,11 +1897,11 @@ mod tests {
             assert!(state.heap.object(id).is_ok());
         }
         assert_eq!(window.depth, 3);
-        assert_eq!(slots.peek(&window, 0).unwrap(), &Value::Int(42));
+        assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), Value::Int(42));
         assert!(
-            matches!(slots.peek(&window, 1).unwrap(), Value::Object(root) if root.object_id()==id)
+            matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
         );
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
     }
 
@@ -1893,10 +1913,10 @@ mod tests {
         owner.metadata.max_stack = 2;
         let mut slots = SlotStore::new(4);
         let mut parent = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
-        slots.push(&mut parent, Value::Int(0)).unwrap();
-        slots.push(&mut parent, Value::Int(42)).unwrap();
+        slots.push(&mut parent, into_internal(&runtime, Value::Int(0))).unwrap();
+        slots.push(&mut parent, into_internal(&runtime, Value::Int(42))).unwrap();
         let other = SlotStore::new(2);
         assert!(
             other
@@ -1904,7 +1924,7 @@ mod tests {
                 .is_err()
         );
         let child = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         assert!(
             slots
@@ -1912,15 +1932,15 @@ mod tests {
                 .is_err()
         );
         assert_eq!(parent.depth, 2);
-        slots.clear_frame(child).unwrap();
+        slots.clear_frame(&runtime, child).unwrap();
         assert!(
             slots
                 .validate_call_value_domains(&parent, &runtime, 1, false)
                 .unwrap()
         );
-        assert_eq!(slots.pop(&mut parent).unwrap(), Value::Int(42));
-        assert_eq!(slots.pop(&mut parent).unwrap(), Value::Int(0));
-        slots.clear_frame(parent).unwrap();
+        assert_eq!(take_public(&runtime, slots.pop(&mut parent).unwrap()), Value::Int(42));
+        assert_eq!(take_public(&runtime, slots.pop(&mut parent).unwrap()), Value::Int(0));
+        slots.clear_frame(&runtime, parent).unwrap();
     }
 
     #[test]
@@ -1975,10 +1995,10 @@ mod tests {
             owner.metadata.max_stack = 3;
             let mut slots = SlotStore::new(3);
             let mut window = slots
-                .push_frame(&owner.frame_layout(), empty_storage())
+                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
             for value in [base, Value::Int(key), value] {
-                slots.push(&mut window, value).unwrap();
+                slots.push(&mut window, into_internal(&runtime, value)).unwrap();
             }
             assert!(
                 !slots
@@ -1989,9 +2009,9 @@ mod tests {
                 "{source}"
             );
             assert_eq!(window.depth, 3);
-            assert_eq!(slots.peek(&window, 1).unwrap(), &Value::Int(key));
+            assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), Value::Int(key));
             if !object_value {
-                assert_eq!(slots.peek(&window, 0).unwrap(), &Value::Int(17));
+                assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), Value::Int(17));
             }
             if let Some(Value::Object(view)) = &retained {
                 if source.starts_with("new Uint8Array") && !detached {
@@ -2001,7 +2021,7 @@ mod tests {
                     );
                 }
             }
-            slots.clear_frame(window).unwrap();
+            slots.clear_frame(&runtime, window).unwrap();
         }
     }
 
@@ -2015,10 +2035,10 @@ mod tests {
         owner.metadata.max_stack = 3;
         let mut slots = SlotStore::new(3);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         for value in [base, Value::Int(0), Value::Int(17)] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
         {
             let _borrow = runtime.0.state.borrow();
@@ -2044,7 +2064,7 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(window.depth, 3);
-        assert_eq!(slots.peek(&window, 0).unwrap(), &Value::Int(17));
+        assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), Value::Int(17));
         assert!(runtime.0.deferred_references.has_pending());
         runtime.drain_deferred_references().unwrap();
         let Value::Object(view) = &retained else {
@@ -2066,7 +2086,7 @@ mod tests {
             runtime.typed_array_read_index(view, 0).unwrap(),
             Some(Value::Int(17))
         );
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     #[test]
@@ -2089,10 +2109,10 @@ mod tests {
             code.metadata.max_stack = 2;
             let mut store = SlotStore::new(2);
             let mut window = store
-                .push_frame(&code.frame_layout(), empty_storage())
+                .push_frame(&runtime, &code.frame_layout(), empty_storage())
                 .unwrap();
-            store.push(&mut window, base).unwrap();
-            store.push(&mut window, Value::String(key)).unwrap();
+            store.push(&mut window, into_internal(&runtime, base)).unwrap();
+            store.push(&mut window, into_internal(&runtime, Value::String(key))).unwrap();
             assert_eq!(
                 store
                     .run_window(&mut window)
@@ -2103,13 +2123,13 @@ mod tests {
                 "{text}/{retained}"
             );
             if expected {
-                assert_eq!(store.peek(&window, 0).unwrap(), &Value::Int(42));
+                assert_eq!(to_public(&runtime, store.peek(&window, 0).unwrap()), Value::Int(42));
                 assert_eq!(window.depth, 1);
             } else {
                 assert_eq!(window.depth, 2);
-                assert!(matches!(store.peek(&window, 0).unwrap(), Value::String(_)));
+                assert!(matches!(store.peek(&window, 0).unwrap(), JsValue::String(_)));
             }
-            store.clear_frame(window).unwrap();
+            store.clear_frame(&runtime, window).unwrap();
             drop(keep_key);
             drop(keep_base);
         }
@@ -2145,10 +2165,10 @@ mod tests {
             owner.metadata.max_stack = 3;
             let mut slots = SlotStore::new(3);
             let mut window = slots
-                .push_frame(&owner.frame_layout(), empty_storage())
+                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
             for value in [Value::Int(99), base, key.clone()] {
-                slots.push(&mut window, value).unwrap();
+                slots.push(&mut window, into_internal(&runtime, value)).unwrap();
             }
             assert!(
                 !slots
@@ -2159,12 +2179,12 @@ mod tests {
                 "{source}"
             );
             assert_eq!(window.depth, 3);
-            assert_eq!(slots.peek(&window, 0).unwrap(), &key);
+            assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), key);
             assert!(
-                matches!(slots.peek(&window, 1).unwrap(), Value::Object(root) if root.object_id()==id)
+                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
             );
-            assert_eq!(slots.peek(&window, 2).unwrap(), &Value::Int(99));
-            slots.clear_frame(window).unwrap();
+            assert_eq!(to_public(&runtime, slots.peek(&window, 2).unwrap()), Value::Int(99));
+            slots.clear_frame(&runtime, window).unwrap();
         }
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -2174,10 +2194,10 @@ mod tests {
         owner.metadata.max_stack = 3;
         let mut slots = SlotStore::new(3);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         for value in [Value::Int(99), base, Value::Int(0)] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
         let queued = runtime.new_object(None).unwrap();
         {
@@ -2209,10 +2229,10 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(window.depth, 2);
-        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(42));
-        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(99));
+        assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(42));
+        assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(99));
         drop(retained);
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     #[test]
@@ -2243,10 +2263,10 @@ mod tests {
             owner.metadata.max_stack = 2;
             let mut slots = SlotStore::new(2);
             let mut window = slots
-                .push_frame(&owner.frame_layout(), empty_storage())
+                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
             for value in [base, Value::Int(0)] {
-                slots.push(&mut window, value).unwrap();
+                slots.push(&mut window, into_internal(&runtime, value)).unwrap();
             }
             assert!(
                 !slots
@@ -2257,11 +2277,11 @@ mod tests {
                 "{source}"
             );
             assert_eq!(window.depth, 2);
-            assert_eq!(slots.peek(&window, 0).unwrap(), &Value::Int(0));
+            assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), Value::Int(0));
             assert!(
-                matches!(slots.peek(&window, 1).unwrap(), Value::Object(root) if root.object_id()==id)
+                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
             );
-            slots.clear_frame(window).unwrap();
+            slots.clear_frame(&runtime, window).unwrap();
         }
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -2271,10 +2291,10 @@ mod tests {
         owner.metadata.max_stack = 2;
         let mut slots = SlotStore::new(2);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         for value in [base, Value::Int(0)] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
         let queued = runtime.new_object(None).unwrap();
         {
@@ -2306,8 +2326,8 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(window.depth, 1);
-        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(42));
-        slots.clear_frame(window).unwrap();
+        assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(42));
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     #[test]
@@ -2332,23 +2352,23 @@ mod tests {
         );
         let mut slots = SlotStore::new(16);
         let mut parent = slots
-            .push_frame(&caller.frame_layout(), empty_storage())
+            .push_frame(&runtime, &caller.frame_layout(), empty_storage())
             .unwrap();
-        slots.push(&mut parent, Value::Int(99)).unwrap();
+        slots.push(&mut parent, into_internal(&runtime, Value::Int(99))).unwrap();
         let mut child = slots
-            .push_frame(
+            .push_frame(&runtime, 
                 &callee.frame_layout(),
                 FrameStorage {
-                    original_arguments: vec![Value::Int(10)],
+                    original_arguments: vec![JsValue::Int(10)],
                     parameters: vec![
-                        FrameBinding::Direct(Value::Int(10)),
-                        FrameBinding::Direct(Value::Undefined),
+                        FrameBinding::Direct(JsValue::Int(10)),
+                        FrameBinding::Direct(JsValue::Undefined),
                     ],
                     locals: vec![
-                        FrameBinding::Direct(Value::Int(20)),
+                        FrameBinding::Direct(JsValue::Int(20)),
                         FrameBinding::Uninitialized,
                     ],
-                    operands: vec![Value::Int(30)],
+                    operands: vec![JsValue::Int(30)],
                 },
             )
             .unwrap();
@@ -2360,24 +2380,24 @@ mod tests {
         assert!(slots.peek(&parent, 0).is_err());
         assert!(slots.parameter(&child, 2).is_err());
         assert!(slots.local(&child, 2).is_err());
-        slots.push(&mut child, Value::Int(31)).unwrap();
-        assert!(slots.push(&mut child, Value::Int(32)).is_err());
+        slots.push(&mut child, into_internal(&runtime, Value::Int(31))).unwrap();
+        assert!(slots.push(&mut child, into_internal(&runtime, Value::Int(32))).is_err());
         let end = child.end;
         child.end = end - 1;
         assert!(slots.pop(&mut child).is_err());
         child.end = end;
         assert_eq!(slots.depth(&child), 2);
-        assert_eq!(slots.pop(&mut child).unwrap(), Value::Int(31));
-        let storage = slots.take_frame(child).unwrap();
-        assert_eq!(storage.original_arguments, vec![Value::Int(10)]);
-        assert_eq!(storage.operands, vec![Value::Int(30)]);
+        assert_eq!(take_public(&runtime, slots.pop(&mut child).unwrap()), Value::Int(31));
+        let storage = slots.take_frame(&runtime, child).unwrap();
+        assert_eq!(storage.original_arguments, vec![JsValue::Int(10)]);
+        assert_eq!(storage.operands, vec![JsValue::Int(30)]);
         assert!(matches!(
             storage.locals[0],
-            FrameBinding::Direct(Value::Int(20))
+            FrameBinding::Direct(JsValue::Int(20))
         ));
         assert!(matches!(storage.locals[1], FrameBinding::Uninitialized));
-        assert_eq!(slots.pop(&mut parent).unwrap(), Value::Int(99));
-        slots.clear_frame(parent).unwrap();
+        assert_eq!(take_public(&runtime, slots.pop(&mut parent).unwrap()), Value::Int(99));
+        slots.clear_frame(&runtime, parent).unwrap();
         assert_eq!(slots.active_end, 0);
         assert!(slots.slots.iter().all(Option::is_none));
         #[cfg(target_pointer_width = "64")]
@@ -2392,10 +2412,10 @@ mod tests {
         let owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         let mut slots = SlotStore::new(0);
         let parent = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let child = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         for window in [&parent, &child] {
             assert_eq!(window.whole(), 0..0);
@@ -2407,9 +2427,9 @@ mod tests {
         assert_ne!(parent.id, child.id);
         assert!(slots.binding_counts(&parent).is_err());
         assert_eq!(slots.binding_counts(&child).unwrap(), (0, 0));
-        slots.clear_frame(child).unwrap();
+        slots.clear_frame(&runtime, child).unwrap();
         assert_eq!(slots.binding_counts(&parent).unwrap(), (0, 0));
-        slots.clear_frame(parent).unwrap();
+        slots.clear_frame(&runtime, parent).unwrap();
         assert!(slots.windows.is_empty());
     }
 
@@ -2425,7 +2445,7 @@ mod tests {
         let marker = runtime.new_object(None).unwrap();
         let mut slots = SlotStore::new(32);
         let mut parent = slots
-            .push_frame(&caller.frame_layout(), empty_storage())
+            .push_frame(&runtime, &caller.frame_layout(), empty_storage())
             .unwrap();
         for value in [
             Value::Int(99),
@@ -2434,7 +2454,7 @@ mod tests {
             Value::Int(7),
             Value::Object(marker.clone()),
         ] {
-            slots.push(&mut parent, value).unwrap();
+            slots.push(&mut parent, into_internal(&runtime, value)).unwrap();
         }
         {
             // Retaining a root while the state is mutably borrowed is the
@@ -2443,7 +2463,7 @@ mod tests {
             let _borrow = runtime.0.state.borrow_mut();
             assert!(
                 slots
-                    .push_call_frame(
+                    .push_call_frame(&runtime, 
                         &callee.frame_layout(),
                         &mut parent,
                         2,
@@ -2454,13 +2474,13 @@ mod tests {
                     .is_err()
             );
             assert_eq!(slots.depth(&parent), 5);
-            assert_eq!(slots.peek(&parent, 1).unwrap(), &Value::Int(7));
+            assert_eq!(to_public(&runtime, slots.peek(&parent, 1).unwrap()), Value::Int(7));
             assert_eq!(slots.active_end, parent.whole().end);
             assert!(slots.slots[slots.active_end..].iter().all(Option::is_none));
             assert_eq!(slots.windows.len(), 1);
         }
         let child = slots
-            .push_call_frame(
+            .push_call_frame(&runtime, 
                 &callee.frame_layout(),
                 &mut parent,
                 2,
@@ -2471,21 +2491,21 @@ mod tests {
             .unwrap();
         assert_eq!(slots.depth(&parent), 1);
         assert!(slots.peek(&parent, 0).is_err());
-        let storage = slots.take_frame(child).unwrap();
+        let storage = slots.take_frame(&runtime, child).unwrap();
         assert_eq!(storage.original_arguments.len(), 2);
-        assert_eq!(storage.original_arguments[0], Value::Int(7));
+        assert_eq!(to_public(&runtime, &storage.original_arguments[0]), Value::Int(7));
         assert_eq!(storage.parameters.len(), 3);
         assert!(matches!(
             storage.parameters[2],
-            FrameBinding::Direct(Value::Undefined)
+            FrameBinding::Direct(JsValue::Undefined)
         ));
-        assert_eq!(slots.peek(&parent, 0).unwrap(), &Value::Int(99));
+        assert_eq!(to_public(&runtime, slots.peek(&parent, 0).unwrap()), Value::Int(99));
         assert!(
             slots.slots[parent.operands().start + 1..parent.operands().end]
                 .iter()
                 .all(Option::is_none)
         );
-        slots.clear_frame(parent).unwrap();
+        slots.clear_frame(&runtime, parent).unwrap();
     }
 
     #[test]
@@ -2498,7 +2518,7 @@ mod tests {
         let object = runtime.new_object(None).unwrap();
         let mut slots = SlotStore::new(16);
         let source = || FrameStorage {
-            original_arguments: vec![Value::Int(7), Value::Object(object.clone())],
+            original_arguments: vec![JsValue::Int(7), JsValue::Object(object.clone().into_handle())],
             parameters: Vec::new(),
             locals: Vec::new(),
             operands: Vec::new(),
@@ -2511,7 +2531,7 @@ mod tests {
             let _borrow = runtime.0.state.borrow_mut();
             assert!(
                 slots
-                    .push_initialized_frame(&owner.frame_layout(), storage, &function, None)
+                    .push_initialized_frame(&runtime, &owner.frame_layout(), storage, &function, None)
                     .is_err()
             );
             assert_eq!(slots.active_end, 0);
@@ -2519,22 +2539,22 @@ mod tests {
             assert!(slots.windows.is_empty());
         }
         let window = slots
-            .push_initialized_frame(&owner.frame_layout(), source(), &function, None)
+            .push_initialized_frame(&runtime, &owner.frame_layout(), source(), &function, None)
             .unwrap();
         assert_eq!(slots.binding_counts(&window).unwrap(), (0, 3));
         assert!(matches!(
             slots.parameter(&window, 2).unwrap(),
-            FrameBinding::Direct(Value::Undefined)
+            FrameBinding::Direct(JsValue::Undefined)
         ));
         slots
-            .replace_parameter(&window, 0, FrameBinding::Direct(Value::Int(9)))
+            .replace_parameter(&window, 0, FrameBinding::Direct(JsValue::Int(9)))
             .unwrap();
-        let storage = slots.take_frame(window).unwrap();
+        let storage = slots.take_frame(&runtime, window).unwrap();
         assert_eq!(storage.original_arguments.len(), 2);
-        assert_eq!(storage.original_arguments[0], Value::Int(7));
+        assert_eq!(to_public(&runtime, &storage.original_arguments[0]), Value::Int(7));
         assert!(matches!(
             storage.parameters[0],
-            FrameBinding::Direct(Value::Int(9))
+            FrameBinding::Direct(JsValue::Int(9))
         ));
     }
 
@@ -2554,22 +2574,22 @@ mod tests {
                 let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
                 owner.metadata.max_stack = size;
                 let mut window = slots
-                    .push_frame(&owner.frame_layout(), empty_storage())
+                    .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                     .unwrap();
                 slots
-                    .push(&mut window, Value::Object(marker.clone()))
+                    .push(&mut window, into_internal(&runtime, Value::Object(marker.clone())))
                     .unwrap();
                 windows.push(window);
             }
             assert_eq!(slots.active_end, 12);
             assert_eq!(slots.slots.len(), 12);
             while let Some(window) = windows.pop() {
-                slots.clear_frame(window).unwrap();
+                slots.clear_frame(&runtime, window).unwrap();
                 assert!(slots.slots[slots.active_end..].iter().all(Option::is_none));
                 if let Some(parent) = windows.last() {
                     assert_eq!(
-                        slots.peek(parent, 0).unwrap(),
-                        &Value::Object(marker.clone())
+                        to_public(&runtime, slots.peek(parent, 0).unwrap()),
+                        Value::Object(marker.clone())
                     );
                 }
             }
@@ -2607,7 +2627,7 @@ mod tests {
         let first_id = first.object_id();
         let blocked = other_runtime.new_object(None).unwrap();
         let storage = FrameStorage {
-            original_arguments: vec![Value::Object(first.clone()), Value::Object(blocked.clone())],
+            original_arguments: vec![JsValue::Object(first.clone().into_handle()), JsValue::Object(blocked.clone().into_handle())],
             ..empty_storage()
         };
         let mut slots = SlotStore::new(16);
@@ -2618,7 +2638,7 @@ mod tests {
             let _borrow = other_runtime.0.state.borrow_mut();
             assert!(
                 slots
-                    .push_initialized_frame(&owner.frame_layout(), storage, &function, None)
+                    .push_initialized_frame(&runtime, &owner.frame_layout(), storage, &function, None)
                     .is_err()
             );
             assert_eq!(slots.active_end, 0);
@@ -2629,9 +2649,9 @@ mod tests {
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(first_id).is_err());
         let window = slots
-            .push_initialized_frame(&owner.frame_layout(), empty_storage(), &function, None)
+            .push_initialized_frame(&runtime, &owner.frame_layout(), empty_storage(), &function, None)
             .unwrap();
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
         assert!(slots.slots.iter().all(Option::is_none));
         other_runtime.run_gc().unwrap();
     }
@@ -2647,31 +2667,31 @@ mod tests {
         let value_id = value.object_id();
         let mut slots = SlotStore::new(16);
         let window = slots
-            .push_frame(
+            .push_frame(&runtime, 
                 &owner.frame_layout(),
                 FrameStorage {
-                    original_arguments: vec![Value::Int(1), Value::Int(2)],
+                    original_arguments: vec![JsValue::Int(1), JsValue::Int(2)],
                     parameters: vec![
-                        FrameBinding::Direct(Value::Int(3)),
-                        FrameBinding::Direct(Value::Int(4)),
+                        FrameBinding::Direct(JsValue::Int(3)),
+                        FrameBinding::Direct(JsValue::Int(4)),
                     ],
                     locals: Vec::new(),
-                    operands: vec![Value::Object(value)],
+                    operands: vec![JsValue::Object(value.into_handle())],
                 },
             )
             .unwrap();
-        let storage = slots.take_frame(window).unwrap();
+        let storage = slots.take_frame(&runtime, window).unwrap();
         let initialized = slots.slots.len();
         assert_eq!(slots.active_end, 0);
         assert!(slots.slots.iter().all(Option::is_none));
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(value_id).is_ok());
-        let window = slots.push_frame(&owner.frame_layout(), storage).unwrap();
+        let window = slots.push_frame(&runtime, &owner.frame_layout(), storage).unwrap();
         assert_eq!(slots.slots.len(), initialized);
         assert!(
-            matches!(slots.peek(&window, 0).unwrap(), Value::Object(value) if value.object_id() == value_id)
+            matches!(slots.peek(&window, 0).unwrap(), JsValue::Object(handle) if *handle == value_id)
         );
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(value_id).is_err());
         assert!(slots.slots.iter().all(Option::is_none));
@@ -2709,39 +2729,39 @@ mod tests {
         owner.metadata.max_stack = 2;
         let mut slots = SlotStore::new(8);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         assert!(
             slots
                 .binary_number(&mut window, |_, _| unreachable!())
                 .is_err()
         );
-        slots.push(&mut window, Value::Int(7)).unwrap();
+        slots.push(&mut window, into_internal(&runtime, Value::Int(7))).unwrap();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
-        slots.push(&mut window, Value::Object(object)).unwrap();
+        slots.push(&mut window, into_internal(&runtime, Value::Object(object))).unwrap();
         assert!(
             !slots
                 .binary_number(&mut window, |_, _| unreachable!())
                 .unwrap()
         );
         assert_eq!(slots.depth(&window), 2);
-        assert_eq!(slots.peek(&window, 1).unwrap(), &Value::Int(7));
+        assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), Value::Int(7));
         assert!(
-            matches!(slots.peek(&window, 0).unwrap(), Value::Object(root) if root.object_id() == id)
+            matches!(slots.peek(&window, 0).unwrap(), JsValue::Object(handle) if *handle == id)
         );
         drop(slots.pop(&mut window).unwrap());
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
-        slots.push(&mut window, Value::Int(3)).unwrap();
+        slots.push(&mut window, into_internal(&runtime, Value::Int(3))).unwrap();
         let child = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         assert!(
             slots
                 .binary_number(&mut window, |_, _| unreachable!())
                 .is_err()
         );
-        slots.clear_frame(child).unwrap();
+        slots.clear_frame(&runtime, child).unwrap();
         assert!(
             slots
                 .binary_number(&mut window, |left, right| left.sub(right).into())
@@ -2749,8 +2769,8 @@ mod tests {
         );
         assert_eq!(slots.depth(&window), 1);
         assert!(slots.slots[window.operands().start + 1].is_none());
-        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(4));
-        slots.clear_frame(window).unwrap();
+        assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(4));
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     #[test]
@@ -2761,25 +2781,25 @@ mod tests {
         owner.metadata.max_stack = 1;
         let mut slots = SlotStore::new(8192);
         let mut parent = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
-        slots.push(&mut parent, Value::Object(object)).unwrap();
+        slots.push(&mut parent, into_internal(&runtime, Value::Object(object))).unwrap();
         let original_capacity = slots.slots.capacity();
         owner.metadata.max_stack = 4096;
         let child = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         assert!(slots.slots.capacity() > original_capacity);
         assert!(
             slots.peek(&parent, 0).is_err(),
             "an inactive parent cannot access the current window"
         );
-        slots.clear_frame(child).unwrap();
+        slots.clear_frame(&runtime, child).unwrap();
         let result = slots.pop(&mut parent).unwrap();
         assert!(slots.slots[parent.operands().start].is_none());
-        slots.clear_frame(parent).unwrap();
+        slots.clear_frame(&runtime, parent).unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_ok());
         drop(result);
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
@@ -2796,7 +2816,7 @@ mod tests {
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
@@ -2807,14 +2827,14 @@ mod tests {
             Value::Object(object),
             Value::Int(4),
         ] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
         let capacity = slots.slots.capacity();
         slots.rotate_operands(&window, 1, 4, false).unwrap();
         slots.rotate_operands(&window, 0, 4, true).unwrap();
-        slots.insert_copy(&mut window, 4, 5).unwrap();
+        slots.insert_copy(&runtime, &mut window, 4, 5).unwrap();
         assert_eq!(slots.slots.capacity(), capacity);
-        assert!(slots.insert_copy(&mut window, 0, 0).is_err());
+        assert!(slots.insert_copy(&runtime, &mut window, 0, 0).is_err());
         assert!(slots.rotate_operands(&window, 1, 6, false).is_err());
         assert!(
             slots
@@ -2822,14 +2842,14 @@ mod tests {
                 .is_err()
         );
         assert_eq!(slots.depth(&window), 6);
-        let mut values = slots.take_frame(window).unwrap().operands;
+        let mut values = slots.take_frame(&runtime, window).unwrap().operands;
         for expected in [0, 4, 2, 1] {
-            assert_eq!(values.pop().unwrap(), Value::Int(expected));
+            assert_eq!(take_public(&runtime, values.pop().unwrap()), Value::Int(expected));
         }
         assert!(
             values
                 .iter()
-                .all(|value| matches!(value, Value::Object(root) if root.object_id() == id))
+                .all(|value| matches!(value, JsValue::Object(handle) if *handle == id))
         );
         drop(values.pop());
         assert!(runtime.0.state.borrow().heap.object(id).is_ok());
@@ -2847,25 +2867,25 @@ mod tests {
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         for value in [Value::Int(7), Value::Object(object), Value::Int(9)] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
-        slots.duplicate_operands(&mut window, 3).unwrap();
-        assert!(slots.duplicate_operands(&mut window, 3).is_err());
+        slots.duplicate_operands(&runtime, &mut window, 3).unwrap();
+        assert!(slots.duplicate_operands(&runtime, &mut window, 3).is_err());
         assert_eq!(slots.depth(&window), 6);
         for _ in 0..2 {
-            assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(9));
-            assert!(
-                matches!(slots.pop(&mut window).unwrap(), Value::Object(root) if root.object_id() == id)
-            );
-            assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(7));
+            assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(9));
+            let popped = slots.pop(&mut window).unwrap();
+            assert!(matches!(&popped, JsValue::Object(handle) if *handle == id));
+            runtime.release_jsvalue(popped).unwrap();
+            assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(7));
         }
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     #[test]
@@ -2876,7 +2896,7 @@ mod tests {
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
@@ -2884,21 +2904,21 @@ mod tests {
             "retained prefix",
         ));
         for value in [text.clone(), Value::Object(object), Value::Int(9)] {
-            slots.push(&mut window, value).unwrap();
+            slots.push(&mut window, into_internal(&runtime, value)).unwrap();
         }
         {
             // Rc-backed String copies succeed; the following Object retain
             // must fail because it needs a mutable heap borrow (shared
             // borrows take the nested-materialization fast path).
             let state = runtime.0.state.borrow_mut();
-            assert!(slots.duplicate_operands(&mut window, 3).is_err());
+            assert!(slots.duplicate_operands(&runtime, &mut window, 3).is_err());
             assert_eq!(slots.depth(&window), 4);
-            assert_eq!(slots.peek(&window, 0).unwrap(), &text);
-            assert_eq!(slots.peek(&window, 1).unwrap(), &Value::Int(9));
+            assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), text);
+            assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), Value::Int(9));
             assert!(state.heap.object(id).is_ok());
             assert!(!runtime.0.deferred_references.has_pending());
         }
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
     }
 
@@ -2914,11 +2934,11 @@ mod tests {
         let mut previous = None;
         for _ in 0..2 {
             let mut window = slots
-                .push_frame(&owner.frame_layout(), empty_storage())
+                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
-            slots.push(&mut window, Value::Int(1)).unwrap();
-            slots.insert_copy(&mut window, 0, 0).unwrap();
-            slots.clear_frame(window).unwrap();
+            slots.push(&mut window, into_internal(&runtime, Value::Int(1))).unwrap();
+            slots.insert_copy(&runtime, &mut window, 0, 0).unwrap();
+            slots.clear_frame(&runtime, window).unwrap();
             let cost = profile.snapshot().owned_storage;
             assert_eq!(cost.slot_capacity_growths, 1);
             assert_eq!(cost.maximum_reserved_slots, 2);
@@ -2952,13 +2972,13 @@ mod tests {
         owner.metadata.max_stack = 5;
         let mut slots = SlotStore::new(8);
         let warm = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
-        slots.clear_frame(warm).unwrap();
+        slots.clear_frame(&runtime, warm).unwrap();
         owner.metadata.max_stack = 2;
         let profile = crate::engine::api::profiling::CostProfile::start();
         let reused = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let costs = profile.snapshot().owned_storage;
         assert_eq!(costs.physical_none_initializations, 0);
@@ -2967,7 +2987,7 @@ mod tests {
         assert_eq!(costs.slots_initialized, 2);
         assert_eq!(costs.slot_capacity_growths, 0);
         assert!(costs.maximum_slot_capacity >= 5);
-        slots.clear_frame(reused).unwrap();
+        slots.clear_frame(&runtime, reused).unwrap();
     }
 
     #[test]
@@ -2978,31 +2998,31 @@ mod tests {
         owner.metadata.argument_count = 2;
         let mut slots = SlotStore::new(32);
         let window = slots
-            .push_frame(
+            .push_frame(&runtime, 
                 &owner.frame_layout(),
                 FrameStorage {
-                    original_arguments: vec![Value::Int(1)],
+                    original_arguments: vec![JsValue::Int(1)],
                     parameters: vec![
-                        FrameBinding::Direct(Value::Int(1)),
-                        FrameBinding::Direct(Value::Undefined),
+                        FrameBinding::Direct(JsValue::Int(1)),
+                        FrameBinding::Direct(JsValue::Undefined),
                     ],
                     ..empty_storage()
                 },
             )
             .unwrap();
         let old = slots
-            .replace_parameter(&window, 0, FrameBinding::Direct(Value::Int(2)))
+            .replace_parameter(&window, 0, FrameBinding::Direct(JsValue::Int(2)))
             .unwrap();
-        assert!(matches!(old, FrameBinding::Direct(Value::Int(1))));
-        let storage = slots.take_frame(window).unwrap();
-        assert_eq!(storage.original_arguments, vec![Value::Int(1)]);
+        assert!(matches!(old, FrameBinding::Direct(JsValue::Int(1))));
+        let storage = slots.take_frame(&runtime, window).unwrap();
+        assert_eq!(storage.original_arguments, vec![JsValue::Int(1)]);
         assert!(matches!(
             storage.parameters[0],
-            FrameBinding::Direct(Value::Int(2))
+            FrameBinding::Direct(JsValue::Int(2))
         ));
         assert!(matches!(
             storage.parameters[1],
-            FrameBinding::Direct(Value::Undefined)
+            FrameBinding::Direct(JsValue::Undefined)
         ));
     }
 
@@ -3015,17 +3035,17 @@ mod tests {
         let mut first = SlotStore::new(4);
         let mut second = SlotStore::new(4);
         let mut a = first
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         let mut b = second
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
-        first.push(&mut a, Value::Int(1)).unwrap();
-        second.push(&mut b, Value::Int(2)).unwrap();
+        first.push(&mut a, into_internal(&runtime, Value::Int(1))).unwrap();
+        second.push(&mut b, into_internal(&runtime, Value::Int(2))).unwrap();
         assert!(second.peek(&a, 0).is_err());
         assert!(first.peek(&b, 0).is_err());
-        assert_eq!(first.pop(&mut a).unwrap(), Value::Int(1));
-        assert_eq!(second.pop(&mut b).unwrap(), Value::Int(2));
+        assert_eq!(take_public(&runtime, first.pop(&mut a).unwrap()), Value::Int(1));
+        assert_eq!(take_public(&runtime, second.pop(&mut b).unwrap()), Value::Int(2));
     }
 
     #[test]
@@ -3036,18 +3056,18 @@ mod tests {
         owner.metadata.max_stack = 1;
         let mut slots = SlotStore::new(1);
         let mut window = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
-        slots.push(&mut window, Value::Int(7)).unwrap();
-        assert!(slots.push(&mut window, Value::Int(8)).is_err());
+        slots.push(&mut window, into_internal(&runtime, Value::Int(7))).unwrap();
+        assert!(slots.push(&mut window, into_internal(&runtime, Value::Int(8))).is_err());
         assert!(
             slots
-                .push_frame(&owner.frame_layout(), empty_storage())
+                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .is_err()
         );
         assert!(
             slots
-                .push_frame(
+                .push_frame(&runtime, 
                     &owner.frame_layout(),
                     FrameStorage {
                         locals: vec![FrameBinding::Uninitialized],
@@ -3058,11 +3078,11 @@ mod tests {
         );
         assert!(slots.peek(&window, usize::MAX).is_err());
         assert_eq!(slots.depth(&window), 1);
-        assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(7));
+        assert_eq!(take_public(&runtime, slots.pop(&mut window).unwrap()), Value::Int(7));
         assert!(slots.pop(&mut window).is_err());
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
         let reused = slots
-            .push_frame(&owner.frame_layout(), empty_storage())
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         assert_eq!(slots.depth(&reused), 0);
         assert!(slots.slots.iter().all(Option::is_none));

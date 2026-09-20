@@ -35,7 +35,7 @@ use crate::engine::object::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField,
     OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
 };
-use crate::engine::value::{JsString, JsStringError, Value};
+use crate::engine::value::{JsString, JsStringError, JsValue, Value};
 use crate::engine::vm::call::CallableExecution;
 
 use crate::engine::vm::{Completion, ToPrimitiveHint};

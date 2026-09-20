@@ -797,6 +797,14 @@ fn assert_script_true(context: &mut Context, source: &str) {
     assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
 }
 
+#[track_caller]
+fn assert_returned_completion(runtime: &Runtime, completion: Completion, expected: Value) {
+    let Completion::Return(value) = completion else {
+        panic!("expected Completion::Return");
+    };
+    assert_eq!(runtime.root_and_release_jsvalue(value).unwrap(), expected);
+}
+
 fn eval_dynamic_import(context: &mut Context, source: &str, filename: &str) -> ObjectRef {
     let Value::Object(promise) = context.eval_with_filename(source, filename).unwrap() else {
         panic!("dynamic import did not return an object");

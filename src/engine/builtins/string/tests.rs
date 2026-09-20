@@ -23,6 +23,26 @@ const STRING_CASE_ENTRIES: [(&str, StringCaseKind); 4] = [
     ("toLocaleUpperCase", StringCaseKind::Upper),
 ];
 
+fn js(runtime: &Runtime, value: Value) -> JsValue {
+    runtime.into_jsvalue(value).unwrap()
+}
+
+#[track_caller]
+fn returned(runtime: &Runtime, completion: Completion) -> Value {
+    let Completion::Return(value) = completion else {
+        panic!("expected Completion::Return");
+    };
+    runtime.root_and_release_jsvalue(value).unwrap()
+}
+
+#[track_caller]
+fn thrown(runtime: &Runtime, completion: Completion) -> Value {
+    let Completion::Throw(value) = completion else {
+        panic!("expected Completion::Throw");
+    };
+    runtime.root_and_release_jsvalue(value).unwrap()
+}
+
 mod registration;
 
 mod code_points;

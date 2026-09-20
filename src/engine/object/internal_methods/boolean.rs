@@ -6,7 +6,7 @@ use super::{
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyBooleanKind {
@@ -107,7 +107,9 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyBooleanStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyBooleanStep::Complete(NativeConversion::Throw(value)),
+        MethodStep::Throw(value) => ProxyBooleanStep::Complete(NativeConversion::Throw(
+            runtime.root_and_release_jsvalue(value)?,
+        )),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let key = resume.take_read_key();
@@ -163,9 +165,15 @@ fn method(
                     if let ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) = &kind {
                         arguments.push(runtime.property_key_value(key)?);
                     }
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let arguments = arguments
+                        .into_iter()
+                        .map(|value| runtime.into_jsvalue(value))
+                        .collect::<Result<Vec<_>, _>>()?;
                     ProxyBooleanStep::request_call(
                         target,
-                        Value::Object(rooted.handler.clone()),
+                        receiver,
                         arguments,
                         ProxyBooleanResume(Box::new(ProxyBooleanResumeState {
                             pending_effect: ProxyBooleanStepPending::default(),
@@ -188,7 +196,9 @@ impl ProxyBooleanResume {
         let value = match completion {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(ProxyBooleanStep::Complete(NativeConversion::Throw(value)));
+                return Ok(ProxyBooleanStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -199,7 +209,7 @@ impl ProxyBooleanResume {
                 resume.resume(runtime, Completion::Return(value))?,
             ),
             Phase::Trap { rooted, kind } => {
-                let result = runtime.value_to_boolean(&value)?;
+                let result = runtime.value_to_boolean_jsvalue(&value)?;
                 match kind {
                     ProxyBooleanKind::Has(_) if result => {
                         Ok(ProxyBooleanStep::Complete(NativeConversion::Value(true)))
@@ -379,7 +389,7 @@ pub(super) fn finish(
             ProxyBooleanStep::Read { mut resume } => {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 resume.resume(
                     runtime,
                     runtime.internal_get(realm, &object, &key, receiver)?,
@@ -387,8 +397,12 @@ pub(super) fn finish(
             }
             ProxyBooleanStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 {
                     let result = match target {
                         DirectCallTarget::Callable(callable) => {
@@ -478,12 +492,15 @@ mod tests {
             );
             let resume = take_call(
                 resume
-                    .resume(&runtime, Completion::Return(callable))
+                    .resume(
+                        &runtime,
+                        Completion::Return(runtime.into_jsvalue(callable).unwrap()),
+                    )
                     .unwrap(),
             );
             let mut resume = take_descriptor(
                 resume
-                    .resume(&runtime, Completion::Return(Value::Bool(true)))
+                    .resume(&runtime, Completion::Return(JsValue::Bool(true)))
                     .unwrap(),
             );
             if after_descriptor {
@@ -522,10 +539,10 @@ struct ProxyBooleanStepPending {
     prevent_extensions_object: Option<ObjectRef>,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
     extensible_object: Option<ObjectRef>,
@@ -552,7 +569,7 @@ impl ProxyBooleanStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ProxyBooleanResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -562,8 +579,8 @@ impl ProxyBooleanStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxyBooleanResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -630,7 +647,7 @@ impl ProxyBooleanResume {
             .take()
             .expect("ProxyBooleanStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -644,14 +661,14 @@ impl ProxyBooleanResume {
             .take()
             .expect("ProxyBooleanStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxyBooleanStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

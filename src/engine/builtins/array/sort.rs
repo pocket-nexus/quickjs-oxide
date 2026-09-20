@@ -7,7 +7,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey, operations::InternalSetResult},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -78,17 +78,26 @@ impl SortStep {
     ) -> Result<Self, RuntimeError> {
         let comparator = match runtime.native_sort_comparator(realm, arguments)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Array sort requires generic invocation",
             ));
         };
-        let object = match runtime.native_to_object(realm, this_value.clone())? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-        };
+        let object =
+            match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
         Ok(Self::request_read(
             object.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
@@ -129,13 +138,13 @@ impl SortResume {
         result: Completion,
     ) -> Result<SortStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => return Ok(SortStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(SortStep::request_number(value, self))
+                Ok(SortStep::request_number(runtime.into_jsvalue(value)?, self))
             }
             Phase::CollectRead => {
                 self.collect_value(value);
@@ -147,7 +156,7 @@ impl SortResume {
                     return self.compared(runtime, order_from_number(f64::from(value)));
                 }
                 self.0.phase = Phase::CompareNumber;
-                Ok(SortStep::request_number(value, self))
+                Ok(SortStep::request_number(runtime.into_jsvalue(value)?, self))
             }
             _ => Err(RuntimeError::Invariant("Array sort value phase mismatch")),
         }
@@ -160,7 +169,9 @@ impl SortResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SortStep::Complete(Completion::Throw(value)));
+                return Ok(SortStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -172,7 +183,9 @@ impl SortResume {
                     {
                         NativeConversion::Value(values) => values,
                         NativeConversion::Throw(value) => {
-                            return Ok(SortStep::Complete(Completion::Throw(value)));
+                            return Ok(SortStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
                         }
                     };
                 }
@@ -227,7 +240,9 @@ impl SortResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SortStep::Complete(Completion::Throw(value)));
+                return Ok(SortStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -292,8 +307,8 @@ impl SortResume {
                         return Ok(SortStep::request_call(
                             callable,
                             vec![
-                                self.0.slots[left].value.clone(),
-                                self.0.slots[right].value.clone(),
+                                runtime.into_jsvalue(self.0.slots[left].value.clone())?,
+                                runtime.into_jsvalue(self.0.slots[right].value.clone())?,
                             ],
                             self,
                         ));
@@ -321,14 +336,14 @@ impl SortResume {
         if self.0.slots[self.0.left].cached_string.is_none() {
             self.0.phase = Phase::LeftString;
             return Ok(SortStep::request_string(
-                self.0.slots[self.0.left].value.clone(),
+                runtime.into_jsvalue(self.0.slots[self.0.left].value.clone())?,
                 self,
             ));
         }
         if self.0.slots[self.0.right].cached_string.is_none() {
             self.0.phase = Phase::RightString;
             return Ok(SortStep::request_string(
-                self.0.slots[self.0.right].value.clone(),
+                runtime.into_jsvalue(self.0.slots[self.0.right].value.clone())?,
                 self,
             ));
         }
@@ -358,7 +373,9 @@ impl SortResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SortStep::Complete(Completion::Throw(value)));
+                return Ok(SortStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let index = match self.0.phase {
@@ -396,7 +413,7 @@ impl SortResume {
             return Ok(SortStep::request_set(
                 self.0.object.clone(),
                 runtime.property_key_for_index(self.0.cursor)?,
-                value,
+                runtime.into_jsvalue(value)?,
                 self,
             ));
         }
@@ -406,7 +423,7 @@ impl SortResume {
             return Ok(SortStep::request_set(
                 self.0.object.clone(),
                 runtime.property_key_for_index(self.0.cursor)?,
-                Value::Undefined,
+                JsValue::Undefined,
                 self,
             ));
         }
@@ -418,9 +435,9 @@ impl SortResume {
                 self,
             ));
         }
-        Ok(SortStep::Complete(Completion::Return(Value::Object(
-            self.0.object,
-        ))))
+        Ok(SortStep::Complete(Completion::Return(
+            runtime.into_jsvalue(Value::Object(self.0.object))?,
+        )))
     }
     pub(crate) fn set(
         mut self,
@@ -432,7 +449,9 @@ impl SortResume {
             return Err(RuntimeError::Invariant("Array sort set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(SortStep::Complete(Completion::Throw(value)));
+            return Ok(SortStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            )));
         }
         self.0.cursor += 1;
         self.write_next(runtime)
@@ -464,11 +483,11 @@ pub(crate) fn finish(
                 )?
             }
             SortStep::Number { mut resume } => {
-                let value = resume.take_number_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             SortStep::String { mut resume } => {
-                let value = resume.take_string_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
                 resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
             }
             SortStep::Has { mut resume } => {
@@ -481,7 +500,11 @@ pub(crate) fn finish(
             }
             SortStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let arguments = resume.take_call_arguments();
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, Value::Undefined, &arguments)?,
@@ -490,7 +513,7 @@ pub(crate) fn finish(
             SortStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 {
                     let result = runtime.internal_set(
                         realm,
@@ -518,15 +541,15 @@ pub(crate) fn finish(
 struct SortStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    number_value: Option<Value>,
-    string_value: Option<Value>,
+    number_value: Option<JsValue>,
+    string_value: Option<JsValue>,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_arguments: Option<Vec<Value>>,
+    call_arguments: Option<Vec<JsValue>>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
+    set_value: Option<JsValue>,
     delete_object: Option<ObjectRef>,
     delete_key: Option<PropertyKey>,
 }
@@ -540,11 +563,11 @@ impl SortStep {
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: SortResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: SortResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
-    pub(crate) fn request_string(value: Value, mut resume: SortResume) -> Self {
+    pub(crate) fn request_string(value: JsValue, mut resume: SortResume) -> Self {
         resume.0.pending_effect.string_value = Some(value);
         Self::String { resume }
     }
@@ -555,7 +578,7 @@ impl SortStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         mut resume: SortResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -565,7 +588,7 @@ impl SortStep {
     pub(crate) fn request_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: SortResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -598,14 +621,14 @@ impl SortResume {
             .take()
             .expect("SortStep Read key")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value
             .take()
             .expect("SortStep Number value")
     }
-    pub(crate) fn take_string_value(&mut self) -> Value {
+    pub(crate) fn take_string_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .string_value
@@ -633,7 +656,7 @@ impl SortResume {
             .take()
             .expect("SortStep Call callable")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments
@@ -654,7 +677,7 @@ impl SortResume {
             .take()
             .expect("SortStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value

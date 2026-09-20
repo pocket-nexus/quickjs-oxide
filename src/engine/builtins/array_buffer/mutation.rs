@@ -4,7 +4,7 @@ use crate::engine::{
     builtins::native::ArrayBufferNativeKind,
     heap::ContextId,
     object::ObjectRef,
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -13,7 +13,7 @@ use crate::engine::{
 pub(crate) enum BufferMutationStep {
     Complete(Completion),
     Primitive {
-        value: Value,
+        value: JsValue,
         resume: BufferMutationResume,
     },
 }
@@ -48,18 +48,19 @@ impl BufferMutationStep {
                 "SharedArrayBuffer.prototype.grow received a constructor invocation",
             ));
         };
-        let object = match runtime.require_shared_array_buffer(realm, this_value.clone())? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-        };
+        let object =
+            match runtime.require_shared_array_buffer(realm, runtime.root_value(this_value)?)? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
         Ok(Self::Primitive {
-            value: arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant(
-                    "SharedArrayBuffer grow argument was not padded",
-                ))?
-                .clone(),
+            value: runtime.dup_jsvalue(arguments.readable.first().ok_or(
+                RuntimeError::Invariant("SharedArrayBuffer grow argument was not padded"),
+            )?)?,
             resume: BufferMutationResume(Box::new(BufferMutationResumeState {
                 realm,
                 object,
@@ -95,14 +96,18 @@ impl BufferMutationStep {
                 },
             ));
         };
-        let object = match runtime.require_array_buffer(realm, this_value.clone())? {
+        let object = match runtime.require_array_buffer(realm, runtime.root_value(this_value)?)? {
             NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         if !matches!(kind, ArrayBufferNativeKind::Resize) {
             let initial = runtime.array_buffer_snapshot(&object)?;
             if arguments.actual_arg_count == 0
-                || matches!(arguments.readable.first(), Some(Value::Undefined))
+                || matches!(arguments.readable.first(), Some(JsValue::Undefined))
             {
                 return Ok(Self::Complete(runtime.finish_array_buffer_transfer(
                     realm,
@@ -112,17 +117,13 @@ impl BufferMutationStep {
                 )?));
             }
         }
-        let value = arguments
-            .readable
-            .first()
-            .ok_or(RuntimeError::Invariant(
-                if matches!(kind, ArrayBufferNativeKind::Resize) {
-                    "ArrayBuffer resize argument was not padded"
-                } else {
-                    "ArrayBuffer transfer argument was not padded"
-                },
-            ))?
-            .clone();
+        let value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant(if matches!(kind, ArrayBufferNativeKind::Resize) {
+                "ArrayBuffer resize argument was not padded"
+            } else {
+                "ArrayBuffer transfer argument was not padded"
+            }),
+        )?)?;
         Ok(Self::Primitive {
             value,
             resume: BufferMutationResume(Box::new(BufferMutationResumeState {
@@ -141,7 +142,7 @@ impl BufferMutationResume {
         result: Completion,
     ) -> Result<BufferMutationStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(BufferMutationStep::Complete(Completion::Throw(value)));
             }
@@ -164,7 +165,9 @@ impl BufferMutationResume {
                         runtime.finish_array_buffer_resize(self.0.realm, self.0.object, length)?
                     }
                 }
-                NativeConversion::Throw(value) => Completion::Throw(value),
+                NativeConversion::Throw(value) => {
+                    Completion::Throw(runtime.into_jsvalue(value)?)
+                }
             }
         } else {
             match runtime.native_to_index(self.0.realm, &value)? {
@@ -174,7 +177,9 @@ impl BufferMutationResume {
                     length,
                     matches!(self.0.kind, ArrayBufferNativeKind::TransferToFixedLength),
                 )?,
-                NativeConversion::Throw(value) => Completion::Throw(value),
+                NativeConversion::Throw(value) => {
+                    Completion::Throw(runtime.into_jsvalue(value)?)
+                }
             }
         };
         Ok(BufferMutationStep::Complete(result))
@@ -189,8 +194,8 @@ pub(in crate::engine::builtins) fn finish(
         step = match step {
             BufferMutationStep::Complete(result) => return Ok(result),
             BufferMutationStep::Primitive { value, resume } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::Number)?
+                let result = if matches!(value, JsValue::Object(_)) {
+                    runtime.to_primitive_jsvalue(realm, value, ToPrimitiveHint::Number)?
                 } else {
                     Completion::Return(value)
                 };

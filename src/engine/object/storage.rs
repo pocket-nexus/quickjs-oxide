@@ -11,7 +11,7 @@ use crate::engine::object::{
     AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, properties,
 };
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 /// One-use missing selection minted only by the storage transaction below.
 /// It never leaves that exclusive RuntimeState borrow or enters a VM/JS state.
@@ -360,7 +360,7 @@ impl Runtime {
                     None
                 };
                 let root = if let Some(root) = global_root {
-                    self.write_var_ref(&root, value)?;
+                    self.write_var_ref(&root, self.unroot_value(&value)?)?;
                     root
                 } else if let Some(root) = hidden_root {
                     if !self.delete_property(&hidden, key)? {
@@ -368,7 +368,7 @@ impl Runtime {
                             "hidden global VarRef property was not configurable",
                         ));
                     }
-                    self.write_var_ref(&root, value)?;
+                    self.write_var_ref(&root, self.unroot_value(&value)?)?;
                     root
                 } else {
                     self.new_var_ref_rooted(value, false, !writable, ClosureVariableKind::Normal)?

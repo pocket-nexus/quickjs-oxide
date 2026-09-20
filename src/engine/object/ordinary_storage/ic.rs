@@ -248,7 +248,6 @@ impl Runtime {
                 let Some(slot) = cache.slot(&state.heap, self.domain_id(), executable.realm, id)
                 else {
                     drop(state);
-                    self.release_converted_value_edge(&conversion_probe);
                     return Ok(false);
                 };
                 slot
@@ -259,9 +258,6 @@ impl Runtime {
         let replaced =
             state.replace_property_slot(id, slot, crate::engine::heap::PropertySlot::Data(raw));
         drop(state);
-        // The slot retained its own copy edge on success; a rejected
-        // replacement kept nothing. Balance the producer edge either way.
-        self.release_converted_value_edge(&conversion_probe);
         replaced?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("property_write_ic.hit");
@@ -285,7 +281,6 @@ impl Runtime {
             Ok(data) => data,
             Err(error) => {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error.into());
             }
         };
@@ -298,7 +293,6 @@ impl Runtime {
             Ok(atoms) => atoms,
             Err(error) => {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error);
             }
         };
@@ -339,7 +333,6 @@ impl Runtime {
             Ok(data) => data,
             Err(error) => {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error.into());
             }
         };
@@ -493,12 +486,13 @@ impl Runtime {
 mod tests {
     use super::*;
     use crate::engine::code::bytecode::Instruction;
+    use crate::engine::value::Value;
 
-    fn object(value: &Value) -> &crate::engine::object::ObjectRef {
-        let Value::Object(object) = value else {
+    fn object(value: &JsValue) -> crate::engine::heap::ObjectId {
+        let JsValue::Object(object) = value else {
             panic!("object")
         };
-        object
+        *object
     }
 
     fn site(runtime: &Runtime) -> (PublishedFunctionSnapshot, usize, u32) {
@@ -540,7 +534,15 @@ mod tests {
             "({nested:7})",
         ] {
             let (code, pc, key) = site(&runtime);
-            let base=context.eval(&format!("globalThis.icExpected={expression};globalThis.icHolder={{x:icExpected}};icHolder")).unwrap();
+            let base = runtime
+                .into_jsvalue(
+                    context
+                        .eval(&format!(
+                            "globalThis.icExpected={expression};globalThis.icHolder={{x:icExpected}};icHolder"
+                        ))
+                        .unwrap(),
+                )
+                .unwrap();
             let expected = context.eval("icExpected").unwrap();
             let mut native = None;
             assert!(
@@ -553,15 +555,21 @@ mod tests {
                 .try_property_ic_read_owned(&base, &code, pc, key, false, &mut native)
                 .unwrap()
                 .unwrap();
-            assert_eq!(actual, expected, "{expression}");
-            context.eval("icHolder.x=99").unwrap();
             assert_eq!(
-                runtime
-                    .try_property_ic_read_owned(&base, &code, pc, key, false, &mut native)
-                    .unwrap(),
+                runtime.root_and_release_jsvalue(actual).unwrap(),
+                expected,
+                "{expression}"
+            );
+            context.eval("icHolder.x=99").unwrap();
+            let after = runtime
+                .try_property_ic_read_owned(&base, &code, pc, key, false, &mut native)
+                .unwrap();
+            assert_eq!(
+                after.map(|value| runtime.root_and_release_jsvalue(value).unwrap()),
                 Some(Value::Int(99))
             );
             assert!(native.is_none());
+            runtime.release_jsvalue(base).unwrap();
         }
     }
 
@@ -570,7 +578,9 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let (code, pc, key) = site(&runtime);
-        let base = context.eval("({x:{marker:1}})").unwrap();
+        let base = runtime
+            .into_jsvalue(context.eval("({x:{marker:1}})").unwrap())
+            .unwrap();
         let mut native = None;
         assert!(
             runtime
@@ -592,7 +602,7 @@ mod tests {
                 .state
                 .borrow()
                 .heap
-                .object_strong_count(receiver.object_id())
+                .object_strong_count(receiver)
                 .unwrap(),
             1
         );
@@ -613,18 +623,23 @@ mod tests {
         assert!(runtime.0.deferred_references.has_pending());
         // A kept receiver hit only retains under the exclusive heap borrow;
         // pending unrelated releases cannot mutate its guarded layout.
-        let retained_hit = runtime
+        let first_hit = runtime
             .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
             .unwrap();
-        assert!(matches!(retained_hit, Some(Value::Object(_))));
+        assert!(matches!(first_hit, Some(JsValue::Object(_))));
         assert!(runtime.0.deferred_references.has_pending());
         runtime.drain_deferred_references().unwrap();
-        assert!(matches!(
-            runtime
-                .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
-                .unwrap(),
-            Some(Value::Object(_))
-        ));
+        let second_hit = runtime
+            .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
+            .unwrap();
+        assert!(matches!(second_hit, Some(JsValue::Object(_))));
+        if let Some(value) = first_hit {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        if let Some(value) = second_hit {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
@@ -632,8 +647,12 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let (code, pc, key) = site(&runtime);
-        let base = context
-            .eval("globalThis.icNative={x:Math.min};icNative")
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("globalThis.icNative={x:Math.min};icNative")
+                    .unwrap(),
+            )
             .unwrap();
         let mut native = None;
         assert!(
@@ -646,9 +665,12 @@ mod tests {
             .try_property_ic_read_owned(&base, &code, pc, key, true, &mut native)
             .unwrap()
             .unwrap();
+        let first_object =
+            crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), object(&first))
+                .unwrap();
         let hint = native.take().unwrap();
         context.eval("icNative.x=Math.max").unwrap();
-        let data = hint.into_parts(object(&first)).unwrap();
+        let data = hint.into_parts(&first_object).unwrap();
         assert_eq!(
             data.target,
             crate::engine::builtins::native::NativeFunctionId::MathMinMax(
@@ -660,7 +682,10 @@ mod tests {
             .unwrap()
             .unwrap();
         let hint = native.take().unwrap();
-        assert!(hint.into_parts(object(&first)).is_none());
+        assert!(hint.into_parts(&first_object).is_none());
         assert_ne!(first, second);
+        runtime.release_jsvalue(first).unwrap();
+        runtime.release_jsvalue(second).unwrap();
+        runtime.release_jsvalue(base).unwrap();
     }
 }

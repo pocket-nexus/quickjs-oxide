@@ -2,7 +2,7 @@
 //! access-mode checks move to publication. These tests use the real compiler,
 //! publisher and runtime host, not synthetic instruction fixtures.
 use crate::engine::api::runtime::Runtime;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 #[test]
 fn invalid_binding_modes_are_rejected_before_creating_a_runtime_frame() {
@@ -222,6 +222,7 @@ fn stack_reads_cover_full_depth_range_and_preserve_root_ownership() {
         let mut slots = SlotStore::new(length + 1);
         let mut window = slots
             .push_frame(
+                &runtime,
                 &code.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
@@ -232,17 +233,19 @@ fn stack_reads_cover_full_depth_range_and_preserve_root_ownership() {
             )
             .unwrap();
         for index in 0..length {
-            slots.push(&mut window, Value::Int(index as i32)).unwrap();
+            slots
+                .push(&mut window, JsValue::Int(index as i32))
+                .unwrap();
         }
         for depth in 0..=255 {
             let value = slots.peek(&window, depth);
             if depth < length {
-                assert_eq!(value.unwrap(), &Value::Int((length - depth - 1) as i32));
+                assert_eq!(value.unwrap(), &JsValue::Int((length - depth - 1) as i32));
             } else {
                 assert!(value.is_err());
             }
         }
-        slots.clear_frame(window).unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
     }
     let object = context.new_object().unwrap();
     let id = object.object_id();
@@ -251,6 +254,7 @@ fn stack_reads_cover_full_depth_range_and_preserve_root_ownership() {
     let mut slots = SlotStore::new(2);
     let mut window = slots
         .push_frame(
+            &runtime,
             &code.frame_layout(),
             FrameStorage {
                 original_arguments: vec![],
@@ -260,12 +264,19 @@ fn stack_reads_cover_full_depth_range_and_preserve_root_ownership() {
             },
         )
         .unwrap();
-    slots.push(&mut window, Value::Object(object)).unwrap();
-    slots.push(&mut window, Value::Int(9)).unwrap();
-    let saved = slots.peek(&window, 1).unwrap().clone();
-    assert_eq!(slots.pop(&mut window).unwrap(), Value::Int(9));
-    slots.clear_frame(window).unwrap();
+    slots
+        .push(
+            &mut window,
+            runtime.into_jsvalue(Value::Object(object)).unwrap(),
+        )
+        .unwrap();
+    slots.push(&mut window, JsValue::Int(9)).unwrap();
+    let saved = runtime
+        .dup_jsvalue(slots.peek(&window, 1).unwrap())
+        .unwrap();
+    assert_eq!(slots.pop(&mut window).unwrap(), JsValue::Int(9));
+    slots.clear_frame(&runtime, window).unwrap();
     assert!(runtime.0.state.borrow().heap.object(id).is_ok());
-    drop(saved);
+    runtime.release_jsvalue(saved).unwrap();
     assert!(runtime.0.state.borrow().heap.object(id).is_err());
 }

@@ -10,7 +10,7 @@ use crate::engine::object::operations::RawStringProperty;
 use crate::engine::object::ordinary::OrdinaryRead;
 use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 
 impl Runtime {
@@ -56,11 +56,13 @@ impl Runtime {
         strict: bool,
     ) -> Result<Completion, RuntimeError> {
         match result {
-            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                Ok(Completion::Throw(self.unroot_value(&value)?))
+            }
             NativeConversion::Value(false) if strict => Err(RuntimeError::Engine(
                 crate::engine::api::Error::new(ErrorKind::Type, "could not delete property"),
             )),
-            NativeConversion::Value(value) => Ok(Completion::Return(Value::Bool(value))),
+            NativeConversion::Value(value) => Ok(Completion::Return(JsValue::Bool(value))),
         }
     }
 
@@ -205,8 +207,13 @@ impl Runtime {
         read: OrdinaryRead,
     ) -> Result<Completion, RuntimeError> {
         Ok(match self.finish_prepared_read(realm, key, read)? {
-            NativeConversion::Value(value) => Completion::Return(value.unwrap_or(Value::Undefined)),
-            NativeConversion::Throw(value) => Completion::Throw(value),
+            NativeConversion::Value(value) => Completion::Return(match value {
+                Some(value) => self.unroot_value(&value)?,
+                None => JsValue::Undefined,
+            }),
+            NativeConversion::Throw(value) => {
+                Completion::Throw(self.unroot_value(&value)?)
+            }
         })
     }
 
@@ -239,7 +246,9 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match self.prepare_value_property_read_completion(realm, receiver, key)? {
             NativeConversion::Value(read) => self.finish_value_property_read(realm, key, read),
-            NativeConversion::Throw(reason) => Ok(Completion::Throw(reason)),
+            NativeConversion::Throw(reason) => {
+                Ok(Completion::Throw(self.unroot_value(&reason)?))
+            }
         }
     }
 

@@ -5,7 +5,7 @@ use crate::engine::{
     object::{
         ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, operations::InternalDefineResult,
     },
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::Completion,
 };
 
@@ -16,10 +16,11 @@ pub(crate) enum LiteralDefinitionStep {
 }
 pub(crate) struct LiteralDefinitionResume(Box<LiteralDefinitionState>);
 struct LiteralDefinitionState {
+    runtime: Runtime,
     realm: Option<ContextId>,
     object: Option<ObjectRef>,
     value: Option<Value>,
-    primitive: Option<Value>,
+    primitive: Option<JsValue>,
     key: Option<PropertyKey>,
     descriptor: Option<OrdinaryPropertyDescriptor>,
 }
@@ -31,8 +32,10 @@ impl LiteralDefinitionStep {
         key: PropertyKey,
         descriptor: OrdinaryPropertyDescriptor,
     ) -> Self {
+        let runtime = object.runtime().clone();
         Self::Define {
             resume: LiteralDefinitionResume(Box::new(LiteralDefinitionState {
+                runtime,
                 realm: None,
                 object: Some(object),
                 value: None,
@@ -52,10 +55,11 @@ impl LiteralDefinitionStep {
         if matches!(key, Value::Object(_)) {
             Ok(Self::Primitive {
                 resume: LiteralDefinitionResume(Box::new(LiteralDefinitionState {
+                    runtime: runtime.clone(),
                     realm: Some(realm),
                     object: Some(object),
                     value: Some(value),
-                    primitive: Some(key),
+                    primitive: Some(runtime.into_jsvalue(key)?),
                     key: None,
                     descriptor: None,
                 })),
@@ -67,13 +71,15 @@ impl LiteralDefinitionStep {
                     key,
                     Runtime::public_class_field_descriptor(value),
                 )),
-                NativeConversion::Throw(value) => Ok(Self::Complete(Completion::Throw(value))),
+                NativeConversion::Throw(value) => Ok(Self::Complete(Completion::Throw(
+                    runtime.unroot_value(&value)?,
+                ))),
             }
         }
     }
 }
 impl LiteralDefinitionResume {
-    pub(crate) fn take_primitive(&mut self) -> Value {
+    pub(crate) fn take_primitive(&mut self) -> JsValue {
         self.0.primitive.take().expect("literal primitive request")
     }
     pub(crate) fn take_define(&mut self) -> (ObjectRef, PropertyKey, OrdinaryPropertyDescriptor) {
@@ -97,10 +103,12 @@ impl LiteralDefinitionResume {
         let realm = self.0.realm.take().ok_or(RuntimeError::Invariant(
             "literal definition lost its key conversion owner",
         ))?;
-        let key = match runtime.property_key_from_primitive(realm, key)? {
+        let key = match runtime.property_key_from_primitive_jsvalue(realm, key)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
-                return Ok(LiteralDefinitionStep::Complete(Completion::Throw(value)));
+                return Ok(LiteralDefinitionStep::Complete(Completion::Throw(
+                    runtime.unroot_value(&value)?,
+                )));
             }
         };
         self.0.key = Some(key);
@@ -118,11 +126,14 @@ impl LiteralDefinitionResume {
                 "literal definition reply has wrong owner",
             ));
         }
+        let runtime = self.0.runtime.clone();
         Ok(LiteralDefinitionStep::Complete(match result {
             NativeConversion::Value(InternalDefineResult::Defined) => {
-                Completion::Return(Value::Undefined)
+                Completion::Return(crate::engine::value::JsValue::Undefined)
             }
-            NativeConversion::Throw(value) => Completion::Throw(value),
+            NativeConversion::Throw(value) => {
+                Completion::Throw(runtime.unroot_value(&value)?)
+            }
             NativeConversion::Value(InternalDefineResult::RejectedOrdinary(_)) => {
                 return Err(Error::new(ErrorKind::Type, "property is not configurable").into());
             }
@@ -161,9 +172,17 @@ mod resident_tests {
             panic!("primitive request")
         };
         let address = (&*resume.0) as *const LiteralDefinitionState;
-        assert_eq!(resume.take_primitive(), key);
+        assert_eq!(
+            runtime
+                .root_and_release_jsvalue(resume.take_primitive())
+                .unwrap(),
+            key
+        );
         let LiteralDefinitionStep::Define { mut resume } = resume
-            .resume(&runtime, Completion::Return(primitive))
+            .resume(
+                &runtime,
+                Completion::Return(runtime.unroot_value(&primitive).unwrap()),
+            )
             .unwrap()
         else {
             panic!("define request")
@@ -176,7 +195,9 @@ mod resident_tests {
             resume
                 .defined(NativeConversion::Value(InternalDefineResult::Defined))
                 .unwrap(),
-            LiteralDefinitionStep::Complete(Completion::Return(Value::Undefined))
+            LiteralDefinitionStep::Complete(Completion::Return(
+                crate::engine::value::JsValue::Undefined
+            ))
         ));
     }
 }

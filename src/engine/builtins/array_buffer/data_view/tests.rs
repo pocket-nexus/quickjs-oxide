@@ -580,10 +580,12 @@ fn pending_data_view_access_roots_the_view_and_buffer_until_abandonment() {
     };
     let id = object.object_id();
     let buffer = runtime.data_view_snapshot(object).unwrap().buffer;
-    let invocation = NativeInvocation::Call { this_value: view };
+    let invocation = NativeInvocation::Call {
+        this_value: runtime.unroot_value(&view).unwrap(),
+    };
     let arguments = NativeArguments {
         actual_arg_count: 2,
-        readable: vec![Value::Int(0), Value::Int(42)],
+        readable: vec![JsValue::Int(0), JsValue::Int(42)],
     };
     let DataViewAccessStep::Primitive { resume, .. } = DataViewAccessStep::start(
         &runtime,
@@ -598,7 +600,7 @@ fn pending_data_view_access_roots_the_view_and_buffer_until_abandonment() {
     drop(invocation);
     drop(arguments);
     let DataViewAccessStep::Primitive { resume, .. } = resume
-        .resume(&runtime, Completion::Return(Value::Int(0)))
+        .resume(&runtime, Completion::Return(JsValue::Int(0)))
         .unwrap()
     else {
         panic!("expected value conversion")

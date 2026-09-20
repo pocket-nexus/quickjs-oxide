@@ -602,6 +602,7 @@ fn equality(
                     | JsValue::Symbol(_),
             ) => {
                 return primitive(
+                    runtime,
                     left,
                     ToPrimitiveHint::Default,
                     NumericResume(Box::new(NumericResumeState {

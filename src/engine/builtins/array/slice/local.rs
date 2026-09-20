@@ -25,16 +25,17 @@ impl SliceStep {
                             );
                             resume.resume_once(
                                 runtime,
-                                Completion::Return(value.unwrap_or(Value::Undefined)),
+                                Completion::Return(value.unwrap_or(JsValue::Undefined)),
                             )?
                         }
                         read => return Ok(Self::make_preparedread(read, key, resume)),
                     }
                 }
                 Self::Number { mut resume }
-                    if !matches!(resume.0.pending.value.as_ref(), Some(Value::Object(_))) =>
+                    if !matches!(resume.0.pending.value.as_ref(), Some(JsValue::Object(_))) =>
                 {
                     let (value,) = resume.take_number();
+                    let value = runtime.root_and_release_jsvalue(value)?;
                     let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant(

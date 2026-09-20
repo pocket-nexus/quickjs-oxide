@@ -395,15 +395,21 @@ impl RunSlots<'_> {
 
     pub(in crate::engine::vm) fn insert_copy(
         &mut self,
+        runtime: &Runtime,
         source_from_top: usize,
         destination_from_top: usize,
     ) -> Result<(), Error> {
         self.store
-            .insert_copy_current(self.window, source_from_top, destination_from_top)
+            .insert_copy_current(runtime, self.window, source_from_top, destination_from_top)
     }
 
-    pub(in crate::engine::vm) fn duplicate_operands(&mut self, count: usize) -> Result<(), Error> {
-        self.store.duplicate_operands_current(self.window, count)
+    pub(in crate::engine::vm) fn duplicate_operands(
+        &mut self,
+        runtime: &Runtime,
+        count: usize,
+    ) -> Result<(), Error> {
+        self.store
+            .duplicate_operands_current(runtime, self.window, count)
     }
 
     pub(in crate::engine::vm) fn release_operand(
@@ -580,11 +586,14 @@ mod primitive_transaction_tests {
         let mut store = SlotStore::new(8);
         let mut window = store
             .push_frame(
+                &runtime,
                 &layout.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
                     parameters: vec![],
-                    locals: vec![FrameBinding::Direct(left.clone())],
+                    locals: vec![FrameBinding::Direct(
+                        runtime.into_jsvalue(left.clone()).unwrap(),
+                    )],
                     operands: vec![],
                 },
             )
@@ -596,11 +605,11 @@ mod primitive_transaction_tests {
             let FrameBinding::Direct(value) = slots.local(0).unwrap() else {
                 panic!("left")
             };
-            let value = value.clone();
+            let value = runtime.dup_jsvalue(value).unwrap();
             slots.push(value).unwrap();
             assert!(slots.local(u16::MAX).is_err());
             assert_eq!(slots.window.depth, 1);
-            assert_eq!(slots.peek(0).unwrap(), &left);
+            assert_eq!(runtime.root_value(slots.peek(0).unwrap()).unwrap(), left);
         }
     }
 
@@ -613,6 +622,7 @@ mod primitive_transaction_tests {
         let mut store = SlotStore::new(8);
         let mut window = store
             .push_frame(
+                &runtime,
                 &layout.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
@@ -623,7 +633,12 @@ mod primitive_transaction_tests {
             )
             .unwrap();
         store
-            .push(&mut window, context.eval("({tag:42})").unwrap())
+            .push(
+                &mut window,
+                runtime
+                    .into_jsvalue(context.eval("({tag:42})").unwrap())
+                    .unwrap(),
+            )
             .unwrap();
         let mut owner;
         {
@@ -632,19 +647,21 @@ mod primitive_transaction_tests {
             // No RunSlots is live during collection. The moved owner roots
             // the object independently of the exclusive frame transaction.
             runtime.run_gc().unwrap();
-            transaction.slots().push(Value::Int(7)).unwrap();
+            transaction.slots().push(JsValue::Int(7)).unwrap();
             assert!(transaction.slots().push_pending(&mut owner).is_err());
             assert!(
                 owner.is_some(),
                 "failed output keeps its owner outside the borrow"
             );
-            assert_eq!(transaction.slots().pop().unwrap(), Value::Int(7));
+            assert_eq!(transaction.slots().pop().unwrap(), JsValue::Int(7));
             transaction.slots().push_pending(&mut owner).unwrap();
         }
         assert!(owner.is_none());
-        let Value::Object(object) = store.pop(&mut window).unwrap() else {
+        let popped = store.pop(&mut window).unwrap();
+        let Value::Object(object) = runtime.root_value(&popped).unwrap() else {
             panic!("object")
         };
+        runtime.release_jsvalue(popped).unwrap();
         assert_eq!(
             context
                 .get_property(&object, &runtime.intern_property_key("tag").unwrap())
@@ -663,6 +680,7 @@ mod primitive_transaction_tests {
         layout.metadata.max_stack = 1;
         let mut window = store
             .push_frame(
+                &runtime,
                 &layout.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
@@ -673,7 +691,7 @@ mod primitive_transaction_tests {
             )
             .unwrap();
         let base = context.eval("({x:{tag:42}})").unwrap();
-        store.push(&mut window, base).unwrap();
+        store.push(&mut window, runtime.into_jsvalue(base).unwrap()).unwrap();
         let mut old_base = None;
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
@@ -698,11 +716,15 @@ mod primitive_transaction_tests {
             );
             drop(profile);
         }
-        drop(old_base);
+        if let Some(value) = old_base.take() {
+            runtime.release_jsvalue(value).unwrap();
+        }
         runtime.run_gc().unwrap();
-        let Value::Object(result) = store.pop(&mut window).unwrap() else {
+        let popped = store.pop(&mut window).unwrap();
+        let Value::Object(result) = runtime.root_value(&popped).unwrap() else {
             panic!("result");
         };
+        runtime.release_jsvalue(popped).unwrap();
         assert_eq!(
             context
                 .get_property(&result, &runtime.intern_property_key("tag").unwrap())
@@ -721,6 +743,7 @@ mod primitive_transaction_tests {
         let mut store = SlotStore::new(8);
         let mut window = store
             .push_frame(
+                &runtime,
                 &layout.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
@@ -741,7 +764,7 @@ mod primitive_transaction_tests {
         store
             .push(
                 &mut window,
-                Value::Object(foreign.new_object(None).unwrap()),
+                JsValue::Object(foreign.new_object(None).unwrap().into_handle()),
             )
             .unwrap();
         assert!(matches!(
@@ -765,6 +788,7 @@ mod primitive_transaction_tests {
         let mut store = SlotStore::new(8);
         let mut window = store
             .push_frame(
+                &runtime,
                 &layout.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
@@ -775,7 +799,7 @@ mod primitive_transaction_tests {
             )
             .unwrap();
         let base = context.eval("globalThis.linkedCalls=0;globalThis.linkedBase={get x(){linkedCalls++;return 42}};linkedBase").unwrap();
-        store.push(&mut window, base).unwrap();
+        store.push(&mut window, runtime.into_jsvalue(base).unwrap()).unwrap();
         let LinkedReadCompletion::Pending(read) = store
             .with_linked_own_read(&mut window, &runtime, &executable, index, |_, _| {
                 panic!("pending getter committed operands")
@@ -811,6 +835,7 @@ mod primitive_transaction_tests {
         let mut store = SlotStore::new(1);
         let mut window = store
             .push_frame(
+                &runtime,
                 &owner.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
@@ -820,10 +845,10 @@ mod primitive_transaction_tests {
                 },
             )
             .unwrap();
-        store.push(&mut window, Value::Int(7)).unwrap();
+        store.push(&mut window, JsValue::Int(7)).unwrap();
         let object = runtime.new_object(None).unwrap();
         let object_id = object.object_id();
-        let mut pending = Some(Value::Object(object));
+        let mut pending = Some(JsValue::Object(object.into_handle()));
         {
             let mut slots = store.run_window(&mut window).unwrap();
             assert!(slots.push_pending(&mut pending).is_err());
@@ -831,7 +856,7 @@ mod primitive_transaction_tests {
                 pending.is_some(),
                 "failure may not release the final owner inside RunSlots"
             );
-            assert_eq!(slots.peek(0).unwrap(), &Value::Int(7));
+            assert_eq!(slots.peek(0).unwrap(), &JsValue::Int(7));
         }
         assert!(runtime.0.state.borrow().heap.object(object_id).is_ok());
         let mut binding = Some(FrameBinding::Direct(pending.take().unwrap()));

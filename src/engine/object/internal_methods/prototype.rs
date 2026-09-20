@@ -6,7 +6,7 @@ use super::{
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::{ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyPrototypeKind {
@@ -91,7 +91,7 @@ impl ProxyPrototypeStep {
     }
 }
 fn method(
-    _runtime: &Runtime,
+    runtime: &Runtime,
     realm: ContextId,
     kind: ProxyPrototypeKind,
     step: MethodStep,
@@ -144,9 +144,15 @@ fn method(
                     if let ProxyPrototypeKind::Set(prototype) = &kind {
                         arguments.push(prototype.clone().map_or(Value::Null, Value::Object));
                     }
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let arguments = arguments
+                        .into_iter()
+                        .map(|value| runtime.into_jsvalue(value))
+                        .collect::<Result<Vec<_>, _>>()?;
                     ProxyPrototypeStep::request_call(
                         target,
-                        Value::Object(rooted.handler.clone()),
+                        receiver,
                         arguments,
                         ProxyPrototypeResume(Box::new(ProxyPrototypeResumeState {
                             pending_effect: ProxyPrototypeStepPending::default(),
@@ -161,15 +167,17 @@ fn method(
 }
 fn completed(prototype: Option<ObjectRef>, setting: bool) -> ProxyPrototypeStep {
     ProxyPrototypeStep::Complete(Completion::Return(if setting {
-        Value::Bool(true)
+        JsValue::Bool(true)
     } else {
-        prototype.map_or(Value::Null, Value::Object)
+        prototype.map_or(JsValue::Null, |object| JsValue::Object(object.into_handle()))
     }))
 }
 fn inconsistent(runtime: &Runtime, realm: ContextId) -> Result<ProxyPrototypeStep, RuntimeError> {
     Ok(ProxyPrototypeStep::Complete(
         match runtime.proxy_invariant_throw::<Value>(realm, "prototype")? {
-            NativeConversion::Throw(value) => Completion::Throw(value),
+            NativeConversion::Throw(value) => {
+                Completion::Throw(runtime.unroot_value(&value)?)
+            }
             NativeConversion::Value(_) => {
                 return Err(RuntimeError::Invariant(
                     "Proxy invariant rejection returned a value",
@@ -201,16 +209,19 @@ impl ProxyPrototypeResume {
                 let (prototype, setting) = match kind {
                     ProxyPrototypeKind::Get => (
                         match value {
-                            Value::Object(object) => Some(object),
-                            Value::Null => None,
+                            JsValue::Object(object) => Some(ObjectRef::from_owned_handle(
+                                runtime.clone(),
+                                object,
+                            )),
+                            JsValue::Null => None,
                             _ => return inconsistent(runtime, self.0.realm),
                         },
                         false,
                     ),
                     ProxyPrototypeKind::Set(prototype) => {
-                        if !runtime.value_to_boolean(&value)? {
+                        if !runtime.value_to_boolean_jsvalue(&value)? {
                             return Ok(ProxyPrototypeStep::Complete(Completion::Return(
-                                Value::Bool(false),
+                                JsValue::Bool(false),
                             )));
                         }
                         (prototype, true)
@@ -242,7 +253,9 @@ impl ProxyPrototypeResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(value)));
+                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(
+                    _runtime.unroot_value(&value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -250,7 +263,7 @@ impl ProxyPrototypeResume {
                 kind: ProxyPrototypeKind::Set(_),
                 ..
             } => Ok(ProxyPrototypeStep::Complete(Completion::Return(
-                Value::Bool(value),
+                JsValue::Bool(value),
             ))),
             Phase::Extensible {
                 rooted,
@@ -286,7 +299,9 @@ impl ProxyPrototypeResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(value)));
+                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(
+                    runtime.unroot_value(&value)?,
+                )));
             }
         };
         match self.0.phase {
@@ -321,7 +336,7 @@ pub(super) fn finish(
             ProxyPrototypeStep::Read { mut resume } => {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 resume.resume(
                     runtime,
                     runtime.internal_get(realm, &object, &key, receiver)?,
@@ -329,8 +344,12 @@ pub(super) fn finish(
             }
             ProxyPrototypeStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 {
                     let result = match target {
                         DirectCallTarget::Callable(callable) => {
@@ -415,7 +434,10 @@ mod tests {
                 );
                 let resume = take_call(
                     resume
-                        .resume(&runtime, Completion::Return(callable))
+                        .resume(
+                            &runtime,
+                            Completion::Return(runtime.into_jsvalue(callable).unwrap()),
+                        )
                         .unwrap(),
                 );
                 let reply = if setting {
@@ -424,8 +446,14 @@ mod tests {
                 } else {
                     Value::Object(prototype)
                 };
-                let mut resume =
-                    take_extensible(resume.resume(&runtime, Completion::Return(reply)).unwrap());
+                let mut resume = take_extensible(
+                    resume
+                        .resume(
+                            &runtime,
+                            Completion::Return(runtime.into_jsvalue(reply).unwrap()),
+                        )
+                        .unwrap(),
+                );
                 if compare {
                     resume = take_get(
                         resume
@@ -455,10 +483,10 @@ mod tests {
 struct ProxyPrototypeStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     get_object: Option<ObjectRef>,
     set_object: Option<ObjectRef>,
     set_prototype: Option<Option<ObjectRef>>,
@@ -468,7 +496,7 @@ impl ProxyPrototypeStep {
     pub(crate) fn request_read(
         object: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
         mut resume: ProxyPrototypeResume,
     ) -> Self {
         resume.0.pending_effect.read_object = Some(object);
@@ -478,8 +506,8 @@ impl ProxyPrototypeStep {
     }
     pub(crate) fn request_call(
         target: DirectCallTarget,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: ProxyPrototypeResume,
     ) -> Self {
         resume.0.pending_effect.call_target = Some(target);
@@ -520,7 +548,7 @@ impl ProxyPrototypeResume {
             .take()
             .expect("ProxyPrototypeStep Read key")
     }
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -534,14 +562,14 @@ impl ProxyPrototypeResume {
             .take()
             .expect("ProxyPrototypeStep Call target")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("ProxyPrototypeStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

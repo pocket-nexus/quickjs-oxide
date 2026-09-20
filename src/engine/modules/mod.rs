@@ -55,7 +55,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsStringError, Value};
+use crate::engine::value::{JsString, JsStringError, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 use crate::engine::vm::frames::ExplicitBacktraceLocation;
@@ -3039,7 +3039,7 @@ impl Runtime {
                             "namespace import has no preallocated declaration cell",
                         ))?;
                     let slot = VarRefRoot::from_borrowed_handle(self.clone(), slot)?;
-                    self.write_var_ref(&slot, Value::Object(namespace))?;
+                    self.write_var_ref(&slot, self.into_jsvalue(Value::Object(namespace))?)?;
                     continue;
                 }
                 ModuleImportName::Name(import_name) => {
@@ -3195,9 +3195,9 @@ impl Runtime {
             )
             .map_err(RuntimeError::Engine)?;
             match completion {
-                Completion::Return(Value::Undefined) => Ok(()),
+                Completion::Return(JsValue::Undefined) => Ok(()),
                 Completion::Throw(value) => {
-                    self.set_pending_exception(value)?;
+                    self.set_pending_exception_jsvalue(value)?;
                     Err(RuntimeError::Exception)
                 }
                 _ => Err(RuntimeError::Invariant(
@@ -3408,7 +3408,7 @@ impl Runtime {
             crate::engine::vm::entry::call(self, realm, &target, Value::Undefined, &[value])?;
 
         match completion {
-            Completion::Return(_) => Ok(Completion::Return(Value::Undefined)),
+            Completion::Return(_) => Ok(Completion::Return(JsValue::Undefined)),
             Completion::Throw(_) => Err(RuntimeError::Invariant(
                 "intrinsic dynamic import resolving function threw",
             )),
@@ -3510,7 +3510,7 @@ impl Runtime {
             resolve,
             reject,
         )? {
-            NativeConversion::Value(()) => Ok(Completion::Return(Value::Undefined)),
+            NativeConversion::Value(()) => Ok(Completion::Return(JsValue::Undefined)),
             NativeConversion::Throw(value) => {
                 // `JS_LoadModuleInternal` frees the abrupt `js_promise_then`
                 // result and the surrounding load job still returns
@@ -3518,7 +3518,7 @@ impl Runtime {
                 // while the caller-facing import Promise deliberately stays
                 // pending in this edge case.
                 self.set_pending_exception(value)?;
-                Ok(Completion::Return(Value::Undefined))
+                Ok(Completion::Return(JsValue::Undefined))
             }
         }
     }

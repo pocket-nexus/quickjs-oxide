@@ -7,7 +7,7 @@ use crate::engine::{
         GlobalNumberPredicateKind, GlobalUriCodecKind, NumberParseKind, SymbolRegistryKind,
     },
     heap::ContextId,
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -33,8 +33,8 @@ impl GlobalKind {
 }
 pub(crate) enum GlobalStep {
     Complete(Completion),
-    String { value: Value, resume: GlobalResume },
-    Number { value: Value, resume: GlobalResume },
+    String { value: JsValue, resume: GlobalResume },
+    Number { value: JsValue, resume: GlobalResume },
 }
 pub(crate) struct GlobalResume(Box<GlobalResumeState>);
 impl std::ops::Deref for GlobalResume {
@@ -52,12 +52,12 @@ const _: () = assert!(std::mem::size_of::<GlobalResume>() <= 8);
 pub(crate) struct GlobalResumeState {
     realm: ContextId,
     kind: GlobalKind,
-    radix: Value,
+    radix: JsValue,
     input: Option<JsString>,
 }
 impl GlobalStep {
     pub(crate) fn start(
-        _runtime: &Runtime,
+        runtime: &Runtime,
         realm: ContextId,
         kind: GlobalKind,
         invocation: &NativeInvocation,
@@ -68,21 +68,16 @@ impl GlobalStep {
                 "global builtin requires generic invocation",
             ));
         }
-        let value = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "global builtin argv was not padded",
-            ))?;
+        let value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("global builtin argv was not padded"),
+        )?)?;
         let resume = GlobalResume(Box::new(GlobalResumeState {
             realm,
             kind,
-            radix: arguments
-                .readable
-                .get(1)
-                .cloned()
-                .unwrap_or(Value::Undefined),
+            radix: match arguments.readable.get(1) {
+                Some(value) => runtime.dup_jsvalue(value)?,
+                None => JsValue::Undefined,
+            },
             input: None,
         }));
         Ok(if matches!(kind, GlobalKind::Predicate(_)) {
@@ -101,15 +96,17 @@ impl GlobalStep {
         use crate::engine::value::conversion::number::NumberStep;
         loop {
             self = match self {
-                Self::String { value, resume } if !matches!(value, Value::Object(_)) => {
+                Self::String { value, resume } if !matches!(value, JsValue::Object(_)) => {
+                    let value = runtime.root_and_release_jsvalue(value)?;
                     resume.string(runtime, runtime.string_from_primitive(realm, &value)?)?
                 }
-                Self::Number { value, resume } if !matches!(value, Value::Object(_)) => {
+                Self::Number { value, resume } if !matches!(value, JsValue::Object(_)) => {
+                    let value = runtime.root_and_release_jsvalue(value)?;
                     let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant("primitive global number suspended"));
                     };
-                    resume.number(result)?
+                    resume.number(runtime, result)?
                 }
                 Self::Complete(completion) => {
                     #[cfg(feature = "profiling")]
@@ -132,38 +129,52 @@ impl GlobalResume {
         let input = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(GlobalStep::Complete(Completion::Throw(value)));
+                return Ok(GlobalStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.kind {
             GlobalKind::Parse(NumberParseKind::ParseInt) => {
                 self.0.input = Some(input);
                 Ok(GlobalStep::Number {
-                    value: self.0.radix.clone(),
+                    value: runtime.dup_jsvalue(&self.0.radix)?,
                     resume: self,
                 })
             }
             GlobalKind::Parse(NumberParseKind::ParseFloat) => {
-                Ok(GlobalStep::Complete(Completion::Return(Value::number(
-                    crate::engine::value::number_parse::parse_float(&input),
-                ))))
+                Ok(GlobalStep::Complete(Completion::Return(
+                    crate::engine::value::number::operations::Number::compact(
+                        crate::engine::value::number_parse::parse_float(&input),
+                    )
+                    .into(),
+                )))
             }
             GlobalKind::Uri(kind) => Ok(GlobalStep::Complete(runtime.finish_global_uri_codec(
                 self.0.realm,
                 kind,
                 input,
             )?)),
-            GlobalKind::SymbolFor => Ok(GlobalStep::Complete(Completion::Return(Value::Symbol(
-                runtime.symbol_for(&input)?,
-            )))),
+            GlobalKind::SymbolFor => {
+                let symbol = runtime.symbol_for(&input)?;
+                Ok(GlobalStep::Complete(Completion::Return(
+                    runtime.unroot_value(&Value::Symbol(symbol))?,
+                )))
+            }
             _ => Err(RuntimeError::Invariant("global string reply mismatch")),
         }
     }
-    pub(crate) fn number(self, result: NativeConversion<f64>) -> Result<GlobalStep, RuntimeError> {
+    pub(crate) fn number(
+        self,
+        runtime: &Runtime,
+        result: NativeConversion<f64>,
+    ) -> Result<GlobalStep, RuntimeError> {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(GlobalStep::Complete(Completion::Throw(value)));
+                return Ok(GlobalStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let value = match self.0.kind {
@@ -182,7 +193,9 @@ impl GlobalResume {
             }),
             _ => return Err(RuntimeError::Invariant("global number reply mismatch")),
         };
-        Ok(GlobalStep::Complete(Completion::Return(value)))
+        Ok(GlobalStep::Complete(Completion::Return(
+            runtime.into_jsvalue(value)?,
+        )))
     }
 }
 pub(crate) fn finish(
@@ -194,10 +207,12 @@ pub(crate) fn finish(
         step = match step {
             GlobalStep::Complete(result) => return Ok(result),
             GlobalStep::String { value, resume } => {
+                let value = runtime.root_and_release_jsvalue(value)?;
                 resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
             }
             GlobalStep::Number { value, resume } => {
-                resume.number(runtime.native_to_number(realm, &value)?)?
+                let value = runtime.root_and_release_jsvalue(value)?;
+                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
         };
     }

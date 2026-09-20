@@ -9,7 +9,7 @@ use crate::engine::heap::{
     ContextId, InternalCallableData, PromiseState, RawModuleRef, roots::VarRefRoot,
 };
 use crate::engine::object::CallableRef;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 pub(crate) enum BodyStep {
@@ -72,8 +72,8 @@ impl BodyStep {
                     ))?;
                 let slot = VarRefRoot::from_borrowed_handle(runtime.clone(), slot)?;
                 let default_value = runtime.root_raw_value(default_value)?;
-                runtime.write_var_ref(&slot, default_value)?;
-                Ok(Self::Complete(Completion::Return(Value::Undefined)))
+                runtime.write_var_ref(&slot, runtime.into_jsvalue(default_value)?)?;
+                Ok(Self::Complete(Completion::Return(JsValue::Undefined)))
             }
             ModuleRecordBody::Parsing => Err(RuntimeError::Invariant(
                 "module execution reached a parse-in-progress record",
@@ -93,15 +93,28 @@ impl BodyResume {
             Phase::Attach => {
                 if let Completion::Throw(reason) = completion {
                     // Preserve the ignored abrupt attachment and pending exception.
-                    runtime.set_pending_exception(reason)?;
+                    runtime.set_pending_exception_jsvalue(reason)?;
                 }
-                Ok(BodyStep::Complete(Completion::Return(Value::Undefined)))
+                Ok(BodyStep::Complete(Completion::Return(JsValue::Undefined)))
             }
             Phase::Async => {
-                let Completion::Return(Value::Object(promise)) = completion else {
-                    return Err(RuntimeError::Invariant(
-                        "async module callable did not return a Promise",
-                    ));
+                let promise = match completion {
+                    Completion::Return(value) => {
+                        match runtime.root_and_release_jsvalue(value)? {
+                            Value::Object(promise) => promise,
+                            _ => {
+                                return Err(RuntimeError::Invariant(
+                                    "async module callable did not return a Promise",
+                                ));
+                            }
+                        }
+                    }
+                    Completion::Throw(value) => {
+                        runtime.release_jsvalue(value)?;
+                        return Err(RuntimeError::Invariant(
+                            "async module callable did not return a Promise",
+                        ));
+                    }
                 };
                 let module = self.root.raw;
                 let make_handler = |kind| {
@@ -126,15 +139,21 @@ impl BodyResume {
     }
 }
 fn inspect_sync(runtime: &Runtime, completion: Completion) -> Result<Completion, RuntimeError> {
-    let Completion::Return(Value::Object(promise)) = completion else {
-        return match completion {
-            Completion::Throw(_) => Err(RuntimeError::Invariant(
+    let promise = match completion {
+        Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
+            Value::Object(promise) => promise,
+            _ => {
+                return Err(RuntimeError::Invariant(
+                    "async module callable returned a non-Promise",
+                ));
+            }
+        },
+        Completion::Throw(value) => {
+            runtime.release_jsvalue(value)?;
+            return Err(RuntimeError::Invariant(
                 "async module callable threw instead of returning a Promise",
-            )),
-            Completion::Return(_) => Err(RuntimeError::Invariant(
-                "async module callable returned a non-Promise",
-            )),
-        };
+            ));
+        }
     };
     let snapshot = runtime
         .0
@@ -144,8 +163,8 @@ fn inspect_sync(runtime: &Runtime, completion: Completion) -> Result<Completion,
         .promise_snapshot(promise.object_id())?;
     let result = runtime.root_raw_value(&snapshot.result)?;
     match snapshot.state {
-        PromiseState::Fulfilled => Ok(Completion::Return(result)),
-        PromiseState::Rejected => Ok(Completion::Throw(result)),
+        PromiseState::Fulfilled => Ok(Completion::Return(runtime.into_jsvalue(result)?)),
+        PromiseState::Rejected => Ok(Completion::Throw(runtime.into_jsvalue(result)?)),
         PromiseState::Pending => Err(RuntimeError::Invariant(
             "synchronous module body retained a pending Promise",
         )),

@@ -11,7 +11,7 @@ use crate::engine::{
         WellKnownSymbol,
         operations::{InternalDefineResult, InternalSetResult},
     },
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{ConstructorRef, NativeArguments, NativeInvocation},
@@ -123,12 +123,15 @@ impl BuildStep {
             let length = u32::try_from(arguments.actual_arg_count)
                 .map_err(|_| RuntimeError::Invariant("Array.of argument count exceeded Uint32"))?;
             // Snapshot argv because constructor/callback requests outlive this borrow.
-            let values = arguments.readable[..arguments.actual_arg_count].to_vec();
+            let values = arguments.readable[..arguments.actual_arg_count]
+                .iter()
+                .map(|value| runtime.root_value(value))
+                .collect::<Result<Vec<_>, _>>()?;
             let resume = BuildResume(Box::new(BuildResumeState {
                 pending_effect: BuildStepPending::default(),
                 scheduler_set_key: None,
                 realm,
-                constructor: this_value.clone(),
+                constructor: runtime.root_value(this_value)?,
                 result: None,
                 mapfn: None,
                 map_this: Value::Undefined,
@@ -141,15 +144,17 @@ impl BuildStep {
             }));
             return resume.construct(runtime, Some(Runtime::array_length_value(length)), false);
         }
-        let items = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant("Array.from argv was not padded"))?;
+        let items = runtime.root_value(
+            arguments
+                .readable
+                .first()
+                .ok_or(RuntimeError::Invariant("Array.from argv was not padded"))?,
+        )?;
         let mapfn = if arguments.actual_arg_count > 1
-            && !matches!(arguments.readable[1], Value::Undefined)
+            && !matches!(arguments.readable[1], JsValue::Undefined)
         {
-            let callable = match &arguments.readable[1] {
+            let mapfn_value = runtime.root_value(&arguments.readable[1])?;
+            let callable = match &mapfn_value {
                 Value::Object(object) => runtime.as_callable(object)?,
                 _ => None,
             };
@@ -163,7 +168,7 @@ impl BuildStep {
             None
         };
         let map_this = if arguments.actual_arg_count > 2 {
-            arguments.readable[2].clone()
+            runtime.root_value(&arguments.readable[2])?
         } else {
             Value::Undefined
         };
@@ -182,13 +187,13 @@ impl BuildStep {
             )));
         }
         Ok(Self::request_read(
-            items.clone(),
+            runtime.into_jsvalue(items.clone())?,
             PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
             BuildResume(Box::new(BuildResumeState {
                 pending_effect: BuildStepPending::default(),
                 scheduler_set_key: None,
                 realm,
-                constructor: this_value.clone(),
+                constructor: runtime.root_value(this_value)?,
                 result: None,
                 mapfn,
                 map_this,
@@ -208,19 +213,20 @@ impl BuildResume {
         self.0.scheduler_set_key.take().expect("waiting Set key")
     }
 
-    fn abrupt(self, value: Value) -> BuildStep {
+    fn abrupt(self, runtime: &Runtime, value: Value) -> Result<BuildStep, RuntimeError> {
+        let completion = Completion::Throw(runtime.into_jsvalue(value)?);
         if matches!(self.0.phase, Phase::Map | Phase::Define)
             && let Mode::Iterable {
                 iterator: Some(iterator),
                 ..
             } = self.0.mode
         {
-            return BuildStep::Close {
+            return Ok(BuildStep::Close {
                 iterator,
-                completion: Completion::Throw(value),
-            };
+                completion,
+            });
         }
-        BuildStep::Complete(Completion::Throw(value))
+        Ok(BuildStep::Complete(completion))
     }
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
@@ -241,11 +247,14 @@ impl BuildResume {
         {
             let target = match runtime.constructor_from_value(self.0.realm, constructor)? {
                 NativeConversion::Value(target) => target,
-                NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
+                NativeConversion::Throw(value) => return self.abrupt(runtime, value),
             };
             return Ok(BuildStep::request_construct(
                 target,
-                length.into_iter().collect(),
+                length
+                    .into_iter()
+                    .map(|value| runtime.into_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?,
                 self,
             ));
         }
@@ -263,7 +272,7 @@ impl BuildResume {
                 ..
             } => {
                 let callable = next.clone();
-                let receiver = Value::Object(iterator.clone());
+                let receiver = JsValue::Object(iterator.clone().into_handle());
                 self.0.phase = Phase::NextCall;
                 // Array.from uses ordinary Call, not JS_IteratorNext2's raw
                 // cproto fast path; parse its actual object result afterwards.
@@ -275,7 +284,7 @@ impl BuildResume {
                 ))
             }
             Mode::ArrayLike { source, length } if self.0.index < *length => {
-                let receiver = Value::Object(source.clone());
+                let receiver = JsValue::Object(source.clone().into_handle());
                 self.0.phase = Phase::Value;
                 Ok(BuildStep::request_read(
                     receiver,
@@ -306,7 +315,7 @@ impl BuildResume {
         Ok(BuildStep::request_set(
             self.result()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            Value::number(length as f64),
+            runtime.into_jsvalue(Value::number(length as f64))?,
             self,
         ))
     }
@@ -315,8 +324,11 @@ impl BuildResume {
             self.0.phase = Phase::Map;
             return Ok(BuildStep::request_call(
                 callable,
-                self.0.map_this.clone(),
-                vec![value, Value::number(self.0.index as f64)],
+                runtime.into_jsvalue(self.0.map_this.clone())?,
+                vec![
+                    runtime.into_jsvalue(value)?,
+                    runtime.into_jsvalue(Value::number(self.0.index as f64))?,
+                ],
                 self,
             ));
         }
@@ -347,8 +359,10 @@ impl BuildResume {
             return Ok(BuildStep::request_parse(reply, self));
         }
         let value = match reply {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => return Ok(self.abrupt(value)),
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Throw(value) => {
+                return self.abrupt(runtime, runtime.root_and_release_jsvalue(value)?);
+            }
         };
         match self.0.phase {
             Phase::Method => {
@@ -360,7 +374,7 @@ impl BuildResume {
                 if matches!(value, Value::Undefined | Value::Null) {
                     let source = match runtime.native_to_object(self.0.realm, items)? {
                         NativeConversion::Value(source) => source,
-                        NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
+                        NativeConversion::Throw(value) => return self.abrupt(runtime, value),
                     };
                     self.0.mode = Mode::ArrayLike {
                         source: source.clone(),
@@ -368,7 +382,7 @@ impl BuildResume {
                     };
                     self.0.phase = Phase::Length;
                     return Ok(BuildStep::request_read(
-                        Value::Object(source),
+                        JsValue::Object(source.into_handle()),
                         runtime
                             .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                         self,
@@ -384,7 +398,7 @@ impl BuildResume {
                         NativeErrorKind::Type,
                         "value is not iterable",
                     )?;
-                    return Ok(self.abrupt(error));
+                    return self.abrupt(runtime, error);
                 };
                 self.0.mode = Mode::Iterable {
                     items,
@@ -396,7 +410,7 @@ impl BuildResume {
             }
             Phase::Length => {
                 self.0.phase = Phase::Number;
-                Ok(BuildStep::request_number(value, self))
+                Ok(BuildStep::request_number(runtime.into_jsvalue(value)?, self))
             }
             Phase::Construct => {
                 let Value::Object(result) = value else {
@@ -406,7 +420,7 @@ impl BuildResume {
                 };
                 self.0.result = Some(result);
                 if let Mode::Iterable { items, method, .. } = &self.0.mode {
-                    let receiver = items.clone();
+                    let receiver = runtime.into_jsvalue(items.clone())?;
                     let callable = method.clone();
                     self.0.phase = Phase::Iterator;
                     return Ok(BuildStep::request_call(
@@ -425,7 +439,7 @@ impl BuildResume {
                         NativeErrorKind::Type,
                         "not an object",
                     )?;
-                    return Ok(self.abrupt(error));
+                    return self.abrupt(runtime, error);
                 };
                 let Mode::Iterable {
                     iterator: target, ..
@@ -436,7 +450,7 @@ impl BuildResume {
                 *target = Some(iterator.clone());
                 self.0.phase = Phase::NextMethod;
                 Ok(BuildStep::request_read(
-                    Value::Object(iterator),
+                    JsValue::Object(iterator.into_handle()),
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
                     self,
                 ))
@@ -452,7 +466,7 @@ impl BuildResume {
                         NativeErrorKind::Type,
                         "not a function",
                     )?;
-                    return Ok(self.abrupt(error));
+                    return self.abrupt(runtime, error);
                 };
                 let Mode::Iterable { next, .. } = &mut self.0.mode else {
                     return Err(RuntimeError::Invariant("Array.from iterator mode missing"));
@@ -474,7 +488,7 @@ impl BuildResume {
     ) -> Result<BuildStep, RuntimeError> {
         let number = match reply {
             NativeConversion::Value(number) => number,
-            NativeConversion::Throw(value) => return Ok(self.abrupt(value)),
+            NativeConversion::Throw(value) => return self.abrupt(runtime, value),
         };
         if !matches!(self.0.phase, Phase::Number) {
             return Err(RuntimeError::Invariant(
@@ -501,9 +515,13 @@ impl BuildResume {
             ));
         }
         match reply {
-            ObjectIteratorStep::Throw(value) => Ok(self.abrupt(value)),
+            ObjectIteratorStep::Throw(value) => {
+                self.abrupt(runtime, runtime.root_and_release_jsvalue(value)?)
+            }
             ObjectIteratorStep::Done => self.set_length(runtime),
-            ObjectIteratorStep::Yield(value) => self.map(runtime, value),
+            ObjectIteratorStep::Yield(value) => {
+                self.map(runtime, runtime.root_and_release_jsvalue(value)?)
+            }
         }
     }
     pub(crate) fn defined(
@@ -519,7 +537,7 @@ impl BuildResume {
         if let Some(value) =
             runtime.finish_create_indexed_data_property(self.0.realm, self.0.index, reply)?
         {
-            return Ok(self.abrupt(value));
+            return self.abrupt(runtime, value);
         }
         self.0.index = self.0.index.checked_add(1).ok_or(RuntimeError::Invariant(
             "Array.from iterator index overflowed u64",
@@ -538,11 +556,11 @@ impl BuildResume {
             ));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, reply)? {
-            return Ok(self.abrupt(value));
+            return self.abrupt(runtime, value);
         }
-        Ok(BuildStep::Complete(Completion::Return(Value::Object(
-            self.result()?,
-        ))))
+        Ok(BuildStep::Complete(Completion::Return(
+            runtime.into_jsvalue(Value::Object(self.result()?))?,
+        )))
     }
 }
 pub(crate) fn finish(
@@ -554,7 +572,7 @@ pub(crate) fn finish(
         step = match step {
             BuildStep::Complete(result) => return Ok(result),
             BuildStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
@@ -562,13 +580,17 @@ pub(crate) fn finish(
                 )?
             }
             BuildStep::Number { mut resume } => {
-                let value = resume.take_number_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
             BuildStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
+                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let arguments = resume
+                    .take_call_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.call_internal(realm, &callable, receiver, &arguments)?,
@@ -576,7 +598,11 @@ pub(crate) fn finish(
             }
             BuildStep::Construct { mut resume } => {
                 let target = resume.take_construct_target();
-                let arguments = resume.take_construct_arguments();
+                let arguments = resume
+                    .take_construct_arguments()
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
                 resume.resume(
                     runtime,
                     runtime.construct_constructor_internal(realm, &target, &target, &arguments)?,
@@ -605,7 +631,7 @@ pub(crate) fn finish(
             BuildStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = resume.take_set_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
                 {
                     let reply = runtime.internal_set(
                         realm,
@@ -633,36 +659,40 @@ pub(crate) fn finish(
 
 #[derive(Default)]
 struct BuildStepPending {
-    read_receiver: Option<Value>,
+    read_receiver: Option<JsValue>,
     read_key: Option<PropertyKey>,
-    number_value: Option<Value>,
+    number_value: Option<JsValue>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     construct_target: Option<ConstructorRef>,
-    construct_arguments: Option<Vec<Value>>,
+    construct_arguments: Option<Vec<JsValue>>,
     parse_result: Option<Completion>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
     define_descriptor: Option<OrdinaryPropertyDescriptor>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
-    set_value: Option<Value>,
+    set_value: Option<JsValue>,
 }
 impl BuildStep {
-    pub(crate) fn request_read(receiver: Value, key: PropertyKey, mut resume: BuildResume) -> Self {
+    pub(crate) fn request_read(
+        receiver: JsValue,
+        key: PropertyKey,
+        mut resume: BuildResume,
+    ) -> Self {
         resume.0.pending_effect.read_receiver = Some(receiver);
         resume.0.pending_effect.read_key = Some(key);
         Self::Read { resume }
     }
-    pub(crate) fn request_number(value: Value, mut resume: BuildResume) -> Self {
+    pub(crate) fn request_number(value: JsValue, mut resume: BuildResume) -> Self {
         resume.0.pending_effect.number_value = Some(value);
         Self::Number { resume }
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         mut resume: BuildResume,
     ) -> Self {
         resume.0.pending_effect.call_callable = Some(callable);
@@ -672,7 +702,7 @@ impl BuildStep {
     }
     pub(crate) fn request_construct(
         target: ConstructorRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         mut resume: BuildResume,
     ) -> Self {
         resume.0.pending_effect.construct_target = Some(target);
@@ -697,7 +727,7 @@ impl BuildStep {
     pub(crate) fn request_set(
         object: ObjectRef,
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
         mut resume: BuildResume,
     ) -> Self {
         resume.0.pending_effect.set_object = Some(object);
@@ -707,7 +737,7 @@ impl BuildStep {
     }
 }
 impl BuildResume {
-    pub(crate) fn take_read_receiver(&mut self) -> Value {
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .read_receiver
@@ -721,7 +751,7 @@ impl BuildResume {
             .take()
             .expect("BuildStep Read key")
     }
-    pub(crate) fn take_number_value(&mut self) -> Value {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .number_value
@@ -735,14 +765,14 @@ impl BuildResume {
             .take()
             .expect("BuildStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("BuildStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments
@@ -756,7 +786,7 @@ impl BuildResume {
             .take()
             .expect("BuildStep Construct target")
     }
-    pub(crate) fn take_construct_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_construct_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .construct_arguments
@@ -805,7 +835,7 @@ impl BuildResume {
             .take()
             .expect("BuildStep Set key")
     }
-    pub(crate) fn take_set_value(&mut self) -> Value {
+    pub(crate) fn take_set_value(&mut self) -> JsValue {
         self.0
             .pending_effect
             .set_value

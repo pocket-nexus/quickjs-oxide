@@ -12,7 +12,7 @@ use crate::engine::object::SymbolRef;
 use crate::engine::object::access::raw_string_property_one_level;
 use crate::engine::value::conversion::NativeConversion;
 
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
 
@@ -64,6 +64,17 @@ impl Runtime {
             message.push_utf8("not a constructor");
         }
         self.new_native_error_from_message(realm, NativeErrorKind::Type, message)
+    }
+
+    /// Internal-value form of [`Runtime::new_not_constructor_error`].
+    pub(crate) fn new_not_constructor_error_jsvalue(
+        &self,
+        realm: ContextId,
+        target: &JsValue,
+    ) -> Result<JsValue, RuntimeError> {
+        let target = self.root_value(target)?;
+        let value = self.new_not_constructor_error(realm, &target)?;
+        self.into_jsvalue(value)
     }
 
     pub(crate) fn call_global_number_parse(
@@ -125,7 +136,9 @@ impl Runtime {
             GlobalUriCodecKind::Unescape => crate::engine::builtins::uri::unescape(&input),
         };
         match result {
-            Ok(value) => Ok(Completion::Return(Value::String(value))),
+            Ok(value) => Ok(Completion::Return(
+                self.unroot_value(&Value::String(value))?,
+            )),
             Err(crate::engine::builtins::uri::UriCodecError::String(error)) => Err(error.into()),
             Err(error) => Ok(Completion::Throw(self.new_native_error_jsvalue(
                 realm,
@@ -321,9 +334,12 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match self.call_string_iterator_next_raw(realm, invocation)? {
             NativeInvokeOutcome::Completion(completion) => Ok(completion),
-            NativeInvokeOutcome::IteratorNextRaw { value, done } => Ok(Completion::Return(
-                Value::Object(self.new_iterator_result(realm, value, done)?),
-            )),
+            NativeInvokeOutcome::IteratorNextRaw { value, done } => {
+                let value = self.root_and_release_jsvalue(value)?;
+                Ok(Completion::Return(JsValue::Object(
+                    self.new_iterator_result(realm, value, done)?.into_handle(),
+                )))
+            }
         }
     }
 
@@ -341,6 +357,7 @@ impl Runtime {
                 "String Iterator next did not receive an iterator-next invocation",
             ));
         };
+        let this_value = self.root_value(&this_value)?;
         let Value::Object(iterator) = this_value else {
             return Ok(NativeInvokeOutcome::Completion(Completion::Throw(
                 self.new_native_error_jsvalue(
@@ -375,8 +392,8 @@ impl Runtime {
             .heap
             .string_iterator_next(iterator.object_id())?;
         let (value, done) = match value {
-            Some(value) => (Value::String(value), false),
-            None => (Value::Undefined, true),
+            Some(value) => (self.unroot_value(&Value::String(value))?, false),
+            None => (JsValue::Undefined, true),
         };
         Ok(NativeInvokeOutcome::IteratorNextRaw { value, done })
     }
@@ -488,19 +505,25 @@ impl Runtime {
                     })?;
                 JsString::checked_length(0, formatted.len())?;
                 debug_assert!(formatted.is_ascii());
-                Ok(Completion::Return(Value::String(
+                Ok(Completion::Return(self.unroot_value(&Value::String(
                     JsString::from_owned_latin1(formatted.into_bytes()),
-                )))
+                ))?))
             }
             (PrimitiveKind::String, Value::String(value)) => {
-                Ok(Completion::Return(Value::String(value)))
+                Ok(Completion::Return(
+                    self.unroot_value(&Value::String(value))?,
+                ))
             }
-            (PrimitiveKind::Boolean, Value::Bool(value)) => Ok(Completion::Return(Value::String(
-                JsString::from_static(if value { "true" } else { "false" }),
-            ))),
-            (PrimitiveKind::Symbol, Value::Symbol(value)) => Ok(Completion::Return(Value::String(
-                self.symbol_descriptive_string(&value)?,
-            ))),
+            (PrimitiveKind::Boolean, Value::Bool(value)) => {
+                Ok(Completion::Return(self.unroot_value(&Value::String(
+                    JsString::from_static(if value { "true" } else { "false" }),
+                ))?))
+            }
+            (PrimitiveKind::Symbol, Value::Symbol(value)) => {
+                Ok(Completion::Return(self.unroot_value(&Value::String(
+                    self.symbol_descriptive_string(&value)?,
+                ))?))
+            }
             (PrimitiveKind::BigInt, Value::BigInt(value)) => {
                 if value.exceeds_allocation_limit()
                     && (value.is_negative() || !radix.is_power_of_two())
@@ -516,9 +539,9 @@ impl Runtime {
                     .map_err(|_| RuntimeError::Invariant("validated BigInt radix was rejected"))?;
                 JsString::checked_length(0, text.len())?;
                 debug_assert!(text.is_ascii());
-                Ok(Completion::Return(Value::String(
+                Ok(Completion::Return(self.unroot_value(&Value::String(
                     JsString::from_owned_latin1(text.into_bytes()),
-                )))
+                ))?))
             }
             _ => Err(RuntimeError::Invariant(
                 "unimplemented primitive toString reached native dispatch",
@@ -555,9 +578,9 @@ impl Runtime {
             Ok(value) => {
                 JsString::checked_length(0, value.len())?;
                 debug_assert!(value.is_ascii());
-                Ok(Completion::Return(Value::String(
+                Ok(Completion::Return(self.unroot_value(&Value::String(
                     JsString::from_owned_latin1(value.into_bytes()),
-                )))
+                ))?))
             }
             Err(crate::engine::value::number::NumberFormatError::InvalidDigits) => {
                 Ok(Completion::Throw(self.new_native_error_jsvalue(
@@ -620,7 +643,7 @@ impl Runtime {
                     && number.abs() <= 9_007_199_254_740_991.0
             }
         });
-        Ok(Completion::Return(Value::Bool(result)))
+        Ok(Completion::Return(JsValue::Bool(result)))
     }
 
     pub(crate) fn call_bigint_as_n(
@@ -667,12 +690,13 @@ impl Runtime {
                     realm,
                     globals::GlobalKind::SymbolFor,
                     &NativeInvocation::Call {
-                        this_value: Value::Undefined,
+                        this_value: JsValue::Undefined,
                     },
                     arguments,
                 )?,
             ),
             SymbolRegistryKind::KeyFor => {
+                let argument = self.root_value(argument)?;
                 let Value::Symbol(symbol) = argument else {
                     return Ok(Completion::Throw(self.new_native_error_jsvalue(
                         realm,
@@ -681,8 +705,10 @@ impl Runtime {
                     )?));
                 };
                 Ok(Completion::Return(
-                    self.symbol_key_for(symbol)?
-                        .map_or(Value::Undefined, Value::String),
+                    match self.symbol_key_for(&symbol)? {
+                        Some(value) => self.unroot_value(&Value::String(value))?,
+                        None => JsValue::Undefined,
+                    },
                 ))
             }
         }
@@ -698,19 +724,27 @@ impl Runtime {
                 "Symbol.prototype.description received the wrong native invocation",
             ));
         };
-        let value =
-            match self.primitive_this_value_borrowed(realm, PrimitiveKind::Symbol, this_value)? {
-                NativeConversion::Value(Value::Symbol(value)) => value,
-                NativeConversion::Value(_) => {
-                    return Err(RuntimeError::Invariant(
-                        "Symbol brand extraction did not return a Symbol",
-                    ));
-                }
-                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-            };
+        let this_value = self.root_value(this_value)?;
+        let value = match self.primitive_this_value_borrowed(
+            realm,
+            PrimitiveKind::Symbol,
+            &this_value,
+        )? {
+            NativeConversion::Value(Value::Symbol(value)) => value,
+            NativeConversion::Value(_) => {
+                return Err(RuntimeError::Invariant(
+                    "Symbol brand extraction did not return a Symbol",
+                ));
+            }
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
+        };
         Ok(Completion::Return(
-            self.symbol_description(&value)?
-                .map_or(Value::Undefined, Value::String),
+            match self.symbol_description(&value)? {
+                Some(value) => self.unroot_value(&Value::String(value))?,
+                None => JsValue::Undefined,
+            },
         ))
     }
 
@@ -725,9 +759,12 @@ impl Runtime {
                 "primitive valueOf did not receive a generic invocation",
             ));
         };
-        match self.primitive_this_value_borrowed(realm, kind, this_value)? {
-            NativeConversion::Value(value) => Ok(Completion::Return(value)),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
+        let this_value = self.root_value(this_value)?;
+        match self.primitive_this_value_borrowed(realm, kind, &this_value)? {
+            NativeConversion::Value(value) => {
+                Ok(Completion::Return(self.into_jsvalue(value)?))
+            }
+            NativeConversion::Throw(value) => Ok(Completion::Throw(self.into_jsvalue(value)?)),
         }
     }
 
@@ -752,26 +789,30 @@ impl Runtime {
     ) -> Result<super::function::invoke::InvokeStep, RuntimeError> {
         use super::function::invoke::InvokeStep;
         let completion = match arguments.readable.first() {
-            Some(Value::Object(value))
-                if matches!(arguments.readable.get(1), Some(Value::Bool(false))) =>
+            Some(JsValue::Object(value))
+                if matches!(arguments.readable.get(1), Some(JsValue::Bool(false))) =>
             {
-                Ok(Completion::Throw(Value::Object(value.clone())))
+                Ok(Completion::Throw(
+                    self.dup_jsvalue(&JsValue::Object(*value))?,
+                ))
             }
-            Some(Value::Object(callback)) => {
-                let callback = self.callable_from_value(Value::Object(callback.clone()))?;
+            Some(JsValue::Object(callback)) => {
+                let callback =
+                    self.callable_from_value(self.root_value(&JsValue::Object(*callback))?)?;
                 let active_function = self.active_function()?;
                 return Ok(InvokeStep::Call(Box::new(
                     super::function::invoke::InvokeCall {
                         target: crate::engine::vm::call::DirectCallTarget::Callable(callback),
-                        receiver: Value::Undefined,
-                        arguments: vec![Value::Object(active_function)],
+                        receiver: JsValue::Undefined,
+                        arguments: vec![self
+                            .unroot_value(&Value::Object(active_function))?],
                     },
                 )));
             }
-            Some(Value::Bool(false)) => Ok(Completion::Throw(Value::String(
+            Some(JsValue::Bool(false)) => Ok(Completion::Throw(self.unroot_value(&Value::String(
                 JsString::from_static("active frame probe throw"),
-            ))),
-            Some(Value::Bool(true)) => {
+            ))?)),
+            Some(JsValue::Bool(true)) => {
                 Err(RuntimeError::Invariant("active frame probe engine error"))
             }
             Some(_) => Err(RuntimeError::Invariant(
@@ -784,7 +825,7 @@ impl Runtime {
                     .borrow_mut()
                     .active_frame_probe_snapshots
                     .push(snapshot);
-                Ok(Completion::Return(Value::Undefined))
+                Ok(Completion::Return(JsValue::Undefined))
             }
         }?;
         Ok(InvokeStep::Complete(completion))

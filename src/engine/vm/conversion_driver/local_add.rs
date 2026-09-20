@@ -19,8 +19,8 @@ pub(in crate::engine::vm) fn complete_local_add(
     // the constant as the left operand so concatenation order cannot swap.
     enum Operands {
         Locals(u16, u16),
-        LocalConstant(Value),
-        ConstantLocal(Value),
+        LocalConstant(JsValue),
+        ConstantLocal(JsValue),
     }
     let (store, operands, prepend) = match &frame.executable.code[start..] {
         [
@@ -56,11 +56,11 @@ pub(in crate::engine::vm) fn complete_local_add(
     // All preflight remains non-mutating; checked/captured/TDZ fallbacks retain
     // the canonical first operand PC and original operand stack.
     enum PreparedAdd {
-        Exhausted(Value, Value),
-        Result(Result<Value, Error>),
+        Exhausted(JsValue, JsValue),
+        Result(Result<JsValue, Error>),
         Appended,
     }
-    let consume = |left: &mut Value, right: &Value| {
+    let consume = |left: &mut JsValue, right: &JsValue| {
         frame.fault_pc = start + 2;
         frame.resume_pc = frame.fault_pc;
         #[cfg(feature = "profiling")]
@@ -70,38 +70,49 @@ pub(in crate::engine::vm) fn complete_local_add(
         }
         let Some(next) = next_operation.checked_add(1) else {
             // Reconstruct canonical operands only on this cold error.
-            return Ok::<_, Error>(PreparedAdd::Exhausted(left.clone(), right.clone()));
+            return Ok::<_, Error>(PreparedAdd::Exhausted(
+                runtime.dup_jsvalue(left).map_err(runtime_error_to_vm_error)?,
+                runtime
+                    .dup_jsvalue(right)
+                    .map_err(runtime_error_to_vm_error)?,
+            ));
         };
         *next_operation = next;
-        if let Value::String(string) = left {
+        if let JsValue::String(id) = left {
             let suffix = match right {
-                Value::String(value) => std::borrow::Cow::Borrowed(value),
-                value => match value.to_js_string() {
-                    Ok(value) => std::borrow::Cow::Owned(value),
-                    Err(error) => return Ok(PreparedAdd::Result(Err(error))),
-                },
+                JsValue::String(right) => {
+                    super::super::numeric::string_payload(runtime, *right)?
+                }
+                value => super::super::numeric::to_js_string_jsvalue(runtime, value)?,
             };
             // A prepend never appends into the shared constant buffer; only an
-            // append may extend a uniquely-owned local in place.
+            // append may extend a uniquely-owned local. The handle form always
+            // commits a fresh node and releases the replaced local edge.
+            let string = super::super::numeric::string_payload(runtime, *id)?;
             if !prepend {
-                match string.try_concat_in_place(&suffix) {
-                    Ok(true) => return Ok(PreparedAdd::Appended),
-                    Err(error) => return Ok(PreparedAdd::Result(Err(error.into()))),
-                    Ok(false) => {}
+                let mut candidate = string.clone();
+                if candidate
+                    .try_concat_in_place(&suffix)
+                    .map_err(Error::from)?
+                {
+                    let value = super::super::numeric::allocate_string_jsvalue(runtime, candidate)?;
+                    let old = std::mem::replace(left, value);
+                    runtime
+                        .release_jsvalue(old)
+                        .map_err(runtime_error_to_vm_error)?;
+                    return Ok(PreparedAdd::Appended);
                 }
             }
-            // Reuse the conversion already completed above even when a
-            // shared/rope lhs cannot append into its own buffer.
             return Ok(PreparedAdd::Result(
-                string
-                    .try_concat(&suffix)
-                    .map(Value::String)
-                    .map_err(Error::from),
+                super::super::numeric::allocate_string_jsvalue(
+                    runtime,
+                    string.try_concat(&suffix).map_err(Error::from)?,
+                ),
             ));
         }
-        Ok(PreparedAdd::Result(
-            super::super::numeric::add_primitives_ref(left, right),
-        ))
+        Ok(PreparedAdd::Result(super::super::numeric::add_primitives_ref(
+            runtime, left, right,
+        )))
     };
     let prepared = match operands {
         Operands::Locals(left, right) => transaction.with_local_add_inputs(left, right, consume)?,
@@ -206,15 +217,13 @@ fn constant_string(
     runtime: &Runtime,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
     index: u32,
-) -> Option<Value> {
+) -> Option<JsValue> {
     use crate::engine::heap::{BytecodeConstant, RawValue};
     match executable.constant(index) {
         Some(BytecodeConstant::Value(RawValue::String(value))) => {
-            // The published bytecode node owns the constant-pool edge, so the
-            // trusted read clones the payload Rc without retaining the node.
-            Some(Value::String(
-                runtime.0.state.borrow().heap.string_fast(*value).clone(),
-            ))
+            // The published bytecode node owns the constant-pool edge; duplicate
+            // the handle so the operand carries its own independent owner.
+            runtime.dup_jsvalue(&JsValue::String(*value)).ok()
         }
         _ => None,
     }
@@ -223,6 +232,7 @@ fn constant_string(
 #[cfg(test)]
 mod tests {
     use crate::engine::api::{Runtime, Value};
+    use crate::engine::value::JsValue;
     #[cfg(feature = "profiling")]
     #[test]
     fn local_string_append_reaches_unique_storage_and_preserves_failure_binding() {
@@ -339,8 +349,8 @@ mod tests {
         else {
             panic!("bytecode")
         };
-        let a = context.eval("'a'").unwrap();
-        let b = context.eval("'b'").unwrap();
+        let a = runtime.unroot_value(&context.eval("'a'").unwrap()).unwrap();
+        let b = runtime.unroot_value(&context.eval("'b'").unwrap()).unwrap();
         let mut execution = RunningExecution::new(
             &runtime,
             ExecutionLimits {
@@ -351,8 +361,8 @@ mod tests {
         .unwrap();
         let entry = BytecodeCallRequest {
             callable,
-            receiver: Value::Undefined,
-            new_target: Value::Undefined,
+            receiver: JsValue::Undefined,
+            new_target: JsValue::Undefined,
             arguments: vec![],
             bytecode,
             closure_slots,
@@ -382,11 +392,19 @@ mod tests {
             };
             execution
                 .slots
-                .replace_local(&frame.window, *left, FrameBinding::Direct(a.clone()))
+                .replace_local(
+                    &frame.window,
+                    *left,
+                    FrameBinding::Direct(runtime.dup_jsvalue(&a).unwrap()),
+                )
                 .unwrap();
             execution
                 .slots
-                .replace_local(&frame.window, *right, FrameBinding::Direct(b.clone()))
+                .replace_local(
+                    &frame.window,
+                    *right,
+                    FrameBinding::Direct(runtime.dup_jsvalue(&b).unwrap()),
+                )
                 .unwrap();
             frame.fault_pc = start;
             frame.resume_pc = start;

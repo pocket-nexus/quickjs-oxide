@@ -13,7 +13,7 @@ use crate::engine::{
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::ObjectRef,
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -84,7 +84,9 @@ impl Runtime {
             let access = self.snapshot_buffer_access(current.snapshot.buffer)?;
             self.move_buffer_range(&access, &access, source_start, target_start, byte_count)?;
         }
-        Ok(Completion::Return(Value::Object(target)))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target.clone()))?,
+        ))
     }
 
     pub(crate) fn call_typed_array_fill(
@@ -134,7 +136,9 @@ impl Runtime {
                 }
             })?;
         }
-        Ok(Completion::Return(Value::Object(target)))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target.clone()))?,
+        ))
     }
 
     pub(crate) fn call_typed_array_reverse(
@@ -147,9 +151,12 @@ impl Runtime {
                 "TypedArray.prototype.reverse received a constructor invocation",
             ));
         };
-        let target = match self.require_typed_array_borrowed(realm, this_value)? {
+        let this_value = self.root_value(this_value)?;
+        let target = match self.require_typed_array_borrowed(realm, &this_value)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            }
         };
         let current = self.typed_array_state(target)?;
         if current.out_of_bounds {
@@ -178,7 +185,9 @@ impl Runtime {
                 }
             })?;
         }
-        Ok(Completion::Return(Value::Object(target.clone())))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(target.clone()))?,
+        ))
     }
 }
 #[derive(Clone, Copy)]
@@ -198,12 +207,12 @@ impl TypedMutationKind {
 pub(crate) enum TypedMutationStep {
     Complete(Completion),
     Primitive {
-        value: Value,
+        value: JsValue,
         resume: TypedMutationResume,
     },
     Element {
         element: TypedArrayElementKind,
-        value: Value,
+        value: JsValue,
         resume: TypedMutationResume,
     },
 }
@@ -268,51 +277,47 @@ impl TypedMutationStep {
                 "TypedArray mutation received a constructor invocation",
             ));
         };
-        let target = match runtime.require_typed_array(realm, this_value.clone())? {
+        let target = match runtime.require_typed_array(realm, runtime.root_value(this_value)?)? {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
         let length = match runtime.typed_array_validated_length(realm, &target)? {
             NativeConversion::Value(value) => i64::from(value),
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
         };
-        let first = arguments
-            .readable
-            .first()
-            .ok_or(RuntimeError::Invariant(
-                "TypedArray mutation first argv was not padded",
-            ))?
-            .clone();
+        let first = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("TypedArray mutation first argv was not padded"),
+        )?)?;
         let end = if arguments.actual_arg_count > 2
-            && !matches!(arguments.readable.get(2), Some(Value::Undefined))
+            && !matches!(arguments.readable.get(2), Some(JsValue::Undefined))
         {
-            Some(
-                arguments
-                    .readable
-                    .get(2)
-                    .ok_or(RuntimeError::Invariant(
-                        "TypedArray mutation end argv was missing",
-                    ))?
-                    .clone(),
-            )
+            Some(runtime.root_value(arguments.readable.get(2).ok_or(
+                RuntimeError::Invariant("TypedArray mutation end argv was missing"),
+            )?)?)
         } else {
             None
         };
         Ok(match kind {
             TypedMutationKind::CopyWithin => Self::Primitive {
-                value: first,
+                value: runtime.into_jsvalue(first)?,
                 resume: TypedMutationResume(Box::new(TypedMutationResumeState {
                     realm,
                     target,
                     length,
                     phase: Phase::To {
-                        from: arguments
-                            .readable
-                            .get(1)
-                            .ok_or(RuntimeError::Invariant(
+                        from: runtime.root_value(arguments.readable.get(1).ok_or(
+                            RuntimeError::Invariant(
                                 "TypedArray.copyWithin start argv was not padded",
-                            ))?
-                            .clone(),
+                            ),
+                        )?)?,
                         end,
                     },
                 })),
@@ -320,21 +325,15 @@ impl TypedMutationStep {
             TypedMutationKind::Fill => {
                 let element = runtime.typed_array_snapshot(&target)?.element;
                 let start = if arguments.actual_arg_count > 1 {
-                    Some(
-                        arguments
-                            .readable
-                            .get(1)
-                            .ok_or(RuntimeError::Invariant(
-                                "TypedArray.fill start argv was missing",
-                            ))?
-                            .clone(),
-                    )
+                    Some(runtime.root_value(arguments.readable.get(1).ok_or(
+                        RuntimeError::Invariant("TypedArray.fill start argv was missing"),
+                    )?)?)
                 } else {
                     None
                 };
                 Self::Element {
                     element,
-                    value: first,
+                    value: runtime.into_jsvalue(first)?,
                     resume: TypedMutationResume(Box::new(TypedMutationResumeState {
                         realm,
                         target,
@@ -359,7 +358,9 @@ impl TypedMutationResume {
         let bytes = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
+                return Ok(TypedMutationStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let Phase::FillValue {
@@ -382,9 +383,12 @@ impl TypedMutationResume {
             self
         };
         if let Some(value) = start {
-            Ok(TypedMutationStep::Primitive { value, resume })
+            Ok(TypedMutationStep::Primitive {
+                value: runtime.into_jsvalue(value)?,
+                resume,
+            })
         } else {
-            resume.resume(runtime, Completion::Return(Value::Int(0)))
+            resume.resume(runtime, Completion::Return(JsValue::Int(0)))
         }
     }
     pub(crate) fn resume(
@@ -393,7 +397,7 @@ impl TypedMutationResume {
         result: Completion,
     ) -> Result<TypedMutationStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
             }
@@ -407,12 +411,14 @@ impl TypedMutationResume {
         )? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
+                return Ok(TypedMutationStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
             Phase::To { from, end } => Ok(TypedMutationStep::Primitive {
-                value: from,
+                value: runtime.into_jsvalue(from)?,
                 resume: {
                     let updated_0 = Phase::From { to: index, end };
                     self.0.phase = updated_0;
@@ -422,7 +428,7 @@ impl TypedMutationResume {
             Phase::From { to, end } => {
                 if let Some(value) = end {
                     Ok(TypedMutationStep::Primitive {
-                        value,
+                        value: runtime.into_jsvalue(value)?,
                         resume: {
                             let updated_0 = Phase::CopyEnd { to, from: index };
                             self.0.phase = updated_0;
@@ -459,7 +465,7 @@ impl TypedMutationResume {
             } => {
                 if let Some(value) = end {
                     Ok(TypedMutationStep::Primitive {
-                        value,
+                        value: runtime.into_jsvalue(value)?,
                         resume: {
                             let updated_0 = Phase::FillEnd {
                                 element,
@@ -508,8 +514,8 @@ fn finish(
         step = match step {
             TypedMutationStep::Complete(result) => return Ok(result),
             TypedMutationStep::Primitive { value, resume } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, ToPrimitiveHint::Number)?
+                let result = if matches!(value, JsValue::Object(_)) {
+                    runtime.to_primitive_jsvalue(realm, value, ToPrimitiveHint::Number)?
                 } else {
                     Completion::Return(value)
                 };
@@ -519,10 +525,13 @@ fn finish(
                 element,
                 value,
                 resume,
-            } => resume.element(
-                runtime,
-                runtime.typed_array_convert_element(realm, element, &value)?,
-            )?,
+            } => {
+                let value = runtime.root_and_release_jsvalue(value)?;
+                resume.element(
+                    runtime,
+                    runtime.typed_array_convert_element(realm, element, &value)?,
+                )?
+            }
         };
     }
 }

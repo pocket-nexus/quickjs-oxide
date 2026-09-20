@@ -11,14 +11,22 @@ use crate::engine::code::bytecode::ArgumentsKind;
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName,
 };
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
+
+fn root_values(runtime: &Runtime, values: Vec<JsValue>) -> Result<Vec<Value>, Error> {
+    values
+        .into_iter()
+        .map(|value| runtime.root_and_release_jsvalue(value))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(runtime_error_to_vm_error)
+}
 
 pub(super) fn arguments(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
     kind: ArgumentsKind,
-) -> Result<Value, Error> {
+) -> Result<JsValue, Error> {
     let frame = execution.frames.current_mut(id)?;
     let count = execution.slots.actual_argument_count(&frame.window)?;
     let object = match kind {
@@ -26,6 +34,7 @@ pub(super) fn arguments(
             let values = execution
                 .slots
                 .snapshot_actual_arguments(&frame.window, runtime)?;
+            let values = root_values(runtime, values)?;
             runtime.new_unmapped_arguments_object(frame.executable.realm, values)
         }
         ArgumentsKind::Mapped => {
@@ -63,7 +72,7 @@ pub(super) fn arguments(
         }
     }
     .map_err(runtime_error_to_vm_error)?;
-    Ok(Value::Object(object))
+    Ok(JsValue::Object(object.into_handle()))
 }
 
 pub(super) fn rest(
@@ -71,15 +80,16 @@ pub(super) fn rest(
     execution: &mut RunningExecution,
     id: FrameId,
     start: u16,
-) -> Result<Value, Error> {
+) -> Result<JsValue, Error> {
     let frame = execution.frames.current_mut(id)?;
     let values =
         execution
             .slots
             .snapshot_argument_tail(&frame.window, runtime, usize::from(start))?;
+    let values = root_values(runtime, values)?;
     runtime
         .new_array_from_values(frame.executable.realm, values)
-        .map(Value::Object)
+        .map(|object| JsValue::Object(object.into_handle()))
         .map_err(runtime_error_to_vm_error)
 }
 

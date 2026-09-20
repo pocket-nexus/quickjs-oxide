@@ -136,7 +136,9 @@ pub(in crate::engine::vm) fn unwind(
                     ));
                 }
                 let iterator = {
-                    let peeked = execution.slots.peek(&frame.window, depth - record_base - 1)?;
+                    let peeked = execution
+                        .slots
+                        .peek(&frame.window, depth - record_base - 1)?;
                     runtime
                         .dup_jsvalue(peeked)
                         .map_err(super::runtime_error_to_vm_error)?

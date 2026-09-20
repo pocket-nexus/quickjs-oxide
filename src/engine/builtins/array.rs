@@ -21,7 +21,7 @@ use crate::engine::object::{
     PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
 use std::cmp::Ordering as ComparisonOrdering;
@@ -422,12 +422,7 @@ impl Runtime {
 
         let values = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, array_prototype, &values)? {
-            Completion::Return(value @ Value::Object(_)) => value,
-            Completion::Return(_) => {
-                return Err(RuntimeError::Invariant(
-                    "Array.prototype.values was not callable during alias bootstrap",
-                ));
-            }
+            Completion::Return(value) => self.root_and_release_jsvalue(value)?,
             Completion::Throw(_) => {
                 return Err(RuntimeError::Invariant(
                     "Array.prototype.values initialization threw during bootstrap",
@@ -435,7 +430,9 @@ impl Runtime {
             }
         };
         let Value::Object(values_object) = &values else {
-            unreachable!("Array.prototype.values bootstrap validated an object value")
+            return Err(RuntimeError::Invariant(
+                "Array.prototype.values was not callable during alias bootstrap",
+            ));
         };
         self.0
             .state
@@ -697,13 +694,18 @@ impl Runtime {
             ));
         };
         let result = match arguments.readable.first() {
-            Some(value) => match self.internal_is_array(realm, value)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-            },
+            Some(value) => {
+                let value = self.root_value(value)?;
+                match self.internal_is_array(realm, &value)? {
+                    NativeConversion::Value(value) => value,
+                    NativeConversion::Throw(value) => {
+                        return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    }
+                }
+            }
             None => false,
         };
-        Ok(Completion::Return(Value::Bool(result)))
+        Ok(Completion::Return(JsValue::Bool(result)))
     }
 
     pub(crate) fn call_array_species_getter(
@@ -740,7 +742,9 @@ impl Runtime {
         if let Some(length) = length {
             let length = match self.array_constructor_length(realm, &length)? {
                 ArrayLengthConversion::Length(length) => length,
-                ArrayLengthConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                ArrayLengthConversion::Throw(value) => {
+                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                }
             };
             let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
             match self.define_own_property_in_realm(
@@ -758,10 +762,14 @@ impl Runtime {
                         "fresh Array.from result rejected its length",
                     ));
                 }
-                PropertyDefineOutcome::Throw(value) => return Ok(Completion::Throw(value)),
+                PropertyDefineOutcome::Throw(value) => {
+                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                }
             }
         }
-        Ok(Completion::Return(Value::Object(array)))
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::Object(array))?,
+        ))
     }
 
     pub(crate) fn call_array_of(
@@ -1000,7 +1008,9 @@ impl Runtime {
                     .ok_or(RuntimeError::Invariant("flatten count was not numeric"))?
                     as u64,
             )),
-            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(
+                self.root_and_release_jsvalue(value)?,
+            )),
         }
     }
 
@@ -1170,11 +1180,12 @@ impl Runtime {
         let argument = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "sort comparator argv was not padded",
         ))?;
-        if matches!(argument, Value::Undefined) {
+        if matches!(argument, JsValue::Undefined) {
             return Ok(NativeConversion::Value(None));
         }
-        if let Value::Object(object) = argument
-            && let Some(callable) = self.as_callable(object)?
+        if let JsValue::Object(id) = argument
+            && let Some(callable) =
+                self.as_callable(&ObjectRef::from_borrowed_handle(self.clone(), *id)?)?
         {
             return Ok(NativeConversion::Value(Some(callable)));
         }
@@ -1322,15 +1333,20 @@ impl Runtime {
             ));
         };
         let object = match this_value {
-            Value::Object(object) => std::borrow::Cow::Borrowed(object),
-            value => match self.native_to_object(realm, value.clone())? {
+            JsValue::Object(id) => std::borrow::Cow::Owned(ObjectRef::from_borrowed_handle(
+                self.clone(),
+                *id,
+            )?),
+            value => match self.native_to_object_jsvalue(realm, self.dup_jsvalue(value)?)? {
                 NativeConversion::Value(object) => std::borrow::Cow::Owned(object),
-                NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                NativeConversion::Throw(value) => {
+                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                }
             },
         };
-        Ok(Completion::Return(Value::Object(
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(
             self.new_array_iterator(realm, &object, kind)?,
-        )))
+        ))?))
     }
 
     pub(crate) fn call_array_iterator_next(
@@ -1340,9 +1356,12 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match self.call_array_iterator_next_raw(realm, invocation)? {
             NativeInvokeOutcome::Completion(completion) => Ok(completion),
-            NativeInvokeOutcome::IteratorNextRaw { value, done } => Ok(Completion::Return(
-                Value::Object(self.new_iterator_result(realm, value, done)?),
-            )),
+            NativeInvokeOutcome::IteratorNextRaw { value, done } => {
+                let value = self.root_and_release_jsvalue(value)?;
+                Ok(Completion::Return(self.into_jsvalue(Value::Object(
+                    self.new_iterator_result(realm, value, done)?,
+                ))?))
+            }
         }
     }
 

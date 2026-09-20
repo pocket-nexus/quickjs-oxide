@@ -17,17 +17,26 @@ pub(super) fn define_element(
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
-    let Value::Object(object) = execution.slots.peek(&frame.window, 2)? else {
-        return super::property_driver::throw_error(
-            runtime,
-            realm,
-            Error::new(ErrorKind::Type, "not an object"),
-        );
+    let object = match runtime
+        .root_value(execution.slots.peek(&frame.window, 2)?)
+        .map_err(runtime_error_to_vm_error)?
+    {
+        Value::Object(object) => object,
+        _ => {
+            return super::property_driver::throw_error(
+                runtime,
+                realm,
+                Error::new(ErrorKind::Type, "not an object"),
+            );
+        }
     };
-    let object = object.clone();
-    let key = execution.slots.peek(&frame.window, 1)?.clone();
+    let key = runtime
+        .root_value(execution.slots.peek(&frame.window, 1)?)
+        .map_err(runtime_error_to_vm_error)?;
     let depth = execution.slots.depth(&frame.window);
-    let value = execution.slots.pop(&mut frame.window)?;
+    let value = runtime
+        .root_and_release_jsvalue(execution.slots.pop(&mut frame.window)?)
+        .map_err(runtime_error_to_vm_error)?;
     let step = match LiteralDefinitionStep::start(runtime, realm, object, key, value) {
         Ok(step) => step,
         Err(error) => {

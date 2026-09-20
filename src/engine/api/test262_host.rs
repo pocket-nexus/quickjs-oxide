@@ -12,7 +12,7 @@ use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::heap::ContextId;
 
 use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 
@@ -179,18 +179,24 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         use operation::EvalScriptStep;
-        let mut step = EvalScriptStep::start(realm, invocation, arguments)?;
+        let mut step = EvalScriptStep::start(self, realm, invocation, arguments)?;
         loop {
             step = match step {
                 EvalScriptStep::Complete(result) => return Ok(result),
                 EvalScriptStep::String { value, resume } => {
+                    let value = self.root_and_release_jsvalue(value)?;
                     let result = match self.native_to_js_string(realm, &value)? {
-                        NativeConversion::Value(value) => Completion::Return(Value::String(value)),
-                        NativeConversion::Throw(value) => Completion::Throw(value),
+                        NativeConversion::Value(value) => {
+                            Completion::Return(self.into_jsvalue(Value::String(value))?)
+                        }
+                        NativeConversion::Throw(value) => {
+                            Completion::Throw(self.into_jsvalue(value)?)
+                        }
                     };
                     resume.resume(self, result)?
                 }
                 EvalScriptStep::Call { callable, receiver } => {
+                    let receiver = self.root_and_release_jsvalue(receiver)?;
                     return self.call_internal(realm, &callable, receiver, &[]);
                 }
             };
@@ -209,7 +215,7 @@ impl Runtime {
         let mut child = self.new_context();
         let object_262 = child.install_test262_host()?;
         drop(child);
-        Ok(Completion::Return(Value::Object(object_262)))
+        Ok(Completion::Return(self.into_jsvalue(Value::Object(object_262))?))
     }
 
     pub(crate) fn call_test262_is_html_dda(
@@ -221,7 +227,7 @@ impl Runtime {
                 "Test262 IsHTMLDDA received a constructor invocation",
             ));
         };
-        Ok(Completion::Return(Value::Null))
+        Ok(Completion::Return(JsValue::Null))
     }
 }
 

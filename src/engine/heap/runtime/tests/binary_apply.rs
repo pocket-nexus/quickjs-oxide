@@ -1021,7 +1021,7 @@ fn construct_only_proxy_and_new_target_do_not_require_call_capability() {
                 &[Value::Int(42)],
             )
             .unwrap(),
-        Completion::Return(Value::Object(_))
+        Completion::Return(JsValue::Object(_))
     ));
     assert_eq!(
         expect_string_value(context.eval("__qjo_construct_only_log").unwrap()),
@@ -1294,17 +1294,20 @@ fn trusted_quickjs_ordinary_apply_raw_native_constructors_use_class_fallbacks() 
         actual_arg_count: 0,
         readable: Vec::new(),
     };
-    let Completion::Return(Value::Object(direct_array)) = runtime
+    let completion = runtime
         .call_array_constructor(
             context.realm,
             crate::engine::vm::call::NativeInvocation::Construct {
-                new_target: Value::Undefined,
+                new_target: JsValue::Undefined,
             },
             &direct_arguments,
         )
-        .unwrap()
-    else {
+        .unwrap();
+    let Completion::Return(value) = completion else {
         panic!("Array undefined newTarget required an active function");
+    };
+    let Value::Object(direct_array) = runtime.root_and_release_jsvalue(value).unwrap() else {
+        panic!("Array undefined newTarget required an object");
     };
     assert_eq!(
         runtime.get_prototype_of(&direct_array).unwrap(),

@@ -1,7 +1,7 @@
 //! Capability construction roots its executor until the constructor reply is validated.
 use super::{
-    Completion, ContextId, NativeConversion, Phase, PromiseResume, PromiseStep,
-    RootedPromiseCapability, Runtime, RuntimeError, Value,
+    Completion, ContextId, JsValue, NativeConversion, Phase, PromiseResume, PromiseStep,
+    RootedPromiseCapability, Runtime, RuntimeError,
 };
 use crate::engine::vm::call::ConstructorRef;
 
@@ -18,7 +18,8 @@ impl PromiseResume {
         let executor = runtime.prepare_promise_capability_executor(self.realm)?;
         Ok({
             let __pending_field_target = target;
-            let __pending_field_arguments = vec![Value::Object(executor.as_object().clone())];
+            let __pending_field_arguments =
+                vec![JsValue::Object(executor.as_object().clone().into_handle())];
             let __pending_field_resume = Box::new(Self {
                 pending_effect: super::PromiseStepPending::default(),
                 realm: self.realm,
@@ -42,7 +43,9 @@ impl PromiseResume {
     ) -> Result<PromiseStep, RuntimeError> {
         let capability = match result {
             NativeConversion::Throw(value) => {
-                return Ok(PromiseStep::Complete(Completion::Throw(value)));
+                return Ok(PromiseStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
             NativeConversion::Value(capability) => capability,
         };
@@ -70,8 +73,8 @@ impl PromiseResume {
                 };
                 Ok({
                     let __pending_field_callable = target;
-                    let __pending_field_receiver = Value::Undefined;
-                    let __pending_field_arguments = vec![argument];
+                    let __pending_field_receiver = JsValue::Undefined;
+                    let __pending_field_arguments = vec![runtime.into_jsvalue(argument)?];
                     let __pending_field_resume = Box::new(Self {
                         pending_effect: super::PromiseStepPending::default(),
                         realm: self.realm,

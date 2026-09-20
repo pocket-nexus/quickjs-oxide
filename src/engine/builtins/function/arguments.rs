@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, HeapError},
     object::{ObjectRef, PropertyKey},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::Completion,
 };
 
@@ -17,7 +17,7 @@ pub(crate) enum ArgumentsStep {
         resume: ArgumentsResume,
     },
     Number {
-        value: Value,
+        value: JsValue,
         resume: ArgumentsResume,
     },
 }
@@ -76,16 +76,18 @@ impl ArgumentsResume {
         result: Completion,
     ) -> Result<ArgumentsStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
-                return Ok(ArgumentsStep::Complete(NativeConversion::Throw(value)));
+                return Ok(ArgumentsStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
         };
         match std::mem::replace(&mut self.0.phase, Phase::Number) {
             Phase::Length => {
                 self.0.phase = Phase::Number;
                 Ok(ArgumentsStep::Number {
-                    value,
+                    value: runtime.into_jsvalue(value)?,
                     resume: self,
                 })
             }
@@ -181,6 +183,7 @@ pub(crate) fn finish(
                 runtime.get_property_in_realm(realm, &object, &key)?,
             )?,
             ArgumentsStep::Number { value, resume } => {
+                let value = runtime.root_and_release_jsvalue(value)?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
         };

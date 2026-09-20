@@ -4,7 +4,7 @@ use super::{
     call::{BytecodeCallRequest, CallableExecution},
     driver::{CallStep, push_frame},
     eval_bindings::{self, PreparedEvalEnvironment},
-    exception::runtime_error_to_vm_error,
+    exception::{heap_error_to_vm_error, runtime_error_to_vm_error},
     execution::RunningExecution,
     frame::{FrameId, OperationTarget, ReturnTarget, ReturnValue},
 };
@@ -79,23 +79,32 @@ fn prepare_and_enter(
     };
     let string = matches!(input, Value::String(_));
     let this_value = if !string {
-        frame.cold.input.this_value.clone()
+        runtime
+            .dup_jsvalue(&frame.cold.input.this_value)
+            .map_err(runtime_error_to_vm_error)?
     } else if let Some(value) = frame
         .cold
         .rare
         .get()
         .and_then(|rare| rare.normalized_this.as_ref())
     {
-        value.clone()
+        runtime
+            .unroot_value(value)
+            .map_err(runtime_error_to_vm_error)?
     } else if frame.executable.metadata.strict
         || matches!(frame.cold.input.this_value, JsValue::Object(_))
     {
-        frame.cold.input.this_value.clone()
-    } else if matches!(frame.cold.input.this_value, JsValue::Null | JsValue::Undefined) {
+        runtime
+            .dup_jsvalue(&frame.cold.input.this_value)
+            .map_err(runtime_error_to_vm_error)?
+    } else if matches!(
+        frame.cold.input.this_value,
+        JsValue::Null | JsValue::Undefined
+    ) {
         let id = frame.cold.input.callee_global(runtime, realm)?.object_id();
         runtime
             .retain_object_handle(id)
-            .map_err(runtime_error_to_vm_error)?;
+            .map_err(heap_error_to_vm_error)?;
         JsValue::Object(id)
     } else {
         let value = match runtime
@@ -111,7 +120,7 @@ fn prepare_and_enter(
                 let id = object.object_id();
                 runtime
                     .retain_object_handle(id)
-                    .map_err(runtime_error_to_vm_error)?;
+                    .map_err(heap_error_to_vm_error)?;
                 JsValue::Object(id)
             }
             NativeConversion::Throw(value) => {
@@ -157,7 +166,9 @@ fn prepare_and_enter(
     let invocation = DirectEvalInvocation {
         input,
         environment,
-        this_value,
+        this_value: runtime
+            .root_and_release_jsvalue(this_value)
+            .map_err(runtime_error_to_vm_error)?,
         caller_strict: frame.executable.metadata.strict,
     };
     let prepared = runtime
@@ -215,8 +226,10 @@ fn prepare_and_enter(
             }
             Some(BytecodeCallRequest {
                 callable,
-                receiver: this_value,
-                new_target: Value::Undefined,
+                receiver: runtime
+                    .into_jsvalue(this_value)
+                    .map_err(runtime_error_to_vm_error)?,
+                new_target: JsValue::Undefined,
                 arguments: Vec::new(),
                 bytecode,
                 closure_slots,
@@ -278,7 +291,13 @@ pub(super) fn apply(
     // internal convention at its boundary below.
     let mut values = match values {
         NativeConversion::Value(values) => values,
-        NativeConversion::Throw(value) => return Ok(CallStep::Complete(Completion::Throw(value))),
+        NativeConversion::Throw(value) => {
+            return Ok(CallStep::Complete(Completion::Throw(
+                runtime
+                    .into_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?,
+            )));
+        }
     };
     let function = execution.slots.peek(&frame.window, 1)?;
     if runtime
@@ -315,17 +334,28 @@ pub(super) fn apply(
                 this_value,
                 arguments,
             } => {
+                let bound = arguments
+                    .into_iter()
+                    .map(|argument| runtime.root_and_release_jsvalue(argument))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(runtime_error_to_vm_error)?;
                 values = match runtime
-                    .concatenate_bound_arguments(realm, &arguments, &values)
+                    .concatenate_bound_arguments(realm, &bound, &values)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     NativeConversion::Value(values) => values,
                     NativeConversion::Throw(value) => {
-                        return Ok(CallStep::Complete(Completion::Throw(value)));
+                        return Ok(CallStep::Complete(Completion::Throw(
+                            runtime
+                                .into_jsvalue(value)
+                                .map_err(runtime_error_to_vm_error)?,
+                        )));
                     }
                 };
                 callable = target;
-                receiver = this_value;
+                receiver = runtime
+                    .root_and_release_jsvalue(this_value)
+                    .map_err(runtime_error_to_vm_error)?;
             }
             _ => return Ok(CallStep::Bridge),
         }
@@ -533,7 +563,7 @@ mod capture_tests {
             .unwrap();
         let child = runtime.test_child_function_bytecode(&parent, 0).unwrap();
         let closure = runtime
-            .new_var_ref(Value::Int(30), false, false, ClosureVariableKind::Normal)
+            .new_var_ref(JsValue::Int(30), false, false, ClosureVariableKind::Normal)
             .unwrap();
         let eval_variable_object = runtime.new_object(None).unwrap();
 
@@ -582,13 +612,17 @@ mod capture_tests {
                     input: prepared.input.into(),
                 }),
                 storage: FrameStorage {
-                    original_arguments: vec![Value::Int(10)],
+                    original_arguments: vec![JsValue::Int(10)],
                     parameters: prepared.arguments,
                     locals: vec![
-                        FrameBinding::Direct(Value::Int(20)),
-                        FrameBinding::Direct(Value::Object(eval_variable_object.clone())),
+                        FrameBinding::Direct(JsValue::Int(20)),
+                        FrameBinding::Direct(
+                            runtime
+                                .into_jsvalue(Value::Object(eval_variable_object.clone()))
+                                .unwrap(),
+                        ),
                     ],
-                    operands: vec![Value::Undefined],
+                    operands: vec![JsValue::Undefined],
                 },
             };
             let mut execution =
@@ -615,7 +649,7 @@ mod capture_tests {
                     &mut execution,
                     child_id,
                     super::super::run::RunExit::Complete,
-                    Some(Completion::Return(Value::Undefined)),
+                    Some(Completion::Return(JsValue::Undefined)),
                 )
                 .unwrap();
             }
@@ -636,11 +670,11 @@ mod capture_tests {
                 ),
                 captured
             );
-            assert_eq!(runtime.read_var_ref(&closure).unwrap(), Value::Int(30));
+            assert_eq!(runtime.read_var_ref(&closure).unwrap(), JsValue::Int(30));
             if !captured && !throws {
                 assert_eq!(
                     execution.slots.peek(&frame.window, 0).unwrap(),
-                    &Value::Int(42)
+                    &JsValue::Int(42)
                 );
             }
         }

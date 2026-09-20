@@ -9,7 +9,7 @@ use crate::engine::api::{
 };
 use crate::engine::code::bytecode::PrivateNameSource;
 use crate::engine::code::function::metadata::ClosureVariableKind;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Access {
@@ -22,7 +22,7 @@ pub(super) enum Access {
 pub(super) enum Outcome {
     Entered,
     Done,
-    Throw(Value),
+    Throw(JsValue),
 }
 
 #[inline(never)]
@@ -60,7 +60,7 @@ pub(super) fn step(
                 };
                 Ok(Outcome::Throw(
                     runtime
-                        .new_native_error_from_error(realm, kind, &error)
+                        .new_native_error_from_error_jsvalue(realm, kind, &error)
                         .map_err(runtime_error_to_vm_error)?,
                 ))
             }
@@ -122,7 +122,10 @@ pub(super) fn step(
                 return Err(super::bindings::lexical_read_only_error(runtime, name)?);
             }
             if access == Access::In {
-                let Value::Object(receiver) = base else {
+                let Value::Object(receiver) = runtime
+                    .root_and_release_jsvalue(base)
+                    .map_err(runtime_error_to_vm_error)?
+                else {
                     return Err(Error::new(ErrorKind::Type, "invalid 'in' operand"));
                 };
                 let present = if let Some(method) =
@@ -148,23 +151,32 @@ pub(super) fn step(
                 };
                 execution
                     .slots
-                    .push(&mut frame.window, Value::Bool(present))?;
+                    .push(&mut frame.window, JsValue::Bool(present))?;
             } else {
                 let method = private_bindings::optional_callable(runtime, source, kind)?
                     .ok_or_else(|| Error::new(ErrorKind::Type, "not an object"))?;
                 let receiver = private_bindings::branded_receiver(runtime, &method, kind, base)?;
                 if access == Access::GetKeep {
-                    execution
-                        .slots
-                        .push(&mut frame.window, Value::Object(receiver))?;
+                    execution.slots.push(
+                        &mut frame.window,
+                        runtime
+                            .into_jsvalue(Value::Object(receiver))
+                            .map_err(runtime_error_to_vm_error)?,
+                    )?;
                 }
-                execution
-                    .slots
-                    .push(&mut frame.window, Value::Object(method.as_object().clone()))?;
+                execution.slots.push(
+                    &mut frame.window,
+                    runtime
+                        .into_jsvalue(Value::Object(method.as_object().clone()))
+                        .map_err(runtime_error_to_vm_error)?,
+                )?;
             }
             return Ok(());
         }
-        let Value::Object(receiver) = base else {
+        let Value::Object(receiver) = runtime
+            .root_and_release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?
+        else {
             return Err(Error::new(
                 ErrorKind::Type,
                 if access == Access::In {
@@ -190,7 +202,7 @@ pub(super) fn step(
             };
             execution
                 .slots
-                .push(&mut frame.window, Value::Bool(present))?;
+                .push(&mut frame.window, JsValue::Bool(present))?;
         } else {
             let name = name.ok_or_else(|| Error::new(ErrorKind::Type, "not a symbol"))?;
             match access {
@@ -199,22 +211,45 @@ pub(super) fn step(
                         .get_private_field_own(&receiver, &name)
                         .map_err(runtime_error_to_vm_error)?;
                     if access == Access::GetKeep {
-                        execution
-                            .slots
-                            .push(&mut frame.window, Value::Object(receiver))?;
+                        execution.slots.push(
+                            &mut frame.window,
+                            runtime
+                                .into_jsvalue(Value::Object(receiver))
+                                .map_err(runtime_error_to_vm_error)?,
+                        )?;
                     }
-                    execution.slots.push(&mut frame.window, value)?;
+                    execution.slots.push(
+                        &mut frame.window,
+                        runtime
+                            .into_jsvalue(value)
+                            .map_err(runtime_error_to_vm_error)?,
+                    )?;
                 }
                 Access::Put => runtime
-                    .set_private_field_own(&receiver, &name, value.unwrap())
+                    .set_private_field_own(
+                        &receiver,
+                        &name,
+                        runtime
+                            .root_and_release_jsvalue(value.unwrap())
+                            .map_err(runtime_error_to_vm_error)?,
+                    )
                     .map_err(runtime_error_to_vm_error)?,
                 Access::Define => {
                     runtime
-                        .define_private_field_own(&receiver, &name, value.unwrap())
+                        .define_private_field_own(
+                            &receiver,
+                            &name,
+                            runtime
+                                .root_and_release_jsvalue(value.unwrap())
+                                .map_err(runtime_error_to_vm_error)?,
+                        )
                         .map_err(runtime_error_to_vm_error)?;
-                    execution
-                        .slots
-                        .push(&mut frame.window, Value::Object(receiver))?;
+                    execution.slots.push(
+                        &mut frame.window,
+                        runtime
+                            .into_jsvalue(Value::Object(receiver))
+                            .map_err(runtime_error_to_vm_error)?,
+                    )?;
                 }
                 Access::In => unreachable!(),
             }
@@ -237,7 +272,7 @@ pub(super) fn step(
             };
             Ok(Outcome::Throw(
                 runtime
-                    .new_native_error_from_error(realm, kind, &error)
+                    .new_native_error_from_error_jsvalue(realm, kind, &error)
                     .map_err(runtime_error_to_vm_error)?,
             ))
         }
@@ -274,16 +309,10 @@ fn enter_accessor(
     let callable = private_bindings::optional_callable(runtime, binding, kind)?
         .ok_or_else(|| Error::new(ErrorKind::Type, "not an object"))?;
     let setter = access == Access::Put;
-    let base = execution
-        .slots
-        .peek(&frame.window, usize::from(setter))?
-        .clone();
+    let base = runtime
+        .dup_jsvalue(execution.slots.peek(&frame.window, usize::from(setter))?)
+        .map_err(runtime_error_to_vm_error)?;
     let receiver = private_bindings::branded_receiver(runtime, &callable, kind, base)?;
-    if setter {
-        runtime
-            .validate_value_domain(execution.slots.peek(&frame.window, 0)?, "call argument")
-            .map_err(runtime_error_to_vm_error)?;
-    }
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
     let frame = execution.frames.current_mut(id)?;
@@ -292,7 +321,11 @@ fn enter_accessor(
         arguments
             .try_reserve_exact(1)
             .map_err(|_| Error::internal("setter arguments allocation failed"))?;
-        arguments.push(execution.slots.pop(&mut frame.window)?);
+        arguments.push(
+            runtime
+                .root_and_release_jsvalue(execution.slots.pop(&mut frame.window)?)
+                .map_err(runtime_error_to_vm_error)?,
+        );
     }
     let base = execution.slots.pop(&mut frame.window)?;
     if access == Access::GetKeep {

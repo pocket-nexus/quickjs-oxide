@@ -24,7 +24,7 @@ use crate::engine::object::{
     PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -311,24 +311,27 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant("realm has no Iterator intrinsics"))
     }
 
-    fn iterator_receiver(
+    pub(crate) fn iterator_receiver(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Iterator prototype method did not receive a generic invocation",
             ));
         };
-        let Value::Object(object) = this_value else {
+        let JsValue::Object(id) = this_value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,
                 "not an object",
             )?));
         };
-        Ok(NativeConversion::Value(object))
+        Ok(NativeConversion::Value(ObjectRef::from_borrowed_handle(
+            self.clone(),
+            *id,
+        )?))
     }
 
     pub(crate) fn call_iterator_constructor(
@@ -370,10 +373,10 @@ impl Runtime {
         )
     }
 
-    fn iterator_callable_value(
+    pub(crate) fn iterator_callable_value(
         &self,
         realm: ContextId,
-        value: Value,
+        value: &Value,
     ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
         let Value::Object(object) = value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
@@ -382,7 +385,7 @@ impl Runtime {
                 "not a function",
             )?));
         };
-        let Some(callable) = self.as_callable(&object)? else {
+        let Some(callable) = self.as_callable(object)? else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,

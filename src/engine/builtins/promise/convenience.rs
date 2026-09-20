@@ -62,15 +62,16 @@ impl Runtime {
     pub(crate) fn promise_callable(
         &self,
         realm: ContextId,
-        value: Value,
+        value: &JsValue,
     ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
-        let Value::Object(object) = value else {
+        let JsValue::Object(id) = value else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,
                 "not a function",
             )?));
         };
+        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         match self.as_callable(&object)? {
             Some(callable) => Ok(NativeConversion::Value(callable)),
             None => Ok(NativeConversion::Throw(self.new_native_error(

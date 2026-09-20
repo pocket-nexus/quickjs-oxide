@@ -473,11 +473,11 @@ impl Runtime {
             .execute_pending_job_record(job.record())
             .and_then(|completion| match completion {
                 Completion::Return(value) => {
-                    drop(value);
+                    self.release_jsvalue(value)?;
                     Ok(false)
                 }
                 Completion::Throw(value) => {
-                    self.set_pending_exception(value)?;
+                    self.set_pending_exception_jsvalue(value)?;
                     Ok(true)
                 }
             });

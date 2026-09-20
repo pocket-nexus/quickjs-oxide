@@ -15,7 +15,7 @@ use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{
     DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
 };
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -662,7 +662,7 @@ impl Runtime {
             ));
         };
         let random = self.0.state.borrow_mut().heap.next_math_random_u64(realm)?;
-        Ok(Completion::Return(Value::Float(quickjs_random_fraction(
+        Ok(Completion::Return(JsValue::Float(quickjs_random_fraction(
             random,
         ))))
     }

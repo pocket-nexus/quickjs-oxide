@@ -731,6 +731,7 @@ pub(super) fn validate_module_import_collision(descriptor: ClosureVariable) -> R
 #[cfg(test)]
 mod immediate_cell_tests {
     use super::*;
+    use crate::engine::value::Value;
 
     #[test]
     #[cfg(feature = "profiling")]
@@ -770,26 +771,26 @@ mod immediate_cell_tests {
     fn immediate_cell_writes_commit_only_mutable_initialized_owners() {
         let runtime = Runtime::new();
         let root = runtime
-            .new_var_ref(Value::Int(1), true, false, ClosureVariableKind::Normal)
+            .new_var_ref_rooted(Value::Int(1), true, false, ClosureVariableKind::Normal)
             .unwrap();
         let metadata = Some((true, false, ClosureVariableKind::Normal));
         assert!(try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Int(2),
+            &JsValue::Int(2),
             metadata
         ));
-        assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(2));
+        assert_eq!(runtime.read_var_ref_rooted(&root).unwrap(), Value::Int(2));
         assert!(!try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Int(3),
+            &JsValue::Int(3),
             Some((false, false, ClosureVariableKind::Normal))
         ));
         assert!(!try_write_immediate_cell(
             &Runtime::new(),
             &root,
-            &Value::Int(3),
+            &JsValue::Int(3),
             metadata
         ));
         {
@@ -797,24 +798,28 @@ mod immediate_cell_tests {
             assert!(!try_write_immediate_cell(
                 &runtime,
                 &root,
-                &Value::Int(3),
+                &JsValue::Int(3),
                 metadata
             ));
         }
+        let object = runtime
+            .into_jsvalue(Value::Object(runtime.new_object(None).unwrap()))
+            .unwrap();
         assert!(!try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Object(runtime.new_object(None).unwrap()),
+            &object,
             metadata
         ));
-        assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(2));
+        runtime.release_jsvalue(object).unwrap();
+        assert_eq!(runtime.read_var_ref_rooted(&root).unwrap(), Value::Int(2));
         assert!(try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Float(-0.0),
+            &JsValue::Float(-0.0),
             metadata
         ));
-        let Value::Float(value) = runtime.read_var_ref(&root).unwrap() else {
+        let Value::Float(value) = runtime.read_var_ref_rooted(&root).unwrap() else {
             panic!("expected float");
         };
         assert!(value.is_sign_negative());
@@ -822,35 +827,35 @@ mod immediate_cell_tests {
         assert!(!try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Int(3),
+            &JsValue::Int(3),
             metadata
         ));
         runtime
-            .write_var_ref(&root, Value::Object(runtime.new_object(None).unwrap()))
+            .write_var_ref_rooted(&root, Value::Object(runtime.new_object(None).unwrap()))
             .unwrap();
         assert!(!try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Int(3),
+            &JsValue::Int(3),
             metadata
         ));
         let constant = runtime
-            .new_var_ref(Value::Int(1), true, true, ClosureVariableKind::Normal)
+            .new_var_ref_rooted(Value::Int(1), true, true, ClosureVariableKind::Normal)
             .unwrap();
         assert!(!try_write_immediate_cell(
             &runtime,
             &constant,
-            &Value::Int(3),
+            &JsValue::Int(3),
             None
         ));
-        assert_eq!(runtime.read_var_ref(&constant).unwrap(), Value::Int(1));
+        assert_eq!(runtime.read_var_ref_rooted(&constant).unwrap(), Value::Int(1));
     }
 
     #[test]
     fn immediate_cell_writes_preserve_deferred_release_boundary() {
         let runtime = Runtime::new();
         let root = runtime
-            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .new_var_ref_rooted(Value::Int(1), false, false, ClosureVariableKind::Normal)
             .unwrap();
         let object = runtime.new_object(None).unwrap();
         {
@@ -860,7 +865,7 @@ mod immediate_cell_tests {
         assert!(!try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Int(2),
+            &JsValue::Int(2),
             None
         ));
         assert!(runtime.0.deferred_references.has_pending());
@@ -881,7 +886,7 @@ mod immediate_cell_tests {
         assert!(try_write_immediate_cell(
             &runtime,
             &root,
-            &Value::Int(2),
+            &JsValue::Int(2),
             None
         ));
     }
@@ -955,18 +960,18 @@ mod immediate_cell_tests {
     fn immediate_cell_reads_are_fresh_and_preserve_fallback_boundaries() {
         let runtime = Runtime::new();
         let root = runtime
-            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .new_var_ref_rooted(Value::Int(1), false, false, ClosureVariableKind::Normal)
             .unwrap();
-        assert_eq!(read_immediate_cell(&runtime, &root), Some(Value::Int(1)));
-        for value in [
-            Value::Null,
-            Value::Undefined,
-            Value::Bool(true),
-            Value::Float(-0.0),
-            Value::Int(7),
+        assert_eq!(read_immediate_cell(&runtime, &root), Some(JsValue::Int(1)));
+        for (value, expected) in [
+            (Value::Null, JsValue::Null),
+            (Value::Undefined, JsValue::Undefined),
+            (Value::Bool(true), JsValue::Bool(true)),
+            (Value::Float(-0.0), JsValue::Float(-0.0)),
+            (Value::Int(7), JsValue::Int(7)),
         ] {
-            runtime.write_var_ref(&root, value.clone()).unwrap();
-            assert_eq!(read_immediate_cell(&runtime, &root), Some(value));
+            runtime.write_var_ref_rooted(&root, value).unwrap();
+            assert_eq!(read_immediate_cell(&runtime, &root), Some(expected));
         }
         let foreign = Runtime::new();
         assert!(read_immediate_cell(&foreign, &root).is_none());
@@ -975,17 +980,17 @@ mod immediate_cell_tests {
             assert!(read_immediate_cell(&runtime, &root).is_none());
         }
         runtime
-            .write_var_ref(&root, Value::Object(runtime.new_object(None).unwrap()))
+            .write_var_ref_rooted(&root, Value::Object(runtime.new_object(None).unwrap()))
             .unwrap();
         assert!(read_immediate_cell(&runtime, &root).is_none());
         runtime.reset_var_ref_uninitialized(&root).unwrap();
         assert!(read_immediate_cell(&runtime, &root).is_none());
         let constant = runtime
-            .new_var_ref(Value::Int(9), true, true, ClosureVariableKind::Normal)
+            .new_var_ref_rooted(Value::Int(9), true, true, ClosureVariableKind::Normal)
             .unwrap();
         assert_eq!(
             read_immediate_cell(&runtime, &constant),
-            Some(Value::Int(9))
+            Some(JsValue::Int(9))
         );
     }
 
@@ -993,7 +998,7 @@ mod immediate_cell_tests {
     fn immediate_cell_reads_never_drain_deferred_owners() {
         let runtime = Runtime::new();
         let root = runtime
-            .new_var_ref(Value::Int(1), false, false, ClosureVariableKind::Normal)
+            .new_var_ref_rooted(Value::Int(1), false, false, ClosureVariableKind::Normal)
             .unwrap();
         let object = runtime.new_object(None).unwrap();
         {
@@ -1004,7 +1009,7 @@ mod immediate_cell_tests {
         assert!(read_immediate_cell(&runtime, &root).is_none());
         assert!(runtime.0.deferred_references.has_pending());
         runtime.drain_deferred_references().unwrap();
-        assert_eq!(read_immediate_cell(&runtime, &root), Some(Value::Int(1)));
+        assert_eq!(read_immediate_cell(&runtime, &root), Some(JsValue::Int(1)));
     }
 
     #[test]

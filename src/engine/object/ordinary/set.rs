@@ -61,8 +61,8 @@ pub(crate) struct SetResumeState {
     phase: Phase,
     request_object: Option<ObjectRef>,
     request_key: Option<PropertyKey>,
-    request_value: Option<Value>,
-    request_receiver: Option<Value>,
+    request_value: Option<JsValue>,
+    request_receiver: Option<JsValue>,
     request_descriptor: Option<OrdinaryPropertyDescriptor>,
 }
 enum Phase {
@@ -272,13 +272,13 @@ impl SetStep {
                             .request_value
                             .as_ref()
                             .expect("selected Set request field"),
-                        Value::Object(_)
+                        JsValue::Object(_)
                     ) =>
                 {
                     let object = resume.take_object();
                     let key = resume.take_key();
-                    let value = resume.take_value();
-                    let receiver = resume.take_receiver();
+                    let value = runtime.root_and_release_jsvalue(resume.take_value())?;
+                    let receiver = runtime.root_and_release_jsvalue(resume.take_receiver())?;
                     let realm = resume
                         .state
                         .realm
@@ -312,12 +312,12 @@ impl SetStep {
                             .request_value
                             .as_ref()
                             .expect("selected Set request field"),
-                        Value::Object(_)
+                        JsValue::Object(_)
                     ) =>
                 {
                     let object = resume.take_object();
                     let key = resume.take_key();
-                    let value = resume.take_value();
+                    let value = runtime.root_and_release_jsvalue(resume.take_value())?;
                     let action = runtime.prepare_set_array_length(
                         resume.state.realm,
                         &object,
@@ -422,8 +422,8 @@ impl SetStep {
             Self::Proxy { mut resume } => {
                 let object = resume.take_object();
                 let key = resume.take_key();
-                let value = resume.take_value();
-                let receiver = resume.take_receiver();
+                let value = runtime.root_and_release_jsvalue(resume.take_value())?;
+                let receiver = runtime.root_and_release_jsvalue(resume.take_receiver())?;
                 let realm = resume
                     .state
                     .realm
@@ -434,8 +434,8 @@ impl SetStep {
             Self::Special { mut resume } => {
                 let object = resume.take_object();
                 let key = resume.take_key();
-                let value = resume.take_value();
-                let receiver = resume.take_receiver();
+                let value = runtime.root_and_release_jsvalue(resume.take_value())?;
+                let receiver = runtime.root_and_release_jsvalue(resume.take_receiver())?;
                 let realm = resume
                     .state
                     .realm
@@ -453,7 +453,7 @@ impl SetStep {
             Self::ArrayLength { mut resume } => {
                 let object = resume.take_object();
                 let key = resume.take_key();
-                let value = resume.take_value();
+                let value = runtime.root_and_release_jsvalue(resume.take_value())?;
                 let action =
                     runtime.prepare_set_array_length(resume.state.realm, &object, &key, value)?;
                 resume.forward(action)
@@ -534,7 +534,7 @@ fn start_waiting(
     match selected {
         SelectedSet::Complete(action) => Ok(Some(action)),
         selected => {
-            waiting(state.publish_selected(selected)?);
+            waiting(state.publish_selected(runtime, selected)?);
             Ok(None)
         }
     }
@@ -915,7 +915,11 @@ impl State {
         }
     }
 
-    fn publish_selected(self, selected: SelectedSet) -> Result<SetStep, RuntimeError> {
+    fn publish_selected(
+        self,
+        runtime: &Runtime,
+        selected: SelectedSet,
+    ) -> Result<SetStep, RuntimeError> {
         if let SelectedSet::Complete(action) = selected {
             return complete(action);
         }
@@ -928,14 +932,18 @@ impl State {
             request_receiver: None,
             request_descriptor: None,
         }))
-        .publish_selected(selected)
+        .publish_selected(runtime, selected)
     }
 }
 
 impl SetResume {
     // Effect owners live in the same continuation allocation across local and
     // scheduler transitions. SetStep transports only the phase and pointer.
-    fn publish_selected(mut self, selected: SelectedSet) -> Result<SetStep, RuntimeError> {
+    fn publish_selected(
+        mut self,
+        runtime: &Runtime,
+        selected: SelectedSet,
+    ) -> Result<SetStep, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(match &selected {
             SelectedSet::Complete(_) => "set_completion_adapter",
@@ -955,23 +963,33 @@ impl SetResume {
             SelectedSet::Proxy(object) => {
                 self.0.request_object = Some(object);
                 self.0.request_key = Some(clone_set_key(&self.0.state.key));
-                self.0.request_value = Some(clone_set_value(&self.0.state.value));
-                self.0.request_receiver = Some(clone_set_value(&self.0.state.receiver));
+                self.0.request_value = Some(runtime.into_jsvalue(clone_set_value(
+                    &self.0.state.value,
+                ))?);
+                self.0.request_receiver = Some(runtime.into_jsvalue(clone_set_value(
+                    &self.0.state.receiver,
+                ))?);
                 self.0.phase = Phase::Forward;
                 Ok(SetStep::Proxy { resume: self })
             }
             SelectedSet::Special(object) => {
                 self.0.request_object = Some(clone_set_object(&object));
                 self.0.request_key = Some(clone_set_key(&self.0.state.key));
-                self.0.request_value = Some(clone_set_value(&self.0.state.value));
-                self.0.request_receiver = Some(clone_set_value(&self.0.state.receiver));
+                self.0.request_value = Some(runtime.into_jsvalue(clone_set_value(
+                    &self.0.state.value,
+                ))?);
+                self.0.request_receiver = Some(runtime.into_jsvalue(clone_set_value(
+                    &self.0.state.receiver,
+                ))?);
                 self.0.phase = Phase::Special(object);
                 Ok(SetStep::Special { resume: self })
             }
             SelectedSet::ArrayLength(object) => {
                 self.0.request_object = Some(object);
                 self.0.request_key = Some(clone_set_key(&self.0.state.key));
-                self.0.request_value = Some(clone_set_value(&self.0.state.value));
+                self.0.request_value = Some(runtime.into_jsvalue(clone_set_value(
+                    &self.0.state.value,
+                ))?);
                 self.0.phase = Phase::Forward;
                 Ok(SetStep::ArrayLength { resume: self })
             }
@@ -1002,13 +1020,13 @@ impl SetResume {
             .take()
             .expect("selected Set request field")
     }
-    pub(crate) fn take_value(&mut self) -> Value {
+    pub(crate) fn take_value(&mut self) -> JsValue {
         self.0
             .request_value
             .take()
             .expect("selected Set request field")
     }
-    pub(crate) fn take_receiver(&mut self) -> Value {
+    pub(crate) fn take_receiver(&mut self) -> JsValue {
         self.0
             .request_receiver
             .take()
@@ -1026,7 +1044,7 @@ impl SetResume {
         selected: SelectedSet,
     ) -> Result<SetStep, RuntimeError> {
         let selected = self.0.state.advance_selected(runtime, selected)?;
-        self.publish_selected(selected)
+        self.publish_selected(runtime, selected)
     }
 
     pub(crate) fn array_length(
@@ -1129,9 +1147,9 @@ impl Runtime {
         use crate::engine::vm::Completion;
         match result {
             NativeConversion::Value(InternalSetResult::Accepted) => {
-                Ok(Completion::Return(Value::Undefined))
+                Ok(Completion::Return(JsValue::Undefined))
             }
-            NativeConversion::Value(_) if !strict => Ok(Completion::Return(Value::Undefined)),
+            NativeConversion::Value(_) if !strict => Ok(Completion::Return(JsValue::Undefined)),
             NativeConversion::Value(InternalSetResult::RejectedProxyTrap) => {
                 Err(Error::new(ErrorKind::Type, "proxy: cannot set property").into())
             }
@@ -1162,7 +1180,9 @@ impl Runtime {
             NativeConversion::Value(InternalSetResult::Rejected(
                 PropertySetRejection::NotObject,
             )) => Err(Error::new(ErrorKind::Type, "not an object").into()),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(
+                self.unroot_value(&value)?,
+            )),
         }
     }
 }

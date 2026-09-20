@@ -803,6 +803,7 @@ impl Runtime {
 mod tests {
     use crate::engine::code::function::metadata::FunctionMetadata;
     use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
+    use crate::engine::value::JsValue;
 
     use super::*;
     use crate::engine::code::bytecode::Instruction;
@@ -1065,7 +1066,7 @@ mod tests {
             ))
         ));
         assert!(matches!(
-            runtime.write_var_ref(&captured, Value::Int(1)),
+            runtime.write_var_ref(&captured, JsValue::Int(1)),
             Err(RuntimeError::Invariant(
                 "ordinary VarRef write reached a private-element binding"
             ))

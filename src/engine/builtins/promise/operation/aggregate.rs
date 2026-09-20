@@ -4,7 +4,7 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::builtins::{native::PromiseNativeKind, promise::RootedPromiseCapability};
 use crate::engine::heap::ContextId;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -47,7 +47,7 @@ pub(super) struct Loop {
     capability: RootedPromiseCapability,
     resolve: CallableRef,
     iterator: ObjectRef,
-    method: Value,
+    method: JsValue,
     aggregate: Option<Elements>,
 }
 struct Elements {
@@ -63,11 +63,12 @@ fn continuation(realm: ContextId, phase: Phase) -> Box<PromiseResume> {
     })
 }
 fn reject(
+    runtime: &Runtime,
     realm: ContextId,
     capability: RootedPromiseCapability,
-    reason: Value,
+    reason: JsValue,
 ) -> Result<PromiseStep, RuntimeError> {
-    super::convenience::settle(realm, capability, Completion::Throw(reason))
+    super::convenience::settle(runtime, realm, capability, Completion::Throw(reason))
 }
 impl PromiseStep {
     pub(in crate::engine::builtins::promise) fn aggregate(
@@ -93,22 +94,22 @@ impl PromiseStep {
                 "Promise aggregate received constructor invocation",
             ));
         };
-        let Value::Object(object) = this_value else {
+        let JsValue::Object(object_id) = this_value else {
             return capability::error(runtime, realm, "not an object");
         };
-        let constructor = match runtime
-            .constructor_from_value(realm, Value::Object(object.clone()))?
-        {
-            NativeConversion::Throw(value) => return Ok(Self::Complete(Completion::Throw(value))),
-            NativeConversion::Value(constructor) => constructor,
-        };
-        let iterable = arguments
-            .readable
-            .first()
-            .cloned()
-            .ok_or(RuntimeError::Invariant(
-                "Promise aggregate iterable argv was not padded",
-            ))?;
+        let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object_id)?;
+        let constructor =
+            match runtime.constructor_from_value(realm, Value::Object(object.clone()))? {
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+                NativeConversion::Value(constructor) => constructor,
+            };
+        let iterable = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Promise aggregate iterable argv was not padded"),
+        )?)?;
         Box::new(PromiseResume {
             pending_effect: super::PromiseStepPending::default(),
             realm,
@@ -130,7 +131,7 @@ pub(super) fn ready(
     capability: RootedPromiseCapability,
 ) -> Result<PromiseStep, RuntimeError> {
     Ok({
-        let __pending_field_receiver = Value::Object(constructor.clone());
+        let __pending_field_receiver = JsValue::Object(constructor.clone().into_handle());
         let __pending_field_key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Resolve)?;
         let __pending_field_resume = continuation(
@@ -163,10 +164,12 @@ pub(super) fn resume(
                 Phase::Resolve(state)
                 | Phase::Method { state, .. }
                 | Phase::Iterator { state, .. }
-                | Phase::NextMethod { state, .. } => reject(realm, state.capability, reason),
+                | Phase::NextMethod { state, .. } => {
+                    reject(runtime, realm, state.capability, reason)
+                }
                 Phase::Resolved(state) | Phase::Then(state) => state.close(realm, reason),
                 Phase::Terminal(capability) | Phase::Closed(capability) => {
-                    reject(realm, capability, reason)
+                    reject(runtime, realm, capability, reason)
                 }
                 Phase::Next(_) => Err(RuntimeError::Invariant(
                     "Promise next expected iterator reply",
@@ -175,10 +178,15 @@ pub(super) fn resume(
         }
     };
     match phase {
-        Phase::Resolve(state) => match runtime.promise_callable(realm, value)? {
-            NativeConversion::Throw(reason) => reject(realm, state.capability, reason),
+        Phase::Resolve(state) => match runtime.promise_callable(realm, &value)? {
+            NativeConversion::Throw(reason) => reject(
+                runtime,
+                realm,
+                state.capability,
+                runtime.into_jsvalue(reason)?,
+            ),
             NativeConversion::Value(resolve) => Ok({
-                let __pending_field_receiver = state.iterable.clone();
+                let __pending_field_receiver = runtime.into_jsvalue(state.iterable.clone())?;
                 let __pending_field_key =
                     PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
                 let __pending_field_resume = continuation(realm, Phase::Method { state, resolve });
@@ -189,18 +197,23 @@ pub(super) fn resume(
                 )
             }),
         },
-        Phase::Method { state, resolve } => match runtime.promise_callable(realm, value)? {
+        Phase::Method { state, resolve } => match runtime.promise_callable(realm, &value)? {
             NativeConversion::Throw(_) => {
                 let reason = runtime.new_native_error(
                     realm,
                     NativeErrorKind::Type,
                     "value is not iterable",
                 )?;
-                reject(realm, state.capability, reason)
+                reject(
+                    runtime,
+                    realm,
+                    state.capability,
+                    runtime.into_jsvalue(reason)?,
+                )
             }
             NativeConversion::Value(callable) => Ok({
                 let __pending_field_callable = callable;
-                let __pending_field_receiver = state.iterable.clone();
+                let __pending_field_receiver = runtime.into_jsvalue(state.iterable.clone())?;
                 let __pending_field_arguments = Vec::new();
                 let __pending_field_resume =
                     continuation(realm, Phase::Iterator { state, resolve });
@@ -213,13 +226,19 @@ pub(super) fn resume(
             }),
         },
         Phase::Iterator { state, resolve } => {
-            let Value::Object(iterator) = value else {
+            let JsValue::Object(iterator_id) = value else {
                 let reason =
                     runtime.new_native_error(realm, NativeErrorKind::Type, "not an object")?;
-                return reject(realm, state.capability, reason);
+                return reject(
+                    runtime,
+                    realm,
+                    state.capability,
+                    runtime.into_jsvalue(reason)?,
+                );
             };
+            let iterator = ObjectRef::from_borrowed_handle(runtime.clone(), iterator_id)?;
             Ok({
-                let __pending_field_receiver = Value::Object(iterator.clone());
+                let __pending_field_receiver = JsValue::Object(iterator.clone().into_handle());
                 let __pending_field_key =
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                 let __pending_field_resume = continuation(
@@ -273,7 +292,9 @@ pub(super) fn resume(
                     elements.index,
                 )? {
                     NativeConversion::Value(handlers) => handlers,
-                    NativeConversion::Throw(reason) => return state.close(realm, reason),
+                    NativeConversion::Throw(reason) => {
+                        return state.close(realm, runtime.into_jsvalue(reason)?);
+                    }
                 };
                 let Some(count) = elements.remaining.get().checked_add(1) else {
                     return state.overflow(runtime, realm);
@@ -287,8 +308,12 @@ pub(super) fn resume(
                 ]
             };
             Ok({
-                let __pending_field_step =
-                    Box::new(PromiseStep::invoke_then(runtime, realm, value, arguments)?);
+                let __pending_field_step = Box::new(PromiseStep::invoke_then(
+                    runtime,
+                    realm,
+                    runtime.root_and_release_jsvalue(value)?,
+                    arguments,
+                )?);
                 let __pending_field_resume = continuation(realm, Phase::Then(state));
                 PromiseStep::request_nested(__pending_field_step, __pending_field_resume)
             })
@@ -307,7 +332,7 @@ pub(super) fn resume(
             Ok(state.advance(realm))
         }
         Phase::Terminal(capability) => Ok(PromiseStep::Complete(Completion::Return(
-            Value::Object(capability.promise),
+            runtime.into_jsvalue(Value::Object(capability.promise))?,
         ))),
         Phase::Closed(_) | Phase::Next(_) => Err(RuntimeError::Invariant(
             "Promise aggregate unexpected reply",
@@ -315,10 +340,10 @@ pub(super) fn resume(
     }
 }
 impl Loop {
-    fn advance(self: Box<Self>, realm: ContextId) -> PromiseStep {
+    fn advance(mut self: Box<Self>, realm: ContextId) -> PromiseStep {
         {
             let __pending_field_iterator = self.iterator.clone();
-            let __pending_field_method = self.method.clone();
+            let __pending_field_method = std::mem::replace(&mut self.method, JsValue::Undefined);
             let __pending_field_resume = continuation(realm, Phase::Next(self));
             PromiseStep::request_next(
                 __pending_field_iterator,
@@ -332,7 +357,7 @@ impl Loop {
     fn close(
         self: Box<Self>,
         realm: ContextId,
-        reason: Value,
+        reason: JsValue,
     ) -> Result<PromiseStep, RuntimeError> {
         Ok({
             let __pending_field_iterator = self.iterator;
@@ -355,7 +380,7 @@ impl Loop {
             NativeErrorKind::Range,
             "too many Promise aggregate elements",
         )?;
-        self.close(realm, reason)
+        self.close(realm, runtime.into_jsvalue(reason)?)
     }
     pub(super) fn next(
         self: Box<Self>,
@@ -364,10 +389,11 @@ impl Loop {
         result: ObjectIteratorStep,
     ) -> Result<PromiseStep, RuntimeError> {
         match result {
-            ObjectIteratorStep::Throw(reason) => reject(realm, self.capability, reason),
+            ObjectIteratorStep::Throw(reason) => reject(runtime, realm, self.capability, reason),
             ObjectIteratorStep::Yield(value) => Ok({
                 let __pending_field_callable = self.resolve.clone();
-                let __pending_field_receiver = Value::Object(self.constructor.clone());
+                let __pending_field_receiver =
+                    JsValue::Object(self.constructor.clone().into_handle());
                 let __pending_field_arguments = vec![value];
                 let __pending_field_resume = continuation(realm, Phase::Resolved(self));
                 PromiseStep::request_call(
@@ -392,20 +418,24 @@ impl Loop {
                         let (callable, value) = if self.kind == PromiseNativeKind::Any {
                             (
                                 self.capability.reject.clone(),
-                                Value::Object(runtime.new_internal_aggregate_error(
-                                    realm,
-                                    elements.values.clone(),
-                                )?),
+                                JsValue::Object(
+                                    runtime
+                                        .new_internal_aggregate_error(
+                                            realm,
+                                            elements.values.clone(),
+                                        )?
+                                        .into_handle(),
+                                ),
                             )
                         } else {
                             (
                                 self.capability.resolve.clone(),
-                                Value::Object(elements.values.clone()),
+                                JsValue::Object(elements.values.clone().into_handle()),
                             )
                         };
                         return Ok({
                             let __pending_field_callable = callable;
-                            let __pending_field_receiver = Value::Undefined;
+                            let __pending_field_receiver = JsValue::Undefined;
                             let __pending_field_arguments = vec![value];
                             let __pending_field_resume =
                                 continuation(realm, Phase::Terminal(self.capability));
@@ -418,9 +448,9 @@ impl Loop {
                         });
                     }
                 }
-                Ok(PromiseStep::Complete(Completion::Return(Value::Object(
-                    self.capability.promise,
-                ))))
+                Ok(PromiseStep::Complete(Completion::Return(
+                    runtime.into_jsvalue(Value::Object(self.capability.promise))?,
+                )))
             }
         }
     }

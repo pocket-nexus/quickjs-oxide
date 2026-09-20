@@ -6,7 +6,7 @@ use super::{
 use crate::engine::api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::builtins::native::Test262AgentKind;
 use crate::engine::heap::{ContextId, shared_memory::SharedBufferHandle};
-use crate::engine::value::{JsString, Value, conversion::NativeConversion};
+use crate::engine::value::{JsString, JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -14,8 +14,8 @@ use crate::engine::vm::{
 
 pub(crate) enum AgentStep {
     Complete(Completion),
-    String { value: Value, resume: AgentResume },
-    Number { value: Value, resume: AgentResume },
+    String { value: JsValue, resume: AgentResume },
+    Number { value: JsValue, resume: AgentResume },
 }
 enum Phase {
     Start,
@@ -68,7 +68,7 @@ impl AgentStep {
                 }
                 if kind == Test262AgentKind::Start {
                     Ok(Self::String {
-                        value: arguments.readable[0].clone(),
+                        value: runtime.dup_jsvalue(&arguments.readable[0])?,
                         resume: AgentResume(Box::new(AgentResumeState {
                             realm,
                             session,
@@ -77,16 +77,19 @@ impl AgentStep {
                     })
                 } else {
                     // Brand/detached/shared checks precede observable numeric conversion.
+                    let buffer = runtime.root_value(&arguments.readable[0])?;
                     let handle = match runtime
-                        .test262_agent_export_broadcast_buffer(realm, &arguments.readable[0])?
+                        .test262_agent_export_broadcast_buffer(realm, &buffer)?
                     {
                         NativeConversion::Value(handle) => handle,
                         NativeConversion::Throw(value) => {
-                            return Ok(Self::Complete(Completion::Throw(value)));
+                            return Ok(Self::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
                         }
                     };
                     Ok(Self::Number {
-                        value: arguments.readable[1].clone(),
+                        value: runtime.dup_jsvalue(&arguments.readable[1])?,
                         resume: AgentResume(Box::new(AgentResumeState {
                             realm,
                             session,
@@ -96,7 +99,7 @@ impl AgentStep {
                 }
             }
             Test262AgentKind::Report => Ok(Self::String {
-                value: arguments.readable[0].clone(),
+                value: runtime.dup_jsvalue(&arguments.readable[0])?,
                 resume: AgentResume(Box::new(AgentResumeState {
                     realm,
                     session,
@@ -104,7 +107,7 @@ impl AgentStep {
                 })),
             }),
             Test262AgentKind::Sleep => Ok(Self::Number {
-                value: arguments.readable[0].clone(),
+                value: runtime.dup_jsvalue(&arguments.readable[0])?,
                 resume: AgentResume(Box::new(AgentResumeState {
                     realm,
                     session,
@@ -114,8 +117,10 @@ impl AgentStep {
             Test262AgentKind::GetReport => (|| -> Result<Completion, RuntimeError> {
                 let report = lock_unpoisoned(&session.inner.reports).pop_front();
                 Ok(Completion::Return(match report {
-                    Some(report) => Value::String(JsString::try_from_utf8(&report)?),
-                    None => Value::Null,
+                    Some(report) => {
+                        runtime.into_jsvalue(Value::String(JsString::try_from_utf8(&report)?))?
+                    }
+                    None => JsValue::Null,
                 }))
             })()
             .map(Self::Complete),
@@ -125,7 +130,7 @@ impl AgentStep {
                         .test262_agent_type_error(realm, "must be called inside an agent");
                 }
                 // Pinned QuickJS performs no state transition or signal here.
-                Ok(Completion::Return(Value::Undefined))
+                Ok(Completion::Return(JsValue::Undefined))
             })()
             .map(Self::Complete),
             Test262AgentKind::ReceiveBroadcast => (|| -> Result<Completion, RuntimeError> {
@@ -133,7 +138,8 @@ impl AgentStep {
                     return runtime
                         .test262_agent_type_error(realm, "must be called inside an agent");
                 }
-                let callback = match &arguments.readable[0] {
+                let argument = runtime.root_value(&arguments.readable[0])?;
+                let callback = match &argument {
                     Value::Object(object) => runtime.as_callable(object)?,
                     _ => None,
                 };
@@ -141,13 +147,13 @@ impl AgentStep {
                     return runtime.test262_agent_type_error(realm, "expecting function");
                 };
                 install_worker_callback(runtime.domain_id(), callback);
-                Ok(Completion::Return(Value::Undefined))
+                Ok(Completion::Return(JsValue::Undefined))
             })()
             .map(Self::Complete),
             Test262AgentKind::MonotonicNow => {
                 let milliseconds = session.inner.clock_origin.elapsed().as_millis();
                 #[allow(clippy::cast_precision_loss)]
-                Ok(Completion::Return(Value::Float(milliseconds as f64)))
+                Ok(Completion::Return(JsValue::Float(milliseconds as f64)))
             }
             .map(Self::Complete),
         }
@@ -161,12 +167,14 @@ impl AgentResume {
     ) -> Result<AgentStep, RuntimeError> {
         let source = match completion {
             Completion::Throw(value) => return Ok(AgentStep::Complete(Completion::Throw(value))),
-            Completion::Return(Value::String(value)) => value,
-            _ => {
-                return Err(RuntimeError::Invariant(
-                    "agent string conversion returned a non-string",
-                ));
-            }
+            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
+                Value::String(value) => value,
+                _ => {
+                    return Err(RuntimeError::Invariant(
+                        "agent string conversion returned a non-string",
+                    ));
+                }
+            },
         };
         let state = *self.0;
         let realm = state.realm;
@@ -192,12 +200,12 @@ impl AgentResume {
                             &error,
                         )?));
                     }
-                    Ok(Completion::Return(Value::Undefined))
+                    Ok(Completion::Return(JsValue::Undefined))
                 }
                 Phase::Report => {
                     let report = source;
                     lock_unpoisoned(&session.inner.reports).push_back(report.to_utf8_lossy());
-                    Ok(Completion::Return(Value::Undefined))
+                    Ok(Completion::Return(JsValue::Undefined))
                 }
                 _ => Err(RuntimeError::Invariant(
                     "agent received an unexpected string reply",
@@ -214,7 +222,9 @@ impl AgentResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(AgentStep::Complete(Completion::Throw(value)));
+                return Ok(AgentStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
             }
         };
         let state = *self.0;
@@ -231,7 +241,7 @@ impl AgentResume {
                             &error,
                         )?));
                     }
-                    Ok(Completion::Return(Value::Undefined))
+                    Ok(Completion::Return(JsValue::Undefined))
                 }
                 Phase::Sleep => {
                     let duration = Runtime::to_uint32_number(value);
@@ -244,7 +254,7 @@ impl AgentResume {
                             "sleep is unavailable on wasm targets",
                         );
                     }
-                    Ok(Completion::Return(Value::Undefined))
+                    Ok(Completion::Return(JsValue::Undefined))
                 }
                 _ => Err(RuntimeError::Invariant(
                     "agent received an unexpected number reply",

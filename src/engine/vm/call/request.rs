@@ -125,6 +125,11 @@ pub(in crate::engine::vm) fn normalize_callback(
                 this_value,
                 arguments: bound,
             } => {
+                let bound = bound
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(runtime_error_to_vm_error)?;
                 arguments = match runtime
                     .concatenate_bound_arguments(realm, &bound, &arguments)
                     .map_err(runtime_error_to_vm_error)?
@@ -134,7 +139,9 @@ pub(in crate::engine::vm) fn normalize_callback(
                         return Ok(NativeConversion::Throw(value));
                     }
                 };
-                receiver = this_value;
+                receiver = runtime
+                    .root_and_release_jsvalue(this_value)
+                    .map_err(runtime_error_to_vm_error)?;
                 callable = target;
             }
             classification => {

@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::{StringIncludesKind, StringIndexOfKind, StringSubrangeKind},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -36,7 +36,7 @@ pub(crate) enum StringSearchStep {
         resume: StringSearchResume,
     },
     Primitive {
-        value: Value,
+        value: JsValue,
         hint: ToPrimitiveHint,
         resume: StringSearchResume,
     },
@@ -83,6 +83,7 @@ impl StringSearchStep {
                 "String search did not receive a call",
             ));
         };
+        let this_value = runtime.root_value(this_value)?;
         if matches!(this_value, Value::Undefined | Value::Null) {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
@@ -92,24 +93,21 @@ impl StringSearchStep {
                 )?,
             )));
         }
+        let first = runtime.root_value(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("String search first argument was not padded"),
+        )?)?;
+        let second = match arguments.readable.get(1) {
+            Some(value) => runtime.root_value(value)?,
+            None => Value::Undefined,
+        };
         Ok(Self::Primitive {
-            value: this_value.clone(),
+            value: runtime.into_jsvalue(this_value)?,
             hint: ToPrimitiveHint::String,
             resume: StringSearchResume(Box::new(StringSearchResumeState {
                 realm,
                 kind,
-                first: arguments
-                    .readable
-                    .first()
-                    .ok_or(RuntimeError::Invariant(
-                        "String search first argument was not padded",
-                    ))?
-                    .clone(),
-                second: arguments
-                    .readable
-                    .get(1)
-                    .cloned()
-                    .unwrap_or(Value::Undefined),
+                first,
+                second,
                 actual: arguments.actual_arg_count,
                 phase: SearchPhase::Source,
             })),
@@ -119,7 +117,7 @@ impl StringSearchStep {
 impl StringSearchResume {
     fn primitive(
         mut self,
-        value: Value,
+        value: JsValue,
         hint: ToPrimitiveHint,
         phase: SearchPhase,
     ) -> StringSearchStep {
@@ -133,9 +131,9 @@ impl StringSearchResume {
             },
         }
     }
-    fn needle(self, source: JsString) -> StringSearchStep {
-        let value = self.0.first.clone();
-        self.primitive(value, ToPrimitiveHint::String, SearchPhase::Needle(source))
+    fn needle(self, runtime: &Runtime, source: JsString) -> Result<StringSearchStep, RuntimeError> {
+        let value = runtime.unroot_value(&self.0.first)?;
+        Ok(self.primitive(value, ToPrimitiveHint::String, SearchPhase::Needle(source)))
     }
     fn finish_search(
         &self,
@@ -164,7 +162,7 @@ impl StringSearchResume {
         result: Completion,
     ) -> Result<StringSearchStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(StringSearchStep::Complete(Completion::Throw(value)));
             }
@@ -175,7 +173,9 @@ impl StringSearchResume {
                 let source = match string_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 match self.0.kind {
@@ -185,7 +185,7 @@ impl StringSearchResume {
                                 "String length exceeded QuickJS's signed index range",
                             )
                         })?;
-                        let value = self.0.first.clone();
+                        let value = runtime.unroot_value(&self.0.first)?;
                         Ok(self.primitive(
                             value,
                             ToPrimitiveHint::Number,
@@ -206,10 +206,10 @@ impl StringSearchResume {
                                 },
                             })
                         } else {
-                            Ok(self.needle(source))
+                            self.needle(runtime, source)
                         }
                     }
-                    StringSearchKind::Index(_) => Ok(self.needle(source)),
+                    StringSearchKind::Index(_) => self.needle(runtime, source),
                 }
             }
             SearchPhase::Regexp(source) => {
@@ -226,18 +226,20 @@ impl StringSearchResume {
                         )?,
                     )));
                 }
-                Ok({
+                {
                     let updated_0 = SearchPhase::Source;
                     self.0.phase = updated_0;
                     self
                 }
-                .needle(source))
+                .needle(runtime, source)
             }
             SearchPhase::Needle(source) => {
                 let needle = match string_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 i32::try_from(source.len()).map_err(|_| {
@@ -257,7 +259,7 @@ impl StringSearchResume {
                     && !(matches!(next.kind, StringSearchKind::Includes(_))
                         && matches!(next.second, Value::Undefined))
                 {
-                    let value = next.second.clone();
+                    let value = runtime.unroot_value(&next.second)?;
                     Ok(next.primitive(
                         value,
                         ToPrimitiveHint::Number,
@@ -271,7 +273,9 @@ impl StringSearchResume {
                 let position = match number_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 {
@@ -285,7 +289,9 @@ impl StringSearchResume {
                 let start = match number_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let next = {
@@ -301,7 +307,7 @@ impl StringSearchResume {
                         runtime.finish_string_subrange(kind, source, start, None)?,
                     ))
                 } else {
-                    let value = next.second.clone();
+                    let value = runtime.unroot_value(&next.second)?;
                     Ok(next.primitive(
                         value,
                         ToPrimitiveHint::Number,
@@ -313,7 +319,9 @@ impl StringSearchResume {
                 let end = match number_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(
+                            runtime.into_jsvalue(value)?,
+                        )));
                     }
                 };
                 let StringSearchKind::Subrange(kind) = self.0.kind else {
@@ -374,8 +382,8 @@ pub(super) fn finish(
                 hint,
                 resume,
             } => {
-                let result = if matches!(value, Value::Object(_)) {
-                    runtime.to_primitive(realm, value, hint)?
+                let result = if matches!(value, JsValue::Object(_)) {
+                    runtime.to_primitive_jsvalue(realm, value, hint)?
                 } else {
                     Completion::Return(value)
                 };

@@ -86,9 +86,10 @@ pub(super) fn instantiate(
         .map_err(runtime_error_to_vm_error)?;
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
-    execution
-        .slots
-        .push(&mut frame.window, Value::Object(callable.into_object()))?;
+    let value = runtime
+        .into_jsvalue(Value::Object(callable.into_object()))
+        .map_err(runtime_error_to_vm_error)?;
+    execution.slots.push(&mut frame.window, value)?;
     frame.resume_pc = frame
         .fault_pc
         .checked_add(1)

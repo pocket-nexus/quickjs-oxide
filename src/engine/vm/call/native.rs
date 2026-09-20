@@ -7,7 +7,7 @@ use crate::engine::{
     builtins::native::NativeFunctionId,
     heap::ContextId,
     object::CallableRef,
-    value::Value,
+    value::{JsValue, Value},
     vm::{Completion, frames::ActiveFrameGuard},
 };
 
@@ -142,7 +142,7 @@ impl Runtime {
         let target = NativeFunctionId::ArrayIteratorNext;
         let mode = NativeInvokeMode::IteratorNextRaw;
         let invocation = NativeInvocation::Call {
-            this_value: receiver,
+            this_value: self.unroot_value(&receiver)?,
         };
         if min_readable_args != 0 {
             return self.prepare_native_continuation_owned(
@@ -247,28 +247,35 @@ impl Runtime {
         let available_arg_count = actual_arg_count.max(usize::from(min_readable_args));
         let (mut readable, _copied, _before) = match arguments {
             NativeArgumentInput::Borrowed(values) => {
-                let mut readable = Vec::new();
+                let mut readable: Vec<crate::engine::value::JsValue> = Vec::new();
                 readable.try_reserve(available_arg_count).map_err(|_| {
                     RuntimeError::Invariant("native readable arguments allocation failed")
                 })?;
-                readable.extend_from_slice(values);
+                for value in values {
+                    readable.push(self.unroot_value(value)?);
+                }
                 (readable, true, 0)
             }
 
-            NativeArgumentInput::Owned(mut values) => {
+            NativeArgumentInput::Owned(values) => {
                 let before = values.capacity();
+                let mut readable: Vec<crate::engine::value::JsValue> =
+                    Vec::with_capacity(values.len());
+                for value in values {
+                    readable.push(self.into_jsvalue(value)?);
+                }
                 // All padding allocation precedes publication. Actual arity
                 // and every extra argument survive this owning handoff.
-                values
+                readable
                     .try_reserve(available_arg_count - actual_arg_count)
                     .map_err(|_| {
                         RuntimeError::Invariant("native readable arguments allocation failed")
                     })?;
-                (values, false, before)
+                (readable, false, before)
             }
         };
-        if actual_arg_count < available_arg_count {
-            readable.resize(available_arg_count, Value::Undefined);
+        while readable.len() < available_arg_count {
+            readable.push(crate::engine::value::JsValue::Undefined);
         }
         #[cfg(feature = "profiling")]
         {
@@ -341,7 +348,7 @@ impl NativeActivation {
     pub(in crate::engine::vm) fn finish_reusing(
         self,
         result: Result<NativeInvokeOutcome, RuntimeError>,
-    ) -> (Result<NativeInvokeOutcome, RuntimeError>, Vec<Value>) {
+    ) -> (Result<NativeInvokeOutcome, RuntimeError>, Vec<JsValue>) {
         self.finish_reusing_with(result, |value| {
             NativeInvokeOutcome::Completion(Completion::Throw(value))
         })
@@ -350,15 +357,15 @@ impl NativeActivation {
     pub(in crate::engine::vm) fn finish_completion_reusing(
         self,
         result: Result<Completion, RuntimeError>,
-    ) -> (Result<Completion, RuntimeError>, Vec<Value>) {
+    ) -> (Result<Completion, RuntimeError>, Vec<JsValue>) {
         self.finish_reusing_with(result, Completion::Throw)
     }
 
     fn finish_reusing_with<T>(
         self,
         result: Result<T, RuntimeError>,
-        throw: impl FnOnce(Value) -> T,
-    ) -> (Result<T, RuntimeError>, Vec<Value>) {
+        throw: impl FnOnce(JsValue) -> T,
+    ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
         let runtime = &self.active_frame.runtime;
         let result = (|| match result {
             Err(RuntimeError::Engine(error))
@@ -367,6 +374,7 @@ impl NativeActivation {
                 let kind = NativeErrorKind::from_javascript_error(error.kind())
                     .expect("guard proved this is a JavaScript-visible native error");
                 let value = runtime.new_native_error_from_error(self.realm, kind, &error)?;
+                let value = runtime.into_jsvalue(value)?;
                 Ok(throw(value))
             }
             result => result,
@@ -412,7 +420,7 @@ mod tests {
                 target,
                 min_readable_args,
                 NativeInvocation::Call {
-                    this_value: Value::Undefined,
+                    this_value: JsValue::Undefined,
                 },
                 arguments,
                 NativeInvokeMode::Ordinary,
@@ -451,7 +459,9 @@ mod tests {
             else {
                 panic!("native fixture")
             };
-            let input = Value::Object(runtime.new_object(None).unwrap());
+            let input = runtime
+                .unroot_value(&Value::Object(runtime.new_object(None).unwrap()))
+                .unwrap();
             let invocation = if construct {
                 NativeInvocation::Construct { new_target: input }
             } else {
@@ -468,6 +478,14 @@ mod tests {
                     NativeInvokeMode::Ordinary,
                 )
                 .unwrap();
+            fn native_input(value: &NativeInvocation) -> &JsValue {
+                match value {
+                    NativeInvocation::Call { this_value }
+                    | NativeInvocation::Getter { this_value }
+                    | NativeInvocation::Setter { this_value } => this_value,
+                    NativeInvocation::Construct { new_target } => new_target,
+                }
+            }
             let borrowed = runtime
                 .adapt_native_invocation_borrowed(
                     target,
@@ -477,15 +495,16 @@ mod tests {
                 )
                 .unwrap();
             if fixture == "Reflect.get" {
-                assert!(
-                    matches!(&borrowed,NativeInvocationAdaptation::Invoke(std::borrow::Cow::Borrowed(value)) if std::ptr::eq(*value,&prepared.invocation))
-                );
+                let NativeInvocationAdaptation::Invoke(value) = &borrowed else {
+                    panic!("expected invocation adaptation");
+                };
+                assert_eq!(native_input(value), native_input(&prepared.invocation));
             }
             let owned = runtime
                 .adapt_native_invocation(
                     target,
                     realm,
-                    prepared.invocation.clone(),
+                    prepared.invocation.dup(&runtime).unwrap(),
                     &prepared.activation.arguments,
                 )
                 .unwrap();
@@ -495,23 +514,23 @@ mod tests {
                     NativeInvocationAdaptation::Invoke(owned),
                 ) => {
                     assert_eq!(
-                        std::mem::discriminant(borrowed.as_ref()),
+                        std::mem::discriminant(&borrowed),
                         std::mem::discriminant(&owned)
                     );
-                    fn input(value: &NativeInvocation) -> &Value {
-                        match value {
-                            NativeInvocation::Call { this_value }
-                            | NativeInvocation::Getter { this_value }
-                            | NativeInvocation::Setter { this_value } => this_value,
-                            NativeInvocation::Construct { new_target } => new_target,
-                        }
-                    }
-                    assert_eq!(input(borrowed.as_ref()), input(&owned));
+                    assert_eq!(native_input(&borrowed), native_input(&owned));
                 }
                 (
-                    NativeInvocationAdaptation::Complete(Completion::Throw(Value::Object(a))),
-                    NativeInvocationAdaptation::Complete(Completion::Throw(Value::Object(b))),
+                    NativeInvocationAdaptation::Complete(Completion::Throw(throw_a)),
+                    NativeInvocationAdaptation::Complete(Completion::Throw(throw_b)),
                 ) => {
+                    let Value::Object(a) = runtime.root_and_release_jsvalue(throw_a).unwrap()
+                    else {
+                        panic!("expected thrown object");
+                    };
+                    let Value::Object(b) = runtime.root_and_release_jsvalue(throw_b).unwrap()
+                    else {
+                        panic!("expected thrown object");
+                    };
                     assert_eq!(
                         runtime.get_prototype_of(&a).unwrap(),
                         runtime.get_prototype_of(&b).unwrap()
@@ -520,7 +539,7 @@ mod tests {
                 _ => panic!("borrowed and owned adaptation diverged"),
             }
             let already_adapted = NativeInvocation::Getter {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             };
             assert!(matches!(
                 runtime.adapt_native_invocation_borrowed(
@@ -551,7 +570,7 @@ mod tests {
             prepared
                 .activation
                 .finish(Ok(NativeInvokeOutcome::Completion(Completion::Return(
-                    Value::Undefined,
+                    JsValue::Undefined,
                 ))))
                 .unwrap();
             assert!(runtime.0.state.borrow().active_frames.is_empty());
@@ -593,7 +612,7 @@ mod tests {
                         target,
                         min_readable_args,
                         NativeInvocation::Call {
-                            this_value: Value::Undefined,
+                            this_value: JsValue::Undefined,
                         },
                         arguments,
                         NativeInvokeMode::Ordinary,
@@ -666,7 +685,7 @@ mod tests {
                     target,
                     min_readable_args,
                     NativeInvocation::Call {
-                        this_value: Value::Undefined,
+                        this_value: JsValue::Undefined,
                     },
                     &actual,
                     NativeInvokeMode::Ordinary,
@@ -686,7 +705,7 @@ mod tests {
                     target,
                     min_readable_args,
                     NativeInvocation::Call {
-                        this_value: Value::Undefined,
+                        this_value: JsValue::Undefined,
                     },
                     owned,
                     NativeInvokeMode::Ordinary,
@@ -740,7 +759,7 @@ mod tests {
             target,
             min_readable_args + 1,
             NativeInvocation::Call {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             },
             vec![],
             NativeInvokeMode::Ordinary,
@@ -756,7 +775,7 @@ mod tests {
             target,
             min_readable_args + 1,
             NativeInvocation::Call {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             },
             vec![],
             NativeInvokeMode::Ordinary,
@@ -781,7 +800,7 @@ mod tests {
                     target,
                     min_readable_args,
                     NativeInvocation::Call {
-                        this_value: Value::Undefined,
+                        this_value: JsValue::Undefined,
                     },
                     arguments.clone(),
                     NativeInvokeMode::Ordinary,
@@ -793,7 +812,7 @@ mod tests {
                     target,
                     min_readable_args,
                     NativeInvocation::Call {
-                        this_value: Value::Undefined,
+                        this_value: JsValue::Undefined,
                     },
                     &arguments,
                     NativeInvokeMode::Ordinary,
@@ -894,7 +913,7 @@ mod tests {
                 .arguments
                 .readable
                 .iter()
-                .all(|value| *value == Value::Undefined)
+                .all(|value| *value == JsValue::Undefined)
         );
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
             let _native = native;
@@ -919,8 +938,10 @@ mod tests {
                 "activation failure",
             ))))
             .unwrap();
-        let NativeInvokeOutcome::Completion(Completion::Throw(Value::Object(error))) = result
-        else {
+        let NativeInvokeOutcome::Completion(Completion::Throw(thrown)) = result else {
+            panic!("expected TypeError")
+        };
+        let Value::Object(error) = runtime.root_value(&thrown).unwrap() else {
             panic!("expected TypeError")
         };
         assert_eq!(
@@ -935,17 +956,21 @@ mod tests {
         };
         assert!(stack.to_string().contains("get (native)"), "{stack:?}");
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+        runtime.release_jsvalue(thrown).unwrap();
         let sentinel = runtime.new_object(None).unwrap();
+        let sentinel_id = sentinel.object_id();
         let native = prepare(&runtime, &mut caller, &[]);
         let result = native
             .activation
             .finish(Ok(NativeInvokeOutcome::Completion(Completion::Throw(
-                Value::Object(sentinel.clone()),
+                runtime.unroot_value(&Value::Object(sentinel)).unwrap(),
             ))))
             .unwrap();
-        assert!(
-            matches!(result, NativeInvokeOutcome::Completion(Completion::Throw(Value::Object(value))) if value == sentinel)
-        );
+        let NativeInvokeOutcome::Completion(Completion::Throw(value)) = result else {
+            panic!("expected sentinel throw")
+        };
+        assert_eq!(value, JsValue::Object(sentinel_id));
+        runtime.release_jsvalue(value).unwrap();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -971,7 +996,7 @@ mod tests {
             target,
             min_readable_args,
             NativeInvocation::Call {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             },
             &[],
             NativeInvokeMode::Ordinary,
@@ -984,7 +1009,7 @@ mod tests {
             target,
             min_readable_args + 1,
             NativeInvocation::Call {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             },
             &[],
             NativeInvokeMode::Ordinary,
@@ -1030,7 +1055,7 @@ mod continuation_publication_tests {
                     target,
                     min_readable_args,
                     NativeInvocation::Call {
-                        this_value: Value::Undefined,
+                        this_value: JsValue::Undefined,
                     },
                     vec![Value::Int(7)],
                     mode,
@@ -1145,7 +1170,7 @@ mod continuation_publication_tests {
             target,
             min_readable_args.saturating_add(1),
             NativeInvocation::Call {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             },
             Vec::new(),
             NativeInvokeMode::Ordinary,
@@ -1165,7 +1190,7 @@ mod continuation_publication_tests {
                 target,
                 min_readable_args,
                 NativeInvocation::Call {
-                    this_value: Value::Undefined,
+                    this_value: JsValue::Undefined,
                 },
                 Vec::new(),
                 NativeInvokeMode::Ordinary,
@@ -1325,7 +1350,7 @@ mod publication_witness_tests {
             target,
             min_readable_args,
             NativeInvocation::Call {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             },
             &[],
             NativeInvokeMode::Ordinary,
@@ -1386,7 +1411,7 @@ mod classified_preparation_tests {
                 target,
                 min_readable_args,
                 NativeInvocation::Call {
-                    this_value: Value::Undefined,
+                    this_value: JsValue::Undefined,
                 },
                 vec![Value::Int(3), Value::Int(2)],
                 NativeInvokeMode::Ordinary,
@@ -1397,7 +1422,7 @@ mod classified_preparation_tests {
         prepared
             .activation
             .finish(Ok(NativeInvokeOutcome::Completion(Completion::Return(
-                Value::Int(2),
+                JsValue::Int(2),
             ))))
             .unwrap();
         let selection = NativeClassification::select(&runtime, &callable)
@@ -1413,7 +1438,7 @@ mod classified_preparation_tests {
                 target,
                 min_readable_args,
                 NativeInvocation::Call {
-                    this_value: Value::Undefined
+                    this_value: JsValue::Undefined
                 },
                 vec![],
                 NativeInvokeMode::Ordinary,

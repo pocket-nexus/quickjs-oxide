@@ -639,9 +639,11 @@ fn pending_map_element_owns_source_target_callback_and_conversion_input() {
     });
     let arguments = NativeArguments {
         actual_arg_count: 1,
-        readable: vec![callback],
+        readable: vec![runtime.into_jsvalue(callback).unwrap()],
     };
-    let invocation = NativeInvocation::Call { this_value: source };
+    let invocation = NativeInvocation::Call {
+        this_value: runtime.into_jsvalue(source).unwrap(),
+    };
     let TypedIterationStep::Species { mut resume } = TypedIterationStep::start(
         &runtime,
         context.realm,
@@ -672,7 +674,10 @@ fn pending_map_element_owns_source_target_callback_and_conversion_input() {
     let conversion = runtime.new_object(None).unwrap();
     let conversion_id = conversion.object_id();
     let step = resume
-        .resume(&runtime, Completion::Return(Value::Object(conversion)))
+        .resume(
+            &runtime,
+            Completion::Return(runtime.into_jsvalue(Value::Object(conversion)).unwrap()),
+        )
         .unwrap();
     assert!(matches!(step, TypedIterationStep::Element { .. }));
     runtime.run_gc().unwrap();

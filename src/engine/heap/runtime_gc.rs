@@ -5,7 +5,7 @@ use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{GcStats, HeapCounts, WeakSymbolGcEvent};
 use crate::engine::jobs;
 #[cfg(feature = "test262-host")]
-use crate::engine::value::Value;
+use crate::engine::value::JsValue;
 #[cfg(feature = "test262-host")]
 use crate::engine::vm::Completion;
 #[cfg(feature = "test262-host")]
@@ -71,7 +71,7 @@ impl Runtime {
             ));
         };
         self.run_gc()?;
-        Ok(Completion::Return(Value::Undefined))
+        Ok(Completion::Return(JsValue::Undefined))
     }
 
     /// Runtime heap population for diagnostics and lifecycle tests.

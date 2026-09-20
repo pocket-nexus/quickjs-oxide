@@ -7,7 +7,9 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::code::runtime::{PublishedFunctionData, PublishedFunctionSnapshot};
 use crate::engine::object::CallableRef;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
+#[cfg(test)]
+use crate::engine::value::Value;
 use crate::engine::vm::CallInput;
 use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::frames::ActiveFrameGuard;
@@ -45,15 +47,25 @@ impl Runtime {
             executable,
             active_frame,
             input,
-        } = self.prepare_bytecode_header(callable, this_value, new_target, bytecode)?;
+        } = self.prepare_bytecode_header(
+            callable,
+            self.unroot_value(&this_value)?,
+            self.unroot_value(&new_target)?,
+            bytecode,
+        )?;
         let local_definitions = &executable.local_definitions;
         let metadata = executable.metadata;
         let argument_slots = executable.frame_layout().argument_slots(arguments.len());
         let mut frame_arguments = Vec::new();
         let mut frame_locals = Vec::new();
         frame_arguments.reserve(argument_slots);
-        frame_arguments.extend(arguments.iter().cloned().map(FrameBinding::Direct));
-        frame_arguments.resize_with(argument_slots, || FrameBinding::Direct(Value::Undefined));
+        frame_arguments.extend(
+            arguments
+                .iter()
+                .map(|value| self.unroot_value(value).map(FrameBinding::Direct))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        frame_arguments.resize_with(argument_slots, || FrameBinding::Direct(JsValue::Undefined));
         frame_locals.reserve(local_definitions.len());
         frame_locals.extend(
             local_definitions
@@ -162,8 +174,8 @@ pub(in crate::engine::vm) fn initial_local_binding(
         runtime.retain_object_handle(id)?;
         Ok(FrameBinding::Direct(JsValue::Object(id)))
     } else if lexical {
-        FrameBinding::Uninitialized
+        Ok(FrameBinding::Uninitialized)
     } else {
-        FrameBinding::Direct(Value::Undefined)
+        Ok(FrameBinding::Direct(JsValue::Undefined))
     }
 }

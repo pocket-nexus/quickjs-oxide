@@ -1,4 +1,5 @@
 //! Mechanical adapters for iterator domain requests.
+use super::JsValue;
 use super::{Completion, DirectCallTarget, Resume, Step, Value};
 
 impl From<crate::engine::builtins::IteratorCloseStep> for Step {
@@ -11,7 +12,7 @@ impl From<crate::engine::builtins::IteratorCloseStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::IteratorClose(resume)),
@@ -22,7 +23,7 @@ impl From<crate::engine::builtins::IteratorCloseStep> for Step {
                 resume,
             } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(Value::Object(iterator)),
+                receiver: Some(JsValue::Object(iterator.into_handle())),
                 arguments: Some(Vec::new()),
                 resume: Some(Resume::IteratorClose(resume)),
             },
@@ -40,7 +41,7 @@ impl From<crate::engine::builtins::IteratorNextStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::IteratorNext(resume)),
@@ -67,7 +68,7 @@ impl From<crate::engine::builtins::IteratorConsumeStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::IteratorConsume(resume)),
@@ -87,7 +88,7 @@ impl From<crate::engine::builtins::IteratorConsumeStep> for Step {
                 let arguments = resume.take_call_arguments();
                 Self::Call {
                     target: Some(DirectCallTarget::Callable(callable)),
-                    receiver: Some(Value::Undefined),
+                    receiver: Some(JsValue::Undefined),
                     arguments: Some(arguments),
                     resume: Some(Resume::IteratorConsume(resume)),
                 }
@@ -112,7 +113,7 @@ impl From<crate::engine::builtins::IteratorHelperStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::IteratorHelper(resume)),
@@ -157,7 +158,7 @@ impl From<crate::engine::builtins::IteratorCreateStep> for Step {
         match step {
             T::CloseInvalidCount { iterator, resume } => Self::IteratorCloseWithResume {
                 iterator: Some(iterator),
-                completion: Some(Completion::Throw(Value::Undefined)),
+                completion: Some(Completion::Throw(JsValue::Undefined)),
                 resume: Some(Resume::IteratorInvalidCount(resume)),
             },
 
@@ -167,7 +168,7 @@ impl From<crate::engine::builtins::IteratorCreateStep> for Step {
                 key,
                 resume,
             } => Self::Read {
-                receiver: Some(Value::Object(object.clone())),
+                receiver: Some(JsValue::Object(object.clone().into_handle())),
                 object: Some(object),
                 key: Some(key),
                 resume: Some(Resume::IteratorCreate(resume)),
@@ -277,7 +278,7 @@ impl From<crate::engine::builtins::IteratorConcatStep> for Step {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 Self::Read {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     resume: Some(Resume::IteratorConcat(resume)),
@@ -350,7 +351,7 @@ impl From<crate::engine::builtins::IteratorTagStep> for Step {
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 Self::Set {
-                    receiver: Some(Value::Object(object.clone())),
+                    receiver: Some(JsValue::Object(object.clone().into_handle())),
                     object: Some(object),
                     key: Some(key),
                     value: Some(value),
@@ -412,7 +413,7 @@ impl From<crate::engine::builtins::WeakComputedStep> for Step {
                 resume,
             } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(Value::Undefined),
+                receiver: Some(JsValue::Undefined),
                 arguments: Some(arguments),
                 resume: Some(Resume::WeakComputed(resume)),
             },

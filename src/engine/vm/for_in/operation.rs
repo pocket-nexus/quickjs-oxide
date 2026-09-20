@@ -4,15 +4,15 @@ use crate::engine::{
     atom::PropertyKeyKind,
     heap::{ContextId, ForInCandidate, ForInProperty},
     object::{ObjectRef, PropertyKey},
-    value::{JsString, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value, conversion::NativeConversion},
 };
 
 pub(in crate::engine::vm) enum ForInStep {
     Complete {
-        value: Value,
+        value: JsValue,
         done: Option<bool>,
     },
-    Throw(Value),
+    Throw(JsValue),
     Keys {
         object: ObjectRef,
         resume: ForInResume,
@@ -151,11 +151,11 @@ impl ForInStep {
         match object {
             Some(object) if fast.is_none() => snapshot(realm, object, AfterSnapshot::Start),
             object => Ok(ForInStep::Complete {
-                value: Value::Object(runtime.allocate_for_in_iterator(
-                    object.as_ref(),
-                    fast,
-                    Vec::new(),
-                )?),
+                value: JsValue::Object(
+                    runtime
+                        .allocate_for_in_iterator(object.as_ref(), fast, Vec::new())?
+                        .into_handle(),
+                ),
                 done: None,
             }),
         }
@@ -187,7 +187,7 @@ fn snapshot(
 }
 fn done() -> ForInStep {
     ForInStep::Complete {
-        value: Value::Undefined,
+        value: JsValue::Undefined,
         done: Some(true),
     }
 }
@@ -247,7 +247,7 @@ fn advance(
                 if dense_present {
                     record_local_step();
                     return Ok(ForInStep::Complete {
-                        value: Value::String(name),
+                        value: runtime.unroot_value(&Value::String(name))?,
                         done: Some(false),
                     });
                 }
@@ -286,12 +286,14 @@ fn advance(
         match reply {
             NativeConversion::Value(true) => {
                 return Ok(ForInStep::Complete {
-                    value: Value::String(name),
+                    value: runtime.unroot_value(&Value::String(name))?,
                     done: Some(false),
                 });
             }
             NativeConversion::Value(false) => {}
-            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+            }
         }
     }
 }
@@ -309,7 +311,9 @@ impl ForInResume {
     ) -> Result<ForInStep, RuntimeError> {
         let keys = match reply {
             NativeConversion::Value(keys) => keys,
-            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+            }
         };
         match self.0.phase {
             Phase::SnapshotKeys { object, after } => snapshot_next(
@@ -335,7 +339,9 @@ impl ForInResume {
     ) -> Result<ForInStep, RuntimeError> {
         let value = match reply {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+            }
         };
         match self.0.phase {
             Phase::SnapshotEnumerable { mut snapshot, name } => {
@@ -363,7 +369,7 @@ impl ForInResume {
             Phase::Candidate { iterator, name } => {
                 if value {
                     Ok(ForInStep::Complete {
-                        value: Value::String(name),
+                        value: runtime.unroot_value(&Value::String(name))?,
                         done: Some(false),
                     })
                 } else {
@@ -382,7 +388,9 @@ impl ForInResume {
     ) -> Result<ForInStep, RuntimeError> {
         let prototype = match reply {
             NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+            NativeConversion::Throw(value) => {
+                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+            }
         };
         match self.0.phase {
             Phase::ProbePrototype(probe) => {
@@ -437,7 +445,9 @@ fn snapshot_next(
                 &key,
             )? {
                 NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+                NativeConversion::Throw(value) => {
+                    return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                }
             };
             pending
                 .properties
@@ -461,11 +471,11 @@ fn snapshot_next(
     }
     match pending.after {
         AfterSnapshot::Start => Ok(ForInStep::Complete {
-            value: Value::Object(runtime.allocate_for_in_iterator(
-                Some(&pending.object),
-                None,
-                pending.properties,
-            )?),
+            value: JsValue::Object(
+                runtime
+                    .allocate_for_in_iterator(Some(&pending.object), None, pending.properties)?
+                    .into_handle(),
+            ),
             done: None,
         }),
         AfterSnapshot::Refresh { iterator } => {
@@ -516,7 +526,9 @@ fn probe_keys(
                 .internal_snapshot_own_property_is_enumerable(realm, &prototype, &key)?
             {
                 NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(ForInStep::Throw(value)),
+                NativeConversion::Throw(value) => {
+                    return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                }
             };
             record_local_step();
             if enumerable {

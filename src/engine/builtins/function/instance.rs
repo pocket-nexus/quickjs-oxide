@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::NativeFunctionId,
     heap::{ContextId, ObjectPayload},
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -90,21 +90,23 @@ impl InstanceStep {
             ));
         };
         let target = match this_value {
-            Value::Object(target) => runtime.as_callable(target)?,
+            JsValue::Object(id) => {
+                let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
+                runtime.as_callable(&object)?
+            }
             _ => None,
         };
         let Some(target) = target else {
-            return Ok(Self::Complete(Completion::Return(Value::Bool(false))));
+            return Ok(Self::Complete(Completion::Return(JsValue::Bool(false))));
         };
         Self::ordinary(
             runtime,
             realm,
             &target,
-            arguments
-                .readable
-                .first()
-                .cloned()
-                .unwrap_or(Value::Undefined),
+            match arguments.readable.first() {
+                Some(value) => runtime.root_value(value)?,
+                None => Value::Undefined,
+            },
         )
     }
     pub(crate) fn ordinary(
@@ -132,7 +134,7 @@ impl InstanceStep {
             return Self::method(runtime, realm, candidate, target, true);
         }
         if !matches!(candidate, Value::Object(_)) {
-            return Ok(Self::Complete(Completion::Return(Value::Bool(false))));
+            return Ok(Self::Complete(Completion::Return(JsValue::Bool(false))));
         }
         Ok({
             let __pending_field_object = target.as_object().clone();
@@ -160,7 +162,7 @@ impl InstanceResume {
         result: Completion,
     ) -> Result<InstanceStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => value,
+            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             result @ Completion::Throw(_) => return Ok(InstanceStep::Complete(result)),
         };
         match self.0.phase {
@@ -206,8 +208,13 @@ impl InstanceResume {
                 };
                 Ok({
                     let __pending_field_callable = callable;
-                    let __pending_field_receiver = Value::Object(self.0.target.clone());
-                    let __pending_field_arguments = vec![self.0.candidate.clone()];
+                    let __pending_field_receiver =
+                        runtime.into_jsvalue(Value::Object(self.0.target.clone()))?;
+                    let __pending_field_arguments = vec![runtime
+                        .into_jsvalue(std::mem::replace(
+                            &mut self.0.candidate,
+                            Value::Undefined,
+                        ))?];
                     let __pending_field_delegate = delegate;
                     let __pending_field_resume = {
                         let updated_0 = Phase::Result;
@@ -223,7 +230,7 @@ impl InstanceResume {
                     )
                 })
             }
-            Phase::Result => Ok(InstanceStep::Complete(Completion::Return(Value::Bool(
+            Phase::Result => Ok(InstanceStep::Complete(Completion::Return(JsValue::Bool(
                 runtime.value_to_boolean(&value)?,
             )))),
             Phase::Prototype => {
@@ -256,6 +263,7 @@ impl InstanceResume {
     }
     pub(crate) fn prototype(
         self,
+        runtime: &Runtime,
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<InstanceStep, RuntimeError> {
         let Phase::Walk(expected) = &self.0.phase else {
@@ -264,12 +272,14 @@ impl InstanceResume {
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => InstanceStep::Complete(Completion::Throw(value)),
+            NativeConversion::Throw(value) => {
+                InstanceStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
+            }
             NativeConversion::Value(None) => {
-                InstanceStep::Complete(Completion::Return(Value::Bool(false)))
+                InstanceStep::Complete(Completion::Return(JsValue::Bool(false)))
             }
             NativeConversion::Value(Some(object)) if &object == expected => {
-                InstanceStep::Complete(Completion::Return(Value::Bool(true)))
+                InstanceStep::Complete(Completion::Return(JsValue::Bool(true)))
             }
             NativeConversion::Value(Some(object)) => {
                 let __pending_field_object = object;
@@ -299,7 +309,10 @@ pub(super) fn finish(
             }
             InstanceStep::Prototype { mut resume } => {
                 let object = resume.take_prototype_object();
-                resume.prototype(runtime.internal_get_prototype_of(realm, &object)?)?
+                resume.prototype(
+                    runtime,
+                    runtime.internal_get_prototype_of(realm, &object)?,
+                )?
             }
             InstanceStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
@@ -338,6 +351,11 @@ pub(super) fn finish(
                             },
                         )?
                     } else {
+                        let receiver = runtime.root_and_release_jsvalue(receiver)?;
+                        let arguments = arguments
+                            .into_iter()
+                            .map(|value| runtime.root_and_release_jsvalue(value))
+                            .collect::<Result<Vec<_>, _>>()?;
                         resume.resume(
                             runtime,
                             runtime.call_internal(realm, &callable, receiver, &arguments)?,
@@ -361,8 +379,8 @@ struct InstanceStepPending {
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
-    call_receiver: Option<Value>,
-    call_arguments: Option<Vec<Value>>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
     call_delegate: Option<bool>,
     prototype_object: Option<ObjectRef>,
 }
@@ -378,8 +396,8 @@ impl InstanceStep {
     }
     pub(crate) fn request_call(
         callable: CallableRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
         delegate: bool,
         mut resume: InstanceResume,
     ) -> Self {
@@ -416,14 +434,14 @@ impl InstanceResume {
             .take()
             .expect("InstanceStep Call callable")
     }
-    pub(crate) fn take_call_receiver(&mut self) -> Value {
+    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
             .pending_effect
             .call_receiver
             .take()
             .expect("InstanceStep Call receiver")
     }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<Value> {
+    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
         self.0
             .pending_effect
             .call_arguments

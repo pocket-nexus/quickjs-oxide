@@ -4,7 +4,7 @@ pub(super) mod suspension;
 use super::{
     Completion,
     driver::CallStep,
-    exception::runtime_error_to_vm_error,
+    exception::{heap_error_to_vm_error, runtime_error_to_vm_error},
     execution::RunningExecution,
     frame::{FrameId, OperationTarget, ReturnTarget},
 };
@@ -152,7 +152,7 @@ pub(super) fn start(
         return Ok(CallStep::Bridge);
     };
     let array = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *array)
-        .map_err(runtime_error_to_vm_error)?;
+        .map_err(heap_error_to_vm_error)?;
     let position = *position as u32;
     let iterable = runtime
         .dup_jsvalue(execution.slots.peek(&frame.window, 0)?)
@@ -381,8 +381,10 @@ fn finish_local(
                 let id = array.object_id();
                 runtime
                     .retain_object_handle(id)
-                    .map_err(runtime_error_to_vm_error)?;
-                execution.slots.push(&mut frame.window, JsValue::Object(id))?;
+                    .map_err(heap_error_to_vm_error)?;
+                execution
+                    .slots
+                    .push(&mut frame.window, JsValue::Object(id))?;
                 execution
                     .slots
                     .push(&mut frame.window, JsValue::Int(pending.position as i32))?;
@@ -419,7 +421,9 @@ fn finish_local(
                     std::mem::replace(&mut pending.next, JsValue::Undefined),
                 )?;
                 if delegating {
-                    execution.slots.push(&mut frame.window, JsValue::Undefined)?;
+                    execution
+                        .slots
+                        .push(&mut frame.window, JsValue::Undefined)?;
                 } else {
                     frame.cold.regions.push(super::VmUnwindRegion::Iterator {
                         record_base,
@@ -703,11 +707,6 @@ impl PendingIteratorState {
         use crate::engine::builtins::ObjectIteratorStep;
         match reply {
             ObjectIteratorStep::Throw(value) => {
-                // The builtin iterator reply is a public root; transfer it into
-                // the internal completion without a retain/release pair.
-                let value = runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
                 self.advance_query(runtime, Some(Completion::Throw(value)))
             }
             ObjectIteratorStep::Done => {
@@ -716,9 +715,6 @@ impl PendingIteratorState {
             }
             ObjectIteratorStep::Yield(value) => {
                 self.stage = Stage::Value;
-                let value = runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
                 self.advance_query(runtime, Some(Completion::Return(value)))
             }
         }
@@ -843,11 +839,15 @@ impl PendingIteratorState {
                 ))
             }
             Stage::Probe => {
+                let probe = runtime
+                    .root_value(&value)
+                    .map_err(runtime_error_to_vm_error)?;
                 self.builtin_probe = super::iterator_support::is_direct_native_target(
                     runtime,
-                    &value,
+                    &probe,
                     NativeFunctionId::ArrayPrototypeIterator(ArrayIteratorKind::Value),
                 )?;
+                drop(probe);
                 // Release the first result before the second observable GetIterator lookup.
                 runtime
                     .release_jsvalue(value)
@@ -901,15 +901,12 @@ impl PendingIteratorState {
                     .new_async_from_sync_iterator_jsvalue(self.realm, iterator, &value)
                     .map_err(runtime_error_to_vm_error)?;
                 runtime
-                    .release_jsvalue(std::mem::replace(
-                        &mut self.iterator,
-                        JsValue::Undefined,
-                    ))
+                    .release_jsvalue(std::mem::replace(&mut self.iterator, JsValue::Undefined))
                     .map_err(runtime_error_to_vm_error)?;
                 let id = wrapper.object_id();
                 runtime
                     .retain_object_handle(id)
-                    .map_err(runtime_error_to_vm_error)?;
+                    .map_err(heap_error_to_vm_error)?;
                 self.iterator = JsValue::Object(id);
                 self.sync_fallback = false;
                 Ok(Action::Read(
@@ -924,13 +921,34 @@ impl PendingIteratorState {
                 if matches!(self.mode, Mode::Start { .. }) {
                     return Ok(Action::Finish);
                 }
-                self.fast = super::iterator_support::append_fast_array_values(
+                let iterable = runtime
+                    .root_value(&self.iterable)
+                    .map_err(runtime_error_to_vm_error)?;
+                let next = runtime
+                    .root_value(&self.next)
+                    .map_err(runtime_error_to_vm_error)?;
+                let fast = super::iterator_support::append_fast_array_values(
                     runtime,
-                    &self.iterable,
-                    &self.next,
+                    &iterable,
+                    &next,
                     self.builtin_probe,
-                )?
-                .map(Vec::into_iter);
+                )?;
+                drop(iterable);
+                drop(next);
+                self.fast = match fast {
+                    Some(values) => {
+                        let mut internal = Vec::with_capacity(values.len());
+                        for value in values {
+                            internal.push(
+                                runtime
+                                    .into_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?,
+                            );
+                        }
+                        Some(internal.into_iter())
+                    }
+                    None => None,
+                };
                 self.ready = true;
                 self.stage = Stage::Next;
                 Ok(Action::Reply(Completion::Return(JsValue::Undefined)))
@@ -967,7 +985,9 @@ impl PendingIteratorState {
                 let key = runtime
                     .property_key_for_index(self.position as u64)
                     .map_err(|e| Error::internal(e.to_string()))?;
-                let value_root = runtime.root_value(&value).map_err(runtime_error_to_vm_error)?;
+                let value_root = runtime
+                    .root_value(&value)
+                    .map_err(runtime_error_to_vm_error)?;
                 let outcome = runtime
                     .define_own_property_in_realm(
                         Some(self.realm),

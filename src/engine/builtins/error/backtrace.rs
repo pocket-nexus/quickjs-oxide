@@ -54,7 +54,7 @@ impl Runtime {
         let stack_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Stack)?;
         let needs_backtrace = {
             let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
+            let data = state.heap.object(object)?;
             if !matches!(data.payload, ObjectPayload::Error) {
                 false
             } else {
@@ -88,6 +88,7 @@ impl Runtime {
             Err(error) => return Err(error),
         };
 
+        let object_ref = ObjectRef::from_borrowed_handle(self.clone(), object)?;
         // Parse errors add SpiderMonkey-compatible metadata before `stack`,
         // exactly as QuickJS does. Rejection (for example after
         // preventExtensions) is intentionally silent: build_backtrace must
@@ -109,13 +110,13 @@ impl Runtime {
                 ("lineNumber", Value::Int(line)),
                 ("columnNumber", Value::Int(column)),
             ] {
-                if !self.define_backtrace_property(object, name, property_value)? {
+                if !self.define_backtrace_property(&object_ref, name, property_value)? {
                     return Ok(());
                 }
             }
         }
 
-        let _ = self.define_backtrace_property(object, "stack", Value::String(stack))?;
+        let _ = self.define_backtrace_property(&object_ref, "stack", Value::String(stack))?;
         Ok(())
     }
 

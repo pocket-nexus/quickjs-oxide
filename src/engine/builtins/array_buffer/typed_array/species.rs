@@ -9,7 +9,7 @@ use crate::engine::{
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::ConstructorRef},
 };
 
@@ -106,7 +106,9 @@ impl Runtime {
                 "out of memory",
             )?));
         }
-        owned.extend_from_slice(arguments);
+        for argument in arguments {
+            owned.push(self.into_jsvalue(argument.clone())?);
+        }
         finish_species(
             self,
             realm,
@@ -120,18 +122,24 @@ impl Runtime {
         minimum_length: Option<u64>,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let target = match result {
-            Completion::Return(Value::Object(value)) => value,
-            Completion::Return(_) => {
-                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Type,
-                    "not a TypedArray",
-                )?));
+            Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
+                Value::Object(object) => object,
+                _ => {
+                    return Ok(NativeConversion::Throw(self.new_native_error(
+                        realm,
+                        NativeErrorKind::Type,
+                        "not a TypedArray",
+                    )?));
+                }
+            },
+            Completion::Throw(value) => {
+                return Ok(NativeConversion::Throw(
+                    self.root_and_release_jsvalue(value)?,
+                ));
             }
-            Completion::Throw(value) => return Ok(NativeConversion::Throw(value)),
         };
         let Some(_) = self.typed_array_snapshot_if_branded(&target)? else {
-            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
+            return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,
                 "not a TypedArray",
@@ -248,7 +256,7 @@ pub(crate) enum TypedSpeciesStep {
     },
     Construct {
         constructor: ConstructorRef,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         resume: TypedSpeciesResume,
     },
 }
@@ -347,7 +355,7 @@ impl TypedSpeciesStep {
         runtime: &Runtime,
         realm: ContextId,
         constructor: Value,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
         minimum_length: Option<u64>,
     ) -> Result<Self, RuntimeError> {
         let Value::Object(object) = constructor else {
@@ -418,7 +426,7 @@ impl TypedSpeciesResume {
         }
         let minimum = match input.mode {
             SpeciesMode::Length(length) => {
-                arguments.push(Value::number(length as f64));
+                arguments.push(runtime.into_jsvalue(Value::number(length as f64))?);
                 Some(length)
             }
             SpeciesMode::View {
@@ -426,10 +434,10 @@ impl TypedSpeciesResume {
                 byte_offset,
                 length,
             } => {
-                arguments.push(Value::Object(buffer));
-                arguments.push(Value::number(byte_offset as f64));
+                arguments.push(JsValue::Object(buffer.into_handle()));
+                arguments.push(runtime.into_jsvalue(Value::number(byte_offset as f64))?);
                 if let Some(length) = length {
-                    arguments.push(Value::number(length as f64));
+                    arguments.push(runtime.into_jsvalue(Value::number(length as f64))?);
                 }
                 None
             }
@@ -444,15 +452,17 @@ impl TypedSpeciesResume {
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(value)));
+                return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(
+                    runtime.root_and_release_jsvalue(value)?,
+                )));
             }
         };
         match self.0.phase {
             SpeciesPhase::Constructor(input) => {
-                if matches!(value, Value::Undefined) {
+                if matches!(value, JsValue::Undefined) {
                     return Self::selected(runtime, self.0.realm, input, Value::Undefined);
                 }
-                let Value::Object(object) = value else {
+                let Value::Object(object) = runtime.root_and_release_jsvalue(value)? else {
                     return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(
                         runtime.new_native_error(
                             self.0.realm,
@@ -470,7 +480,12 @@ impl TypedSpeciesResume {
                     })),
                 })
             }
-            SpeciesPhase::Species(input) => Self::selected(runtime, self.0.realm, input, value),
+            SpeciesPhase::Species(input) => Self::selected(
+                runtime,
+                self.0.realm,
+                input,
+                runtime.root_and_release_jsvalue(value)?,
+            ),
             SpeciesPhase::Constructed(minimum) => Ok(TypedSpeciesStep::Complete(
                 runtime.validate_typed_array_construction(
                     self.0.realm,
@@ -501,15 +516,21 @@ fn finish_species(
                 constructor,
                 arguments,
                 resume,
-            } => resume.resume(
-                runtime,
-                runtime.construct_constructor_internal(
-                    realm,
-                    &constructor,
-                    &constructor,
-                    &arguments,
-                )?,
-            )?,
+            } => {
+                let arguments = arguments
+                    .into_iter()
+                    .map(|value| runtime.root_and_release_jsvalue(value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                resume.resume(
+                    runtime,
+                    runtime.construct_constructor_internal(
+                        realm,
+                        &constructor,
+                        &constructor,
+                        &arguments,
+                    )?,
+                )?
+            }
         };
     }
 }

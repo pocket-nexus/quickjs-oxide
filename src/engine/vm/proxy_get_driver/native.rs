@@ -10,7 +10,7 @@ pub(super) fn finish(
     mut resume: Resume,
     result: Result<NativeInvokeOutcome, Error>,
 ) -> Result<Step, Error> {
-    let mut output = Step::Complete(Some(Completion::Return(Value::Undefined)));
+    let mut output = Step::Complete(Some(Completion::Return(JsValue::Undefined)));
     finish_into(runtime, slots, call, &mut resume, result, &mut output)?;
     Ok(output)
 }
@@ -41,9 +41,15 @@ pub(super) fn finish_result(
             (
                 super::super::call::NativeInvokeMode::Ordinary,
                 NativeInvokeOutcome::IteratorNextRaw { value, done },
-            ) => Ok(NativeInvokeOutcome::Completion(Completion::Return(
-                Value::Object(runtime.new_iterator_result(call.activation.realm, value, done)?),
-            ))),
+            ) => {
+                let value = runtime
+                    .root_and_release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
+                let result = runtime.new_iterator_result(call.activation.realm, value, done)?;
+                Ok(NativeInvokeOutcome::Completion(Completion::Return(
+                    JsValue::Object(result.into_handle()),
+                )))
+            }
             (_, result) => Ok(result),
         });
     let (result, arguments) = call.activation.finish_reusing(result);
@@ -70,7 +76,7 @@ fn apply_into(
     if matches!(resume, Resume::Identity) {
         *output = Step::Complete(Some(identity_completion(result)?));
     } else if let Resume::IteratorNext(next) = resume {
-        match next.raw_completion(result) {
+        match next.raw_completion(runtime, result) {
             Ok(Ok(result)) => {
                 *output = Step::IteratorNextComplete(Some(result));
                 #[cfg(feature = "profiling")]
@@ -128,7 +134,9 @@ pub(super) fn begin_synchronous(
             target,
             min_readable_args,
             super::super::call::NativeInvocation::Call {
-                this_value: receiver,
+                this_value: runtime
+                    .into_jsvalue(receiver)
+                    .map_err(runtime_error_to_vm_error)?,
             },
             arguments,
             super::super::call::NativeInvokeMode::Ordinary,
@@ -234,6 +242,14 @@ fn capture_native_step(
                     let kind = selected
                         .take_operation()
                         .ok_or_else(|| Error::internal("selected replace has no continuation"))?;
+                    let receiver = runtime
+                        .root_and_release_jsvalue(receiver)
+                        .map_err(runtime_error_to_vm_error)?;
+                    let arguments = arguments
+                        .into_iter()
+                        .map(|argument| runtime.root_and_release_jsvalue(argument))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(runtime_error_to_vm_error)?;
                     begin_local(
                         runtime,
                         slots,
@@ -281,7 +297,7 @@ fn capture_native_step(
                             )
                             .and_then(identity_completion);
                             records[0].step =
-                                Step::Complete(Some(Completion::Return(Value::Undefined)));
+                                Step::Complete(Some(Completion::Return(JsValue::Undefined)));
                             storage.recycle_native_wait(records);
                             let result = result?;
                             return match resume
@@ -366,7 +382,9 @@ pub(super) fn begin_local(
             target,
             min_readable_args,
             super::super::call::NativeInvocation::Call {
-                this_value: receiver,
+                this_value: runtime
+                    .into_jsvalue(receiver)
+                    .map_err(runtime_error_to_vm_error)?,
             },
             arguments,
             super::super::call::NativeInvokeMode::Ordinary,
@@ -431,7 +449,7 @@ pub(super) fn begin_local(
             if let Some(inner) = records[0].call.take() {
                 result = finish_result(runtime, slots, inner, result);
             }
-            records[0].step = Step::Complete(Some(Completion::Return(Value::Undefined)));
+            records[0].step = Step::Complete(Some(Completion::Return(JsValue::Undefined)));
             debug_assert!(
                 records[0]
                     .parents
@@ -1393,8 +1411,11 @@ mod selected_replace_local_tests {
             false,
         )
         .unwrap();
-        let LocalNativeResult::Complete(Completion::Throw(Value::Object(error))) = result else {
+        let LocalNativeResult::Complete(Completion::Throw(thrown)) = result else {
             panic!("expected nested budget error");
+        };
+        let Value::Object(error) = runtime.root_and_release_jsvalue(thrown).unwrap() else {
+            panic!("expected native error object");
         };
         // The original scheduler rejects before entering the selected native:
         // overflow belongs to query.realm (the outer activation), unlike an

@@ -73,24 +73,25 @@ impl InitialOutput for crate::engine::builtins::ArrayNextStep {
 mod tests {
     use super::*;
     use crate::engine::api::{Runtime, Value};
+    use crate::engine::value::JsValue;
     use crate::engine::vm::{Completion, call::NativeInvocation};
 
     #[test]
     fn domain_completion_does_not_construct_a_waiting_payload() {
         let result = deliver(
-            crate::engine::builtins::MathStep::Complete(Completion::Return(Value::Int(7))),
+            crate::engine::builtins::MathStep::Complete(Completion::Return(JsValue::Int(7))),
             &mut |_| panic!("immediate result must not enter waiting sink"),
         );
         assert!(matches!(
             result,
             Some(NativeInvokeOutcome::Completion(Completion::Return(
-                Value::Int(7)
+                JsValue::Int(7)
             )))
         ));
         let result = deliver(
             crate::engine::builtins::ArrayNextStep::Complete(
                 NativeInvokeOutcome::IteratorNextRaw {
-                    value: Value::Int(9),
+                    value: JsValue::Int(9),
                     done: false,
                 },
             ),
@@ -99,7 +100,7 @@ mod tests {
         assert!(matches!(
             result,
             Some(NativeInvokeOutcome::IteratorNextRaw {
-                value: Value::Int(9),
+                value: JsValue::Int(9),
                 done: false
             })
         ));
@@ -114,7 +115,7 @@ mod tests {
             &runtime,
             context.realm,
             &NativeInvocation::Call {
-                this_value: iterator,
+                this_value: runtime.unroot_value(&iterator).unwrap(),
             },
         )
         .unwrap();

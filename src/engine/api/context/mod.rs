@@ -79,9 +79,9 @@ impl Context {
 
     fn finish_completion(&mut self, completion: Completion) -> Result<Value, RuntimeError> {
         match completion {
-            Completion::Return(value) => Ok(value),
+            Completion::Return(value) => self.runtime.root_and_release_jsvalue(value),
             Completion::Throw(value) => {
-                self.runtime.set_pending_exception(value)?;
+                self.runtime.set_pending_exception_jsvalue(value)?;
                 Err(RuntimeError::Exception)
             }
         }

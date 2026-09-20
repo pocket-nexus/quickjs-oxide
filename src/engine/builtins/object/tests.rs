@@ -41,20 +41,26 @@ fn reduced_group_by_element_limit_checks_before_next_and_preserves_throw() {
     );
     let arguments = NativeArguments {
         actual_arg_count: 2,
-        readable: vec![Value::Object(iterable), Value::Object(callback)],
+        readable: vec![
+            runtime.into_jsvalue(Value::Object(iterable)).unwrap(),
+            runtime.into_jsvalue(Value::Object(callback)).unwrap(),
+        ],
     };
 
     let completion = runtime
         .call_object_group_by_with_element_limit(
             context.realm,
             NativeInvocation::Call {
-                this_value: Value::Undefined,
+                this_value: JsValue::Undefined,
             },
             &arguments,
             2,
         )
         .unwrap();
-    let Completion::Throw(Value::Object(error)) = completion else {
+    let Completion::Throw(value) = completion else {
+        panic!("reduced Object.groupBy limit did not throw an Error object");
+    };
+    let Value::Object(error) = runtime.root_and_release_jsvalue(value).unwrap() else {
         panic!("reduced Object.groupBy limit did not throw an Error object");
     };
     assert_eq!(
@@ -1285,7 +1291,10 @@ fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
             &[Value::String(JsString::from_static("x"))],
         )
         .unwrap();
-    let Completion::Return(Value::Object(result)) = completion else {
+    let Completion::Return(value) = completion else {
+        panic!("borrowed Object.entries did not return an Array");
+    };
+    let Value::Object(result) = runtime.root_and_release_jsvalue(value).unwrap() else {
         panic!("borrowed Object.entries did not return an Array");
     };
     assert_eq!(
@@ -1311,7 +1320,10 @@ fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
             &[Value::Undefined],
         )
         .unwrap();
-    let Completion::Throw(Value::Object(error)) = completion else {
+    let Completion::Throw(value) = completion else {
+        panic!("borrowed Object.entries nullish conversion did not throw");
+    };
+    let Value::Object(error) = runtime.root_and_release_jsvalue(value).unwrap() else {
         panic!("borrowed Object.entries nullish conversion did not throw");
     };
     assert_eq!(
