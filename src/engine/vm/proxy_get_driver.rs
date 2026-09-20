@@ -2660,14 +2660,16 @@ pub(super) fn start_iterator_next(
     iterator: crate::engine::value::JsValue,
     method: crate::engine::object::CallableRef,
 ) -> Result<CallStep, Error> {
-    let crate::engine::value::JsValue::Object(iterator) = iterator else {
+    let Value::Object(iterator) = runtime
+        .root_and_release_jsvalue(iterator)
+        .map_err(runtime_error_to_vm_error)?
+    else {
         return Err(Error::internal("iterator record lost object receiver"));
     };
     let step = crate::engine::builtins::IteratorNextStep::start_callable(
         runtime,
         pending.realm(),
-        crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), iterator)
-            .map_err(super::exception::heap_error_to_vm_error)?,
+        iterator,
         method,
     )
     .map_err(runtime_error_to_vm_error)?;
@@ -2929,6 +2931,8 @@ fn install_iterator_finish(
     if frame.cold.iterator_wait.is_some() {
         return Err(Error::internal("iterator resident record already occupied"));
     }
+    #[cfg(debug_assertions)]
+    super::iterator_driver::trace_pending("install-wait", &pending);
     frame.cold.iterator_wait = Some(pending);
     Ok(if next {
         Finish::IteratorNext(id)

@@ -275,6 +275,8 @@ pub(super) fn operation(
                 .map_err(runtime_error_to_vm_error)?;
             pending.stage = if enabled { Stage::Next } else { Stage::Finish };
             pending.done = !enabled;
+            #[cfg(debug_assertions)]
+            trace_pending("built-next", &pending);
             pending
         }
         _ => {
@@ -361,6 +363,8 @@ fn finish_local(
     execution: &mut RunningExecution,
     pending: &mut PendingIteratorState,
 ) -> Result<CallStep, Error> {
+    #[cfg(debug_assertions)]
+    trace_pending("finish-local", pending);
     let frame = execution.frames.current_mut(pending.frame)?;
     #[cfg(feature = "profiling")]
     let depth = match pending.mode {
@@ -497,6 +501,34 @@ fn finish_local(
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
+}
+
+/// Release a suspended wait abandoned by an abruptly exiting frame.
+pub(super) fn release_wait(runtime: &Runtime, pending: &mut PendingIterator) -> Result<(), Error> {
+    #[cfg(debug_assertions)]
+    trace_pending("release-wait", pending);
+    release_pending_edges(runtime, pending)
+}
+
+#[cfg(debug_assertions)]
+pub(super) fn trace_pending(label: &str, pending: &PendingIteratorState) {
+    if std::env::var_os("QJS_TRACE_PENDING").is_none() {
+        return;
+    }
+    let id = |value: &JsValue| match value {
+        JsValue::Object(id) => format!("obj:{id:?}"),
+        JsValue::String(id) => format!("str:{id:?}"),
+        other => format!("{other:?}"),
+    };
+    eprintln!(
+        "[pending] {label} gen={} iterator={} next={} iterable={} yielded={} argument={}",
+        pending.generation,
+        id(&pending.iterator),
+        id(&pending.next),
+        id(&pending.iterable),
+        id(&pending.yielded),
+        id(&pending.argument),
+    );
 }
 
 /// Release owned edges the suspended state still holds after its mode-specific

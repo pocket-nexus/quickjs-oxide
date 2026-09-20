@@ -44,10 +44,25 @@ impl std::ops::DerefMut for ObjectStringResume {
 }
 const _: () = assert!(std::mem::size_of::<ObjectStringResume>() <= 8);
 pub(crate) struct ObjectStringResumeState {
+    runtime: Runtime,
     pending_effect: ObjectStringStepPending,
     realm: ContextId,
     receiver: JsValue,
     phase: Phase,
+}
+impl Drop for ObjectStringResumeState {
+    /// Release the internal edges still owned when the request is abandoned.
+    /// Drained fields are `None`/`Undefined` here; releases are defer-safe.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        let receiver = std::mem::replace(&mut self.receiver, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(receiver);
+    }
 }
 enum Phase {
     Tag(JsString),
@@ -107,6 +122,7 @@ impl ObjectStringStep {
                     runtime.dup_jsvalue(&receiver)?,
                     PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)),
                     ObjectStringResume(Box::new(ObjectStringResumeState {
+                        runtime: runtime.clone(),
                         pending_effect: ObjectStringStepPending::default(),
                         realm,
                         receiver,
@@ -131,6 +147,7 @@ impl ObjectStringStep {
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?,
                     ObjectStringResume(Box::new(ObjectStringResumeState {
+                        runtime: runtime.clone(),
                         pending_effect: ObjectStringStepPending::default(),
                         realm,
                         receiver: this_value,
@@ -153,7 +170,7 @@ impl ObjectStringResume {
                 return Ok(ObjectStringStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.0.phase {
+        match std::mem::replace(&mut self.0.phase, Phase::LocaleResult) {
             Phase::Tag(default_tag) => tag_string(
                 runtime,
                 match value {
@@ -181,11 +198,7 @@ impl ObjectStringResume {
                 Ok(ObjectStringStep::request_call(
                     DirectCallTarget::Callable(callable),
                     runtime.dup_jsvalue(&self.0.receiver)?,
-                    {
-                        let updated_0 = Phase::LocaleResult;
-                        self.0.phase = updated_0;
-                        self
-                    },
+                    self,
                 ))
             }
         }

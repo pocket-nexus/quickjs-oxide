@@ -633,6 +633,12 @@ impl Drop for RuntimeInner {
                     shown,
                     &roots[..shown]
                 );
+                crate::engine::heap::ownership::dump_outstanding_object_retains();
+                if let Ok(wanted) = std::env::var("QJS_TRACE_OBJECT_ID")
+                    && let Ok(index) = wanted.parse::<usize>()
+                {
+                    state.heap.debug_incoming_edges_for_index(index);
+                }
             } else {
                 debug_assert_eq!(live, 0, "runtime teardown left live heap nodes");
             }

@@ -25,6 +25,22 @@ pub(in crate::engine::vm) struct BytecodeCallRequest {
 }
 
 impl BytecodeCallRequest {
+    /// Release the internal edges owned by a request abandoned before
+    /// [`Self::prepare`] consumed it (throw or overflow replies).
+    pub(in crate::engine::vm) fn release_owned_values(
+        &mut self,
+        runtime: &Runtime,
+    ) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
+        for argument in self.arguments.drain(..) {
+            runtime.release_jsvalue(argument)?;
+        }
+        let new_target = std::mem::replace(&mut self.new_target, JsValue::Undefined);
+        runtime.release_jsvalue(new_target)?;
+        let receiver = std::mem::replace(&mut self.receiver, JsValue::Undefined);
+        runtime.release_jsvalue(receiver)?;
+        Ok(())
+    }
+
     pub(in crate::engine::vm) fn prepare(
         self,
         runtime: &Runtime,

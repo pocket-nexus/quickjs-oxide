@@ -1654,8 +1654,22 @@ impl SlotStore {
         // Vec::truncate previously lowered logical length before dropping the
         // suffix. Preserve that authority boundary and ascending owner order.
         self.active_end = window.whole().start;
+        #[cfg(debug_assertions)]
+        let trace_clear = std::env::var_os("QJS_TRACE_CLEAR").is_some();
         for index in window.whole().start..window.operands().start + window.depth {
             if let Some(binding) = self.slots[index].take() {
+                #[cfg(debug_assertions)]
+                if trace_clear {
+                    eprintln!(
+                        "[clear] slot {index} {:?}",
+                        match &binding {
+                            FrameBinding::Direct(JsValue::Object(object)) =>
+                                format!("object {object:?}"),
+                            FrameBinding::Direct(value) => format!("direct {value:?}"),
+                            _ => "other".to_string(),
+                        }
+                    );
+                }
                 release_binding(runtime, binding)?;
             }
         }

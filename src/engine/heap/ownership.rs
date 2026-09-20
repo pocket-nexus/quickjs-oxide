@@ -8,6 +8,74 @@ use crate::engine::heap::{
     VarRefId,
 };
 
+#[cfg(debug_assertions)]
+pub(crate) fn trace_object_matches(id: ObjectId) -> bool {
+    std::env::var("QJS_TRACE_OBJECT_ID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .is_some_and(|wanted| wanted == id.index)
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    static OUTSTANDING_OBJECT_RETAINS: std::cell::RefCell<
+        std::collections::HashMap<u32, Vec<String>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn record_object_retain(id: ObjectId) {
+    if !trace_object_matches(id) {
+        return;
+    }
+    let backtrace = std::backtrace::Backtrace::force_capture().to_string();
+    let compact = backtrace
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let at = line.strip_prefix("at ")?;
+            at.split_once(": ")
+                .map(|(path, _)| path.to_string())
+                .or_else(|| Some(at.to_string()))
+        })
+        .take(10)
+        .collect::<Vec<_>>()
+        .join(" <- ");
+    OUTSTANDING_OBJECT_RETAINS.with(|slot| {
+        slot.borrow_mut().entry(id.index).or_default().push(compact);
+    });
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn record_object_release(id: ObjectId) {
+    if !trace_object_matches(id) {
+        return;
+    }
+    OUTSTANDING_OBJECT_RETAINS.with(|slot| {
+        if let Some(entries) = slot.borrow_mut().get_mut(&id.index) {
+            entries.pop();
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn dump_outstanding_object_retains() {
+    let wanted = std::env::var("QJS_TRACE_OBJECT_ID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok());
+    let Some(wanted) = wanted else {
+        return;
+    };
+    OUTSTANDING_OBJECT_RETAINS.with(|slot| {
+        let mut map = slot.borrow_mut();
+        if let Some(entries) = map.remove(&wanted) {
+            for (index, entry) in entries.iter().enumerate() {
+                eprintln!("[outstanding-retain] {wanted} #{index}: {entry}");
+            }
+        }
+    });
+}
+
 impl Runtime {
     #[inline]
     pub(crate) fn operation(&self) -> RuntimeOperation<'_> {
@@ -92,7 +160,15 @@ impl Runtime {
         #[cfg(debug_assertions)]
         if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
             eprintln!("[retain] {id:?} at {}", std::panic::Location::caller());
+            if trace_object_matches(id) {
+                eprintln!(
+                    "[retain-o-backtrace]\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
         }
+        #[cfg(debug_assertions)]
+        // record_object_retain(id);
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_object(id);
         }
@@ -110,7 +186,15 @@ impl Runtime {
         #[cfg(debug_assertions)]
         if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
             eprintln!("[release] {id:?} at {}", std::panic::Location::caller());
+            if trace_object_matches(id) {
+                eprintln!(
+                    "[release-o-backtrace]\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
         }
+        #[cfg(debug_assertions)]
+        // record_object_release(id);
         self.release_or_defer(DeferredRefOp::Object(id));
     }
 

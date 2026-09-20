@@ -35,12 +35,33 @@ impl std::ops::DerefMut for PrimitiveConstructorResume {
 }
 const _: () = assert!(std::mem::size_of::<PrimitiveConstructorResume>() <= 8);
 pub(crate) struct PrimitiveConstructorResumeState {
+    runtime: Runtime,
     pending_effect: PrimitiveConstructorStepPending,
     realm: ContextId,
     kind: PrimitiveKind,
     new_target: JsValue,
     value: JsValue,
     phase: Phase,
+}
+impl Drop for PrimitiveConstructorResumeState {
+    /// Release the internal edges still owned when the request is abandoned.
+    /// Drained fields are `None`/`Undefined` here; releases are defer-safe.
+    fn drop(&mut self) {
+        for value in [
+            self.pending_effect.primitive_value.take(),
+            self.pending_effect.string_value.take(),
+            self.pending_effect.read_receiver.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        let new_target = std::mem::replace(&mut self.new_target, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(new_target);
+        let value = std::mem::replace(&mut self.value, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(value);
+    }
 }
 impl PrimitiveConstructorStep {
     pub(crate) fn start(
@@ -50,18 +71,19 @@ impl PrimitiveConstructorStep {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let argument = runtime.dup_jsvalue(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("primitive constructor argv was not padded"),
-        )?)?;
         let NativeInvocation::Construct { new_target } = invocation else {
             return Err(RuntimeError::Invariant(
                 "primitive constructor requires constructor-or-function invocation",
             ));
         };
+        let argument = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("primitive constructor argv was not padded"),
+        )?)?;
         let new_target_value = runtime.dup_jsvalue(new_target)?;
         if matches!(kind, PrimitiveKind::Symbol | PrimitiveKind::BigInt)
             && !matches!(new_target_value, JsValue::Undefined)
         {
+            runtime.release_jsvalue(argument)?;
             return Ok(Self::Complete(Completion::Throw(runtime.into_jsvalue(
                 runtime.new_not_constructor_error(
                     realm,
@@ -70,6 +92,7 @@ impl PrimitiveConstructorStep {
             )?)));
         }
         let resume = PrimitiveConstructorResume(Box::new(PrimitiveConstructorResumeState {
+            runtime: runtime.clone(),
             pending_effect: PrimitiveConstructorStepPending::default(),
             realm,
             kind,
@@ -259,10 +282,11 @@ impl PrimitiveConstructorResume {
                 runtime.primitive_prototype_for_realm(realm, self.0.kind)?
             }
         };
+        let value = std::mem::replace(&mut self.0.value, JsValue::Undefined);
         Ok(PrimitiveConstructorStep::Complete(Completion::Return(
             JsValue::Object(
                 runtime
-                    .new_primitive_object_jsvalue(&prototype, self.0.kind, self.0.value)?
+                    .new_primitive_object_jsvalue(&prototype, self.0.kind, value)?
                     .into_handle(),
             ),
         )))

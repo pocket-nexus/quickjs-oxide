@@ -1114,6 +1114,12 @@ impl Heap {
     }
 
     pub(super) fn retain_raw(&mut self, id: RawId, additional: u32) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if let RawId::Object(object) = id
+            && super::ownership::trace_object_matches(object)
+        {
+            super::ownership::record_object_retain(object);
+        }
         let node = self.live_node_mut(id)?;
         node.strong.set(
             node.strong
@@ -1134,8 +1140,23 @@ impl Heap {
     /// fallible [`Heap::retain_raw`] keeps its checked overflow behavior.
     #[inline]
     pub(in crate::engine::heap) fn retain_raw_fast(&self, id: RawId) {
+        #[cfg(debug_assertions)]
+        if let RawId::Object(object) = id
+            && super::ownership::trace_object_matches(object)
+        {
+            super::ownership::record_object_retain(object);
+        }
         let node = self.live_node_fast(id);
         node.strong.set(node.strong.get().saturating_add(1));
+        #[cfg(debug_assertions)]
+        if let RawId::Object(object) = id
+            && super::ownership::trace_object_matches(object)
+        {
+            eprintln!(
+                "[fast-retain] {object:?}\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
     }
 
     /// Validated shared-borrow retain: full identity check, then the `Cell`
@@ -1144,6 +1165,12 @@ impl Heap {
     /// one reference without requiring `&mut` access to the arena.
     #[inline]
     pub(in crate::engine::heap) fn retain_raw_shared(&self, id: RawId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if let RawId::Object(object) = id
+            && super::ownership::trace_object_matches(object)
+        {
+            super::ownership::record_object_retain(object);
+        }
         let node = self.live_node(id)?;
         node.strong.set(
             node.strong
@@ -1176,6 +1203,12 @@ impl Heap {
     }
 
     pub(super) fn release_raw_no_drain(&mut self, id: RawId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if let RawId::Object(object) = id
+            && super::ownership::trace_object_matches(object)
+        {
+            super::ownership::record_object_release(object);
+        }
         let index = self.validate_slot_identity(id)?;
         let mut queue = false;
         let mut vacate_zombie = false;
@@ -2315,5 +2348,41 @@ impl Heap {
             }
         }
         roots
+    }
+
+    /// Debug-only: list every live node whose outgoing edges include `target`
+    /// together with the target's strong count, to separate a real external
+    /// root from an edge missed by `Edges`.
+    pub(crate) fn debug_incoming_edges_for_index(&self, target_index: usize) {
+        let Some(slot) = self.slots.get(target_index) else {
+            eprintln!("[incoming] index {target_index} is out of range");
+            return;
+        };
+        let SlotState::Live(target) = &slot.state else {
+            eprintln!("[incoming] index {target_index} is not live");
+            return;
+        };
+        let strong = target.strong.get();
+        eprintln!(
+            "[incoming] target #{target_index} kind={:?} strong={strong}",
+            target.data.kind()
+        );
+        if let NodeData::Object(object) = &target.data {
+            let detail = format!("{:?}", object.payload);
+            eprintln!("[incoming] payload {}", &detail[..detail.len().min(400)]);
+        }
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let SlotState::Live(node) = &slot.state {
+                let mut hits = 0;
+                for edge in node.data.edges() {
+                    if self.live_index(edge) == Ok(target_index) {
+                        hits += 1;
+                    }
+                }
+                if hits != 0 {
+                    eprintln!("[incoming] from {:?} #{index} x{hits}", node.data.kind());
+                }
+            }
+        }
     }
 }

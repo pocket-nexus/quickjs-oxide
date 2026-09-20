@@ -301,9 +301,12 @@ fn perform(
             }
         }
         P::DeleteSuper => {
-            slots.pop(&mut frame.window)?;
-            slots.pop(&mut frame.window)?;
-            slots.pop(&mut frame.window)?;
+            for _ in 0..3 {
+                let discarded = slots.pop(&mut frame.window)?;
+                runtime
+                    .release_jsvalue(discarded)
+                    .map_err(runtime_error_to_vm_error)?;
+            }
             return Err(Error::new(
                 ErrorKind::Reference,
                 "unsupported reference to 'super'",

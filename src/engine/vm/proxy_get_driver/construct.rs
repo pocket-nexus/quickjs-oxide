@@ -197,6 +197,9 @@ pub(super) fn ready(
 ) -> Result<Result<Next, Step>, Error> {
     let receiver = match receiver {
         Completion::Throw(value) => {
+            request
+                .release_owned_values(runtime)
+                .map_err(runtime_error_to_vm_error)?;
             return Ok(Err(resume
                 .resume(runtime, Completion::Throw(value))
                 .map_err(runtime_error_to_vm_error)?));
@@ -208,6 +211,9 @@ pub(super) fn ready(
         .can_push_with_continuations(query.continuation_depth())
         || runtime.bytecode_call_would_overflow()
     {
+        request
+            .release_owned_values(runtime)
+            .map_err(runtime_error_to_vm_error)?;
         return Ok(Err(resume
             .resume(runtime, overflow(runtime, request.caller_realm)?)
             .map_err(runtime_error_to_vm_error)?));

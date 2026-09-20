@@ -92,7 +92,10 @@ pub(super) fn get_super(
             });
         #[cfg(feature = "profiling")]
         let depth = execution.slots.depth(&frame.window);
-        execution.slots.pop(&mut frame.window)?;
+        let discarded = execution.slots.pop(&mut frame.window)?;
+        runtime
+            .release_jsvalue(discarded)
+            .map_err(runtime_error_to_vm_error)?;
         execution.slots.push(&mut frame.window, prototype)?;
         frame.resume_pc = frame
             .fault_pc

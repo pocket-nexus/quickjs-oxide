@@ -343,6 +343,14 @@ fn array_join_separator_overflow_still_gets_nullish_slots_and_later_throw_wins()
     else {
         panic!("Array.join overflow fixture was not an object");
     };
+    let arguments = crate::engine::vm::call::NativeArguments {
+        actual_arg_count: 1,
+        readable: vec![
+            runtime
+                .into_jsvalue(Value::String(JsString::from_static("xx")))
+                .unwrap(),
+        ],
+    };
     let completion = runtime
         .call_array_prototype_join_with_string_limit(
             context.realm,
@@ -350,17 +358,13 @@ fn array_join_separator_overflow_still_gets_nullish_slots_and_later_throw_wins()
             crate::engine::vm::call::NativeInvocation::Call {
                 this_value: runtime.into_jsvalue(Value::Object(source)).unwrap(),
             },
-            &crate::engine::vm::call::NativeArguments {
-                actual_arg_count: 1,
-                readable: vec![
-                    runtime
-                        .into_jsvalue(Value::String(JsString::from_static("xx")))
-                        .unwrap(),
-                ],
-            },
+            &arguments,
             2,
         )
         .unwrap();
+    for value in arguments.readable {
+        runtime.release_jsvalue(value).unwrap();
+    }
     assert!(matches!(completion, Completion::Throw(JsValue::Int(77))));
     assert_eq!(
         context.eval("joinOverflowLog").unwrap(),

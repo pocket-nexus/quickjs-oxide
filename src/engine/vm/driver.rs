@@ -937,7 +937,10 @@ fn run_frames_with_state(
             let parent = execution.frames.current_mut(target.frame()?)?;
             parent.cold.eval_arguments = None;
             for _ in 0..=arguments {
-                execution.slots.pop(&mut parent.window)?;
+                let discarded = execution.slots.pop(&mut parent.window)?;
+                runtime
+                    .release_jsvalue(discarded)
+                    .map_err(runtime_error_to_vm_error)?;
             }
             match completion {
                 Completion::Return(value) => execution.slots.push(&mut parent.window, value)?,

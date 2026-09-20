@@ -61,6 +61,7 @@ impl std::ops::DerefMut for ArrayStringResume {
 }
 const _: () = assert!(std::mem::size_of::<ArrayStringResume>() <= 8);
 pub(crate) struct ArrayStringResumeState {
+    runtime: Runtime,
     pending_effect: ArrayStringStepPending,
     realm: ContextId,
     kind: ArrayStringKind,
@@ -73,6 +74,27 @@ pub(crate) struct ArrayStringResumeState {
     length: u64,
     index: u64,
     element: JsValue,
+}
+impl Drop for ArrayStringResumeState {
+    /// Release the internal edges still owned when the request is abandoned.
+    /// Drained fields are `None`/`Undefined` here; releases are defer-safe.
+    fn drop(&mut self) {
+        for value in [
+            self.pending_effect.read_receiver.take(),
+            self.pending_effect.number_value.take(),
+            self.pending_effect.string_value.take(),
+            self.pending_effect.call_receiver.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        let element = std::mem::replace(&mut self.element, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(element);
+        let separator = std::mem::replace(&mut self.separator_value, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(separator);
+    }
 }
 impl ArrayStringStep {
     pub(crate) fn start(
@@ -103,6 +125,7 @@ impl ArrayStringStep {
             let __pending_field_key =
                 runtime.intern_property_key(if to_string { "join" } else { "length" })?;
             let __pending_field_resume = ArrayStringResume(Box::new(ArrayStringResumeState {
+                runtime: runtime.clone(),
                 pending_effect: ArrayStringStepPending::default(),
                 realm,
                 kind,
@@ -161,7 +184,9 @@ impl ArrayStringResume {
                     self.0.kind,
                     ArrayStringKind::Join(ArrayJoinKind::ToLocaleString)
                 ) {
-                    self.0.element = runtime.dup_jsvalue(&value)?;
+                    let previous =
+                        std::mem::replace(&mut self.0.element, runtime.dup_jsvalue(&value)?);
+                    runtime.release_jsvalue(previous)?;
                     self.0.phase = Phase::LocaleMethod;
                     return Ok({
                         let __pending_field_receiver = value;
@@ -176,10 +201,11 @@ impl ArrayStringResume {
                         )
                     });
                 }
-                self.element_string(value)
+                self.element_string(runtime, value)
             }
             Phase::LocaleMethod => {
                 let callable = callable(runtime, &value)?;
+                runtime.release_jsvalue(value)?;
                 let Some(callable) = callable else {
                     return Ok(ArrayStringStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
@@ -202,11 +228,13 @@ impl ArrayStringResume {
                 })
             }
             Phase::LocaleResult => {
-                self.0.element = JsValue::Undefined;
-                self.element_string(value)
+                let element = std::mem::replace(&mut self.0.element, JsValue::Undefined);
+                runtime.release_jsvalue(element)?;
+                self.element_string(runtime, value)
             }
             Phase::JoinMethod => {
                 let callable = callable(runtime, &value)?;
+                runtime.release_jsvalue(value)?;
                 if let Some(callable) = callable {
                     self.0.phase = Phase::JoinResult;
                     Ok({
@@ -222,7 +250,7 @@ impl ArrayStringResume {
                     })
                 } else {
                     Ok(ArrayStringStep::ObjectTag {
-                        receiver: JsValue::Object(self.0.object.into_handle()),
+                        receiver: JsValue::Object(self.0.object.clone().into_handle()),
                     })
                 }
             }
@@ -230,8 +258,13 @@ impl ArrayStringResume {
             _ => Err(RuntimeError::Invariant("Array string value phase mismatch")),
         }
     }
-    fn element_string(mut self, value: JsValue) -> Result<ArrayStringStep, RuntimeError> {
+    fn element_string(
+        mut self,
+        runtime: &Runtime,
+        value: JsValue,
+    ) -> Result<ArrayStringStep, RuntimeError> {
         if let Some(error) = self.0.separator_error {
+            runtime.release_jsvalue(value)?;
             return Err(error.into());
         }
         self.0.phase = Phase::ElementString;
@@ -304,8 +337,9 @@ impl ArrayStringResume {
             if let Some(error) = self.0.separator_error {
                 return Err(error.into());
             }
+            let output = std::mem::replace(&mut self.0.output, JsStringBuilder::with_limit(0, 0));
             return Ok(ArrayStringStep::Complete(Completion::Return(
-                runtime.into_jsvalue(Value::String(self.0.output.finish()?))?,
+                runtime.into_jsvalue(Value::String(output.finish()?))?,
             )));
         }
         if self.0.index != 0

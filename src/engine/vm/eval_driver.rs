@@ -195,7 +195,10 @@ fn prepare_and_enter(
         DirectEvalPreparation::Complete(completion) => {
             frame.cold.eval_arguments = None;
             for _ in 0..=arguments {
-                execution.slots.pop(&mut frame.window)?;
+                let discarded = execution.slots.pop(&mut frame.window)?;
+                runtime
+                    .release_jsvalue(discarded)
+                    .map_err(runtime_error_to_vm_error)?;
             }
             match completion {
                 Completion::Return(value) => {
