@@ -152,11 +152,7 @@ impl Runtime {
         Ok(PreparedBytecodeHeader {
             executable,
             active_frame,
-            input: CallInput {
-                this_value,
-                new_target,
-                callee_global: Some(callee_global),
-            },
+            input: CallInput::new(self, this_value, new_target, Some(callee_global)),
         })
     }
 }

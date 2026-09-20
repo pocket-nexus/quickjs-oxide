@@ -491,11 +491,12 @@ pub(crate) fn thaw(
             "dormant suspension output was not cleared",
         ));
     }
-    let input = super::CallInput {
-        this_value: decode_raw_jsvalue(&runtime, &data.vm.this_value)?,
-        new_target: decode_raw_jsvalue(&runtime, &data.vm.new_target)?,
-        callee_global: Some(callee_global),
-    };
+    let input = super::CallInput::new(
+        &runtime,
+        decode_raw_jsvalue(&runtime, &data.vm.this_value)?,
+        decode_raw_jsvalue(&runtime, &data.vm.new_target)?,
+        Some(callee_global),
+    );
     let mut entry = super::frame::FrameEntry {
         initialize_bindings: false,
         property_generation: 0,

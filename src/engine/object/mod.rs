@@ -86,13 +86,19 @@ impl ObjectRef {
         self.id
     }
 
-    /// Consume this root, transferring its one owned reference to the caller
-    /// without retaining or releasing (for example into an internal value
-    /// edge of the same runtime).
+    /// Consume this root and transfer its owned reference to the caller.
+    ///
+    /// The edge count is unchanged: this root retains the edge so its own
+    /// release on drop nets to a transfer. `ObjectRef::drop` still runs, so the
+    /// owned runtime handle is disposed instead of leaked. A live root always
+    /// resolves, mirroring [`ObjectRef::clone`]'s invariant treatment.
     #[must_use]
     pub(crate) fn into_handle(self) -> ObjectId {
-        let this = std::mem::ManuallyDrop::new(self);
-        this.id
+        let id = self.id;
+        self.runtime
+            .retain_object_handle(id)
+            .expect("transferring a live object root must retain its handle");
+        id
     }
 }
 
@@ -192,12 +198,18 @@ impl AtomOwner {
         self.runtime.domain_id()
     }
 
-    /// Consume this root, transferring its one owned atom reference to the
-    /// caller without retaining or releasing.
+    /// Consume this root and transfer its owned atom reference to the caller.
+    ///
+    /// The edge count is unchanged: the atom is retained here so this owner's
+    /// release on drop nets to a transfer, and the runtime handle is disposed
+    /// normally. A live root always resolves.
     #[must_use]
     fn into_atom(self) -> Atom {
-        let this = std::mem::ManuallyDrop::new(self);
-        this.atom
+        let atom = self.atom;
+        self.runtime
+            .retain_atom_handle(atom)
+            .expect("transferring a live atom root must retain its handle");
+        atom
     }
 }
 

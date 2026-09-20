@@ -549,12 +549,7 @@ impl Runtime {
         value: Value,
         hint: ToPrimitiveHint,
     ) -> Result<Completion, RuntimeError> {
-        let step = primitive::PrimitiveResume::start(
-            self,
-            realm,
-            self.unroot_value(&value)?,
-            hint,
-        );
+        let step = primitive::PrimitiveResume::start(self, realm, self.unroot_value(&value)?, hint);
         self.finish_primitive_steps(realm, step)
     }
 
@@ -604,10 +599,10 @@ impl Runtime {
         use crate::engine::value::JsValue;
         let (kind, value) = match value {
             JsValue::Object(object) => {
-                return Ok(NativeConversion::Value(ObjectRef::from_borrowed_handle(
+                return Ok(NativeConversion::Value(ObjectRef::from_owned_handle(
                     self.clone(),
                     object,
-                )?));
+                )));
             }
             JsValue::Undefined | JsValue::Null => {
                 return Ok(NativeConversion::Throw(self.new_native_error(

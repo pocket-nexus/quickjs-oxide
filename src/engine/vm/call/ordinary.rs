@@ -204,6 +204,7 @@ impl OrdinaryCall {
             stack::FrameStorage,
         };
         storage.reserve()?;
+        let callback_runtime = self.function.runtime().clone();
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             storage.capture_flags(self.executable.local_definitions.len())?
         } else {
@@ -216,11 +217,12 @@ impl OrdinaryCall {
             function: self.function.into(),
             closure_slots: self.closure,
             reusable_captured_locals: flags,
-            input: crate::engine::vm::CallInput {
-                this_value: receiver,
-                new_target: crate::engine::value::JsValue::Undefined,
-                callee_global: None,
-            }
+            input: crate::engine::vm::CallInput::new(
+                &callback_runtime,
+                receiver,
+                crate::engine::value::JsValue::Undefined,
+                None,
+            )
             .into(),
         });
         #[cfg(feature = "profiling")]
@@ -310,11 +312,12 @@ impl OrdinaryCall {
         cold.function = self.function.into();
         cold.closure_slots = self.closure;
         cold.reusable_captured_locals = flags;
-        cold.input = crate::engine::vm::CallInput {
-            this_value: receiver,
-            new_target: crate::engine::value::JsValue::Undefined,
-            callee_global: None,
-        }
+        cold.input = crate::engine::vm::CallInput::new(
+            runtime,
+            receiver,
+            crate::engine::value::JsValue::Undefined,
+            None,
+        )
         .into();
         cold.executable = self.executable.into();
         cold.window = window.into();
