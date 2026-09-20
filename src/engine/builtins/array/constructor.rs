@@ -267,8 +267,10 @@ mod tests {
         else {
             panic!("expected prototype lookup");
         };
-        let _ = resume.take_read_receiver();
         let _ = resume.take_read_key();
+        runtime
+            .release_jsvalue(resume.take_read_receiver())
+            .unwrap();
 
         let NativeInvocation::Construct { new_target } = invocation else {
             unreachable!()
