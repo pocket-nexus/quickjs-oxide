@@ -37,6 +37,7 @@ impl std::ops::DerefMut for DynamicFunctionResume {
 }
 const _: () = assert!(std::mem::size_of::<DynamicFunctionResume>() <= 8);
 pub(crate) struct DynamicFunctionResumeState {
+    runtime: Runtime,
     pending_effect: DynamicFunctionStepPending,
     realm: ContextId,
     kind: DynamicFunctionKind,
@@ -47,9 +48,27 @@ pub(crate) struct DynamicFunctionResumeState {
     phase: Phase,
     value: Value,
 }
+impl Drop for DynamicFunctionResumeState {
+    /// Release the internal edges still owned when the request is abandoned.
+    /// Consumption goes through `Option::take`/`mem::replace`, so drained
+    /// fields are `None`/`Undefined` here; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.string_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        let new_target = std::mem::replace(&mut self.new_target, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(new_target);
+    }
+}
 impl DynamicFunctionStep {
     pub(crate) fn start(
-        _runtime: &Runtime,
+        runtime: &Runtime,
         realm: ContextId,
         kind: DynamicFunctionKind,
         invocation: &NativeInvocation,
@@ -81,20 +100,21 @@ impl DynamicFunctionStep {
             .try_reserve_exact(arguments.actual_arg_count)
             .map_err(|_| RuntimeError::Invariant("Function constructor argv allocation failed"))?;
         for value in &arguments.readable[..arguments.actual_arg_count] {
-            owned_arguments.push(_runtime.dup_jsvalue(value)?);
+            owned_arguments.push(runtime.dup_jsvalue(value)?);
         }
         DynamicFunctionResume(Box::new(DynamicFunctionResumeState {
+            runtime: runtime.clone(),
             pending_effect: DynamicFunctionStepPending::default(),
             realm,
             kind,
-            new_target: _runtime.dup_jsvalue(new_target)?,
+            new_target: runtime.dup_jsvalue(new_target)?,
             arguments: owned_arguments,
             index: 0,
             source: Some(source),
             phase: Phase::Parameters,
             value: Value::Undefined,
         }))
-        .parameter(_runtime)
+        .parameter(runtime)
     }
 }
 impl DynamicFunctionResume {
@@ -221,7 +241,9 @@ impl DynamicFunctionResume {
                     };
                     ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?
                 };
-                let Value::Object(function) = self.0.value else {
+                let Value::Object(function) =
+                    std::mem::replace(&mut self.0.value, Value::Undefined)
+                else {
                     return Ok(DynamicFunctionStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
                             self.0.realm,

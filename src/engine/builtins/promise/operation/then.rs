@@ -80,6 +80,7 @@ pub(super) fn constructor(
         .capability(runtime, None),
         Completion::Return(JsValue::Object(constructor_id)) => Ok({
             let constructor = ObjectRef::from_borrowed_handle(runtime.clone(), constructor_id)?;
+            runtime.release_jsvalue(JsValue::Object(constructor_id))?;
             let __pending_field_receiver = JsValue::Object(constructor.into_handle());
             let __pending_field_key =
                 PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
@@ -94,7 +95,10 @@ pub(super) fn constructor(
                 __pending_field_resume,
             )
         }),
-        Completion::Return(_) => super::capability::error(runtime, realm, "not an object"),
+        Completion::Return(value) => {
+            runtime.release_jsvalue(value)?;
+            super::capability::error(runtime, realm, "not an object")
+        }
     }
 }
 pub(super) fn species(

@@ -23,8 +23,10 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        operation::PromiseStep::aggregate(self, realm, kind, &invocation, arguments)?
-            .finish(self, realm)
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::PromiseStep::aggregate(self, realm, kind, invocation, arguments)?
+                .finish(self, realm)
+        })
     }
 
     pub(super) fn prepare_promise_aggregate_handlers(

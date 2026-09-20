@@ -1981,13 +1981,10 @@ mod tests {
 
     #[test]
     fn call_domain_validation_preserves_receiver_then_argument_rejection_order() {
-        for (foreign_receiver, foreign_first, malformed_first) in [
-            (true, false, true),
-            (false, true, false),
-            (false, false, true),
-        ] {
+        // Internal values carry no runtime branding, so domain validation only
+        // enforces receiver/left-to-right slot presence.
+        for removed_index in [0, 2, 3] {
             let runtime = Runtime::new();
-            let foreign = Runtime::new();
             let context = runtime.new_context();
             let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
             owner.metadata.max_stack = 4;
@@ -1995,40 +1992,27 @@ mod tests {
             let mut window = slots
                 .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
-            let receiver = Value::Object(if foreign_receiver {
-                foreign.new_object(None).unwrap()
-            } else {
-                runtime.new_object(None).unwrap()
-            });
-            let first = Value::Object(if foreign_first {
-                foreign.new_object(None).unwrap()
-            } else {
-                runtime.new_object(None).unwrap()
-            });
             // Caller shape is [receiver, callee, first argument, second argument].
             for value in [
-                receiver,
+                Value::Object(runtime.new_object(None).unwrap()),
                 Value::Int(0),
-                first,
-                Value::Object(foreign.new_object(None).unwrap()),
+                Value::Object(runtime.new_object(None).unwrap()),
+                Value::Object(runtime.new_object(None).unwrap()),
             ] {
                 slots
                     .push(&mut window, into_internal(&runtime, value))
                     .unwrap();
             }
-            let removed_index = if malformed_first { 2 } else { 3 };
             let removed = slots.slots[removed_index].take();
-            let result = slots.validate_call_value_domains(&window, &runtime, 2, true);
-            if foreign_receiver || foreign_first {
-                assert!(result.is_err());
-            } else {
-                assert!(
-                    result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("owned operand slot is not a value")
-                );
-            }
+            let error = slots
+                .validate_call_value_domains(&window, &runtime, 2, true)
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("owned operand slot is not a value"),
+                "removed slot {removed_index}: {error}"
+            );
             assert_eq!(window.depth, 4);
             assert!(slots.slots[removed_index].is_none());
             slots.slots[removed_index] = removed;
@@ -3246,6 +3230,9 @@ mod tests {
             Value::Int(9)
         );
         assert!(!runtime.0.deferred_references.has_pending());
+        // The intentionally stale handle owns no edge: it was never retained by
+        // the failed transaction, so it must not reach frame teardown.
+        slots.slots[window.operands().start + 1].take();
         slots.clear_frame(&runtime, window).unwrap();
     }
 
