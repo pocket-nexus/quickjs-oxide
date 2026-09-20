@@ -130,7 +130,15 @@ pub(in crate::engine::vm) fn complete(
         (execution.slots.pop(&mut frame.window)?, None)
     } else {
         let right = execution.slots.pop(&mut frame.window)?;
-        (execution.slots.pop(&mut frame.window)?, Some(right))
+        match execution.slots.pop(&mut frame.window) {
+            Ok(left) => (left, Some(right)),
+            Err(error) => {
+                runtime
+                    .release_jsvalue(right)
+                    .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+                return Err(error);
+            }
+        }
     };
     let result = match NumericStep::start(runtime, kind, left, right) {
         Ok(step) => {

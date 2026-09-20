@@ -224,7 +224,17 @@ impl Runtime {
             Value::Float(value) => RawValue::Float(*value),
             Value::BigInt(value) => {
                 let mut state = self.0.state.borrow_mut();
-                RawValue::BigInt(state.heap.allocate_bigint(value.clone())?)
+                let id = state.heap.allocate_bigint(value.clone())?;
+                #[cfg(debug_assertions)]
+                if std::env::var("QJS_TRACE_BIGINT_ID")
+                    .is_ok_and(|value| format!("{id:?}").contains(&format!("index: {value},")))
+                {
+                    eprintln!(
+                        "[raw-b] {id:?}\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
+                RawValue::BigInt(id)
             }
             Value::String(value) => {
                 let mut state = self.0.state.borrow_mut();

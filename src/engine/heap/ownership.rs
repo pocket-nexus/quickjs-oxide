@@ -241,7 +241,22 @@ impl Runtime {
         self.release_or_defer(DeferredRefOp::String(id));
     }
 
+    #[track_caller]
     pub(crate) fn retain_bigint_handle(&self, id: BigIntId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            eprintln!("[retain-b] {id:?} at {}", std::panic::Location::caller());
+            if std::env::var("QJS_TRACE_BIGINT_ID")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                == Some(id.index)
+            {
+                eprintln!(
+                    "[retain-b-backtrace]\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_bigint(id);
         }
@@ -251,13 +266,36 @@ impl Runtime {
         state.heap.retain_bigint_shared(id)
     }
 
+    #[track_caller]
     pub(crate) fn release_bigint_handle(&self, id: BigIntId) {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            eprintln!("[release-b] {id:?} at {}", std::panic::Location::caller());
+            if std::env::var("QJS_TRACE_BIGINT_ID")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                == Some(id.index)
+            {
+                eprintln!(
+                    "[release-b-backtrace]\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
         self.release_or_defer(DeferredRefOp::BigInt(id));
     }
 
     /// Release one producer-owned string/BigInt conversion edge after the
     /// transactional store has retained its own copy edge.
+    #[track_caller]
     pub(crate) fn release_converted_node_edge(&self, edge: RawId) {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            eprintln!(
+                "[release-converted] {edge:?} at {}",
+                std::panic::Location::caller()
+            );
+        }
         match edge {
             RawId::String(id) => self.release_or_defer(DeferredRefOp::String(id)),
             RawId::BigInt(id) => self.release_or_defer(DeferredRefOp::BigInt(id)),

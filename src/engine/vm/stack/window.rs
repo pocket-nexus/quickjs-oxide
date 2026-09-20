@@ -127,7 +127,7 @@ impl FrameTransaction<'_> {
     pub(in crate::engine::vm) fn with_local_add_constant_left<T>(
         &mut self,
         local: u16,
-        constant: JsValue,
+        constant: &mut JsValue,
         consume: impl FnOnce(&mut JsValue, &JsValue) -> T,
     ) -> Result<Option<T>, Error> {
         let local = self.store.slots[self.window.locals()]
@@ -138,11 +138,10 @@ impl FrameTransaction<'_> {
         let FrameBinding::Direct(local) = local else {
             return Ok(None);
         };
-        if !local_add_values(&constant, local) {
+        if !local_add_values(constant, local) {
             return Ok(None);
         }
-        let mut constant = constant;
-        Ok(Some(consume(&mut constant, local)))
+        Ok(Some(consume(constant, local)))
     }
     pub(in crate::engine::vm) fn slots(&mut self) -> RunSlots<'_> {
         RunSlots {

@@ -75,6 +75,15 @@ pub(in crate::engine::vm) fn allocate_bigint_jsvalue(
         .heap
         .allocate_bigint(bigint)
         .map_err(|error| Error::internal(error.to_string()))?;
+    #[cfg(debug_assertions)]
+    if std::env::var("QJS_TRACE_BIGINT_ID")
+        .is_ok_and(|value| format!("{id:?}").contains(&format!("index: {value},")))
+    {
+        eprintln!(
+            "[alloc-b] {id:?}\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
     Ok(JsValue::BigInt(id))
 }
 
@@ -171,11 +180,16 @@ pub(in crate::engine::vm) fn unary_plus_primitive(
     runtime: &Runtime,
     value: JsValue,
 ) -> Result<JsValue, Error> {
-    match value {
-        JsValue::BigInt(_) => Err(Error::new(ErrorKind::Type, "bigint argument with unary +")),
-        value @ (JsValue::Int(_) | JsValue::Float(_)) => Ok(value),
-        value => Ok(jsvalue_number(to_number_jsvalue(runtime, &value)?)),
+    if matches!(value, JsValue::BigInt(_)) {
+        release_primitive_operand(runtime, value)?;
+        return Err(Error::new(ErrorKind::Type, "bigint argument with unary +"));
     }
+    if matches!(value, JsValue::Int(_) | JsValue::Float(_)) {
+        return Ok(value);
+    }
+    let result = jsvalue_number(to_number_jsvalue(runtime, &value)?);
+    release_primitive_operand(runtime, value)?;
+    Ok(result)
 }
 
 /// ECMAScript `ToInt32`, matching QuickJS's modulo-2^32 conversion for every

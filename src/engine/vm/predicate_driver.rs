@@ -46,6 +46,9 @@ pub(super) fn start(
         {
             Value::Object(target) => target,
             _ => {
+                runtime
+                    .release_jsvalue(left)
+                    .map_err(runtime_error_to_vm_error)?;
                 return super::property_driver::throw_error(
                     runtime,
                     realm,
@@ -65,6 +68,12 @@ pub(super) fn start(
         (left, right)
     };
     if kind == Kind::Has && !matches!(base, JsValue::Object(_)) {
+        runtime
+            .release_jsvalue(key)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
         return super::property_driver::throw_error(
             runtime,
             realm,

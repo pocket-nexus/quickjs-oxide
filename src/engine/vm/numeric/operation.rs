@@ -125,9 +125,11 @@ pub(in crate::engine::vm) fn primitive_output(
     if kind == NumericKind::Add {
         return add_primitives(runtime, left, right).map(NumericOutput::value);
     }
-    let left = to_numeric_primitive(runtime, &left)?;
-    let right = to_numeric_primitive(runtime, &right)?;
-    binary(runtime, kind, left, right).map(NumericOutput::value)
+    let converted_left = to_numeric_primitive(runtime, &left);
+    let converted_right = to_numeric_primitive(runtime, &right);
+    super::release_primitive_operand(runtime, left)?;
+    super::release_primitive_operand(runtime, right)?;
+    binary(runtime, kind, converted_left?, converted_right?).map(NumericOutput::value)
 }
 
 pub(in crate::engine::vm) enum NumericStep {
@@ -252,33 +254,48 @@ impl NumericResume {
             Phase::Left(right) => {
                 // Arithmetic converts the left primitive to Numeric before starting
                 // the right callback. Relational comparison converts both primitives first.
-                let phase = if kind == NumericKind::Add || kind.comparison() {
-                    Phase::RightPrimitive(value)
+                let hint = if kind == NumericKind::Add {
+                    ToPrimitiveHint::Default
                 } else {
-                    Phase::RightNumeric(to_numeric_primitive(runtime, &value)?)
+                    ToPrimitiveHint::Number
                 };
+                if kind == NumericKind::Add || kind.comparison() {
+                    return primitive(
+                        runtime,
+                        right,
+                        hint,
+                        NumericResume(Box::new(NumericResumeState {
+                            kind,
+                            phase: Phase::RightPrimitive(value),
+                        })),
+                    );
+                }
+                let converted = to_numeric_primitive(runtime, &value);
+                super::release_primitive_operand(runtime, value)?;
                 primitive(
                     runtime,
                     right,
-                    if kind == NumericKind::Add {
-                        ToPrimitiveHint::Default
-                    } else {
-                        ToPrimitiveHint::Number
-                    },
-                    NumericResume(Box::new(NumericResumeState { kind, phase })),
+                    hint,
+                    NumericResume(Box::new(NumericResumeState {
+                        kind,
+                        phase: Phase::RightNumeric(converted?),
+                    })),
                 )
             }
-            Phase::RightPrimitive(left) => Ok(complete(if kind == NumericKind::Add {
-                add_primitives(runtime, left, value)?
-            } else {
-                JsValue::Bool(compare(runtime, kind, &left, &value)?)
-            })),
-            Phase::RightNumeric(left) => Ok(complete(binary(
-                runtime,
-                kind,
-                left,
-                to_numeric_primitive(runtime, &value)?,
-            )?)),
+            Phase::RightPrimitive(left) => {
+                if kind == NumericKind::Add {
+                    return Ok(complete(add_primitives(runtime, left, value)?));
+                }
+                let compared = compare(runtime, kind, &left, &value);
+                super::release_primitive_operand(runtime, left)?;
+                super::release_primitive_operand(runtime, value)?;
+                Ok(complete(JsValue::Bool(compared?)))
+            }
+            Phase::RightNumeric(left) => {
+                let converted = to_numeric_primitive(runtime, &value);
+                super::release_primitive_operand(runtime, value)?;
+                Ok(complete(binary(runtime, kind, left, converted?)?))
+            }
             Phase::EqualityLeft(right) => equality(runtime, kind, value, right, false),
             Phase::EqualityRight(left) => equality(runtime, kind, left, value, false),
             Phase::EqualityDda(..) => {
@@ -313,70 +330,73 @@ fn unary_output(
         return Ok(NumericOutput::value(unary_plus_primitive(runtime, value)?));
     }
     if kind == NumericKind::Neg {
-        return Ok(NumericOutput::value(
-            if let Some(number) = value.as_number_repr() {
-                match number.negate() {
-                    crate::engine::value::number::operations::Number::Int(value) => {
-                        JsValue::Int(value)
-                    }
-                    crate::engine::value::number::operations::Number::Float(value) => {
-                        JsValue::Float(value)
-                    }
+        if let Some(number) = value.as_number_repr() {
+            return Ok(NumericOutput::value(match number.negate() {
+                crate::engine::value::number::operations::Number::Int(value) => JsValue::Int(value),
+                crate::engine::value::number::operations::Number::Float(value) => {
+                    JsValue::Float(value)
                 }
-            } else {
-                match value {
-                    JsValue::BigInt(id) => {
-                        let payload = bigint_payload(runtime, id)?;
-                        super::allocate_bigint_jsvalue(
-                            runtime,
-                            payload.neg().map_err(bigint_error)?,
-                        )?
-                    }
-                    value => jsvalue_number(-to_number_jsvalue(runtime, &value)?),
-                }
-            },
-        ));
+            }));
+        }
+        let result = match &value {
+            JsValue::BigInt(id) => super::allocate_bigint_jsvalue(
+                runtime,
+                bigint_payload(runtime, *id)?.neg().map_err(bigint_error)?,
+            ),
+            other => Ok(jsvalue_number(-to_number_jsvalue(runtime, other)?)),
+        };
+        super::release_primitive_operand(runtime, value)?;
+        return result.map(NumericOutput::value);
     }
     if kind == NumericKind::BitNot {
-        return Ok(NumericOutput::value(
-            match to_numeric_primitive(runtime, &value)? {
-                NumericValue::BigInt(value) => {
-                    super::allocate_bigint_jsvalue(runtime, value.bit_not().map_err(bigint_error)?)?
-                }
-                NumericValue::Number(value) => JsValue::Int(!number_to_int32(value)),
-            },
-        ));
+        let result = match to_numeric_primitive(runtime, &value)? {
+            NumericValue::BigInt(value) => {
+                super::allocate_bigint_jsvalue(runtime, value.bit_not().map_err(bigint_error)?)
+            }
+            NumericValue::Number(value) => Ok(JsValue::Int(!number_to_int32(value))),
+        };
+        super::release_primitive_operand(runtime, value)?;
+        return result.map(NumericOutput::value);
     }
     let increment = matches!(kind, NumericKind::Inc | NumericKind::PostInc);
     let postfix = matches!(kind, NumericKind::PostInc | NumericKind::PostDec);
-    let (old, next) = if let Some(number) = value.as_number_repr() {
-        (value, super::jsvalue_from_number(number.update(increment)))
-    } else {
-        match value {
-            JsValue::BigInt(id) => {
-                let payload = bigint_payload(runtime, id)?;
-                let old = JsValue::BigInt(id);
-                let next = if increment {
-                    payload.add(&crate::engine::value::bigint::JsBigInt::from(1_i32))
-                } else {
-                    payload.update_decrement()
-                }
-                .map_err(bigint_error)?;
-                (old, super::allocate_bigint_jsvalue(runtime, next)?)
+    if let Some(number) = value.as_number_repr() {
+        return Ok(NumericOutput {
+            value: super::jsvalue_from_number(number.update(increment)),
+            previous: postfix.then_some(value),
+        });
+    }
+    match value {
+        JsValue::BigInt(id) => {
+            let payload = bigint_payload(runtime, id)?;
+            let next = if increment {
+                payload.add(&crate::engine::value::bigint::JsBigInt::from(1_i32))
+            } else {
+                payload.update_decrement()
             }
-            value => {
-                let old = to_number_jsvalue(runtime, &value)?;
-                (
-                    jsvalue_number(old),
-                    jsvalue_number(if increment { old + 1.0 } else { old - 1.0 }),
-                )
-            }
+            .map_err(bigint_error)?;
+            let next = super::allocate_bigint_jsvalue(runtime, next)?;
+            let old = JsValue::BigInt(id);
+            let previous = if postfix {
+                Some(old)
+            } else {
+                super::release_primitive_operand(runtime, old)?;
+                None
+            };
+            Ok(NumericOutput {
+                value: next,
+                previous,
+            })
         }
-    };
-    Ok(NumericOutput {
-        value: next,
-        previous: postfix.then_some(old),
-    })
+        value => {
+            let old = to_number_jsvalue(runtime, &value)?;
+            super::release_primitive_operand(runtime, value)?;
+            Ok(NumericOutput {
+                value: jsvalue_number(if increment { old + 1.0 } else { old - 1.0 }),
+                previous: postfix.then(|| jsvalue_number(old)),
+            })
+        }
+    }
 }
 fn binary(
     runtime: &Runtime,
