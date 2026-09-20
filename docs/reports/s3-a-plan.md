@@ -151,6 +151,27 @@ String/BigInt，8B 无从谈起。
   纪律——任何「自动释放」包装都会把堆访问需求带进值类型的 drop 路径，
   与「值的 drop 不需要堆」的既有纪律冲突。
 
+### 1.3 owner 记录的 Drop 例外（suspension/边界层）
+
+挂起/恢复/放弃类记录（构造器 resume state、proxy 请求、`ReturnOwner`
+等）持 `runtime: Runtime` 字段并实现 `Drop`，对仍被持有的 `JsValue` 边
+调 `release_jsvalue`——与 `ObjectRef` 先例同构（`object/mod.rs:107-111`：
+owner 容器带运行时释放，不是值类型带 Drop）。约束：
+
+1. **适用范围**：只给 suspension/边界层 owner 记录；堆节点内的值存储
+   （对象槽、常量池）仍由 finalize/overwrite 纪律负责，不走此路。
+2. **Drop 必须 nothrow**：只调 `release_jsvalue`（内部走
+   `release_or_defer`，借用被持有时进 deferred 队列）；禁止在 Drop 里
+   直接 `borrow_mut().unwrap()`；不跑 JS、不产生 JS 可观察行为，纯边
+   释放。
+3. **不双释放由构造保证**：消费一律经 `Option::take`（Drop 看到 `None`
+   即跳过）；`Vec<JsValue>` 字段在 Drop 里 drain 逐个 release。
+4. **成本口径**：此 `Rc` 是按控制流事件（每次挂起/放弃一次）付的边界
+   所有权，且替代等量的存量成本（原 `Value` 记录内含 `Rc` 根，持 N 个
+   值则 N 个 `Rc`，现为记录级 1 个）——不属于本阶段消灭的「按值流动
+   按次征收的 `Rc` 税」。若未来 profile 点名挂起记录变热，可对特定记录
+   类型降级为显式 release 穿线，属测量门禁后的微优化，默认不取。
+
 ## 2. 借用与分配放置规则
 
 1. **转换提出借用区**：值→`RawValue` 的转换必须发生在任何 `state` 借用
@@ -199,13 +220,16 @@ A4（NaN-box 编码）为独立的测量门禁后续阶段，不在本序列内�
 3. 公共表面不变：`tests/checked_string_construction.rs` 零改动通过；
    `engine::api` 签名、`adapters/*` 零改动；任何需要改公共测试的迹象
    即警报。
+4. `runtime`+`Drop` 只出现在 §1.3 范围内的 owner 记录上；逐迭代结构或
+   逐值容器中出现即评审驳回。
 
 **尺寸断言（编译期钉死）**：`JsValue` = 16B；`AtomIdx` = 4B；
 `ShapeEntry` = 8B；`RawValue` ≤ 16B。
 
-**语义门禁**：`RawValue` 相等性使用点全部改为「id 快路 + 内容兜底」，
-SameValueZero 语义逐点核对（`collection_key`、StrictEq、switch 字符串
-匹配）；teardown `live == 0` 断言与 `GcStats`/`HeapCounts` 口径适配。
+**语义门禁**：`RawValue`/`JsValue` 均不 derive `PartialEq`，相等性使用点
+全部改为「id 快路 + 内容兜底」，SameValueZero 语义逐点核对
+（`collection_key`、StrictEq、switch 字符串匹配）；teardown
+`live == 0` 断言与 `GcStats`/`HeapCounts` 口径适配。
 
 **全门禁（大阶段末一次）**：`cargo fmt --check` → clippy 1.88
 `-D warnings` → `cargo test --locked --workspace --all-targets` →
