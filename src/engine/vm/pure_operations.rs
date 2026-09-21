@@ -171,6 +171,21 @@ pub(super) fn set_object_prototype(
     object: JsValue,
     prototype: JsValue,
 ) -> Result<Completion, Error> {
+    let result = set_object_prototype_ref(runtime, &object, &prototype);
+    runtime
+        .release_jsvalue(object)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .release_jsvalue(prototype)
+        .map_err(runtime_error_to_vm_error)?;
+    result
+}
+
+fn set_object_prototype_ref(
+    runtime: &Runtime,
+    object: &JsValue,
+    prototype: &JsValue,
+) -> Result<Completion, Error> {
     let JsValue::Object(object) = object else {
         return Err(Error::internal(
             "object-literal prototype target was not an Object",
@@ -178,7 +193,7 @@ pub(super) fn set_object_prototype(
     };
     let prototype = match prototype {
         JsValue::Object(prototype) => Some(
-            crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), prototype)
+            crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *prototype)
                 .map_err(|error| runtime_error_to_vm_error(error.into()))?,
         ),
         JsValue::Null => None,
@@ -186,7 +201,7 @@ pub(super) fn set_object_prototype(
         // changing the fresh literal.
         _ => return Ok(Completion::Return(JsValue::Undefined)),
     };
-    let object = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), object)
+    let object = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *object)
         .map_err(|error| runtime_error_to_vm_error(error.into()))?;
     let changed = runtime
         .set_prototype_of(&object, prototype.as_ref())

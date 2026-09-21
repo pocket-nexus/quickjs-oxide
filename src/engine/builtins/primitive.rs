@@ -354,7 +354,7 @@ impl Runtime {
                 "String Iterator next did not receive an iterator-next invocation",
             ));
         };
-        let this_value = self.root_value(&this_value)?;
+        let this_value = self.root_and_release_jsvalue(this_value)?;
         let Value::Object(iterator) = this_value else {
             return Ok(NativeInvokeOutcome::Completion(Completion::Throw(
                 self.new_native_error_jsvalue(

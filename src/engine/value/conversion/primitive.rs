@@ -24,6 +24,7 @@ impl std::ops::DerefMut for PrimitiveResume {
 }
 const _: () = assert!(std::mem::size_of::<PrimitiveResume>() <= 8);
 pub(crate) struct PrimitiveResumeState {
+    runtime: Runtime,
     object: ObjectRef,
     realm: ContextId,
     hint: ToPrimitiveHint,
@@ -35,11 +36,25 @@ pub(crate) struct PrimitiveResumeState {
     requested_arguments: Vec<JsValue>,
 }
 
+#[derive(Clone, Copy)]
 enum Phase {
     ExoticMethod,
     ExoticResult,
     OrdinaryMethod(bool),
     OrdinaryResult(bool),
+}
+
+impl Drop for PrimitiveResumeState {
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its call step consumed them. Taken fields are empty here.
+    fn drop(&mut self) {
+        if let Some(receiver) = self.requested_receiver.take() {
+            let _ = self.runtime.release_jsvalue(receiver);
+        }
+        for argument in self.requested_arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
 }
 
 impl PrimitiveResume {
@@ -92,6 +107,7 @@ impl PrimitiveResume {
         let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
         let requested = object.clone();
         Self(Box::new(PrimitiveResumeState {
+            runtime: runtime.clone(),
             object,
             realm,
             hint,
@@ -112,6 +128,7 @@ impl PrimitiveResume {
         hint: ToPrimitiveHint,
     ) -> Result<PrimitiveStep, RuntimeError> {
         Self(Box::new(PrimitiveResumeState {
+            runtime: runtime.clone(),
             object,
             realm,
             hint,

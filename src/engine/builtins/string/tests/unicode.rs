@@ -330,6 +330,7 @@ fn string_normalize_limit_and_oom_use_internal_error_and_recover() {
         Value::String(JsString::try_from_utf16([u16::from(b'y'), 0x0301]).unwrap()),
         "the exact normalization expansion boundary was rejected",
     );
+    release_arguments(&runtime, arguments);
 
     let prototype = defining.string_prototype().unwrap();
     let key = runtime.intern_property_key("normalize").unwrap();

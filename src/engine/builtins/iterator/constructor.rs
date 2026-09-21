@@ -43,6 +43,7 @@ impl ConstructorStep {
         };
         let new_target_value = runtime.dup_jsvalue(new_target)?;
         let JsValue::Object(new_target_id) = &new_target_value else {
+            runtime.release_jsvalue(new_target_value)?;
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
                     realm,
@@ -60,6 +61,7 @@ impl ConstructorStep {
             matches!(&state.heap.object(new_target.object_id())?.payload, ObjectPayload::NativeFunction { data, .. } if data.target == NativeFunctionId::IteratorConstructor)
         };
         if native_iterator {
+            runtime.release_jsvalue(new_target_value)?;
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
                     realm,

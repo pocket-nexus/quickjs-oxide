@@ -882,59 +882,6 @@ pub(super) fn finish(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn materialized_factory_values_survive_processed_writes_and_abandonment() {
-        let runtime = Runtime::new();
-        let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
-        let Value::Object(target) = context.eval("new Uint8Array(2)").unwrap() else {
-            panic!("expected view");
-        };
-        let target_id = target.object_id();
-        let buffer_id = runtime.typed_array_snapshot(&target).unwrap().buffer;
-        let first = runtime.new_object(None).unwrap();
-        let second = runtime.new_object(None).unwrap();
-        let first_id = first.object_id();
-        let second_id = second.object_id();
-        let realm = context.realm;
-        let population = Population {
-            source: Input::Values(vec![Value::Object(first), Value::Object(second)]),
-            target,
-            mapper: None,
-            this_arg: Value::Undefined,
-            length: 2,
-            index: 0,
-        };
-        let TypedCreateStep::Element { mut resume } = population.next(&runtime, realm).unwrap()
-        else {
-            panic!("expected first conversion");
-        };
-        let _ = resume.take_element_element();
-        runtime
-            .release_jsvalue(resume.take_element_value())
-            .unwrap();
-        let step = resume
-            .element(&runtime, NativeConversion::Value([0; 8]))
-            .unwrap();
-        assert!(matches!(step, TypedCreateStep::Element { .. }));
-        runtime.run_gc().unwrap();
-        for id in [first_id, second_id, target_id, buffer_id] {
-            assert!(runtime.0.state.borrow().heap.object(id).is_ok());
-        }
-        drop(step);
-        runtime.run_gc().unwrap();
-        for id in [first_id, second_id, target_id, buffer_id] {
-            assert!(runtime.0.state.borrow().heap.object(id).is_err());
-        }
-        drop(context);
-        drop(runtime);
-        assert!(weak.upgrade().is_none());
-    }
-}
-
 struct TypedCreateStepPending {
     runtime: Runtime,
     primitive_value: Option<JsValue>,
@@ -1176,3 +1123,56 @@ const _: () = assert!(std::mem::size_of::<TypedCreateStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<TypedCreateStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn materialized_factory_values_survive_processed_writes_and_abandonment() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let mut context = runtime.new_context();
+        let Value::Object(target) = context.eval("new Uint8Array(2)").unwrap() else {
+            panic!("expected view");
+        };
+        let target_id = target.object_id();
+        let buffer_id = runtime.typed_array_snapshot(&target).unwrap().buffer;
+        let first = runtime.new_object(None).unwrap();
+        let second = runtime.new_object(None).unwrap();
+        let first_id = first.object_id();
+        let second_id = second.object_id();
+        let realm = context.realm;
+        let population = Population {
+            source: Input::Values(vec![Value::Object(first), Value::Object(second)]),
+            target,
+            mapper: None,
+            this_arg: Value::Undefined,
+            length: 2,
+            index: 0,
+        };
+        let TypedCreateStep::Element { mut resume } = population.next(&runtime, realm).unwrap()
+        else {
+            panic!("expected first conversion");
+        };
+        let _ = resume.take_element_element();
+        runtime
+            .release_jsvalue(resume.take_element_value())
+            .unwrap();
+        let step = resume
+            .element(&runtime, NativeConversion::Value([0; 8]))
+            .unwrap();
+        assert!(matches!(step, TypedCreateStep::Element { .. }));
+        runtime.run_gc().unwrap();
+        for id in [first_id, second_id, target_id, buffer_id] {
+            assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+        }
+        drop(step);
+        runtime.run_gc().unwrap();
+        for id in [first_id, second_id, target_id, buffer_id] {
+            assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        }
+        drop(context);
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
+    }
+}

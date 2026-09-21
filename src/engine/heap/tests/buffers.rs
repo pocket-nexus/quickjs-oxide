@@ -813,7 +813,7 @@ fn data_view_intrinsics_attach_transactionally_once() {
         )),
     );
     assert_eq!(heap.object_strong_count(object_prototype), Ok(root_strong),);
-    assert!(matches!(heap.context(realm).unwrap().data_view, None));
+    assert!(heap.context(realm).unwrap().data_view.is_none());
 
     let prototype_strong = heap.object_strong_count(prototype).unwrap();
     heap.attach_data_view_intrinsics(realm, constructor, DataViewRealmData { prototype })

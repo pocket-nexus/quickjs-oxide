@@ -1,5 +1,5 @@
 //! Native activation owners stay local when their first shared step completes.
-use super::super::call::{NativeInvokeOutcome, PreparedNativeCall};
+use super::super::call::{NativeInvocation, NativeInvokeOutcome, PreparedNativeCall};
 use super::super::stack::SlotStore;
 use super::*;
 
@@ -108,6 +108,26 @@ fn apply_into(
     Ok(())
 }
 
+/// Holds the prepared and adapted invocation edges while a started native body
+/// runs. A host callback that panics unwinds through this guard, which releases
+/// both edges before the prepared call is restored to its owner.
+struct NativeInvocationUnwindGuard<'a> {
+    runtime: &'a Runtime,
+    prepared: Option<NativeInvocation>,
+    adapted: Option<NativeInvocation>,
+}
+
+impl Drop for NativeInvocationUnwindGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(invocation) = self.adapted.take() {
+            let _ = invocation.release(self.runtime);
+        }
+        if let Some(invocation) = self.prepared.take() {
+            let _ = invocation.release(self.runtime);
+        }
+    }
+}
+
 /// Registered synchronous families need no Query identity or waiting buffers.
 /// The caller checked budgets before reaching any body; preparation still owns
 /// padding, metadata validation and the observable native diagnostic frame.
@@ -131,7 +151,7 @@ pub(super) fn begin_synchronous(
     } else {
         defining_realm
     };
-    let call = runtime
+    let mut call = runtime
         .prepare_native_continuation_selected(
             callable,
             native_realm,
@@ -147,11 +167,24 @@ pub(super) fn begin_synchronous(
             selected,
         )
         .map_err(runtime_error_to_vm_error)?;
+    let mut unwind = NativeInvocationUnwindGuard {
+        runtime,
+        prepared: Some(std::mem::replace(
+            &mut call.invocation,
+            NativeInvocation::Call {
+                this_value: JsValue::Undefined,
+            },
+        )),
+        adapted: None,
+    };
     let result = (|| {
         let result = match runtime.adapt_native_invocation_borrowed(
             target,
             native_realm,
-            &call.invocation,
+            unwind
+                .prepared
+                .as_ref()
+                .expect("prepared native invocation owner"),
             &call.activation.arguments,
         )? {
             super::super::call::NativeInvocationAdaptation::Complete(result) => result,
@@ -159,19 +192,31 @@ pub(super) fn begin_synchronous(
                 // `start` only borrows the adapted invocation; release the
                 // duplicate this adapter owns once the step has captured its
                 // own edges.
+                unwind.adapted = Some(invocation);
                 let started = kind.start(
                     runtime,
                     native_realm,
-                    &invocation,
+                    unwind
+                        .adapted
+                        .as_ref()
+                        .expect("adapted native invocation owner"),
                     &call.activation.arguments,
                     &call.activation.callable,
                 );
+                let invocation = unwind
+                    .adapted
+                    .take()
+                    .expect("adapted native invocation owner");
                 let _ = invocation.release(runtime);
                 started?
             }
         };
         Ok(result)
     })();
+    call.invocation = unwind
+        .prepared
+        .take()
+        .expect("prepared native invocation owner restored");
     #[cfg(feature = "profiling")]
     {
         crate::engine::api::profiling::record_owned_execution_event(
@@ -249,6 +294,10 @@ fn capture_native_step(
                     })
             {
                 let result = if !nested_budget || runtime.host_stack_would_overflow() {
+                    let _ = runtime.release_jsvalue(receiver);
+                    for argument in arguments {
+                        let _ = runtime.release_jsvalue(argument);
+                    }
                     LocalNativeResult::Complete(overflow(runtime, realm)?)
                 } else {
                     let target = selected.target();
@@ -390,7 +439,7 @@ pub(super) fn begin_local(
     } else {
         defining_realm
     };
-    let call = runtime
+    let mut call = runtime
         .prepare_native_continuation_selected(
             callable,
             native_realm,
@@ -406,6 +455,16 @@ pub(super) fn begin_local(
             selected,
         )
         .map_err(runtime_error_to_vm_error)?;
+    let mut unwind = NativeInvocationUnwindGuard {
+        runtime,
+        prepared: Some(std::mem::replace(
+            &mut call.invocation,
+            NativeInvocation::Call {
+                this_value: JsValue::Undefined,
+            },
+        )),
+        adapted: None,
+    };
     let mut pending = None;
     let mut pending_error = None;
     let mut transported_completion = None;
@@ -413,7 +472,10 @@ pub(super) fn begin_local(
         .adapt_native_invocation_borrowed(
             target,
             native_realm,
-            &call.invocation,
+            unwind
+                .prepared
+                .as_ref()
+                .expect("prepared native invocation owner"),
             &call.activation.arguments,
         )
         .map_err(runtime_error_to_vm_error)?
@@ -425,10 +487,14 @@ pub(super) fn begin_local(
             // `start_into` only borrows the adapted invocation; release the
             // duplicate this adapter owns once the step has captured its own
             // edges.
+            unwind.adapted = Some(invocation);
             let started = kind.start_into(
                 runtime,
                 native_realm,
-                &invocation,
+                unwind
+                    .adapted
+                    .as_ref()
+                    .expect("adapted native invocation owner"),
                 &call.activation.arguments,
                 &call.activation.callable,
                 |step| match capture_native_step(
@@ -444,10 +510,18 @@ pub(super) fn begin_local(
                     Err(error) => pending_error = Some(error),
                 },
             );
+            let invocation = unwind
+                .adapted
+                .take()
+                .expect("adapted native invocation owner");
             let _ = invocation.release(runtime);
             started.map_err(runtime_error_to_vm_error)
         }
     })();
+    call.invocation = unwind
+        .prepared
+        .take()
+        .expect("prepared native invocation owner restored");
     let immediate = match started {
         Ok(Some(result)) => Some(Ok(result)),
         Err(error) => Some(Err(error)),
@@ -588,6 +662,9 @@ pub(super) fn start_selected_into(
         .can_push_with_continuations(query.continuation_depth())
         || runtime.host_stack_would_overflow()
     {
+        invocation
+            .release(runtime)
+            .map_err(runtime_error_to_vm_error)?;
         *output = resume
             .resume(runtime, overflow(runtime, realm)?)
             .map_err(runtime_error_to_vm_error)?;

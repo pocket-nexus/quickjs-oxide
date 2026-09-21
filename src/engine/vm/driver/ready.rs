@@ -79,7 +79,7 @@ pub(super) fn run(
                     return Err(invariant("property return attempted replay"));
                 }
             },
-            #[cfg(test)]
+            #[cfg(all(test, feature = "profiling"))]
             RunExit::ReleaseOperand { .. } => {
                 if !crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)? {
                     return Err(invariant(

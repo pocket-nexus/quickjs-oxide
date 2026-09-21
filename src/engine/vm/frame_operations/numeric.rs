@@ -420,7 +420,7 @@ mod tests {
         let step = NumericStep::start(
             &runtime,
             NumericKind::Plus,
-            JsValue::Object(object.clone().into_handle()),
+            JsValue::Object(object.object_id()),
             None,
         )
         .unwrap();
@@ -446,7 +446,9 @@ mod tests {
         ));
         assert_eq!(identity, 11);
         let frame = execution.frames.current_mut(id).unwrap();
-        execution.slots.pop(&mut frame.window).unwrap();
+        runtime
+            .release_jsvalue(execution.slots.pop(&mut frame.window).unwrap())
+            .unwrap();
         let foreign = Runtime::new();
         push(
             &mut execution,

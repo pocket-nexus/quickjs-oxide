@@ -404,20 +404,35 @@ pub(in crate::engine::vm) fn initialize_derived_binding(
         || definition.is_const
         || definition.kind != ClosureVariableKind::Normal
     {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
         return Err(Error::internal(
             "derived this initialization referenced a non-mutable lexical local",
         ));
     }
     if !matches!(value, JsValue::Object(_)) {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
         return Err(Error::internal(
             "derived this initialization did not receive an Object",
         ));
     }
 
-    let captured = match binding.ok_or_else(|| Error::internal("local index is out of bounds"))? {
+    let Some(binding) = binding else {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
+        return Err(Error::internal("local index is out of bounds"));
+    };
+    let captured = match binding {
         FrameBinding::Uninitialized => None,
         FrameBinding::Captured(root) => Some(root.clone()),
         FrameBinding::Direct(_) | FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
             return Err(Error::new(
                 ErrorKind::Reference,
                 "'this' can be initialized only once",
@@ -429,6 +444,9 @@ pub(in crate::engine::vm) fn initialize_derived_binding(
             .raw_var_ref_value(&root)
             .map_err(runtime_error_to_vm_error)?;
         if !matches!(raw, RawValue::Uninitialized) {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
             return Err(Error::new(
                 ErrorKind::Reference,
                 "'this' can be initialized only once",
@@ -568,15 +586,23 @@ pub(in crate::engine::vm) fn write_checked_closure(
         (matches!(cell.value, RawValue::Uninitialized), cell.is_const)
     };
     if uninitialized {
-        return Err(closure_lexical_uninitialized_error(
+        let error = closure_lexical_uninitialized_error(
             runtime,
             descriptor.source,
             closure_name(descriptor)?,
             strip_variable_debug,
-        )?);
+        )?;
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
+        return Err(error);
     }
     if is_const {
-        return Err(lexical_read_only_error(runtime, closure_name(descriptor)?)?);
+        let error = lexical_read_only_error(runtime, closure_name(descriptor)?)?;
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
+        return Err(error);
     }
     runtime
         .write_var_ref(root, value)

@@ -1129,6 +1129,16 @@ impl Heap {
                     operation: "retaining a heap reference",
                 })?,
         );
+        #[cfg(debug_assertions)]
+        if let RawId::String(string) = id
+            && super::ownership::trace_string_matches(string)
+        {
+            eprintln!(
+                "[strong-retain] {id:?} -> {}\n{}",
+                node.strong.get(),
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         Ok(())
     }
 
@@ -1149,13 +1159,22 @@ impl Heap {
         let node = self.live_node_fast(id);
         node.strong.set(node.strong.get().saturating_add(1));
         #[cfg(debug_assertions)]
-        if let RawId::Object(object) = id
-            && super::ownership::trace_object_matches(object)
-        {
-            eprintln!(
-                "[fast-retain] {object:?}\n{}",
-                std::backtrace::Backtrace::force_capture()
-            );
+        match id {
+            RawId::Object(object) if super::ownership::trace_object_matches(object) => {
+                eprintln!(
+                    "[retain-fast] {object:?} -> {}\n{}",
+                    node.strong.get(),
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+            RawId::String(string) if super::ownership::trace_string_matches(string) => {
+                eprintln!(
+                    "[strong-retain-fast] {id:?} -> {}\n{}",
+                    node.strong.get(),
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+            _ => {}
         }
     }
 
@@ -1180,6 +1199,24 @@ impl Heap {
                     operation: "retaining a heap reference",
                 })?,
         );
+        #[cfg(debug_assertions)]
+        match id {
+            RawId::Object(object) if super::ownership::trace_object_matches(object) => {
+                eprintln!(
+                    "[retain-shared] {object:?} -> {}\n{}",
+                    node.strong.get(),
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+            RawId::String(string) if super::ownership::trace_string_matches(string) => {
+                eprintln!(
+                    "[strong-retain-shared] {id:?} -> {}\n{}",
+                    node.strong.get(),
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -1223,6 +1260,16 @@ impl Heap {
                             generation: id.generation(),
                         },
                     )?);
+                    #[cfg(debug_assertions)]
+                    if let RawId::String(string) = id
+                        && super::ownership::trace_string_matches(string)
+                    {
+                        eprintln!(
+                            "[strong-release] {id:?} -> {}\n{}",
+                            node.strong.get(),
+                            std::backtrace::Backtrace::force_capture()
+                        );
+                    }
                     if node.strong.get() == 0 {
                         let state = std::mem::replace(&mut slot.state, SlotState::Vacant);
                         let SlotState::Live(node) = state else {

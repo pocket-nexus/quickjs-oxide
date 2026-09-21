@@ -488,7 +488,7 @@ impl Runtime {
                             return Ok(NativeConversion::Throw(value));
                         }
                     };
-                    new_target.retarget_bound_identity(&constructor, &target);
+                    new_target.retarget_bound_identity(self, &constructor, &target)?;
                     constructor = ConstructorRef::from_validated_callable(&target);
                 }
                 classification => {
@@ -1026,23 +1026,33 @@ impl ConstructNewTarget {
         }
     }
 
-    pub(crate) fn retarget_bound_identity(&mut self, bound: &ConstructorRef, target: &CallableRef) {
+    pub(crate) fn retarget_bound_identity(
+        &mut self,
+        runtime: &Runtime,
+        bound: &ConstructorRef,
+        target: &CallableRef,
+    ) -> Result<(), RuntimeError> {
         let matches_bound = match self {
             Self::Validated(constructor) => constructor.as_object() == bound.as_object(),
             Self::Raw(JsValue::Object(object)) => *object == bound.as_object().object_id(),
             Self::Raw(_) => false,
         };
         if !matches_bound {
-            return;
+            return Ok(());
         }
         match self {
             Self::Validated(constructor) => {
                 *constructor = ConstructorRef::from_validated_callable(target);
             }
             Self::Raw(value) => {
-                *value = JsValue::Object(target.as_object().clone().into_handle());
+                let previous = std::mem::replace(
+                    value,
+                    JsValue::Object(target.as_object().clone().into_handle()),
+                );
+                runtime.release_jsvalue(previous)?;
             }
         }
+        Ok(())
     }
 }
 

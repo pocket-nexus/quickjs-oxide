@@ -64,7 +64,7 @@ fn from_primitive(
                 object,
                 key,
                 NumberResume(Box::new(NumberResumeState {
-                    pending_effect: NumberStepPending::default(),
+                    pending_effect: NumberStepPending::new(runtime),
                     realm,
                     primitive: resume,
                 })),
@@ -79,7 +79,7 @@ fn from_primitive(
                 receiver,
                 arguments,
                 NumberResume(Box::new(NumberResumeState {
-                    pending_effect: NumberStepPending::default(),
+                    pending_effect: NumberStepPending::new(runtime),
                     realm,
                     primitive: resume,
                 })),
@@ -101,13 +101,40 @@ impl NumberResume {
     }
 }
 
-#[derive(Default)]
 struct NumberStepPending {
+    runtime: Runtime,
     read_object: Option<ObjectRef>,
     read_key: Option<PropertyKey>,
     call_callable: Option<CallableRef>,
     call_receiver: Option<JsValue>,
     call_arguments: Option<Vec<JsValue>>,
+}
+impl NumberStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            read_object: None,
+            read_key: None,
+            call_callable: None,
+            call_receiver: None,
+            call_arguments: None,
+        }
+    }
+
+    /// Release every edge that was not consumed by a completed step.
+    fn release_owned(&mut self) {
+        if let Some(receiver) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(receiver);
+        }
+        for argument in self.call_arguments.take().into_iter().flatten() {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
+}
+impl Drop for NumberStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl NumberStep {
     pub(crate) fn request_read(

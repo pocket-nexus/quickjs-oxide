@@ -3200,9 +3200,12 @@ impl Runtime {
                     self.set_pending_exception_jsvalue(value)?;
                     Err(RuntimeError::Exception)
                 }
-                _ => Err(RuntimeError::Invariant(
-                    "module link entry returned a non-undefined value",
-                )),
+                Completion::Return(value) => {
+                    self.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "module link entry returned a non-undefined value",
+                    ))
+                }
             }
         }
     }
@@ -3408,10 +3411,16 @@ impl Runtime {
             crate::engine::vm::entry::call(self, realm, &target, Value::Undefined, &[value])?;
 
         match completion {
-            Completion::Return(_) => Ok(Completion::Return(JsValue::Undefined)),
-            Completion::Throw(_) => Err(RuntimeError::Invariant(
-                "intrinsic dynamic import resolving function threw",
-            )),
+            Completion::Return(value) => {
+                self.release_jsvalue(value)?;
+                Ok(Completion::Return(JsValue::Undefined))
+            }
+            Completion::Throw(value) => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "intrinsic dynamic import resolving function threw",
+                ))
+            }
         }
     }
 

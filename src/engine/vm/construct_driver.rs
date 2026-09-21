@@ -334,6 +334,7 @@ pub(super) fn define_class(
                 *parent,
             )
             .map_err(super::exception::heap_error_to_vm_error)?,
+            runtime: runtime.clone(),
             constructor: runtime
                 .dup_jsvalue(execution.slots.peek(&frame.window, 0)?)
                 .map_err(runtime_error_to_vm_error)?,
@@ -412,8 +413,17 @@ pub(super) struct PendingClass {
     pub(super) frame: FrameId,
     pub(super) realm: crate::engine::heap::ContextId,
     pub(super) parent: crate::engine::object::ObjectRef,
+    runtime: Runtime,
     constructor: JsValue,
     name: crate::engine::value::JsString,
+}
+impl Drop for PendingClass {
+    /// Release the constructor edge still owned when heritage validation or
+    /// parent linking abandons the pending pair.
+    fn drop(&mut self) {
+        let constructor = std::mem::replace(&mut self.constructor, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(constructor);
+    }
 }
 
 #[inline(never)]
@@ -441,7 +451,7 @@ fn enter_class_parent(
 pub(super) fn finish_class_reply(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    pending: PendingClass,
+    mut pending: PendingClass,
     completion: Completion,
 ) -> Result<CallStep, Error> {
     let result = match completion {
@@ -449,10 +459,13 @@ pub(super) fn finish_class_reply(
         Completion::Return(prototype) => runtime.finish_derived_class_pair(
             pending.realm,
             runtime
-                .root_and_release_jsvalue(pending.constructor)
+                .root_and_release_jsvalue(std::mem::replace(
+                    &mut pending.constructor,
+                    JsValue::Undefined,
+                ))
                 .map_err(runtime_error_to_vm_error)?,
             &pending.name,
-            pending.parent,
+            pending.parent.clone(),
             runtime
                 .root_and_release_jsvalue(prototype)
                 .map_err(runtime_error_to_vm_error)?,

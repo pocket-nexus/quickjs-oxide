@@ -615,6 +615,8 @@ mod primitive_transaction_tests {
             assert_eq!(slots.window.depth, 1);
             assert_eq!(runtime.root_value(slots.peek(0).unwrap()).unwrap(), left);
         }
+        let storage = store.take_frame(&runtime, window).unwrap();
+        crate::engine::vm::stack::release_frame_storage(&runtime, storage);
     }
 
     #[test]
@@ -836,6 +838,8 @@ mod primitive_transaction_tests {
             crate::engine::value::conversion::NativeConversion::Value(Some(Value::Int(42)))
         ));
         assert_eq!(context.eval("linkedCalls").unwrap(), Value::Int(1));
+        let base = store.pop(&mut window).unwrap();
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]

@@ -206,13 +206,19 @@ impl EvaluationResume {
     ) -> Result<EvaluationStep, RuntimeError> {
         if self.settling {
             return match completion {
-                Completion::Return(_) => Ok(EvaluationStep::Complete(Completion::Return(
-                    self.runtime
-                        .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
-                ))),
-                Completion::Throw(_) => Err(RuntimeError::Invariant(
-                    "intrinsic module Promise resolving function threw",
-                )),
+                Completion::Return(value) => {
+                    self.runtime.release_jsvalue(value)?;
+                    Ok(EvaluationStep::Complete(Completion::Return(
+                        self.runtime
+                            .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
+                    )))
+                }
+                Completion::Throw(value) => {
+                    self.runtime.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "intrinsic module Promise resolving function threw",
+                    ))
+                }
             };
         }
         let frame = self.pending.take().ok_or(RuntimeError::Invariant(

@@ -288,81 +288,6 @@ fn complete_get_invariant(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn abandoned_proxy_method_releases_roots_and_depth_guard() {
-        let runtime = Runtime::new();
-        let weak = std::rc::Rc::downgrade(&runtime.0);
-        let context = runtime.new_context();
-        let target = runtime.new_object(None).unwrap();
-        let handler = runtime.new_object(None).unwrap();
-        let target_id = target.object_id();
-        let handler_id = handler.object_id();
-        let NativeConversion::Value(proxy) = runtime
-            .new_proxy(context.realm, Value::Object(target), Value::Object(handler))
-            .unwrap()
-        else {
-            panic!("proxy allocation failed");
-        };
-        let step = ProxyGetStep::start(
-            &runtime,
-            context.realm,
-            proxy,
-            runtime.intern_property_key("x").unwrap(),
-            Value::Undefined,
-        )
-        .unwrap();
-        assert_eq!(runtime.0.proxy_method_depth.get(), 1);
-        runtime.run_gc().unwrap();
-        assert!(runtime.0.state.borrow().heap.object(target_id).is_ok());
-        assert!(runtime.0.state.borrow().heap.object(handler_id).is_ok());
-        drop(step);
-        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
-        runtime.run_gc().unwrap();
-        assert!(runtime.0.state.borrow().heap.object(target_id).is_err());
-        assert!(runtime.0.state.borrow().heap.object(handler_id).is_err());
-        drop(context);
-        drop(runtime);
-        assert!(weak.upgrade().is_none());
-    }
-
-    #[test]
-    fn mismatched_proxy_reply_rejects_and_releases_the_method_guard() {
-        let runtime = Runtime::new();
-        let context = runtime.new_context();
-        let NativeConversion::Value(proxy) = runtime
-            .new_proxy(
-                context.realm,
-                Value::Object(runtime.new_object(None).unwrap()),
-                Value::Object(runtime.new_object(None).unwrap()),
-            )
-            .unwrap()
-        else {
-            panic!("proxy allocation failed");
-        };
-        let ProxyGetStep::Read { resume, .. } = ProxyGetStep::start(
-            &runtime,
-            context.realm,
-            proxy,
-            runtime.intern_property_key("x").unwrap(),
-            Value::Undefined,
-        )
-        .unwrap() else {
-            panic!("expected method read");
-        };
-        assert_eq!(runtime.0.proxy_method_depth.get(), 1);
-        assert!(
-            resume
-                .descriptor(&runtime, NativeConversion::Value(None))
-                .is_err()
-        );
-        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
-    }
-}
-
 struct ProxyGetStepPending {
     runtime: Runtime,
     read_object: Option<ObjectRef>,
@@ -507,3 +432,78 @@ const _: () = assert!(std::mem::size_of::<ProxyGetStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ProxyGetStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn abandoned_proxy_method_releases_roots_and_depth_guard() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let context = runtime.new_context();
+        let target = runtime.new_object(None).unwrap();
+        let handler = runtime.new_object(None).unwrap();
+        let target_id = target.object_id();
+        let handler_id = handler.object_id();
+        let NativeConversion::Value(proxy) = runtime
+            .new_proxy(context.realm, Value::Object(target), Value::Object(handler))
+            .unwrap()
+        else {
+            panic!("proxy allocation failed");
+        };
+        let step = ProxyGetStep::start(
+            &runtime,
+            context.realm,
+            proxy,
+            runtime.intern_property_key("x").unwrap(),
+            Value::Undefined,
+        )
+        .unwrap();
+        assert_eq!(runtime.0.proxy_method_depth.get(), 1);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(target_id).is_ok());
+        assert!(runtime.0.state.borrow().heap.object(handler_id).is_ok());
+        drop(step);
+        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(target_id).is_err());
+        assert!(runtime.0.state.borrow().heap.object(handler_id).is_err());
+        drop(context);
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn mismatched_proxy_reply_rejects_and_releases_the_method_guard() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let NativeConversion::Value(proxy) = runtime
+            .new_proxy(
+                context.realm,
+                Value::Object(runtime.new_object(None).unwrap()),
+                Value::Object(runtime.new_object(None).unwrap()),
+            )
+            .unwrap()
+        else {
+            panic!("proxy allocation failed");
+        };
+        let ProxyGetStep::Read { resume, .. } = ProxyGetStep::start(
+            &runtime,
+            context.realm,
+            proxy,
+            runtime.intern_property_key("x").unwrap(),
+            Value::Undefined,
+        )
+        .unwrap() else {
+            panic!("expected method read");
+        };
+        assert_eq!(runtime.0.proxy_method_depth.get(), 1);
+        assert!(
+            resume
+                .descriptor(&runtime, NativeConversion::Value(None))
+                .is_err()
+        );
+        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+    }
+}

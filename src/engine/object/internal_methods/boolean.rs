@@ -438,99 +438,6 @@ pub(super) fn finish(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn take_read(step: ProxyBooleanStep) -> ProxyBooleanResume {
-        let ProxyBooleanStep::Read { resume, .. } = step else {
-            panic!("expected method read")
-        };
-        resume
-    }
-    fn take_call(step: ProxyBooleanStep) -> ProxyBooleanResume {
-        let ProxyBooleanStep::Call { resume, .. } = step else {
-            panic!("expected trap call")
-        };
-        resume
-    }
-    fn take_descriptor(step: ProxyBooleanStep) -> ProxyBooleanResume {
-        let ProxyBooleanStep::Descriptor { resume, .. } = step else {
-            panic!("expected descriptor query")
-        };
-        resume
-    }
-    fn take_extensible(step: ProxyBooleanStep) -> ProxyBooleanResume {
-        let ProxyBooleanStep::Extensible { resume, .. } = step else {
-            panic!("expected extensibility query")
-        };
-        resume
-    }
-
-    #[test]
-    fn delete_keeps_symbol_key_across_both_invariant_queries_and_abandonment() {
-        for after_descriptor in [false, true] {
-            let runtime = Runtime::new();
-            let weak = std::rc::Rc::downgrade(&runtime.0);
-            let mut context = runtime.new_context();
-            let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
-                panic!("expected Proxy")
-            };
-            let callable = context.eval("(function(){return true})").unwrap();
-            let symbol = runtime.new_symbol(None).unwrap();
-            let key = PropertyKey::from(symbol);
-            let atom = key.atom();
-            let resume = take_read(
-                ProxyBooleanStep::start(
-                    &runtime,
-                    context.realm,
-                    proxy,
-                    ProxyBooleanKind::Delete(key),
-                )
-                .unwrap(),
-            );
-            let resume = take_call(
-                resume
-                    .resume(
-                        &runtime,
-                        Completion::Return(runtime.into_jsvalue(callable).unwrap()),
-                    )
-                    .unwrap(),
-            );
-            let mut resume = take_descriptor(
-                resume
-                    .resume(&runtime, Completion::Return(JsValue::Bool(true)))
-                    .unwrap(),
-            );
-            if after_descriptor {
-                resume = take_extensible(
-                    resume
-                        .descriptor(
-                            &runtime,
-                            NativeConversion::Value(Some(
-                                CompleteOrdinaryPropertyDescriptor::Data {
-                                    value: Value::Int(1),
-                                    writable: true,
-                                    enumerable: true,
-                                    configurable: true,
-                                },
-                            )),
-                        )
-                        .unwrap(),
-                );
-            }
-            runtime.run_gc().unwrap();
-            assert!(runtime.0.state.borrow().atoms.is_live(atom));
-            drop(resume);
-            runtime.run_gc().unwrap();
-            assert!(!runtime.0.state.borrow().atoms.is_live(atom));
-            drop(context);
-            drop(runtime);
-            assert!(weak.upgrade().is_none());
-        }
-    }
-}
-
 struct ProxyBooleanStepPending {
     runtime: Runtime,
     delete_object: Option<ObjectRef>,
@@ -753,3 +660,96 @@ const _: () = assert!(std::mem::size_of::<ProxyBooleanStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ProxyBooleanStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn take_read(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Read { resume, .. } = step else {
+            panic!("expected method read")
+        };
+        resume
+    }
+    fn take_call(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Call { resume, .. } = step else {
+            panic!("expected trap call")
+        };
+        resume
+    }
+    fn take_descriptor(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Descriptor { resume, .. } = step else {
+            panic!("expected descriptor query")
+        };
+        resume
+    }
+    fn take_extensible(step: ProxyBooleanStep) -> ProxyBooleanResume {
+        let ProxyBooleanStep::Extensible { resume, .. } = step else {
+            panic!("expected extensibility query")
+        };
+        resume
+    }
+
+    #[test]
+    fn delete_keeps_symbol_key_across_both_invariant_queries_and_abandonment() {
+        for after_descriptor in [false, true] {
+            let runtime = Runtime::new();
+            let weak = std::rc::Rc::downgrade(&runtime.0);
+            let mut context = runtime.new_context();
+            let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
+                panic!("expected Proxy")
+            };
+            let callable = context.eval("(function(){return true})").unwrap();
+            let symbol = runtime.new_symbol(None).unwrap();
+            let key = PropertyKey::from(symbol);
+            let atom = key.atom();
+            let resume = take_read(
+                ProxyBooleanStep::start(
+                    &runtime,
+                    context.realm,
+                    proxy,
+                    ProxyBooleanKind::Delete(key),
+                )
+                .unwrap(),
+            );
+            let resume = take_call(
+                resume
+                    .resume(
+                        &runtime,
+                        Completion::Return(runtime.into_jsvalue(callable).unwrap()),
+                    )
+                    .unwrap(),
+            );
+            let mut resume = take_descriptor(
+                resume
+                    .resume(&runtime, Completion::Return(JsValue::Bool(true)))
+                    .unwrap(),
+            );
+            if after_descriptor {
+                resume = take_extensible(
+                    resume
+                        .descriptor(
+                            &runtime,
+                            NativeConversion::Value(Some(
+                                CompleteOrdinaryPropertyDescriptor::Data {
+                                    value: Value::Int(1),
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: true,
+                                },
+                            )),
+                        )
+                        .unwrap(),
+                );
+            }
+            runtime.run_gc().unwrap();
+            assert!(runtime.0.state.borrow().atoms.is_live(atom));
+            drop(resume);
+            runtime.run_gc().unwrap();
+            assert!(!runtime.0.state.borrow().atoms.is_live(atom));
+            drop(context);
+            drop(runtime);
+            assert!(weak.upgrade().is_none());
+        }
+    }
+}

@@ -122,20 +122,14 @@ impl Heap {
             return Err(error);
         }
 
+        self.publish(index, NodeData::Object(object))?;
         #[cfg(debug_assertions)]
-        if let ObjectPayload::BytecodeFunction { bytecode, .. } = &object.payload
-            && std::env::var("QJS_TRACE_BYTECODE_ID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-                == Some(bytecode.index)
-        {
+        if super::ownership::trace_object_matches(id) {
             eprintln!(
-                "[alloc-bc] object #{index} bytecode #{}\n{}",
-                bytecode.index,
+                "[o-alloc] {id:?}\n{}",
                 std::backtrace::Backtrace::force_capture()
             );
         }
-        self.publish(index, NodeData::Object(object))?;
         if is_weak_object {
             self.link_weak_object(id)?;
         }

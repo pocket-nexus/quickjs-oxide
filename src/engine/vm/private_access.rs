@@ -330,6 +330,10 @@ fn enter_accessor(
     let base = execution.slots.pop(&mut frame.window)?;
     if access == Access::GetKeep {
         execution.slots.push(&mut frame.window, base)?;
+    } else {
+        runtime
+            .release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
     }
     frame.resume_pc = frame
         .fault_pc

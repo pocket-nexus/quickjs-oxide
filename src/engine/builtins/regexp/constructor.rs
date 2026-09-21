@@ -58,11 +58,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        finish_constructor(
-            self,
-            realm,
-            RegExpConstructorStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish_constructor(
+                self,
+                realm,
+                RegExpConstructorStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 
     pub(crate) fn compile_regexp_program(

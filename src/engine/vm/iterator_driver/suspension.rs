@@ -34,6 +34,7 @@ pub(super) fn start(
             delegating,
         } => {
             let mut pending = PendingIteratorState::new(
+                runtime,
                 frame,
                 id,
                 Mode::Start {
@@ -56,7 +57,7 @@ pub(super) fn start(
             } else {
                 Mode::Invoke
             };
-            let mut pending = PendingIteratorState::new(frame, id, mode)?;
+            let mut pending = PendingIteratorState::new(runtime, frame, id, mode)?;
             pending.iterator = iterator;
             pending.next = next;
             pending.argument = if matches!(op, Operation::Next) {
@@ -93,7 +94,7 @@ pub(super) fn start(
             } else {
                 Mode::Invoke
             };
-            let mut pending = PendingIteratorState::new(frame, id, mode)?;
+            let mut pending = PendingIteratorState::new(runtime, frame, id, mode)?;
             if matches!(op, Operation::Parse) {
                 pending.iterator = execution.slots.pop(&mut frame.window)?;
                 if !matches!(pending.iterator, JsValue::Object(_)) {

@@ -4,7 +4,7 @@
 #[cfg(test)]
 mod direct;
 mod numeric;
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 pub(super) use direct::complete as complete_owned_slot;
 pub(super) use numeric::{
     NumericProgress, commit_output as commit_numeric_output, complete as complete_numeric,

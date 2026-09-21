@@ -75,6 +75,33 @@ pub(crate) struct SetResumeState {
     iterator: JsValue,
     next: JsValue,
 }
+impl Drop for SetResumeState {
+    /// Release the internal edges the pending effect and resident operands
+    /// still own when the request is abandoned. Consumption goes through
+    /// `Option::take`/`mem::replace`; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        let target = std::mem::replace(&mut self.target, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(target);
+        let iterator = std::mem::replace(&mut self.iterator, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(iterator);
+        let next = std::mem::replace(&mut self.next, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(next);
+    }
+}
 enum Phase {
     Size,
     Number,
@@ -162,10 +189,9 @@ impl SetStep {
     }
 }
 impl SetResume {
-    fn read(mut self, runtime: &Runtime, name: &str) -> Result<SetStep, RuntimeError> {
-        let target = std::mem::replace(&mut self.0.target, JsValue::Undefined);
+    fn read(self, runtime: &Runtime, name: &str) -> Result<SetStep, RuntimeError> {
         Ok(SetStep::request_read(
-            target,
+            runtime.dup_jsvalue(&self.0.target)?,
             runtime.intern_property_key(name)?,
             self,
         ))
@@ -330,6 +356,7 @@ impl SetResume {
                         .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
                     _ => None,
                 };
+                runtime.release_jsvalue(value)?;
                 let Some(callable) = callable else {
                     return Ok(SetStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
@@ -427,6 +454,7 @@ impl SetResume {
                         .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
                     _ => None,
                 };
+                runtime.release_jsvalue(value)?;
                 let Some(callable) = callable else {
                     return Ok(SetStep::Complete(Completion::Return(
                         self.0.runtime.into_jsvalue(Value::Bool(false))?,

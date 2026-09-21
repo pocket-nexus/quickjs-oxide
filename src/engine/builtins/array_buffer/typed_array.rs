@@ -433,7 +433,8 @@ impl Runtime {
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?;
         let to_string = match self.get_property_in_realm(realm, &array_prototype, &to_string_key)? {
             Completion::Return(value) => self.root_and_release_jsvalue(value)?,
-            Completion::Throw(_) => {
+            Completion::Throw(value) => {
+                let _ = self.release_jsvalue(value);
                 return Err(RuntimeError::Invariant(
                     "Array.prototype.toString was unavailable during TypedArray bootstrap",
                 ));
@@ -459,7 +460,8 @@ impl Runtime {
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, &base_prototype, &values_key)? {
             Completion::Return(value) => self.root_and_release_jsvalue(value)?,
-            Completion::Throw(_) => {
+            Completion::Throw(value) => {
+                let _ = self.release_jsvalue(value);
                 return Err(RuntimeError::Invariant(
                     "TypedArray values was unavailable during iterator alias bootstrap",
                 ));

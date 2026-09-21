@@ -20,11 +20,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        finish(
-            self,
-            realm,
-            RegExpSplitStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish(
+                self,
+                realm,
+                RegExpSplitStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 
     fn append_regexp_split_value(
@@ -179,7 +181,7 @@ impl SplitState {
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
             runtime.into_jsvalue(value)?,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                step_pending: RegExpSplitStepPending::default(),
+                step_pending: RegExpSplitStepPending::new(runtime),
                 realm,
                 phase: Phase::Set(self),
             })),
@@ -195,7 +197,7 @@ impl SplitState {
             runtime.into_jsvalue(Value::Object(self.splitter.clone()))?,
             runtime.into_jsvalue(Value::String(self.input.clone()))?,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                step_pending: RegExpSplitStepPending::default(),
+                step_pending: RegExpSplitStepPending::new(runtime),
                 realm,
                 phase: if empty {
                     Phase::Empty(self)
@@ -221,7 +223,7 @@ impl SplitState {
             matched.clone(),
             runtime.intern_property_key(&index.to_string())?,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                step_pending: RegExpSplitStepPending::default(),
+                step_pending: RegExpSplitStepPending::new(runtime),
                 realm,
                 phase: Phase::Capture {
                     state: self,
@@ -261,7 +263,7 @@ impl RegExpSplitStep {
             input,
             ToPrimitiveHint::String,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                step_pending: RegExpSplitStepPending::default(),
+                step_pending: RegExpSplitStepPending::new(runtime),
                 realm,
                 phase: Phase::Input {
                     regexp: regexp.clone(),
@@ -299,7 +301,7 @@ impl RegExpSplitResume {
             regexp.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
             Self(Box::new(RegExpSplitResumeState {
-                step_pending: RegExpSplitStepPending::default(),
+                step_pending: RegExpSplitStepPending::new(runtime),
                 realm: self.0.realm,
                 phase: Phase::Flags {
                     regexp,
@@ -348,7 +350,7 @@ impl RegExpSplitResume {
                 Ok(RegExpSplitStep::make_species(
                     regexp.clone(),
                     Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::default(),
+                        step_pending: RegExpSplitStepPending::new(runtime),
                         realm,
                         phase: Phase::Species {
                             regexp,
@@ -367,7 +369,7 @@ impl RegExpSplitResume {
                 runtime.into_jsvalue(value)?,
                 ToPrimitiveHint::String,
                 Self(Box::new(RegExpSplitResumeState {
-                    step_pending: RegExpSplitStepPending::default(),
+                    step_pending: RegExpSplitStepPending::new(runtime),
                     realm,
                     phase: Phase::FlagsPrimitive {
                         regexp,
@@ -415,7 +417,7 @@ impl RegExpSplitResume {
                     constructor,
                     arguments,
                     Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::default(),
+                        step_pending: RegExpSplitStepPending::new(runtime),
                         realm,
                         phase: Phase::Construct {
                             input,
@@ -452,7 +454,7 @@ impl RegExpSplitResume {
                     runtime.into_jsvalue(limit)?,
                     ToPrimitiveHint::Number,
                     Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::default(),
+                        step_pending: RegExpSplitStepPending::new(runtime),
                         realm,
                         phase: Phase::Limit(state),
                     })),
@@ -496,7 +498,7 @@ impl RegExpSplitResume {
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::default(),
+                        step_pending: RegExpSplitStepPending::new(runtime),
                         realm,
                         phase: Phase::End { state, matched },
                     })),
@@ -509,7 +511,7 @@ impl RegExpSplitResume {
                 runtime.into_jsvalue(value)?,
                 ToPrimitiveHint::Number,
                 Self(Box::new(RegExpSplitResumeState {
-                    step_pending: RegExpSplitStepPending::default(),
+                    step_pending: RegExpSplitStepPending::new(runtime),
                     realm,
                     phase: Phase::EndPrimitive { state, matched },
                 })),
@@ -539,7 +541,7 @@ impl RegExpSplitResume {
                     matched.clone(),
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                     Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::default(),
+                        step_pending: RegExpSplitStepPending::new(runtime),
                         realm,
                         phase: Phase::Count { state, matched },
                     })),
@@ -549,7 +551,7 @@ impl RegExpSplitResume {
                 runtime.into_jsvalue(value)?,
                 ToPrimitiveHint::Number,
                 Self(Box::new(RegExpSplitResumeState {
-                    step_pending: RegExpSplitStepPending::default(),
+                    step_pending: RegExpSplitStepPending::new(runtime),
                     realm,
                     phase: Phase::CountPrimitive { state, matched },
                 })),
@@ -672,8 +674,8 @@ fn finish(
     }
 }
 
-#[derive(Default)]
 pub(crate) struct RegExpSplitStepPending {
+    runtime: Runtime,
     value: Option<JsValue>,
     hint: Option<ToPrimitiveHint>,
     object: Option<ObjectRef>,
@@ -683,6 +685,45 @@ pub(crate) struct RegExpSplitStepPending {
     arguments: Option<Vec<JsValue>>,
     exec_regexp: Option<JsValue>,
     input: Option<JsValue>,
+}
+impl RegExpSplitStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            value: None,
+            hint: None,
+            object: None,
+            key: None,
+            regexp: None,
+            constructor: None,
+            arguments: None,
+            exec_regexp: None,
+            input: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        for value in [
+            self.value.take(),
+            self.exec_regexp.take(),
+            self.input.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for argument in self.arguments.take().into_iter().flatten() {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
+}
+impl Drop for RegExpSplitStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl RegExpSplitStep {
     pub(crate) fn make_primitive(

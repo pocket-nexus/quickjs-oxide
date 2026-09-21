@@ -365,20 +365,6 @@ impl JsString {
         Self::default()
     }
 
-    #[cfg(test)]
-    pub fn try_from_utf8(value: &str) -> Result<Self, JsStringError> {
-        let mut result = Self::new();
-        for ch in value.chars() {
-            result.push_char(ch)?;
-        }
-        Ok(result)
-    }
-
-    #[cfg(test)]
-    pub fn push_char(&mut self, ch: char) -> Result<(), JsStringError> {
-        self.push_char_with_limit(ch, RuntimeJsString::MAX_LEN)
-    }
-
     fn push_char_with_limit(&mut self, ch: char, limit: usize) -> Result<(), JsStringError> {
         let mut units = [0_u16; 2];
         let encoded = ch.encode_utf16(&mut units);
@@ -391,11 +377,6 @@ impl JsString {
         RuntimeJsString::checked_length_with_limit(self.utf16.len(), 1, limit)?;
         self.utf16.push(unit);
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn push_code_point(&mut self, value: u32) -> Result<(), JsStringError> {
-        self.push_code_point_with_limit(value, RuntimeJsString::MAX_LEN)
     }
 
     fn push_code_point_with_limit(
@@ -418,11 +399,6 @@ impl JsString {
     #[cfg(test)]
     pub fn to_string(&self) -> Result<String, std::string::FromUtf16Error> {
         String::from_utf16(&self.utf16)
-    }
-
-    #[cfg(test)]
-    pub fn to_string_lossy(&self) -> String {
-        String::from_utf16_lossy(&self.utf16)
     }
 }
 

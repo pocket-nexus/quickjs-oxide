@@ -24,11 +24,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        finish(
-            self,
-            realm,
-            RegExpExecStep::start(self, realm, kind, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish(
+                self,
+                realm,
+                RegExpExecStep::start(self, realm, kind, invocation, arguments)?,
+            )
+        })
     }
     pub(crate) fn regexp_exec_abstract(
         &self,
@@ -214,7 +216,7 @@ impl RegExpExecStep {
         let this_value = runtime.root_value(this_value)?;
         match kind {
             RegExpNativeKind::Exec => RegExpExecResume(Box::new(RegExpExecResumeState {
-                step_pending: RegExpExecStepPending::default(),
+                step_pending: RegExpExecStepPending::new(runtime),
                 realm,
                 regexp: this_value,
                 input,
@@ -262,7 +264,7 @@ impl RegExpExecStep {
             runtime.unroot_value(&regexp)?,
             key,
             RegExpExecResume(Box::new(RegExpExecResumeState {
-                step_pending: RegExpExecStepPending::default(),
+                step_pending: RegExpExecStepPending::new(runtime),
                 realm,
                 regexp,
                 input,
@@ -276,7 +278,13 @@ impl RegExpExecResume {
     fn complete(&mut self, result: Completion) -> RegExpExecStep {
         RegExpExecStep::Complete(match result {
             Completion::Return(value) if self.0.test => {
-                Completion::Return(JsValue::Bool(!matches!(value, JsValue::Null)))
+                // `test` only reports nullness; the freshly built result object
+                // would otherwise be abandoned without an owner.
+                let is_null = matches!(value, JsValue::Null);
+                if !is_null {
+                    let _ = self.0.step_pending.runtime.release_jsvalue(value);
+                }
+                Completion::Return(JsValue::Bool(!is_null))
             }
             result => result,
         })
@@ -480,64 +488,46 @@ fn finish(
     }
 }
 
-#[cfg(test)]
-mod local_exec_tests {
-    use super::*;
-
-    #[test]
-    fn primitive_regexp_exec_completes_inside_its_domain() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let this_value = runtime
-            .unroot_value(&context.eval("/a/g").unwrap())
-            .unwrap();
-        let invocation = NativeInvocation::Call { this_value };
-        let arguments = NativeArguments {
-            actual_arg_count: 1,
-            readable: vec![
-                runtime
-                    .unroot_value(&Value::String(JsString::from_static("a")))
-                    .unwrap(),
-            ],
-        };
-        assert!(matches!(
-            RegExpExecStep::start(
-                &runtime,
-                context.realm,
-                RegExpNativeKind::Exec,
-                &invocation,
-                &arguments
-            )
-            .unwrap(),
-            RegExpExecStep::Complete(Completion::Return(JsValue::Object(_)))
-        ));
-    }
-
-    #[test]
-    fn regexp_local_conversion_preserves_reentry_and_live_program() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        assert_eq!(context.eval(r#"(()=>{
-            let trace='', re=/a/g;
-            const input={toString(){trace+='i';re.lastIndex={valueOf(){trace+='l';return 0}};return 'a'}};
-            if(re.exec(input)[0]!=='a'||trace!=='il'||re.lastIndex!==1)return false;
-            const marker={};re.lastIndex={valueOf(){throw marker}};
-            try{re.exec('a');return false}catch(e){if(e!==marker)return false}
-            const frozen=/a/g;Object.defineProperty(frozen,'lastIndex',{writable:false});
-            try{frozen.exec('a');return false}catch(e){if(!(e instanceof TypeError))return false}
-            return /é/.exec('é')[0]==='é' && /a/.test('a');
-        })()"#).unwrap(),Value::Bool(true));
-    }
-}
-
-#[derive(Default)]
 pub(crate) struct RegExpExecStepPending {
+    runtime: Runtime,
     receiver: Option<JsValue>,
     key: Option<PropertyKey>,
     value: Option<JsValue>,
     hint: Option<ToPrimitiveHint>,
     target: Option<DirectCallTarget>,
     arguments: Option<Vec<JsValue>>,
+}
+impl RegExpExecStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            receiver: None,
+            key: None,
+            value: None,
+            hint: None,
+            target: None,
+            arguments: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        for value in [self.receiver.take(), self.value.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for argument in self.arguments.take().into_iter().flatten() {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
+}
+impl Drop for RegExpExecStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl RegExpExecStep {
     pub(crate) fn make_read(
@@ -628,3 +618,59 @@ const _: () = assert!(std::mem::size_of::<RegExpExecStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<RegExpExecStep>() <= 64);
+
+#[cfg(test)]
+mod local_exec_tests {
+    use super::*;
+
+    #[test]
+    fn primitive_regexp_exec_completes_inside_its_domain() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let this_value = runtime
+            .unroot_value(&context.eval("/a/g").unwrap())
+            .unwrap();
+        let invocation = NativeInvocation::Call { this_value };
+        let arguments = NativeArguments {
+            actual_arg_count: 1,
+            readable: vec![
+                runtime
+                    .unroot_value(&Value::String(JsString::from_static("a")))
+                    .unwrap(),
+            ],
+        };
+        let step = RegExpExecStep::start(
+            &runtime,
+            context.realm,
+            RegExpNativeKind::Exec,
+            &invocation,
+            &arguments,
+        )
+        .unwrap();
+        let RegExpExecStep::Complete(Completion::Return(value)) = step else {
+            panic!("primitive RegExp exec did not complete locally");
+        };
+        assert!(matches!(value, JsValue::Object(_)));
+        runtime.release_jsvalue(value).unwrap();
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        invocation.release(&runtime).unwrap();
+    }
+
+    #[test]
+    fn regexp_local_conversion_preserves_reentry_and_live_program() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let trace='', re=/a/g;
+            const input={toString(){trace+='i';re.lastIndex={valueOf(){trace+='l';return 0}};return 'a'}};
+            if(re.exec(input)[0]!=='a'||trace!=='il'||re.lastIndex!==1)return false;
+            const marker={};re.lastIndex={valueOf(){throw marker}};
+            try{re.exec('a');return false}catch(e){if(e!==marker)return false}
+            const frozen=/a/g;Object.defineProperty(frozen,'lastIndex',{writable:false});
+            try{frozen.exec('a');return false}catch(e){if(!(e instanceof TypeError))return false}
+            return /é/.exec('é')[0]==='é' && /a/.test('a');
+        })()"#).unwrap(),Value::Bool(true));
+    }
+}

@@ -273,15 +273,17 @@ pub(in crate::engine::vm) fn add_primitives(
     right: JsValue,
 ) -> Result<JsValue, Error> {
     let result = if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
-        let left = match &left {
-            JsValue::String(id) => string_payload(runtime, *id)?,
-            value => to_js_string_jsvalue(runtime, value)?,
-        };
-        let right = match &right {
-            JsValue::String(id) => string_payload(runtime, *id)?,
-            value => to_js_string_jsvalue(runtime, value)?,
-        };
-        allocate_string_jsvalue(runtime, left.concat_owned(&right)?)
+        (|| {
+            let left = match &left {
+                JsValue::String(id) => string_payload(runtime, *id)?,
+                value => to_js_string_jsvalue(runtime, value)?,
+            };
+            let right = match &right {
+                JsValue::String(id) => string_payload(runtime, *id)?,
+                value => to_js_string_jsvalue(runtime, value)?,
+            };
+            allocate_string_jsvalue(runtime, left.concat_owned(&right)?)
+        })()
     } else {
         add_primitives_ref(runtime, &left, &right)
     };

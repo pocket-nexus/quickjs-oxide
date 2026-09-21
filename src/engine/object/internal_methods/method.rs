@@ -348,7 +348,9 @@ mod resident_tests {
         let address = (&*resume.0) as *const MethodResumeState;
         drop(resume.take_read_object());
         drop(resume.take_read_key());
-        drop(resume.take_read_receiver());
+        runtime
+            .release_jsvalue(resume.take_read_receiver())
+            .unwrap();
         let MethodStep::Complete { mut resume } = resume
             .resume(&runtime, Completion::Return(JsValue::Undefined))
             .unwrap()

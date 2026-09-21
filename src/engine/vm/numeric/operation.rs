@@ -164,6 +164,28 @@ const _: () = assert!(std::mem::size_of::<NumericResume>() <= 8);
 pub(in crate::engine::vm) struct NumericResumeState {
     kind: NumericKind,
     phase: Phase,
+    runtime: Runtime,
+}
+impl Drop for NumericResumeState {
+    fn drop(&mut self) {
+        let owned = match &mut self.phase {
+            Phase::Unary | Phase::RightNumeric(_) => return,
+            Phase::Left(value)
+            | Phase::RightPrimitive(value)
+            | Phase::EqualityLeft(value)
+            | Phase::EqualityRight(value) => std::mem::replace(value, JsValue::Undefined),
+            Phase::EqualityDda(left, right) => {
+                let left = std::mem::replace(left, JsValue::Undefined);
+                let right = std::mem::replace(right, JsValue::Undefined);
+                let _ = self.runtime.release_jsvalue(left);
+                return drop_owned(&self.runtime, right);
+            }
+        };
+        drop_owned(&self.runtime, owned);
+    }
+}
+fn drop_owned(runtime: &Runtime, value: JsValue) {
+    let _ = runtime.release_jsvalue(value);
 }
 enum Phase {
     Unary,
@@ -189,6 +211,7 @@ impl NumericStep {
                 NumericResume(Box::new(NumericResumeState {
                     kind,
                     phase: Phase::Unary,
+                    runtime: runtime.clone(),
                 })),
             );
         }
@@ -207,6 +230,7 @@ impl NumericStep {
             NumericResume(Box::new(NumericResumeState {
                 kind,
                 phase: Phase::Left(right),
+                runtime: runtime.clone(),
             })),
         )
     }
@@ -235,7 +259,7 @@ fn complete(value: JsValue) -> NumericStep {
 }
 impl NumericResume {
     pub(in crate::engine::vm) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: Completion,
     ) -> Result<NumericStep, Error> {
@@ -249,7 +273,8 @@ impl NumericResume {
             ));
         }
         let kind = self.0.kind;
-        match self.0.phase {
+        let phase = std::mem::replace(&mut self.0.phase, Phase::Unary);
+        match phase {
             Phase::Unary => unary(runtime, kind, value),
             Phase::Left(right) => {
                 // Arithmetic converts the left primitive to Numeric before starting
@@ -267,6 +292,7 @@ impl NumericResume {
                         NumericResume(Box::new(NumericResumeState {
                             kind,
                             phase: Phase::RightPrimitive(value),
+                            runtime: runtime.clone(),
                         })),
                     );
                 }
@@ -279,6 +305,7 @@ impl NumericResume {
                     NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::RightNumeric(converted?),
+                        runtime: runtime.clone(),
                     })),
                 )
             }
@@ -304,11 +331,12 @@ impl NumericResume {
         }
     }
     pub(in crate::engine::vm) fn html_dda(
-        self,
+        mut self,
         runtime: &Runtime,
         value: bool,
     ) -> Result<NumericStep, Error> {
-        let Phase::EqualityDda(left, right) = self.0.phase else {
+        let phase = std::mem::replace(&mut self.0.phase, Phase::Unary);
+        let Phase::EqualityDda(left, right) = phase else {
             return Err(Error::internal("HTMLDDA reply lost equality owner"));
         };
         if value {
@@ -536,6 +564,7 @@ fn equality(
                     resume: NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityDda(left, right),
+                        runtime: runtime.clone(),
                     })),
                 });
             }
@@ -547,6 +576,7 @@ fn equality(
                     resume: NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityDda(left, right),
+                        runtime: runtime.clone(),
                     })),
                 });
             }
@@ -625,6 +655,7 @@ fn equality(
                     NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityLeft(right),
+                        runtime: runtime.clone(),
                     })),
                 );
             }
@@ -643,6 +674,7 @@ fn equality(
                     NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityRight(left),
+                        runtime: runtime.clone(),
                     })),
                 );
             }

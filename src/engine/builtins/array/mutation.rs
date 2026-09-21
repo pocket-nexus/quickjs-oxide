@@ -778,6 +778,7 @@ mod tests {
                 &arguments,
             )
             .unwrap();
+            invocation.release(&runtime).unwrap();
             let result = finish(&runtime, context.realm, step).unwrap();
             assert!(matches!(result, Completion::Return(JsValue::Int(1))));
             let key = runtime.property_key_for_index(0).unwrap();
@@ -810,6 +811,7 @@ mod tests {
             &arguments,
         )
         .unwrap();
+        invocation.release(&runtime).unwrap();
         assert!(matches!(
             finish(&runtime, context.realm, step).unwrap(),
             Completion::Return(JsValue::Int(0))

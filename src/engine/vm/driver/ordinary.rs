@@ -16,7 +16,7 @@ pub(super) enum Entry {
     General,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 pub(super) fn enter(
     runtime: &Runtime,
     execution: &mut RunningExecution,

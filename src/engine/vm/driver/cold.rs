@@ -314,7 +314,7 @@ pub(super) fn dispatch(
         } => get_element(&mut context, keep_receiver, keep_key)?,
         RunExit::ConvertPlus => convert(&mut context, false, false)?,
         RunExit::ConvertPropertyKey => convert(&mut context, false, true)?,
-        #[cfg(test)]
+        #[cfg(all(test, feature = "profiling"))]
         exit @ RunExit::ReleaseOperand { .. } => direct(&mut context, exit)?,
         RunExit::Complete => {
             if matches!(context.forwarded, Some(Completion::Throw(_))) {
@@ -332,7 +332,7 @@ pub(super) fn dispatch(
 }
 
 #[inline(never)]
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 fn direct(context: &mut Context<'_>, exit: RunExit) -> Result<Disposition, Error> {
     if super::super::frame_operations::complete_owned_slot(context.execution, context.id, exit)? {
         Ok(Disposition::Entered)

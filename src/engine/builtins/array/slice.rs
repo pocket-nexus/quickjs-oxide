@@ -796,6 +796,7 @@ fn slice_resume_keeps_one_resident_owner_across_number_transitions() {
     assert_eq!(&*resume.0 as *const SliceResumeState, address);
     let (pending_value,) = resume.take_number();
     assert!(matches!(pending_value, JsValue::Object(_)));
+    runtime.release_jsvalue(pending_value).unwrap();
     assert!(resume.0.pending.value.is_none());
     let SliceStep::Number { mut resume, .. } = resume
         .number_once(&runtime, NativeConversion::Value(1.0))
@@ -806,6 +807,7 @@ fn slice_resume_keeps_one_resident_owner_across_number_transitions() {
     assert_eq!(&*resume.0 as *const SliceResumeState, address);
     let (pending_value,) = resume.take_number();
     assert!(matches!(pending_value, JsValue::Object(_)));
+    runtime.release_jsvalue(pending_value).unwrap();
     assert!(resume.0.pending.value.is_none());
     assert_eq!(resume.0.start, 1);
 }

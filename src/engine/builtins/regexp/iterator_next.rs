@@ -111,7 +111,7 @@ impl RegExpIteratorStep {
             runtime.into_jsvalue(Value::Object(regexp.clone()))?,
             runtime.into_jsvalue(Value::String(string.clone()))?,
             RegExpIteratorResume(Box::new(RegExpIteratorResumeState {
-                step_pending: RegExpIteratorStepPending::default(),
+                step_pending: RegExpIteratorStepPending::new(runtime),
                 scheduler_set_key: None,
                 realm,
                 iterator,
@@ -345,13 +345,41 @@ pub(crate) fn finish(
     }
 }
 
-#[derive(Default)]
 pub(crate) struct RegExpIteratorStepPending {
+    runtime: Runtime,
     regexp: Option<JsValue>,
     input: Option<JsValue>,
     object: Option<ObjectRef>,
     key: Option<PropertyKey>,
     value: Option<JsValue>,
+}
+impl RegExpIteratorStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            regexp: None,
+            input: None,
+            object: None,
+            key: None,
+            value: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        for value in [self.regexp.take(), self.input.take(), self.value.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
+impl Drop for RegExpIteratorStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl RegExpIteratorStep {
     pub(crate) fn make_exec(

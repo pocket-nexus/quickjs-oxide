@@ -120,7 +120,7 @@ mod tests {
         let mut slots = SlotStore::new(20);
         let window = slots
             .push_frame(
-                &runtime,
+                runtime,
                 &owner.frame_layout(),
                 FrameStorage {
                     original_arguments: Vec::new(),

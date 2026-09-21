@@ -473,120 +473,6 @@ pub(super) fn finish(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn list_and_key_roots_survive_gc_and_release_after_abandonment() {
-        for after_list in [false, true] {
-            let runtime = Runtime::new();
-            let weak = std::rc::Rc::downgrade(&runtime.0);
-            let mut context = runtime.new_context();
-            let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
-                panic!("expected proxy")
-            };
-            let data = runtime.proxy_snapshot_if_any(&proxy).unwrap().unwrap();
-            let ids = [proxy.object_id(), data.target, data.handler];
-            let callable = context.eval("(function(){})").unwrap();
-            let KeysStep::Read { resume, .. } =
-                KeysStep::start(&runtime, context.realm, proxy).unwrap()
-            else {
-                panic!("expected handler read")
-            };
-            let KeysStep::Call { resume, .. } = resume
-                .resume(
-                    &runtime,
-                    Completion::Return(runtime.into_jsvalue(callable).unwrap()),
-                )
-                .unwrap()
-            else {
-                panic!("expected trap")
-            };
-            let list = runtime.new_object(None).unwrap();
-            let list_id = list.object_id();
-            let KeysStep::Read { resume, .. } = resume
-                .resume(
-                    &runtime,
-                    Completion::Return(runtime.into_jsvalue(Value::Object(list)).unwrap()),
-                )
-                .unwrap()
-            else {
-                panic!("expected length")
-            };
-            let KeysStep::Number { mut resume, .. } = resume
-                .resume(&runtime, Completion::Return(JsValue::Int(1)))
-                .unwrap()
-            else {
-                panic!("expected conversion")
-            };
-            let symbol = context.eval("Symbol('owned-key')").unwrap();
-            let Value::Symbol(symbol) = symbol else {
-                panic!("expected symbol")
-            };
-            let atom = symbol.atom();
-            if after_list {
-                let KeysStep::Read { resume: next, .. } = resume
-                    .number(&runtime, NativeConversion::Value(1.0))
-                    .unwrap()
-                else {
-                    panic!("expected item")
-                };
-                let KeysStep::Extensible { resume: next, .. } = next
-                    .resume(
-                        &runtime,
-                        Completion::Return(runtime.into_jsvalue(Value::Symbol(symbol)).unwrap()),
-                    )
-                    .unwrap()
-                else {
-                    panic!("expected target query")
-                };
-                resume = next;
-            } else {
-                drop(symbol);
-            }
-            runtime.run_gc().unwrap();
-            for id in ids {
-                assert!(runtime.0.state.borrow().heap.object(id).is_ok());
-            }
-            assert_eq!(
-                runtime.0.state.borrow().heap.object(list_id).is_ok(),
-                !after_list
-            );
-            if after_list {
-                assert!(
-                    runtime
-                        .0
-                        .state
-                        .borrow()
-                        .atoms
-                        .property_key_kind(atom)
-                        .is_ok()
-                );
-            }
-            drop(resume);
-            runtime.run_gc().unwrap();
-            for id in ids {
-                assert!(runtime.0.state.borrow().heap.object(id).is_err());
-            }
-            assert!(runtime.0.state.borrow().heap.object(list_id).is_err());
-            if after_list {
-                assert!(
-                    runtime
-                        .0
-                        .state
-                        .borrow()
-                        .atoms
-                        .property_key_kind(atom)
-                        .is_err()
-                );
-            }
-            drop(context);
-            drop(runtime);
-            assert!(weak.upgrade().is_none());
-        }
-    }
-}
-
 struct KeysStepPending {
     runtime: Runtime,
     read_receiver: Option<JsValue>,
@@ -757,3 +643,117 @@ const _: () = assert!(std::mem::size_of::<KeysStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<KeysStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn list_and_key_roots_survive_gc_and_release_after_abandonment() {
+        for after_list in [false, true] {
+            let runtime = Runtime::new();
+            let weak = std::rc::Rc::downgrade(&runtime.0);
+            let mut context = runtime.new_context();
+            let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
+                panic!("expected proxy")
+            };
+            let data = runtime.proxy_snapshot_if_any(&proxy).unwrap().unwrap();
+            let ids = [proxy.object_id(), data.target, data.handler];
+            let callable = context.eval("(function(){})").unwrap();
+            let KeysStep::Read { resume, .. } =
+                KeysStep::start(&runtime, context.realm, proxy).unwrap()
+            else {
+                panic!("expected handler read")
+            };
+            let KeysStep::Call { resume, .. } = resume
+                .resume(
+                    &runtime,
+                    Completion::Return(runtime.into_jsvalue(callable).unwrap()),
+                )
+                .unwrap()
+            else {
+                panic!("expected trap")
+            };
+            let list = runtime.new_object(None).unwrap();
+            let list_id = list.object_id();
+            let KeysStep::Read { resume, .. } = resume
+                .resume(
+                    &runtime,
+                    Completion::Return(runtime.into_jsvalue(Value::Object(list)).unwrap()),
+                )
+                .unwrap()
+            else {
+                panic!("expected length")
+            };
+            let KeysStep::Number { mut resume, .. } = resume
+                .resume(&runtime, Completion::Return(JsValue::Int(1)))
+                .unwrap()
+            else {
+                panic!("expected conversion")
+            };
+            let symbol = context.eval("Symbol('owned-key')").unwrap();
+            let Value::Symbol(symbol) = symbol else {
+                panic!("expected symbol")
+            };
+            let atom = symbol.atom();
+            if after_list {
+                let KeysStep::Read { resume: next, .. } = resume
+                    .number(&runtime, NativeConversion::Value(1.0))
+                    .unwrap()
+                else {
+                    panic!("expected item")
+                };
+                let KeysStep::Extensible { resume: next, .. } = next
+                    .resume(
+                        &runtime,
+                        Completion::Return(runtime.into_jsvalue(Value::Symbol(symbol)).unwrap()),
+                    )
+                    .unwrap()
+                else {
+                    panic!("expected target query")
+                };
+                resume = next;
+            } else {
+                drop(symbol);
+            }
+            runtime.run_gc().unwrap();
+            for id in ids {
+                assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+            }
+            assert_eq!(
+                runtime.0.state.borrow().heap.object(list_id).is_ok(),
+                !after_list
+            );
+            if after_list {
+                assert!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .atoms
+                        .property_key_kind(atom)
+                        .is_ok()
+                );
+            }
+            drop(resume);
+            runtime.run_gc().unwrap();
+            for id in ids {
+                assert!(runtime.0.state.borrow().heap.object(id).is_err());
+            }
+            assert!(runtime.0.state.borrow().heap.object(list_id).is_err());
+            if after_list {
+                assert!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .atoms
+                        .property_key_kind(atom)
+                        .is_err()
+                );
+            }
+            drop(context);
+            drop(runtime);
+            assert!(weak.upgrade().is_none());
+        }
+    }
+}

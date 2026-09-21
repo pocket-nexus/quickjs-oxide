@@ -444,6 +444,8 @@ mod tests {
         assert_eq!(execution.slots.depth(&frame.window), 2);
         assert_eq!(execution.slots.peek(&frame.window, 1).unwrap(), &a);
         assert_eq!(execution.slots.peek(&frame.window, 0).unwrap(), &b);
+        runtime.release_jsvalue(a).unwrap();
+        runtime.release_jsvalue(b).unwrap();
     }
 
     #[test]

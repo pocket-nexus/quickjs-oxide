@@ -43,6 +43,13 @@ fn thrown(runtime: &Runtime, completion: Completion) -> Value {
     runtime.root_and_release_jsvalue(value).unwrap()
 }
 
+#[track_caller]
+fn release_arguments(runtime: &Runtime, arguments: NativeArguments) {
+    for value in arguments.readable {
+        runtime.release_jsvalue(value).unwrap();
+    }
+}
+
 mod registration;
 
 mod code_points;

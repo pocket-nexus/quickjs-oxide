@@ -48,11 +48,13 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        finish_replace(
-            self,
-            realm,
-            RegExpReplaceStep::start(self, realm, &invocation, arguments)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish_replace(
+                self,
+                realm,
+                RegExpReplaceStep::start(self, realm, invocation, arguments)?,
+            )
+        })
     }
 
     fn standard_regexp_replace(
@@ -1472,7 +1474,10 @@ fn finish_replace(
                                     receiver,
                                     &[argument],
                                 )? {
-                                    Completion::Return(_) => {
+                                    Completion::Return(value) => {
+                                        // The setter result is discarded, but it
+                                        // still owns an internal edge.
+                                        let _ = runtime.release_jsvalue(value);
                                         NativeConversion::Value(InternalSetResult::Accepted)
                                     }
                                     Completion::Throw(value) => NativeConversion::Throw(
@@ -1623,6 +1628,10 @@ mod tests {
             runtime.root_and_release_jsvalue(value).unwrap(),
             Value::String(JsString::from_static("bb"))
         );
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        invocation.release(&runtime).unwrap();
         assert_eq!(
             context.eval("coldReplace.lastIndex").unwrap(),
             Value::Int(0)

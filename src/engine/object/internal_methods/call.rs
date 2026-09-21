@@ -203,67 +203,6 @@ impl ProxyCallResume {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn take_read(step: ProxyCallStep) -> ProxyCallResume {
-        let ProxyCallStep::Read { resume, .. } = step else {
-            panic!("expected apply lookup")
-        };
-        resume
-    }
-
-    #[test]
-    fn abandoned_proxy_call_releases_roots_and_guard_in_both_phases() {
-        for after_lookup in [false, true] {
-            let runtime = Runtime::new();
-            let weak = std::rc::Rc::downgrade(&runtime.0);
-            let mut context = runtime.new_context();
-            let target = context.eval("(function(){return 42})").unwrap();
-            let handler = runtime.new_object(None).unwrap();
-            let handler_id = handler.object_id();
-            let receiver = runtime.new_object(None).unwrap();
-            let receiver_id = receiver.object_id();
-            let argument = runtime.new_object(None).unwrap();
-            let argument_id = argument.object_id();
-            let NativeConversion::Value(proxy) = runtime
-                .new_proxy(context.realm, target, Value::Object(handler))
-                .unwrap()
-            else {
-                panic!("proxy allocation failed")
-            };
-            let mut step = ProxyCallStep::start(
-                &runtime,
-                context.realm,
-                proxy,
-                Value::Object(receiver),
-                vec![Value::Object(argument)],
-            )
-            .unwrap();
-            if after_lookup {
-                step = take_read(step)
-                    .resume(&runtime, Completion::Return(JsValue::Undefined))
-                    .unwrap();
-            }
-            assert_eq!(runtime.0.proxy_method_depth.get(), 1);
-            runtime.run_gc().unwrap();
-            for id in [handler_id, receiver_id, argument_id] {
-                assert!(runtime.0.state.borrow().heap.object(id).is_ok());
-            }
-            drop(step);
-            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
-            runtime.run_gc().unwrap();
-            for id in [handler_id, receiver_id, argument_id] {
-                assert!(runtime.0.state.borrow().heap.object(id).is_err());
-            }
-            drop(context);
-            drop(runtime);
-            assert!(weak.upgrade().is_none());
-        }
-    }
-}
-
 struct ProxyCallStepPending {
     runtime: Runtime,
     read_object: Option<ObjectRef>,
@@ -376,3 +315,64 @@ const _: () = assert!(std::mem::size_of::<ProxyCallStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ProxyCallStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn take_read(step: ProxyCallStep) -> ProxyCallResume {
+        let ProxyCallStep::Read { resume, .. } = step else {
+            panic!("expected apply lookup")
+        };
+        resume
+    }
+
+    #[test]
+    fn abandoned_proxy_call_releases_roots_and_guard_in_both_phases() {
+        for after_lookup in [false, true] {
+            let runtime = Runtime::new();
+            let weak = std::rc::Rc::downgrade(&runtime.0);
+            let mut context = runtime.new_context();
+            let target = context.eval("(function(){return 42})").unwrap();
+            let handler = runtime.new_object(None).unwrap();
+            let handler_id = handler.object_id();
+            let receiver = runtime.new_object(None).unwrap();
+            let receiver_id = receiver.object_id();
+            let argument = runtime.new_object(None).unwrap();
+            let argument_id = argument.object_id();
+            let NativeConversion::Value(proxy) = runtime
+                .new_proxy(context.realm, target, Value::Object(handler))
+                .unwrap()
+            else {
+                panic!("proxy allocation failed")
+            };
+            let mut step = ProxyCallStep::start(
+                &runtime,
+                context.realm,
+                proxy,
+                Value::Object(receiver),
+                vec![Value::Object(argument)],
+            )
+            .unwrap();
+            if after_lookup {
+                step = take_read(step)
+                    .resume(&runtime, Completion::Return(JsValue::Undefined))
+                    .unwrap();
+            }
+            assert_eq!(runtime.0.proxy_method_depth.get(), 1);
+            runtime.run_gc().unwrap();
+            for id in [handler_id, receiver_id, argument_id] {
+                assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+            }
+            drop(step);
+            assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+            runtime.run_gc().unwrap();
+            for id in [handler_id, receiver_id, argument_id] {
+                assert!(runtime.0.state.borrow().heap.object(id).is_err());
+            }
+            drop(context);
+            drop(runtime);
+            assert!(weak.upgrade().is_none());
+        }
+    }
+}

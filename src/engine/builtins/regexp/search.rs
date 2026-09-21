@@ -67,7 +67,7 @@ impl RegExpSearchStep {
                 "RegExp @@search input argv was not padded",
             ))?)?,
             RegExpSearchResume(Box::new(RegExpSearchResumeState {
-                step_pending: RegExpSearchStepPending::default(),
+                step_pending: RegExpSearchStepPending::new(runtime),
                 realm,
                 regexp,
                 phase: SearchPhase::Input,
@@ -260,58 +260,88 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let mut step = RegExpSearchStep::start(self, realm, &invocation, arguments)?;
-        loop {
-            step = match step {
-                RegExpSearchStep::Complete(result) => return Ok(result),
-                RegExpSearchStep::Primitive { mut resume } => {
-                    let value = resume.take_primitive_value();
-                    {
-                        let result = if matches!(value, JsValue::Object(_)) {
-                            self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)?
-                        } else {
-                            Completion::Return(value)
-                        };
-                        resume.resume(self, result)?
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let mut step = RegExpSearchStep::start(self, realm, invocation, arguments)?;
+            loop {
+                step = match step {
+                    RegExpSearchStep::Complete(result) => return Ok(result),
+                    RegExpSearchStep::Primitive { mut resume } => {
+                        let value = resume.take_primitive_value();
+                        {
+                            let result = if matches!(value, JsValue::Object(_)) {
+                                self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)?
+                            } else {
+                                Completion::Return(value)
+                            };
+                            resume.resume(self, result)?
+                        }
                     }
-                }
-                RegExpSearchStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
-                }
-                RegExpSearchStep::Exec { mut resume } => {
-                    let regexp = self.root_and_release_jsvalue(resume.take_exec_regexp())?;
-                    let input = self.root_and_release_jsvalue(resume.take_exec_input())?;
-                    resume.resume(self, self.regexp_exec_abstract(realm, regexp, input)?)?
-                }
-                RegExpSearchStep::Set { mut resume } => {
-                    let object = resume.take_set_object();
-                    let key = resume.take_set_key();
-                    let value = self.root_and_release_jsvalue(resume.take_set_value())?;
-                    resume.set(
-                        self,
-                        self.internal_set(
-                            realm,
-                            &object,
-                            &key,
-                            value,
-                            Value::Object(object.clone()),
-                        )?,
-                    )?
-                }
-            };
-        }
+                    RegExpSearchStep::Read { mut resume } => {
+                        let object = resume.take_read_object();
+                        let key = resume.take_read_key();
+                        resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
+                    }
+                    RegExpSearchStep::Exec { mut resume } => {
+                        let regexp = self.root_and_release_jsvalue(resume.take_exec_regexp())?;
+                        let input = self.root_and_release_jsvalue(resume.take_exec_input())?;
+                        resume.resume(self, self.regexp_exec_abstract(realm, regexp, input)?)?
+                    }
+                    RegExpSearchStep::Set { mut resume } => {
+                        let object = resume.take_set_object();
+                        let key = resume.take_set_key();
+                        let value = self.root_and_release_jsvalue(resume.take_set_value())?;
+                        resume.set(
+                            self,
+                            self.internal_set(
+                                realm,
+                                &object,
+                                &key,
+                                value,
+                                Value::Object(object.clone()),
+                            )?,
+                        )?
+                    }
+                };
+            }
+        })
     }
 }
 
-#[derive(Default)]
 pub(crate) struct RegExpSearchStepPending {
+    runtime: Runtime,
     value: Option<JsValue>,
     object: Option<ObjectRef>,
     key: Option<PropertyKey>,
     regexp: Option<JsValue>,
     input: Option<JsValue>,
+}
+impl RegExpSearchStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            value: None,
+            object: None,
+            key: None,
+            regexp: None,
+            input: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        for value in [self.value.take(), self.regexp.take(), self.input.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
+impl Drop for RegExpSearchStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl RegExpSearchStep {
     pub(crate) fn make_primitive(value: JsValue, mut resume: RegExpSearchResume) -> Self {
