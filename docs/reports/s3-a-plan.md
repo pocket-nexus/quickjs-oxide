@@ -1,6 +1,6 @@
 # S3-A 计划：8B 值表示——融合实施
 
-> 状态：W1–W5 的 16B 实现已收口；性能仍有回退，本轮按要求不运行测试，W6 尚未验收。当前证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
+> 状态：阶段 A 阻塞于性能回退；先完成 §8 全部回退修复，再推进 W6 验收及后续优化。W1–W5 已有 16B 实现快照，但不代表收益达标。本轮按要求不运行测试。当前证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
 > `performance-architecture.md` §4（方案 A）的实施计划与验收规则；若两处
 > 表述冲突，**以本文档为准**。约束与证据附录继承
 > `performance-architecture.md` §0/§11/附录。
@@ -85,10 +85,11 @@ String/BigInt，8B 无从谈起。
    `collection_key.rs`（`same_value_zero`/`hash`）、StrictEq、switch
    字符串匹配改为「id 相等快路 + arena 解引用内容兜底」；动工先盘点
    全部 `RawValue` 相等性使用点。
-7. BigInt：`RawValue::BigInt(BigIntId)` 全 arena（`Short` 也进 arena，其
-   分配成本列为测量点）；**A4 开放决定**——NaN-box 下 short 收缩为
-   **±2⁴⁷ 内联**（48-bit payload + kind tag，超出晋升堆句柄，语义透明），
-   默认取前者，A4 开工时按测量复核。
+7. BigInt：当前实现为 `RawValue::BigInt(BigIntId)` 全 arena，包含 `Short`。
+   **该决定进入回退修复，不再把短整数内联推迟到 A4**：§8 的 R1 优先在
+   16B `JsValue`/`RawValue` 内恢复完整 `ShortBigInt(i64)`，真正 Heap BigInt
+   保留句柄；公共 API 与算术内核保持不变。此项是待实施的设计修订，不能
+   当作已落地。将来 8B NaN-box 的短整数编码范围另行决策，不限制本轮 i64。
 8. 内存语义注意：字符串/BigInt 从「`Rc` 独立分配」变为「arena 节点 +
    free-list 复用 + generation」——teardown 的 `live == 0` 断言与
    `GcStats`/`HeapCounts` 公共诊断（`api/mod.rs:15` 导出）口径需同步
@@ -571,3 +572,232 @@ A4 的 8B NaN-box 仍是独立测量阶段，不计入本轮 16B 工作流。
 最终性能快照为 `161bdbb2`：属性读取下降约 16%/19%/29%，但 scaling 耗时比
 几何均值 +4.9%，BigInt 算术耗时 2–2.5×，已完成的 V8 两项约降分 9%。
 不能据表示收口宣称全部性能目标完成；回退、部分采样与后续顺序见收口报告。
+
+
+## 8. 回退修复优先门禁（2026-09-21，当前执行顺序）
+
+**先解决所有回退，再推进。** 本节优先于前文里可以继续推进的历史排期。
+现在只进入 A 内部的回退修复 R0–R5；A4、B 及其他阶段的新优化全部暂停。
+修复可以并行实施在不重叠的模块，但性能采样必须串行。已有属性读取收益必须
+保留，不能用其平均收益抵消 BigInt、容器、编译或任一规模的回退；也不能
+通过恢复内部公共 Value 双管道、弱化 oracle 期望或删除 teardown 断言换速度。
+
+本节是静态调查后的修复计划，**不是修复完成声明**。本轮未运行测试、构建、
+新 benchmark 或 CPU profile。测量取自 本地记录（不纳入 Git），
+对应实现 `161bdbb2348f4320ee288fd66b8ae57ac1166ae6`，pre-A 对照为
+`85afd56493393065080680d562d4116ff9bd7974`。调查 HEAD `f664a361` 相对该实现
+只有报告文档变化，因此源码机制仍对应现实现；后续代码改动必须换新的 receipt。
+
+### 8.1 完整回退台账，不能只处理三个大项
+
+下表是全部 22 类、86 个 case/size 的现有 scaling 记录，单位为耗时变化；
+正数表示变慢，负数表示变快。即使变化很小，也暂记“待判定”，不得未经
+同协议复核就称为噪声并关闭。原始重复样本、构建信息见 evidence 的 artifacts。
+
+| case | 32 | 128 | 512 | 2048 | 修复/归因任务 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| map-int | +11.82% | +7.50% | +9.85% | +10.36% | R2 |
+| map-string | +16.89% | +18.38% | +20.70% | +18.39% | R2 |
+| set | +9.18% | +6.65% | +5.60% | +6.46% | R2 |
+| map-churn | +0.05% | -0.29% | +5.72% | +10.04% | R2 |
+| set-churn | +8.49% | -0.01% | +2.94% | +2.96% | R2 |
+| set-intersection | +9.51% | +9.43% | +5.79% | +8.88% | R2 |
+| prop-write | +0.14% | -3.36% | -3.08% | +0.98% | R3 |
+| prop-delete | +21.99% | +28.29% | +20.87% | +22.05% | R3 |
+| array-truncate | +7.73% | +3.70% | +8.98% | +5.77% | R3 |
+| scope | -6.77% | +7.61% | +4.29% | -0.05% | R4 |
+| constants | -10.82% | +15.55% | +12.87% | +12.38% | R4 |
+| module | -24.14% | -5.44% | +9.24% | +7.94% | R4 |
+| module-imports | +8.82% | -5.92% | +10.91% | +1.34% | R4 |
+| long-key | +7.23% | +9.46% | +4.95% | +13.74% | R2 |
+| map-iterate-churn | -1.31% | -0.45% | +0.54% | +0.07% | R2 |
+| set-iterate-churn | +0.22% | -1.30% | +0.09% | -0.56% | R2 |
+| array-index | -1.33% | +2.98% | -4.69% | +3.45% | R4 |
+| array-holey | +6.68% | +8.70% | +4.94% | +4.52% | R3 |
+| typed-index | +1.75% | +7.97% | +0.65% | -0.64% | R4 |
+| arguments | +9.48% | +1.52% | -0.60% | -7.64% | R2 / R3 |
+| mapped-arguments | +3.72% | +4.35% | -3.43% | -1.97% | R2 / R3 |
+| regexp-groups | +11.36% | +5.53% | 不适用 | 不适用 | R4 |
+
+另列以下独立门禁，不能被 scaling 几何均值替代：
+
+- **BigInt**：32/64 位工作负载 400→1000 ns，256 位 500→1000 ns，即
+  2.5×/2.5×/2×。上游报告一个迭代含 `sum += a*a; a += incr` 的三次数值
+  运算，并非单次加法；Date.now 粒度较粗，不据此分摊各个算子的成本。
+- **V8 Richards / DeltaBlue**：完整三次记录的分数分别 41.6→37.8、53.1→48.3，
+  均约下降 9%。Crypto 仅一对样本，其他五项尚无完成记录；14/48 样本完成，
+  缺失 34 项。未完成不是通过，也不是已证明回退，仍属覆盖缺口。
+- **已有收益保护**：property int/object/string.length 耗时约下降 16%/19%/29%；
+  默认 microbench 的其余四项中位数持平，empty_loop 的粗时钟结果不能当成
+  整体加速证明。后续修复同时保留这些对照。
+- **内存目标未证明**：JsValue 16B、RawValue ≤16B、AtomIdx 4B、ShapeEntry 8B
+  是布局证据；没有全引擎 RSS 减半证据。叶节点新增 arena 槽可能抵消部分
+  节省。原架构的 8B 流量预期不能直接归给当前 16B 实现，FrameBinding
+  等实际容器也不能按 JsValue 大小直接推算。
+
+### 8.2 R1：恢复短 BigInt 的免 arena 算术与传输
+
+**已确认机制**：`value/bigint.rs` 相对 pre-A 的算术内核没有实质改写，仍为
+`Short(i64)` / `Heap(Rc<BigInt>)`。损失的是 Short 原来的免节点存储与运算。
+现 `vm/numeric.rs::{bigint_payload, allocate_bigint_jsvalue}` 对 Short 同样
+查询 arena、借用 runtime、克隆 payload，并为每个结果 reserve/publish；
+`vm/numeric/operation.rs` 还显式释放输入边。final 已有叶节点最后引用直接
+回收快路，仍不能消除结果分配、输入查找和非最后引用的管理成本。
+这是确定存在的新增机制；其占 2–2.5× 回退的具体份额尚无最终 profile 证明。
+
+**方案**：按修订后的 D2.7 增加 `JsValue::ShortBigInt(i64)` 与
+`RawValue::ShortBigInt(i64)`，Heap BigInt 继续 `BigIntId`。保留 16B 编译期
+断言、不增加 Copy/Drop，不为短值伪造句柄。统一 BigInt payload 发布入口：
+仅真实 `JsBigInt::as_i64()` 的 Short 直接返回标量，其余保留原 Rc payload。
+先复用原 JsBigInt 算术内核，不同时重写 checked arithmetic 算法。
+
+一次闭合以下链条，禁止只优化 VM 算术：numeric、常量 publish、API root/
+unroot、BigInt 构造器、TypedArray decode、对象/容器槽、挂起 argv、包装对象
+valueOf，以及 GC edges/producer_edge/slot ownership。Short dup 复制 i64，
+release 无边；HeapCounts 如实反映不再分配 Short 节点，不能伪造诊断数字。
+
+语言层仍只有一种 BigInt。SameValue/StrictEq/SameValueZero、混合表示比较、
+hash 与 `same_representation` 必须闭合：Short 按值、Heap 保留 Rc 表示身份，
+不同句柄仍需内容兜底；不要直接使用 i64.hash 破坏现有 BigInt hash 契约。
+保留溢出晋升、i64::MIN、除零、负指数、混合 Number、移位及 TypedArray 截断。
+完整 i64 内联可在 16B 阶段完成，不等 NaN-box 的 48-bit payload 决策。
+
+若只做合并 runtime borrow、叶节点发布内联等小改，只能记为降低开销，
+不能预先宣称恢复短整数性能。唯一引用节点就地覆盖和全局小整数缓存涉及
+alias、错误路径、身份与生命周期，不作为首选补丁。
+
+### 8.3 R2：容器与共同调用成本
+
+**先排除已修问题**：native argv 缓冲池、Map/Set borrowed receiver/key、
+不变 ABI 借用 NativeInvocation、primitive predicate 避免 Box、叶最后释放
+快路均已在测量快照中。不能把“恢复池”或“借用 ABI”重复列成待实现根因。
+
+**已确认新增机制**：`value/collection_key.rs` 的 String hash 与内容相等
+通过 `heap.string` 解引用 generational handle；不同 StringId 即使 payload
+相同，仍经过 arena 查询后才内容比较。pre-A 直接持有 JsString。long-key
+即使命中已有 hash 缓存也不能免除内容比较所需的解引用。BigInt 键类似，
+R1 会恢复短整数键的免节点路径。**map-int 不走字符串路径**，其回退必须
+独立处理，不能用字符串 hash 解释全部容器回退。
+
+修复顺序：在同一 heap 借用和已验证 live key 的作用域内复用 payload/record
+查找结果，避免重复类型、generation 与索引查询；借用不能跨执行 JS、修改
+arena 或释放 owner 的边界。容器存储提交仍必须 retain 它实际拥有的边。
+再检查 `vm/stack.rs` 的 take/prepare、`vm/call/native.rs` 的 activation/finish、
+`builtins/dispatch.rs` 和 `vm/proxy_get_driver/native.rs` 的同步调用固定成本，
+在成功路径复用已验证 frame/metadata，避免重复准备与即时释放的中转边。
+异常、changed ABI、constructor、迭代器与宿主调用仍走完整 owner 协议。
+
+具体落点是 `builtins/map.rs` 的 find_record 后再次 get record，以及 has 复用
+取值 helper 的无用值复制；改为一次验证、一次查找，直接返回存在性或借用
+record，get 在退出事务前保留返回边。`heap/value_storage.rs` 已有可信 live-edge
+读取入口，可在明确满足其前提的作用域复用，不引入通用 unchecked indexing。
+`heap/collection_index.rs` 的 8 项缓存从 WeakJsString 表示身份改为 StringId；
+这是代码变化，但 long-key 重用稳定 key、map-string 原先也创建不同表示，
+没有证据把这两项回退归因于缓存失效。保留带随机 seed 的内容 hash，不能用
+32-bit 指纹替代。动态 map-string 临时键的新节点成本同时纳入 R3。
+
+容器已有的重复 hash/lookup、churn 压缩与迭代策略不能冒称 A 新引入。
+如果最终 profile 证明它们是有效补偿点，可采用单次 lookup/hash token、
+同事务返回 record 等局部改进；必须保持 SameValueZero、NaN/±0、插入顺序、
+迭代期间删除重插与 Set intersection 分支的可观察顺序。不能仅按普通 Set
+重写 intersection，忽略用户可见 size/has/keys 获取与调用。
+
+map/set churn 与 iterate-churn 的小正值同样留在台账。最终 profile 要同时含
+map-int、map-string、long-key、set-intersection；一次字符串热点不能代表四类。
+旧 `/tmp/s3-a-map-perf.data` 属于 `2f5f7c08`，只能提示采样方向，不能给 final
+的 native/VM/ownership 成本分配百分比。
+
+### 8.4 R3：动态键、数组和 Arguments
+
+**prop-delete** 工作负载每项先 `o['p'+i]=i` 再 `delete o['p'+i]`，包含两次
+动态字符串创建、转键以及最后 Object.keys，不能全部归因删除内核。
+`vm/numeric.rs` 创建 StringId → `value/conversion.rs` intern → release 的
+临时节点生命周期是相对旧实现确定增加的成本。当前 dictionary 阈值为 1，
+不能把备用 clone 分支当成每次删除都 O(n) 的证据。
+
+先优化新短字符串 reserve/publish/release 和 ToPropertyKey 的 payload 借用，
+合并可信 atom/index 的重复查询；保留 StringId 生命周期。必要时以预生成键、
+仅动态转键、原端到端三类采样区分成本，端到端仍是放行依据。Add→PropertyKey
+融合仅在证实必要后考虑，必须保留 ToPrimitive 顺序、副作用、长度上限和异常。
+
+**array-truncate** 包含逐项 native push、delete a[0] 的 dense→sparse，再
+length=0；物化与截断算法 pre-A 已存在，整数索引的 atom brand 也不查 arena。
+先消除共同调用开销，再定位真实多出的布局/借用成本，不把已有线性算法当根因。
+**array-holey / prop-write** 优先检查已选择 raw data 写入中重复的 shape/index/
+length 验证，复用无可重入区间里的选择结果；不能漏 Proxy、accessor、原型
+setter、非 extensible/frozen 与 length blocker。带洞 dense 是额外存储设计，
+不是未经定位就实施的默认补丁。
+
+**Arguments** 小 arity 回退而较大 arity 改善，先定位每次调用固定成本。
+`vm/stack.rs::snapshot` → `object/arguments.rs` raw layout → release snapshot
+仍有堆值 retain/store/release 中转；需要时改为专用 owned layout 事务，成功
+采用原边，半提交或失败完整释放。mapped VarRef 共享、删除/重定义解联、重复
+形参、callee poison、getter/Proxy 的读取顺序必须保留，不能改成普通 data slot。
+
+### 8.5 R4：编译、模块、RegExp、索引与 V8 覆盖缺口
+
+scope/constants/module/module-imports 是生成程序执行一次的进程计时，包含
+启动、parse/compile/link/evaluate/teardown。constants 是大量 unresolved
+`typeof global_i`，不是纯常量读取；module 同时含 namespace 枚举与读取。
+不能将这些回退直接套到 VM 算术，也不能仅因数值较小就判为计时噪声。
+**已确认的可修成本**：`code/runtime.rs` 的 FlatConstant::AtomString 先经
+raw_property_value 创建草稿 StringId，再 intern 并为非立即整数 atom 的
+canonical 字符串 allocate_string，替换 constant；两个 producer 都需清理。
+pre-A 草稿直接是 JsString，没有这两次节点发布。修复为在编译发布事务内
+保留草稿 JsString，完成 intern/canonical 决策后只发布最终 StringId 一次；
+保留立即整数 atom fallback、auxiliary_atoms 根与失败回滚。这属于初次发布
+新产物，不是恢复运行时 Value 存储。具体 constants opcode 是否使用该分支
+仍需核对，不据该机制直接宣称解释了整个 constants/module 百分比。
+
+`modules/namespace.rs` 的 own keys 对 AtomIdx brand 后又分类/读取，新增
+代际与 entry 校验；可在同一状态事务合并读取，保留域认证、UTF-16 词典序
+和 VarRef 身份。`vm/pure_operations.rs` 的普通 TypeOf 也有字符串节点发布，
+但 TypeOfIsUndefined 专门 opcode 不应被误算进这条成本；先核对 codegen，
+若需要复用 typeof 句柄，必须显式设置 runtime/realm 根及其清理生命周期。
+
+按各阶段拆解，检查常量首次发布、AtomIdx 重新 brand/查表、binding/module
+namespace 查找及 cleanup；对确定的重复操作复用已验证索引或一次事务内的
+借用结果，保留 TDZ、live binding、循环模块与错误缓存语义。首次创建节点
+是合法创建，不能为省分配退回公共 Value 存储。
+
+regexp-groups 同时创建 pattern、执行正则、生成捕获/indices/groups 并枚举键。
+现编号捕获与命名组已共享原 StringId，不能再把该优化记为未做。重点区分真实
+substring 节点创建、对象结果组装/shape/atom 成本和匹配内核，只有前两者存在
+表示迁移相关路径；尚无证据证明 matcher 算法退化。保留 indices 对象共享、
+unmatched captures、属性描述符与命名组顺序，不能通过减少结果语义提高分数。
+
+array-index/typed-index 的正负混合结果先核对稳定性，再定位索引转换、选择器、
+slot 与 typed 读写；立即 Number 仍内联，没有证据表明丢掉普通 Number 算术
+优化。不得把 TypedArray 边界、detach、转换顺序等检查移出必要路径。
+
+Richards/DeltaBlue 的约 9% 降分目前只有端到端证据，共同候选为 VM 分派、
+frame/binding 运输、临时 owner、属性写入与生命周期；**尚未完成定量归因**。
+用这两项的最终源码短采样指导局部修复，不以 map 的中间版 profile 代替。
+Crypto 及其余 V8 缺失项按有界分批方式补齐；未齐之前不声称全 V8 或所有
+场景无回退。布局缩小可能改变代码布局/缓存行为，这需要采样佐证，不能凭猜测
+把统一 inline 或切换 LTO/PGO 当成已找出的根因。
+
+### 8.6 R0–R5 排程及关闭标准
+
+| 顺序 | 交付物 | 关闭条件 |
+| --- | --- | --- |
+| R0 证据冻结 | 本台账、固定 pre-A/build flags/输入、代码与二进制 hash | 不混用中间 profile；所有正值、未完成项都有归属 |
+| R1 BigInt | 16B 完整 i64 内联及所有生产/消费/存储闭合 | Short 闭环、跨 i64 晋升、真正 Heap、容器键和 typed 边界均无回退与语义偏移 |
+| R2 容器/调用 | 可信借用与调用固定开销修复 | 所有 map/set/long-key 规模关闭，原 owner/错误清理保持完整 |
+| R3 属性/数组 | 短字符串生命周期、raw 写入和 Arguments 运输修复 | 对应每个 case/size 关闭，并保留读取收益 |
+| R4 剩余归因 | 编译/模块/RegExp/索引及 V8 定位和修复 | 不遗留“共同开销”占位解释；未完成覆盖补齐 |
+| R5 汇总验收 | 同一最终源码的性能、内存和 §4/§5 语义证据 | 所有回退关闭才允许后续阶段；当前仍未满足 |
+
+R1、R2、R3/R4 可分模块并行调查/实现；涉及共同表示、GC 和 collection hash
+时先落单一协议再集成，不能各自创造不同的所有权规则。采样串行，复用同一
+最终构建；只在相关修复后做有针对性的比较，不反复运行全套去猜根因。
+
+每条关闭记录至少包含：新增成本的源码证据、补丁、同源 before/after receipt、
+该 case 全部规模的结果、错误/清理协议审查及语义验收状态。中间几何均值 +4.9%
+只能描述该组样本，既不是全引擎总分，也不能作关闭条件。小幅正值需足够重复、
+交替基线/候选次序并报告分布；若仍无法排除回退，状态保持待定，不临时放宽
+门槛。没有当前源码 oracle/teardown 证据就不能写“零偏差、零泄漏”。
+
+本轮遵守“不跑测试”，因此 R5 的语义证据明确待验收；该限制不会自动放行
+阶段 A。历史 d184986f 的全套通过不适用于后续源码。先把回退修复完整，再按
+统一最终快照完成已定义验收，之后才讨论 A4 或其他阶段。
