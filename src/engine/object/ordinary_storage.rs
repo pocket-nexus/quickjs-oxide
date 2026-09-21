@@ -509,16 +509,13 @@ impl Runtime {
         self.ordinary_read_probe_atom(object.object_id(), key.atom(), false, None)
     }
 
-    pub(super) fn ordinary_read_probe_selected(
+    pub(super) fn ordinary_read_probe_selected_id(
         &self,
-        object: &ObjectRef,
+        object: ObjectId,
         key: &PropertyKey,
         native: Option<&mut Option<LinkedNativeSelection>>,
     ) -> Result<ReadProbe, RuntimeError> {
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("property object"));
-        }
-        self.ordinary_read_probe_atom(object.object_id(), key.atom(), false, native)
+        self.ordinary_read_probe_atom(object, key.atom(), false, native)
     }
 
     // The caller owns the receiver throughout this non-reentrant probe.
@@ -1755,6 +1752,32 @@ mod ordinary_field_leaf_tests {
                 .is_none()
         );
         runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn borrowed_fallback_read_preserves_inherited_getter_and_receiver_owner() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("({__proto__: {get x(){return this.marker}}, marker: 7})")
+                    .unwrap(),
+            )
+            .unwrap();
+        let key = runtime.intern_property_key("x").unwrap();
+        let read = runtime
+            .prepare_value_property_read_borrowed_jsvalue(context.realm, &base, &key)
+            .unwrap();
+        assert!(matches!(&read, OrdinaryRead::Call { .. }));
+        runtime.release_jsvalue(base).unwrap();
+        let result = runtime
+            .finish_prepared_read_jsvalue(context.realm, &key, read)
+            .unwrap();
+        assert!(matches!(
+            result,
+            crate::engine::value::conversion::NativeConversion::Value(Some(JsValue::Int(7)))
+        ));
     }
 
     #[test]

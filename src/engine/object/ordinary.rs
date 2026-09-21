@@ -2,7 +2,7 @@
 //! exceptional receivers retain the internal-method dispatch contract.
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::heap::ContextId;
+use crate::engine::heap::{ContextId, ObjectId};
 use crate::engine::object::operations::{
     ArrayOwnKey, InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
     PropertySetRejection,
@@ -168,15 +168,47 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
         receiver: &JsValue,
-        mut native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
+        self.prepare_ordinary_read_selected_inner(
+            object.object_id(),
+            Some(object),
+            key,
+            receiver,
+            native,
+        )
+    }
+
+    /// The caller keeps the borrowed initial object alive for this lookup.
+    pub(crate) fn prepare_ordinary_read_selected_id(
+        &self,
+        object: ObjectId,
+        key: &PropertyKey,
+        receiver: &JsValue,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+    ) -> Result<OrdinaryRead, RuntimeError> {
+        let _operation = self.operation();
+        if !key.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("property key"));
+        }
+        self.prepare_ordinary_read_selected_inner(object, None, key, receiver, native)
+    }
+
+    fn prepare_ordinary_read_selected_inner(
+        &self,
+        object: ObjectId,
+        original: Option<&ObjectRef>,
+        key: &PropertyKey,
+        receiver: &JsValue,
+        mut native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+    ) -> Result<OrdinaryRead, RuntimeError> {
         use crate::engine::object::ordinary_storage::ReadProbe;
-        let mut prototype = None;
+        let mut prototype: Option<ObjectRef> = None;
         loop {
-            let current = prototype.as_ref().unwrap_or(object);
-            match self.ordinary_read_probe_selected(current, key, native.as_deref_mut())? {
+            let current_id = prototype.as_ref().map_or(object, ObjectRef::object_id);
+            match self.ordinary_read_probe_selected_id(current_id, key, native.as_deref_mut())? {
                 ReadProbe::Value(value) => {
                     return Ok(OrdinaryRead::Complete(Some(value)));
                 }
@@ -194,11 +226,20 @@ impl Runtime {
                 ReadProbe::Special(kind @ SpecialKind::Proxy) => {
                     return Ok(OrdinaryRead::Special {
                         kind,
-                        object: current.clone(),
+                        object: ObjectRef::from_borrowed_handle(self.clone(), current_id)?,
                         receiver: self.dup_jsvalue(receiver)?,
                     });
                 }
                 ReadProbe::Special(kind) => {
+                    // Only exotic storage needs the ObjectRef adapter. Ordinary
+                    // data/getter/prototype probing borrows the initial base.
+                    let promoted;
+                    let current = if let Some(current) = prototype.as_ref().or(original) {
+                        current
+                    } else {
+                        promoted = ObjectRef::from_borrowed_handle(self.clone(), current_id)?;
+                        &promoted
+                    };
                     // Integer-indexed exotic Get is terminal, including
                     // invalid/detached indices. It must not inspect a prototype.
                     if matches!(kind, SpecialKind::TypedArray)

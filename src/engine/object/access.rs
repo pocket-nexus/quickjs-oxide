@@ -131,8 +131,7 @@ impl Runtime {
     ) -> Result<OrdinaryRead, RuntimeError> {
         match receiver {
             JsValue::Object(object) => {
-                let object = ObjectRef::from_borrowed_handle(self.clone(), *object)?;
-                self.prepare_ordinary_read_selected(&object, key, receiver, native)
+                self.prepare_ordinary_read_selected_id(*object, key, receiver, native)
             }
             JsValue::String(id) => {
                 let string = self.0.state.borrow().heap.string(*id)?.clone();
