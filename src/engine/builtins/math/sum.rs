@@ -243,7 +243,8 @@ impl SumResume {
         let number = match item {
             JsValue::Int(value) => f64::from(value),
             JsValue::Float(value) => value,
-            _ => {
+            other => {
+                runtime.release_jsvalue(other)?;
                 return Ok({
                     let __pending_field_iterator = self
                         .0

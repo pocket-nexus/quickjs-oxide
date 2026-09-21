@@ -146,6 +146,7 @@ impl DescriptorResume {
             Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 if state.field >= 4 {
+                    drop(runtime.root_and_release_jsvalue(value)?);
                     return invalid(
                         runtime,
                         state.realm,

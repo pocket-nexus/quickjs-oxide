@@ -307,6 +307,9 @@ impl FromSyncResume {
                             )?
                         }
                         GeneratorResumeKind::Throw => {
+                            for argument in std::mem::take(&mut state.arguments) {
+                                runtime.release_jsvalue(argument)?;
+                            }
                             let __pending_field_iterator = state.iterator;
                             let __pending_field_completion = Completion::Return(JsValue::Undefined);
                             let __pending_field_resume =
@@ -332,6 +335,9 @@ impl FromSyncResume {
                     match runtime.async_from_sync_callable(realm, value, "not a function")? {
                         NativeConversion::Value(callable) => callable,
                         NativeConversion::Throw(reason) => {
+                            for argument in std::mem::take(&mut state.arguments) {
+                                runtime.release_jsvalue(argument)?;
+                            }
                             return self.settle(
                                 runtime,
                                 state.capability,

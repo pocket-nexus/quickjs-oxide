@@ -55,8 +55,42 @@ struct Search {
     limit: Option<usize>,
     depth: usize,
     guard: ProxyMethodStackGuard,
-    new_target: ConstructNewTarget,
+    new_target: NewTargetOwner,
     arguments: Vec<Value>,
+}
+
+/// Owns the pending `newTarget` across Proxy construct dispatch.
+///
+/// `ConstructNewTarget::Raw` carries no `Drop`, so the raw form must be
+/// released on every abandonment path (overflow, revocation, trap setup
+/// failures, or allocation errors).
+struct NewTargetOwner {
+    runtime: Runtime,
+    target: Option<ConstructNewTarget>,
+}
+impl NewTargetOwner {
+    fn new(runtime: &Runtime, target: ConstructNewTarget) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            target: Some(target),
+        }
+    }
+    fn value(&self) -> JsValue {
+        self.target
+            .as_ref()
+            .expect("proxy construct new target")
+            .value()
+    }
+    fn take(&mut self) -> ConstructNewTarget {
+        self.target.take().expect("proxy construct new target")
+    }
+}
+impl Drop for NewTargetOwner {
+    fn drop(&mut self) {
+        if let Some(target) = self.target.take() {
+            let _ = target.release(&self.runtime);
+        }
+    }
 }
 fn overflow(runtime: &Runtime, realm: ContextId) -> Result<ProxyConstructStep, RuntimeError> {
     Ok(ProxyConstructStep::Complete(Completion::Throw(
@@ -71,6 +105,7 @@ impl ProxyConstructStep {
         new_target: ConstructNewTarget,
         arguments: Vec<Value>,
     ) -> Result<Self, RuntimeError> {
+        let new_target = NewTargetOwner::new(runtime, new_target);
         if runtime.proxy_method_stack_would_overflow() {
             return overflow(runtime, realm);
         }
@@ -168,7 +203,7 @@ impl ProxyConstructResume {
             }
             return Ok(ProxyConstructStep::request_construct(
                 target,
-                search.new_target,
+                search.new_target.take(),
                 search
                     .arguments
                     .into_iter()

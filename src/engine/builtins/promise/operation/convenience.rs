@@ -62,7 +62,14 @@ pub(super) fn ready(
     arguments: NativeArguments,
     capability: RootedPromiseCapability,
 ) -> Result<PromiseStep, RuntimeError> {
+    let NativeArguments {
+        actual_arg_count,
+        readable,
+    } = arguments;
     if kind == PromiseNativeKind::WithResolvers {
+        for value in readable {
+            runtime.release_jsvalue(value)?;
+        }
         let RootedPromiseCapability {
             promise,
             resolve,
@@ -95,10 +102,18 @@ pub(super) fn ready(
             runtime.into_jsvalue(Value::Object(result))?,
         )));
     }
-    let callback = arguments.readable.first().ok_or(RuntimeError::Invariant(
+    let callback = readable.first().ok_or(RuntimeError::Invariant(
         "Promise.try callback argv was not padded",
     ))?;
-    match runtime.promise_callable(realm, callback)? {
+    let outcome = runtime.promise_callable(realm, callback)?;
+    let call_arguments = readable[1..actual_arg_count.max(1)]
+        .iter()
+        .map(|value| runtime.dup_jsvalue(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    for value in readable {
+        runtime.release_jsvalue(value)?;
+    }
+    match outcome {
         NativeConversion::Throw(reason) => settle(
             runtime,
             realm,
@@ -108,11 +123,7 @@ pub(super) fn ready(
         NativeConversion::Value(callable) => Ok({
             let __pending_field_callable = callable;
             let __pending_field_receiver = JsValue::Undefined;
-            let __pending_field_arguments = arguments.readable
-                [1..arguments.actual_arg_count.max(1)]
-                .iter()
-                .map(|value| runtime.dup_jsvalue(value))
-                .collect::<Result<Vec<_>, _>>()?;
+            let __pending_field_arguments = call_arguments;
             let __pending_field_resume = Box::new(PromiseResume {
                 pending_effect: super::PromiseStepPending::default(),
                 realm,

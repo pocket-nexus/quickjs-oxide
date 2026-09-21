@@ -209,6 +209,7 @@ impl ProxyBooleanResume {
             ),
             Phase::Trap { rooted, kind } => {
                 let result = runtime.value_to_boolean_jsvalue(&value)?;
+                runtime.release_jsvalue(value)?;
                 match kind {
                     ProxyBooleanKind::Has(_) if result => {
                         Ok(ProxyBooleanStep::Complete(NativeConversion::Value(true)))

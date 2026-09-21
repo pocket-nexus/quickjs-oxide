@@ -297,14 +297,24 @@ impl NumericResume {
                     );
                 }
                 let converted = to_numeric_primitive(runtime, &value);
-                super::release_primitive_operand(runtime, value)?;
+                if let Err(error) = super::release_primitive_operand(runtime, value) {
+                    super::release_primitive_operand(runtime, right)?;
+                    return Err(error);
+                }
+                let converted = match converted {
+                    Ok(converted) => converted,
+                    Err(error) => {
+                        super::release_primitive_operand(runtime, right)?;
+                        return Err(error);
+                    }
+                };
                 primitive(
                     runtime,
                     right,
                     hint,
                     NumericResume(Box::new(NumericResumeState {
                         kind,
-                        phase: Phase::RightNumeric(converted?),
+                        phase: Phase::RightNumeric(converted),
                         runtime: runtime.clone(),
                     })),
                 )
@@ -340,7 +350,7 @@ impl NumericResume {
             return Err(Error::internal("HTMLDDA reply lost equality owner"));
         };
         if value {
-            Ok(equal_result(self.0.kind, true))
+            equality_complete(runtime, self.0.kind, left, right, true)
         } else {
             equality(runtime, self.0.kind, left, right, true)
         }
@@ -367,24 +377,39 @@ fn unary_output(
             }));
         }
         let result = match &value {
-            JsValue::BigInt(id) => super::allocate_bigint_jsvalue(
-                runtime,
-                bigint_payload(runtime, *id)?.neg().map_err(bigint_error)?,
-            ),
-            other => Ok(jsvalue_number(-to_number_jsvalue(runtime, other)?)),
+            JsValue::BigInt(id) => bigint_payload(runtime, *id)
+                .and_then(|payload| payload.neg().map_err(bigint_error))
+                .and_then(|payload| super::allocate_bigint_jsvalue(runtime, payload)),
+            other => to_number_jsvalue(runtime, other).map(|number| jsvalue_number(-number)),
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                super::release_primitive_operand(runtime, value)?;
+                return Err(error);
+            }
         };
         super::release_primitive_operand(runtime, value)?;
-        return result.map(NumericOutput::value);
+        return Ok(NumericOutput::value(result));
     }
     if kind == NumericKind::BitNot {
-        let result = match to_numeric_primitive(runtime, &value)? {
-            NumericValue::BigInt(value) => {
-                super::allocate_bigint_jsvalue(runtime, value.bit_not().map_err(bigint_error)?)
+        let result = match to_numeric_primitive(runtime, &value) {
+            Ok(NumericValue::BigInt(payload)) => payload
+                .bit_not()
+                .map_err(bigint_error)
+                .and_then(|payload| super::allocate_bigint_jsvalue(runtime, payload)),
+            Ok(NumericValue::Number(number)) => Ok(JsValue::Int(!number_to_int32(number))),
+            Err(error) => Err(error),
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                super::release_primitive_operand(runtime, value)?;
+                return Err(error);
             }
-            NumericValue::Number(value) => Ok(JsValue::Int(!number_to_int32(value))),
         };
         super::release_primitive_operand(runtime, value)?;
-        return result.map(NumericOutput::value);
+        return Ok(NumericOutput::value(result));
     }
     let increment = matches!(kind, NumericKind::Inc | NumericKind::PostInc);
     let postfix = matches!(kind, NumericKind::PostInc | NumericKind::PostDec);
@@ -396,14 +421,23 @@ fn unary_output(
     }
     match value {
         JsValue::BigInt(id) => {
-            let payload = bigint_payload(runtime, id)?;
-            let next = if increment {
-                payload.add(&crate::engine::value::bigint::JsBigInt::from(1_i32))
-            } else {
-                payload.update_decrement()
-            }
-            .map_err(bigint_error)?;
-            let next = super::allocate_bigint_jsvalue(runtime, next)?;
+            let result = bigint_payload(runtime, id)
+                .and_then(|payload| {
+                    if increment {
+                        payload.add(&crate::engine::value::bigint::JsBigInt::from(1_i32))
+                    } else {
+                        payload.update_decrement()
+                    }
+                    .map_err(bigint_error)
+                })
+                .and_then(|payload| super::allocate_bigint_jsvalue(runtime, payload));
+            let next = match result {
+                Ok(next) => next,
+                Err(error) => {
+                    super::release_primitive_operand(runtime, JsValue::BigInt(id))?;
+                    return Err(error);
+                }
+            };
             let old = JsValue::BigInt(id);
             let previous = if postfix {
                 Some(old)
@@ -417,7 +451,13 @@ fn unary_output(
             })
         }
         value => {
-            let old = to_number_jsvalue(runtime, &value)?;
+            let old = match to_number_jsvalue(runtime, &value) {
+                Ok(old) => old,
+                Err(error) => {
+                    super::release_primitive_operand(runtime, value)?;
+                    return Err(error);
+                }
+            };
             super::release_primitive_operand(runtime, value)?;
             Ok(NumericOutput {
                 value: jsvalue_number(if increment { old + 1.0 } else { old - 1.0 }),
@@ -541,6 +581,28 @@ fn compare(
 fn equal_result(kind: NumericKind, equal: bool) -> NumericStep {
     complete(JsValue::Bool(equal != (kind == NumericKind::Neq)))
 }
+fn equality_complete(
+    runtime: &Runtime,
+    kind: NumericKind,
+    left: JsValue,
+    right: JsValue,
+    equal: bool,
+) -> Result<NumericStep, Error> {
+    let left = super::release_primitive_operand(runtime, left);
+    let right = super::release_primitive_operand(runtime, right);
+    left?;
+    right?;
+    Ok(equal_result(kind, equal))
+}
+fn equality_error(runtime: &Runtime, left: JsValue, right: JsValue, error: Error) -> Error {
+    if let Err(release) = super::release_primitive_operand(runtime, left) {
+        return release;
+    }
+    if let Err(release) = super::release_primitive_operand(runtime, right) {
+        return release;
+    }
+    error
+}
 fn equality(
     runtime: &Runtime,
     kind: NumericKind,
@@ -549,18 +611,33 @@ fn equality(
     mut checked_dda: bool,
 ) -> Result<NumericStep, Error> {
     loop {
-        if runtime
-            .strict_equal_jsvalue(&left, &right)
-            .map_err(|error| Error::internal(error.to_string()))?
-        {
-            return Ok(equal_result(kind, true));
+        match runtime.strict_equal_jsvalue(&left, &right) {
+            Ok(true) => return equality_complete(runtime, kind, left, right, true),
+            Ok(false) => {}
+            Err(error) => {
+                return Err(equality_error(
+                    runtime,
+                    left,
+                    right,
+                    Error::internal(error.to_string()),
+                ));
+            }
         }
         if !checked_dda {
             if matches!(right, JsValue::Null | JsValue::Undefined) {
+                let value = match runtime.dup_jsvalue(&left) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return Err(equality_error(
+                            runtime,
+                            left,
+                            right,
+                            Error::internal(error.to_string()),
+                        ));
+                    }
+                };
                 return Ok(NumericStep::HtmlDda {
-                    value: runtime
-                        .dup_jsvalue(&left)
-                        .map_err(|error| Error::internal(error.to_string()))?,
+                    value,
                     resume: NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityDda(left, right),
@@ -569,10 +646,19 @@ fn equality(
                 });
             }
             if matches!(left, JsValue::Null | JsValue::Undefined) {
+                let value = match runtime.dup_jsvalue(&right) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        return Err(equality_error(
+                            runtime,
+                            left,
+                            right,
+                            Error::internal(error.to_string()),
+                        ));
+                    }
+                };
                 return Ok(NumericStep::HtmlDda {
-                    value: runtime
-                        .dup_jsvalue(&right)
-                        .map_err(|error| Error::internal(error.to_string()))?,
+                    value,
                     resume: NumericResume(Box::new(NumericResumeState {
                         kind,
                         phase: Phase::EqualityDda(left, right),
@@ -584,60 +670,90 @@ fn equality(
         checked_dda = false;
         match (&left, &right) {
             (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null) => {
-                return Ok(equal_result(kind, true));
+                return equality_complete(runtime, kind, left, right, true);
             }
             (JsValue::Int(_) | JsValue::Float(_), JsValue::String(_)) => {
-                let number = to_number_jsvalue(runtime, &right)?;
+                let number = match to_number_jsvalue(runtime, &right) {
+                    Ok(number) => number,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
                 let old = std::mem::replace(&mut right, jsvalue_number(number));
-                runtime
-                    .release_jsvalue(old)
-                    .map_err(|error| Error::internal(error.to_string()))?;
+                if let Err(error) = runtime.release_jsvalue(old) {
+                    return Err(equality_error(
+                        runtime,
+                        left,
+                        right,
+                        Error::internal(error.to_string()),
+                    ));
+                }
             }
             (JsValue::String(_), JsValue::Int(_) | JsValue::Float(_)) => {
-                let number = to_number_jsvalue(runtime, &left)?;
+                let number = match to_number_jsvalue(runtime, &left) {
+                    Ok(number) => number,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
                 let old = std::mem::replace(&mut left, jsvalue_number(number));
-                runtime
-                    .release_jsvalue(old)
-                    .map_err(|error| Error::internal(error.to_string()))?;
+                if let Err(error) = runtime.release_jsvalue(old) {
+                    return Err(equality_error(
+                        runtime,
+                        left,
+                        right,
+                        Error::internal(error.to_string()),
+                    ));
+                }
             }
             (JsValue::BigInt(a), JsValue::String(b)) => {
-                let a = bigint_payload(runtime, *a)?;
-                let b = string_payload(runtime, *b)?;
-                return Ok(equal_result(
-                    kind,
-                    string_to_bigint(&b).is_some_and(|b| b == a),
-                ));
+                let payloads = bigint_payload(runtime, *a)
+                    .and_then(|a| string_payload(runtime, *b).map(|b| (a, b)));
+                let (a, b) = match payloads {
+                    Ok(payloads) => payloads,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
+                let equal = string_to_bigint(&b).is_some_and(|b| b == a);
+                return equality_complete(runtime, kind, left, right, equal);
             }
             (JsValue::String(a), JsValue::BigInt(b)) => {
-                let a = string_payload(runtime, *a)?;
-                let b = bigint_payload(runtime, *b)?;
-                return Ok(equal_result(
-                    kind,
-                    string_to_bigint(&a).is_some_and(|a| a == b),
-                ));
+                let payloads = string_payload(runtime, *a)
+                    .and_then(|a| bigint_payload(runtime, *b).map(|b| (a, b)));
+                let (a, b) = match payloads {
+                    Ok(payloads) => payloads,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
+                let equal = string_to_bigint(&a).is_some_and(|a| a == b);
+                return equality_complete(runtime, kind, left, right, equal);
             }
             (JsValue::BigInt(a), JsValue::Int(_) | JsValue::Float(_)) => {
-                let a = bigint_payload(runtime, *a)?;
-                return Ok(equal_result(
-                    kind,
-                    compare_bigint_number(&a, to_number_jsvalue(runtime, &right)?)
-                        == Some(std::cmp::Ordering::Equal),
-                ));
+                let converted = bigint_payload(runtime, *a)
+                    .and_then(|a| to_number_jsvalue(runtime, &right).map(|number| (a, number)));
+                let (a, number) = match converted {
+                    Ok(converted) => converted,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
+                let equal = compare_bigint_number(&a, number) == Some(std::cmp::Ordering::Equal);
+                return equality_complete(runtime, kind, left, right, equal);
             }
             (JsValue::Int(_) | JsValue::Float(_), JsValue::BigInt(b)) => {
-                let b = bigint_payload(runtime, *b)?;
-                return Ok(equal_result(
-                    kind,
-                    compare_bigint_number(&b, to_number_jsvalue(runtime, &left)?)
-                        == Some(std::cmp::Ordering::Equal),
-                ));
+                let converted = bigint_payload(runtime, *b)
+                    .and_then(|b| to_number_jsvalue(runtime, &left).map(|number| (b, number)));
+                let (b, number) = match converted {
+                    Ok(converted) => converted,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
+                let equal = compare_bigint_number(&b, number) == Some(std::cmp::Ordering::Equal);
+                return equality_complete(runtime, kind, left, right, equal);
             }
             (JsValue::Bool(_), _) => {
-                let number = to_number_jsvalue(runtime, &left)?;
+                let number = match to_number_jsvalue(runtime, &left) {
+                    Ok(number) => number,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
                 left = jsvalue_number(number);
             }
             (_, JsValue::Bool(_)) => {
-                let number = to_number_jsvalue(runtime, &right)?;
+                let number = match to_number_jsvalue(runtime, &right) {
+                    Ok(number) => number,
+                    Err(error) => return Err(equality_error(runtime, left, right, error)),
+                };
                 right = jsvalue_number(number);
             }
             (
@@ -678,7 +794,7 @@ fn equality(
                     })),
                 );
             }
-            _ => return Ok(equal_result(kind, false)),
+            _ => return equality_complete(runtime, kind, left, right, false),
         }
     }
 }

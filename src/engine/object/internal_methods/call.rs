@@ -138,6 +138,7 @@ impl ProxyCallResume {
         };
         // Pinned callability validation occurs after the observable trap Get.
         if !rooted.data.is_callable {
+            runtime.release_jsvalue(method)?;
             return Ok(ProxyCallStep::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
                     search.realm,

@@ -67,11 +67,21 @@ impl std::ops::DerefMut for ScalarTextResume {
 }
 const _: () = assert!(std::mem::size_of::<ScalarTextResume>() <= 8);
 pub(crate) struct ScalarTextResumeState {
+    runtime: Runtime,
     realm: ContextId,
     kind: ScalarTextKind,
     phase: Phase,
     string: JsString,
     arguments: std::vec::IntoIter<JsValue>,
+}
+impl Drop for ScalarTextResumeState {
+    /// Release argument edges still owned when conversion abandons the call.
+    /// Consumption drains the iterator; releases are defer-safe and nothrow.
+    fn drop(&mut self) {
+        while let Some(value) = self.arguments.next() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ScalarTextStep {
     pub(crate) fn start(
@@ -115,6 +125,7 @@ impl ScalarTextStep {
         Ok(Self::String {
             value: this_value,
             resume: ScalarTextResume(Box::new(ScalarTextResumeState {
+                runtime: runtime.clone(),
                 realm,
                 kind,
                 phase: Phase::Source,
@@ -163,7 +174,10 @@ impl ScalarTextResume {
             ScalarTextKind::Iterator => Ok(ScalarTextStep::Complete(Completion::Return(
                 JsValue::Object(
                     runtime
-                        .new_string_iterator(self.0.realm, self.0.string)?
+                        .new_string_iterator(
+                            self.0.realm,
+                            std::mem::replace(&mut self.0.string, JsString::from_static("")),
+                        )?
                         .into_handle(),
                 ),
             ))),
@@ -181,8 +195,9 @@ impl ScalarTextResume {
         loop {
             match self.0.arguments.next() {
                 None => {
+                    let string = std::mem::replace(&mut self.0.string, JsString::from_static(""));
                     return Ok(ScalarTextStep::Complete(Completion::Return(
-                        runtime.unroot_value(&Value::String(self.0.string))?,
+                        runtime.unroot_value(&Value::String(string))?,
                     )));
                 }
                 Some(JsValue::String(id)) => {

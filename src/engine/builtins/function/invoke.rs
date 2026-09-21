@@ -248,14 +248,29 @@ impl InvokeStep {
         })
     }
 }
+impl ForwardTarget {
+    /// Release a raw new-target edge still owned by a failing construct
+    /// forward.  `ConstructNewTarget::Raw` carries no `Drop`, so every
+    /// abandonment path must release it explicitly.
+    fn release_pending_new_target(&mut self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        let ForwardTarget::Construct { new_target, .. } = self else {
+            return Ok(());
+        };
+        if let Some(ConstructNewTarget::Raw(value)) = new_target.take() {
+            runtime.release_jsvalue(value)?;
+        }
+        Ok(())
+    }
+}
 impl InvokeResume {
     pub(crate) fn arguments(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<Vec<Value>>,
     ) -> Result<InvokeStep, RuntimeError> {
         let arguments = match result {
             NativeConversion::Throw(value) => {
+                self.0.target.release_pending_new_target(runtime)?;
                 return Ok(InvokeStep::Complete(Completion::Throw(
                     runtime.into_jsvalue(value)?,
                 )));
@@ -281,6 +296,9 @@ impl InvokeResume {
                 let target = match runtime.constructor_from_value(self.0.realm, target)? {
                     NativeConversion::Value(target) => target,
                     NativeConversion::Throw(value) => {
+                        if let Some(ConstructNewTarget::Raw(new_target)) = new_target {
+                            runtime.release_jsvalue(new_target)?;
+                        }
                         return Ok(InvokeStep::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
                         )));
