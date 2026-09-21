@@ -25,26 +25,17 @@ impl Runtime {
     pub(crate) fn set_pending_exception(&self, value: Value) -> Result<(), RuntimeError> {
         let _operation = self.operation();
         self.validate_value_domain(&value, "exception value")?;
-        let raw = self.raw_property_value(&value)?;
+        let converted = self.raw_property_value(&value)?;
+        let raw = converted.raw();
         // The conversion carries one producer-owned string/BigInt node edge;
         // the pending-exception root retains its own occurrence below, so the
-        // producer edge is released on every exit.
-        let conversion_edge = raw.conversion_node_edge();
+        // guard balances the producer edge on every exit.
         {
             let mut state = self.0.state.borrow_mut();
-            if let Err(error) = state.retain_raw_root(&raw) {
-                drop(state);
-                if let Some(edge) = conversion_edge {
-                    self.release_converted_node_edge(edge);
-                }
-                return Err(error);
-            }
+            state.retain_raw_root(&raw)?;
             if let Some(previous) = state.pending_exception.replace(raw) {
                 state.release_owned_raw_root(previous)?;
             }
-        }
-        if let Some(edge) = conversion_edge {
-            self.release_converted_node_edge(edge);
         }
         // `raw` now owns its own retained occurrence.
         drop(value);

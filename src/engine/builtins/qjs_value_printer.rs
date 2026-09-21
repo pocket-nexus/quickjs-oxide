@@ -142,11 +142,10 @@ impl Runtime {
             message_atom: message.atom(),
             stack_atom: stack.atom(),
         };
-        let raw = self.raw_property_value(value)?;
-        let printed = printer.print_raw_value(&raw);
-        // Diagnostic rendering never stores the converted value, so release
-        // the conversion's producer string/BigInt edge immediately.
-        self.release_converted_value_edge(&raw);
+        let converted = self.raw_property_value(value)?;
+        let printed = printer.print_raw_value(&converted.raw());
+        // Diagnostic rendering never stores the converted value; the guard
+        // releases the producer string/BigInt edge when it leaves scope.
         printed?;
         Ok(())
     }
@@ -487,8 +486,8 @@ impl QjsValuePrinter<'_, '_> {
                     match value {
                         Value::BigInt(value) => self.push_ascii(&value.to_string()),
                         _ => {
-                            let raw = self.runtime.raw_property_value(value)?;
-                            self.print_raw_value(&raw)?;
+                            let converted = self.runtime.raw_property_value(value)?;
+                            self.print_raw_value(&converted.raw())?;
                         }
                     }
                 }

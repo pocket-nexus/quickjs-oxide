@@ -53,10 +53,10 @@ impl Runtime {
         let _operation = self.operation();
         self.validate_private_receiver(receiver, name)?;
         self.validate_value_domain(&value, "private field value")?;
-        let raw = self.raw_property_value(&value)?;
-        // Clone duplicates only the handle; the probe keeps the producer edge
+        let converted = self.raw_property_value(&value)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the producer edge
         // accountable through every store-or-decline path below.
-        let conversion_probe = raw.clone();
         let object_id = receiver.object_id();
 
         let duplicate = {
@@ -71,13 +71,11 @@ impl Runtime {
                 Ok(duplicate) => duplicate,
                 Err(error) => {
                     drop(state);
-                    self.release_converted_value_edge(&conversion_probe);
                     return Err(error.into());
                 }
             }
         };
         if duplicate {
-            self.release_converted_value_edge(&conversion_probe);
             return Err(RuntimeError::Engine(self.private_field_error(
                 name,
                 "private class field '",
@@ -100,7 +98,6 @@ impl Runtime {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
                     drop(state);
-                    self.release_converted_value_edge(&conversion_probe);
                     return Err(error.into());
                 }
             };
@@ -111,7 +108,6 @@ impl Runtime {
                 .any(|entry| entry.atom == AtomIdx::from_raw(name.atom().raw()))
             {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(RuntimeError::Engine(self.private_field_error(
                     name,
                     "private class field '",
@@ -128,9 +124,8 @@ impl Runtime {
         let layout_result = state.replace_layout(object_id, prototype, &entries, slots);
         drop(state);
         // `replace_layout` retained the heap occurrence on success; a rejected
-        // layout never stored the value. Balance the producer edge either way
+        // layout never stored the value. The guard balances the producer edge
         // before this incoming public root is released.
-        self.release_converted_value_edge(&conversion_probe);
         layout_result?;
         drop(value);
         Ok(())
@@ -189,10 +184,10 @@ impl Runtime {
         let _operation = self.operation();
         self.validate_private_receiver(receiver, name)?;
         self.validate_value_domain(&value, "private field value")?;
-        let raw = self.raw_property_value(&value)?;
-        // Clone duplicates only the handle; the probe keeps the producer edge
+        let converted = self.raw_property_value(&value)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the producer edge
         // accountable through every store-or-decline path below.
-        let conversion_probe = raw.clone();
         let object_id = receiver.object_id();
         let index = {
             let state = self.0.state.borrow();
@@ -200,7 +195,6 @@ impl Runtime {
                 Ok(object) => object,
                 Err(error) => {
                     drop(state);
-                    self.release_converted_value_edge(&conversion_probe);
                     return Err(error.into());
                 }
             };
@@ -208,13 +202,11 @@ impl Runtime {
                 Ok(shape) => shape,
                 Err(error) => {
                     drop(state);
-                    self.release_converted_value_edge(&conversion_probe);
                     return Err(error.into());
                 }
             };
             let Some(index) = shape.find(AtomIdx::from_raw(name.atom().raw())) else {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(RuntimeError::Engine(self.private_field_error(
                     name,
                     "private class field '",
@@ -225,7 +217,6 @@ impl Runtime {
                 .map_err(|_| RuntimeError::Invariant("private field index does not fit usize"))?;
             if !matches!(object.slots.get(index), Some(PropertySlot::Data(_))) {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(RuntimeError::Invariant(
                     "private data field used non-data storage",
                 ));
@@ -237,9 +228,8 @@ impl Runtime {
         let mut state = self.0.state.borrow_mut();
         let replaced = state.replace_property_slot(object_id, index, replacement);
         drop(state);
-        // The slot retained its own copy edge on success; balance the
-        // producer edge either way before releasing the public root.
-        self.release_converted_value_edge(&conversion_probe);
+        // The slot retained its own copy edge on success; the guard balances
+        // the producer edge before releasing the public root.
         replaced?;
         drop(value);
         Ok(())

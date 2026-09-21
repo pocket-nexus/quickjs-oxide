@@ -37,6 +37,7 @@ use crate::engine::compiler::{
     compile_unlinked_module_bytes_with_name_and_attribute_checker,
     compile_unlinked_module_with_name_and_attribute_checker,
 };
+use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::runtime::RuntimeState;
 
@@ -1998,14 +1999,13 @@ impl Runtime {
         default_value: Value,
     ) -> Result<RawModuleRef, RuntimeError> {
         self.validate_value_domain(&default_value, "JSON module value")?;
-        let raw_default_value = self.raw_property_value(&default_value)?;
-        // Clone duplicates only the handle; the probe keeps the producer edge
+        let converted_default_value = self.raw_property_value(&default_value)?;
+        // Clone duplicates only the handle; the guard keeps the producer edge
         // accountable after the record consumes the value.
-        let default_value_probe = raw_default_value.clone();
         let record = ModuleRecord {
             name,
             body: ModuleRecordBody::Json {
-                default_value: raw_default_value,
+                default_value: converted_default_value.raw(),
             },
             import_meta: None,
             has_top_level_await: false,
@@ -2037,9 +2037,8 @@ impl Runtime {
         };
         let published = self.publish_module_record(realm, record);
         // `publish_module_record` retained the record's own node edge on
-        // success; a rejected publication never stores the value. Either way
-        // the boundary conversion's producer edge must be balanced here.
-        self.release_converted_value_edge(&default_value_probe);
+        // success; a rejected publication never stores the value. The guard
+        // balances the boundary conversion's producer edge either way.
         let published = published?;
         drop(default_value);
         Ok(published)
@@ -2704,14 +2703,13 @@ impl Runtime {
                 .heap
                 .allocate_string(JsString::from_static("Module"))?
         };
-        let tag_raw = RawValue::String(tag_string);
+        let converted_tag = ConvertedValue::new(self, RawValue::String(tag_string));
         let stored = self.store_property_slot(
             &namespace,
             &tag,
             PropertyFlags::data(false, false, false),
-            PropertySlot::Data(tag_raw.clone()),
+            PropertySlot::Data(converted_tag.raw()),
         );
-        self.release_converted_value_edge(&tag_raw);
         stored?;
         self.transition_module_record(
             module,
@@ -3540,30 +3538,20 @@ impl Runtime {
         exception: &Value,
     ) -> Result<(), RuntimeError> {
         self.validate_value_domain(exception, "module evaluation exception")?;
-        let raw = self.raw_property_value(exception)?;
-        // Clone duplicates only the handle; the probe keeps the producer edge
+        let converted = self.raw_property_value(exception)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the producer edge
         // accountable after the records and the pending-exception slot consume
         // the value.
-        let conversion_probe = raw.clone();
         let mut evaluating = Vec::with_capacity(active.len());
         for &id in active {
-            let record = match self.module_record(RawModuleRef { cache, module: id }) {
-                Ok(record) => record,
-                Err(error) => {
-                    self.release_converted_value_edge(&conversion_probe);
-                    return Err(error);
-                }
-            };
+            let record = self.module_record(RawModuleRef { cache, module: id })?;
             if matches!(record.evaluation, ModuleEvaluationState::Evaluating) {
                 evaluating.push(id);
             }
         }
         let mut state = self.0.state.borrow_mut();
-        if let Err(error) = state.retain_raw_root(&raw) {
-            drop(state);
-            self.release_converted_value_edge(&conversion_probe);
-            return Err(error);
-        }
+        state.retain_raw_root(&raw)?;
         let retained_atoms = match &raw {
             RawValue::Symbol(atom) => {
                 let count = evaluating.len();
@@ -3587,8 +3575,6 @@ impl Runtime {
                 .release_atom_indices(retained_atoms)
                 .expect("module evaluation error atom rollback failed");
             state.release_owned_raw_root_committed(raw);
-            drop(state);
-            self.release_converted_value_edge(&conversion_probe);
             return Err(error.into());
         }
         // One extra owned occurrence was prepared with the cache batch, so
@@ -3599,8 +3585,7 @@ impl Runtime {
         }
         drop(state);
         // The records and the pending-exception slot retained their own edges;
-        // the boundary conversion's producer edge is no longer needed.
-        self.release_converted_value_edge(&conversion_probe);
+        // the guard balances the boundary conversion's producer edge.
         Ok(())
     }
 

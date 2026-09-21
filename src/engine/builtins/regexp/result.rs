@@ -185,23 +185,19 @@ impl Runtime {
                 shape
             }
         };
-        let slots = named
+        let conversions = named
             .values
             .iter()
             .map(|(_, capture, range)| {
                 self.raw_property_value(if indices { range } else { capture })
-                    .map(PropertySlot::Data)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // The object retains its own copy edges inside the allocation, so the
-        // conversions' producer edges are released on every exit below.
-        let conversion_probes = slots
+        let slots = conversions
             .iter()
-            .filter_map(|slot| match slot {
-                PropertySlot::Data(raw) => Some(raw.clone()),
-                _ => None,
-            })
+            .map(|converted| PropertySlot::Data(converted.raw()))
             .collect::<Vec<_>>();
+        // The object retains its own copy edges inside the allocation, so the
+        // guards balance the conversions' producer edges on every exit below.
         let id = {
             let mut state = self.0.state.borrow_mut();
             let atoms = state.retain_slot_atoms(&slots)?;
@@ -212,17 +208,10 @@ impl Runtime {
                 Ok(id) => id,
                 Err(error) => {
                     state.release_atoms(atoms)?;
-                    drop(state);
-                    for probe in &conversion_probes {
-                        self.release_converted_value_edge(probe);
-                    }
                     return Err(error.into());
                 }
             }
         };
-        for probe in &conversion_probes {
-            self.release_converted_value_edge(probe);
-        }
         Ok(ObjectRef::from_owned_handle(self.clone(), id))
     }
 
@@ -239,14 +228,17 @@ impl Runtime {
             .regexp_realm_data(realm)?
             .result_shapes
             .ok_or(RuntimeError::Invariant("RegExp result layouts missing"))?[layout];
+        let mut conversions = Vec::with_capacity(properties.len());
+        for value in &properties {
+            conversions.push(self.raw_property_value(value)?);
+        }
         let mut slots = Vec::with_capacity(properties.len() + 1);
         slots.push(PropertySlot::Data(crate::engine::heap::RawValue::Int(0)));
-        let mut conversion_probes = Vec::new();
-        for value in &properties {
-            let raw = self.raw_property_value(value)?;
-            conversion_probes.push(raw.clone());
-            slots.push(PropertySlot::Data(raw));
+        for converted in &conversions {
+            slots.push(PropertySlot::Data(converted.raw()));
         }
+        // The object retains its own copy edges inside the allocation, so the
+        // guards balance the conversions' producer edges on every exit below.
         let id = {
             let mut state = self.0.state.borrow_mut();
             let atoms = state.retain_slot_atoms(&slots)?;
@@ -254,17 +246,10 @@ impl Runtime {
                 Ok(id) => id,
                 Err(error) => {
                     state.release_atoms(atoms)?;
-                    drop(state);
-                    for probe in &conversion_probes {
-                        self.release_converted_value_edge(probe);
-                    }
                     return Err(error.into());
                 }
             }
         };
-        for probe in &conversion_probes {
-            self.release_converted_value_edge(probe);
-        }
         let result = ObjectRef::from_owned_handle(self.clone(), id);
         for value in captures {
             self.append_fresh_array_value(&result, value)?;

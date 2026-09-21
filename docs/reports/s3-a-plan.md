@@ -367,6 +367,22 @@ current-source receipt，不改 `current.conf`）→
 （`check-source-layout.py` 加对应源级规则）；全量测试全绿；评审先看「守卫
 未逃逸、take 只取一次」。
 
+### 7.2 实现记录（2026-09-21）
+
+- 守卫类型 `ConvertedValue<'a>` 落在 `heap/ownership.rs`：持有 `&Runtime`
+  与 `Option<RawValue>`；`raw()` 克隆句柄、`take()` 移交值与边、`disarm()`
+  在 by-value 拥有者接管后停止跟踪；`Drop` 经
+  `release_converted_value_edge` 释放生产者边。
+- `Runtime::raw_property_value` 返回 `Result<ConvertedValue<'_>, ...>`；
+  22 个文件、41 处调用点全部改为守卫式，删除手写 release 与
+  `release_constant_edges` 辅助（净删 217 行）。
+- 顺带修复旧泄漏：Promise capability capture、iterator helper 与
+  `allocate_string` 失败路径原先未释放生产者边。
+- 源级规则：`check-source-layout.py` 新增「调用 `raw_property_value` 的
+  文件不得出现手写 `release_converted_{value,node}_edge`」。
+- 验证：默认 lib 2270 通过、`test262-host` 2326 通过，clippy `-D warnings`
+  / `cargo fmt --check` / source-layout / rust-only 全绿。
+
 ### 7.3 move 优先签名——把「交接生产者边」从评审规则变成签名规则
 
 **事实**：§1.2 已钉死「move 入库 → 交接生产者边，不产生计数对」，但目前

@@ -485,16 +485,15 @@ impl Runtime {
                 return Err(initializer_error);
             }
         };
-        let raw = self.raw_property_value(&initialized)?;
-        // Clone duplicates only the handle; the probe keeps the
-        // producer edge accountable through every store-or-decline path.
-        let conversion_probe = raw.clone();
+        let converted = self.raw_property_value(&initialized)?;
+        // Clone duplicates only the handle; the guard keeps the producer
+        // edge accountable through every store-or-decline path.
         let mut state = self.0.state.borrow_mut();
-        let replaced = state.replace_property_slot(object_id, slot_index, PropertySlot::Data(raw));
+        let replaced =
+            state.replace_property_slot(object_id, slot_index, PropertySlot::Data(converted.raw()));
         drop(state);
         // The slot retained its own copy edge on success; a rejected
-        // replacement kept nothing. Balance the producer edge either way.
-        self.release_converted_value_edge(&conversion_probe);
+        // replacement kept nothing. The guard balances the producer edge.
         replaced?;
         drop(initialized);
         Ok(())
@@ -847,30 +846,22 @@ impl Runtime {
         object: &ObjectRef,
         value: &Value,
     ) -> Result<(), RuntimeError> {
-        let raw = self.raw_property_value(value)?;
-        // Clone duplicates only the handle; the probe keeps the
+        let converted = self.raw_property_value(value)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the
         // producer edge accountable through every store-or-decline path.
-        let conversion_probe = raw.clone();
         let mut state = self.0.state.borrow_mut();
         let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
             Ok(atoms) => atoms,
             Err(error) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error);
             }
         };
         let appended = state.heap.append_array_dense_value(object.object_id(), raw);
         match appended {
-            Ok(()) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(error) => {
                 let released = state.release_atoms(retained_atoms);
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 released?;
                 Err(error.into())
             }
@@ -883,16 +874,14 @@ impl Runtime {
         index: u32,
         value: &Value,
     ) -> Result<(), RuntimeError> {
-        let raw = self.raw_property_value(value)?;
-        // Clone duplicates only the handle; the probe keeps the
+        let converted = self.raw_property_value(value)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the
         // producer edge accountable through every store-or-decline path.
-        let conversion_probe = raw.clone();
         let mut state = self.0.state.borrow_mut();
         let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
             Ok(atoms) => atoms,
             Err(error) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error);
             }
         };
@@ -900,16 +889,9 @@ impl Runtime {
             .heap
             .replace_array_dense_value(object.object_id(), index, raw);
         match replaced {
-            Ok(cleanup) => {
-                let applied = state.apply_cleanup(cleanup);
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-                applied
-            }
+            Ok(cleanup) => state.apply_cleanup(cleanup),
             Err(error) => {
                 let released = state.release_atoms(retained_atoms);
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 released?;
                 Err(error.into())
             }

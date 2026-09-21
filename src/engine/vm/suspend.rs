@@ -11,6 +11,7 @@ use crate::engine::code::function::metadata::{
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::code::runtime::PublishedFunctionData;
+use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::{
     ContextId, GeneratorActivationData, GeneratorFrameBinding, GeneratorVmActivation, RawValue,
@@ -220,11 +221,11 @@ impl EncodedVmActivation {
             .chain(vm.normalized_this.iter())
             .chain(std::iter::once(&vm.new_target))
         {
-            runtime.release_converted_value_edge(value);
+            drop(ConvertedValue::new(runtime, value.clone()));
         }
         for binding in self.data.arguments.iter().chain(self.data.locals.iter()) {
             if let GeneratorFrameBinding::Direct(value) = binding {
-                runtime.release_converted_value_edge(value);
+                drop(ConvertedValue::new(runtime, value.clone()));
             }
         }
     }
@@ -401,6 +402,13 @@ pub(super) fn freeze_entry(
         .iter()
         .map(|binding| encode_generator_frame_binding(runtime, binding))
         .collect::<Result<Vec<_>, _>>()?;
+    let normalized_this = match entry.cold.normalized_this.as_ref() {
+        Some(value) => {
+            let mut converted = runtime.raw_property_value(value)?;
+            Some(converted.take())
+        }
+        None => None,
+    };
     let vm = GeneratorVmActivation {
         stack: storage
             .operands
@@ -412,12 +420,7 @@ pub(super) fn freeze_entry(
         callee_realm: entry.executable.realm,
         current_function: entry.cold.function.object_id(),
         this_value: input.this_value.as_raw(),
-        normalized_this: entry
-            .cold
-            .normalized_this
-            .as_ref()
-            .map(|value| runtime.raw_property_value(value))
-            .transpose()?,
+        normalized_this,
         new_target: input.new_target.as_raw(),
         strict: entry.executable.frame_layout().is_strict(),
         callee_global: global.object_id(),

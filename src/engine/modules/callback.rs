@@ -4,6 +4,7 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::builtins::native::{
     DynamicImportHandlerKind, ModuleEvaluationKind, NativeFunctionId,
 };
+use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::{
     ContextId, InternalCallableData, ModuleId, RawModuleRef, RawModuleTransition, RawValue,
 };
@@ -53,11 +54,11 @@ enum Mode {
     DynamicSettled,
 }
 
-/// Balance the boundary conversion's producer edge exactly once. `None` after
-/// the first call marks the edge as already transferred or released.
+/// Balance the pending request's producer edge exactly once. `None` after the
+/// first call marks the edge as already transferred or released.
 fn release_conversion_probe(runtime: &Runtime, probe: &mut Option<RawValue>) {
     if let Some(probe) = probe.take() {
-        runtime.release_converted_value_edge(&probe);
+        drop(ConvertedValue::new(runtime, probe));
     }
 }
 pub(crate) struct CallbackResume {
@@ -245,18 +246,12 @@ impl CallbackStep {
         reason: Value,
     ) -> Result<Self, RuntimeError> {
         runtime.validate_value_domain(&reason, "async module rejection")?;
-        let raw = runtime.raw_property_value(&reason)?;
-        // Clone duplicates only the handle; the probe keeps the producer edge
-        // accountable until the first error record stores the value.
-        let raw_probe = raw.clone();
-        let root = match runtime.root_module(module) {
-            Ok(root) => root,
-            Err(error) => {
-                runtime.release_converted_value_edge(&raw_probe);
-                return Err(error);
-            }
-        };
-        Box::new(CallbackResume {
+        let mut converted = runtime.raw_property_value(&reason)?;
+        // Clone duplicates only the handle; the pending request adopts the
+        // producer edge and `advance` balances it on every exit.
+        let raw = converted.raw();
+        let root = runtime.root_module(module)?;
+        let resume = Box::new(CallbackResume {
             runtime: runtime.clone(),
             realm,
             root,
@@ -266,8 +261,9 @@ impl CallbackStep {
                 pending: vec![module.module],
                 parents: Vec::new(),
             },
-        })
-        .advance()
+        });
+        converted.disarm();
+        resume.advance()
     }
     pub(super) fn finish(
         self,

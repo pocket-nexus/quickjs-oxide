@@ -16,6 +16,7 @@ use crate::engine::code::function::{
     UnlinkedConstant, UnlinkedFunction, UnlinkedFunctionDebug, UnlinkedVariableDefinition,
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
+use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::{
     BytecodeConstant, ContextId, FunctionBytecodeData, FunctionDebugInfo, PublishedPrivateBindings,
     RawValue,
@@ -68,6 +69,7 @@ impl Runtime {
 
         for function in flat_functions {
             let mut linked_constants = Vec::with_capacity(function.constants.len());
+            let mut converted_constants = Vec::new();
             let mut atom_string_constants = Vec::new();
             let mut children = Vec::new();
             let mut materialized_constant_roots = Vec::new();
@@ -75,13 +77,24 @@ impl Runtime {
                 for constant in function.constants {
                     match constant {
                         FlatConstant::Value(value) => {
-                            let raw = self.raw_property_value(&value)?;
-                            linked_constants.push(BytecodeConstant::Value(raw));
+                            converted_constants.push(self.raw_property_value(&value)?);
+                            linked_constants.push(BytecodeConstant::Value(
+                                converted_constants
+                                    .last()
+                                    .expect("converted constant present")
+                                    .raw(),
+                            ));
                         }
                         FlatConstant::AtomString(value) => {
                             atom_string_constants.push(linked_constants.len());
-                            let raw = self.raw_property_value(&Value::String(value))?;
-                            linked_constants.push(BytecodeConstant::Value(raw));
+                            converted_constants
+                                .push(self.raw_property_value(&Value::String(value))?);
+                            linked_constants.push(BytecodeConstant::Value(
+                                converted_constants
+                                    .last()
+                                    .expect("converted constant present")
+                                    .raw(),
+                            ));
                         }
                         FlatConstant::RegExp { pattern, program } => {
                             linked_constants.push(BytecodeConstant::RegExp { pattern, program });
@@ -106,12 +119,10 @@ impl Runtime {
                 }
                 Ok(())
             })();
-            if let Err(error) = constants_linked {
-                // No bytecode node will retain these converted constants, so
-                // drop their caller-owned string/BigInt producer edges now.
-                release_constant_edges(self, &linked_constants);
-                return Err(error);
-            }
+            // No bytecode node will retain these converted constants; the
+            // guards release their caller-owned string/BigInt producer edges
+            // when they leave scope on this early exit.
+            constants_linked?;
 
             let mut closure_variables = function.closure_variables;
             let eval_environments = function.eval_environments;
@@ -151,16 +162,13 @@ impl Runtime {
                         auxiliary_atoms.push(atom);
                         let canonical = state.atoms.to_js_string(atom)?;
                         let canonical = state.heap.allocate_string(canonical)?;
-                        // The replaced draft string is never stored, so its
-                        // producer edge dies here; the bytecode node retains
-                        // its own edge for the canonical constant.
-                        let previous = std::mem::replace(
-                            &mut linked_constants[index],
-                            BytecodeConstant::Value(RawValue::String(canonical)),
-                        );
-                        if let BytecodeConstant::Value(previous) = previous {
-                            self.release_converted_value_edge(&previous);
-                        }
+                        // The replaced draft string's producer edge stays with
+                        // its guard; the canonical node's producer edge is
+                        // tracked until the bytecode node retains its own.
+                        converted_constants
+                            .push(ConvertedValue::new(self, RawValue::String(canonical)));
+                        linked_constants[index] =
+                            BytecodeConstant::Value(RawValue::String(canonical));
                     }
                     property_key_atoms = bytecode_publish::link_constant_property_keys(
                         &mut state,
@@ -246,7 +254,6 @@ impl Runtime {
                     Ok(())
                 })();
                 if let Err(error) = linking {
-                    release_constant_edges(self, &linked_constants);
                     state.release_atoms(auxiliary_atoms.drain(..))?;
                     return Err(error);
                 }
@@ -272,28 +279,14 @@ impl Runtime {
                     debug: linked_debug,
                     auxiliary_atoms: auxiliary_atoms.into_boxed_slice(),
                 };
-                let producer_values = bytecode
-                    .constants
-                    .iter()
-                    .filter_map(|constant| match constant {
-                        BytecodeConstant::Value(raw) => Some(raw.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
                 match state.heap.allocate_function_bytecode(bytecode) {
                     Ok(id) => {
                         // The bytecode node retained its own copy of every
-                        // constant edge; release the caller-owned producer
-                        // edges carried by the boundary conversion.
-                        for raw in &producer_values {
-                            self.release_converted_value_edge(raw);
-                        }
+                        // constant edge; the guards release the caller-owned
+                        // producer edges carried by the boundary conversion.
                         id
                     }
                     Err(error) => {
-                        for raw in &producer_values {
-                            self.release_converted_value_edge(raw);
-                        }
                         state.release_atoms(owned_atoms)?;
                         return Err(error.into());
                     }
@@ -467,17 +460,6 @@ pub(crate) enum FlatConstant {
         raw: Box<[JsString]>,
     },
     Child(usize),
-}
-
-/// Release every caller-owned string/BigInt producer edge carried by
-/// converted value constants. Idempotent for constants without a node edge.
-fn release_constant_edges(runtime: &Runtime, constants: &[BytecodeConstant]) {
-    for raw in constants.iter().filter_map(|constant| match constant {
-        BytecodeConstant::Value(raw) => Some(raw),
-        _ => None,
-    }) {
-        runtime.release_converted_value_edge(raw);
-    }
 }
 
 pub(crate) struct FlatFunction {

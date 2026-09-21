@@ -220,29 +220,18 @@ pub(super) fn resume(
             PromiseStep::request_nested(__pending_field_step, __pending_field_resume)
         }),
         Phase::Resolved { settlement, kind } => {
-            let raw = runtime.raw_property_value(&settlement)?;
+            let converted = runtime.raw_property_value(&settlement)?;
             // The internal callable retains its own copy edge inside the
-            // allocation, so the conversion's producer edge is released on
-            // every exit.
-            let conversion_edge = raw.conversion_node_edge();
-            let thunk = match runtime.new_internal_promise_function(
+            // allocation; the guard balances the producer edge on every exit.
+            let thunk = runtime.new_internal_promise_function(
                 realm,
                 NativeFunctionId::PromiseFinallyThunk(kind),
                 0,
                 0,
-                InternalCallableData::PromiseFinallyThunk { value: raw },
-            ) {
-                Ok(thunk) => thunk,
-                Err(error) => {
-                    if let Some(edge) = conversion_edge {
-                        runtime.release_converted_node_edge(edge);
-                    }
-                    return Err(error);
-                }
-            };
-            if let Some(edge) = conversion_edge {
-                runtime.release_converted_node_edge(edge);
-            }
+                InternalCallableData::PromiseFinallyThunk {
+                    value: converted.raw(),
+                },
+            )?;
             drop(settlement);
             PromiseStep::invoke_then(
                 runtime,

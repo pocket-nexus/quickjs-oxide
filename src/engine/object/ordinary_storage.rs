@@ -401,17 +401,15 @@ impl Runtime {
             Selected::Define => {
                 // The define was validated under the selection borrow; convert
                 // outside it (node allocation needs the borrow) and commit.
-                let raw = self.raw_property_value(value)?;
-                // Clone duplicates only the handle; the probe keeps the
+                let converted = self.raw_property_value(value)?;
+                // Clone duplicates only the handle; the guard keeps the
                 // producer edge accountable through every store-or-decline path.
-                let conversion_probe = raw.clone();
                 let stored = self.store_property_slot(
                     object,
                     key,
                     PropertyFlags::data(true, true, true),
-                    PropertySlot::Data(raw),
+                    PropertySlot::Data(converted.raw()),
                 );
-                self.release_converted_value_edge(&conversion_probe);
                 stored?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
@@ -420,10 +418,10 @@ impl Runtime {
                 SetProbe::Stored(true)
             }
             Selected::DataReplace(slot) => {
-                let raw = self.raw_property_value(value)?;
-                // Clone duplicates only the handle; the probe keeps the
+                let converted = self.raw_property_value(value)?;
+                let raw = converted.raw();
+                // Clone duplicates only the handle; the guard keeps the
                 // producer edge accountable through every store-or-decline path.
-                let conversion_probe = raw.clone();
                 let mut state = self.0.state.borrow_mut();
                 let replaced = replace_data(
                     &mut state,
@@ -432,7 +430,6 @@ impl Runtime {
                     PropertySlot::Data(raw),
                 );
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 replaced?;
                 return Ok(SetProbe::Stored(true));
             }
@@ -670,36 +667,32 @@ impl Runtime {
             return Ok(None);
         }
         // Convert before taking the state borrow: node allocation needs it.
-        let raw = self.raw_property_value(value)?;
-        // Clone duplicates only the handle; the probe keeps the
+        let converted = self.raw_property_value(value)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the
         // producer edge accountable through every store-or-decline path.
-        let conversion_probe = raw.clone();
         let mut state = self.0.state.borrow_mut();
         let id = object.object_id();
         let ordinary = match state.heap.object(id) {
             Ok(data) => is_ordinary(data),
             Err(error) => {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error.into());
             }
         };
         if !ordinary {
             drop(state);
-            self.release_converted_value_edge(&conversion_probe);
             return Ok(None);
         }
         let slot = match locate(&state, id, key.atom()) {
             Ok(slot) => slot,
             Err(error) => {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error);
             }
         };
         let Some(slot) = slot else {
             drop(state);
-            self.release_converted_value_edge(&conversion_probe);
             return Ok(None);
         };
         let old = match state.heap.object(id) {
@@ -707,13 +700,11 @@ impl Runtime {
                 PropertySlot::Data(old) => old,
                 _ => {
                     drop(state);
-                    self.release_converted_value_edge(&conversion_probe);
                     return Ok(None);
                 }
             },
             Err(error) => {
                 drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 return Err(error.into());
             }
         };
@@ -727,14 +718,12 @@ impl Runtime {
             },
         ) {
             drop(state);
-            self.release_converted_value_edge(&conversion_probe);
             return Ok(Some(false));
         }
         let replaced = replace_data(&mut state, id, slot, PropertySlot::Data(raw));
         drop(state);
         // The slot retained its own copy edge on success; a rejected update
-        // kept nothing. Balance the producer edge either way.
-        self.release_converted_value_edge(&conversion_probe);
+        // kept nothing. The guard balances the producer edge either way.
         replaced?;
         Ok(Some(true))
     }

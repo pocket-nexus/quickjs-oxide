@@ -245,26 +245,26 @@ impl Runtime {
         capability: &RootedPromiseCapability,
     ) -> Result<(), RuntimeError> {
         self.validate_value_domain(&result, "AsyncGenerator request")?;
-        let result = self.raw_property_value(&result)?;
+        let converted = self.raw_property_value(&result)?;
+        let raw = converted.raw();
         let request = AsyncGeneratorRequestData {
             completion,
-            result: result.clone(),
+            result: raw.clone(),
             promise: capability.promise.object_id(),
             resolve: capability.resolve.as_object().object_id(),
             reject: capability.reject.as_object().object_id(),
         };
         let mut state = self.0.state.borrow_mut();
-        let retained_atoms = state.retain_raw_value_atoms([&result])?;
+        let retained_atoms = state.retain_raw_value_atoms([&raw])?;
         if let Err(error) = state
             .heap
             .async_generator_enqueue(generator.object_id(), request)
         {
-            self.release_converted_value_edge(&result);
             state.release_atoms(retained_atoms)?;
             return Err(error.into());
         }
-        // The queued request retained its own copy of the value edge.
-        self.release_converted_value_edge(&result);
+        // The queued request retained its own copy of the value edge; the
+        // guard balances the conversion's producer edge.
         Ok(())
     }
 
