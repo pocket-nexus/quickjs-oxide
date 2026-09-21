@@ -1,7 +1,7 @@
 //! Owned ToPrimitive phases. A reply consumes its continuation exactly once.
 use super::*;
 use crate::engine::object::{CallableRef, ObjectRef};
-use crate::engine::value::JsValue;
+use crate::engine::value::{JsValue, Value};
 
 pub(crate) enum PrimitiveStep {
     Get { resume: PrimitiveResume },
