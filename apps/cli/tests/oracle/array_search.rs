@@ -310,12 +310,16 @@ fn array_search_errors_use_the_native_defining_realm() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
-    defining
-        .eval("TypeError.prototype.arraySearchRealm='defining'")
-        .expect("mark defining TypeError prototype");
-    caller
-        .eval("TypeError.prototype.arraySearchRealm='caller'")
-        .expect("mark caller TypeError prototype");
+    drop(
+        defining
+            .eval("TypeError.prototype.arraySearchRealm='defining'")
+            .expect("mark defining TypeError prototype"),
+    );
+    drop(
+        caller
+            .eval("TypeError.prototype.arraySearchRealm='caller'")
+            .expect("mark caller TypeError prototype"),
+    );
     let defining_array_prototype = defining.array_prototype().unwrap();
     let marker_key = runtime.intern_property_key("arraySearchRealm").unwrap();
 

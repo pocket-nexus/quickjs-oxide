@@ -527,7 +527,7 @@ fn with_global_reference_sees_a_const_from_an_earlier_script() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    context.eval(declaration).unwrap();
+    drop(context.eval(declaration).unwrap());
     assert_eq!(
         context.eval(assignment).unwrap(),
         Value::String(JsString::try_from_utf8("TypeError|0").unwrap())
@@ -564,8 +564,8 @@ fn with_global_reference_observes_a_lexical_declared_after_function_publication(
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    context.eval(function).unwrap();
-    context.eval(declaration).unwrap();
+    drop(context.eval(function).unwrap());
+    drop(context.eval(declaration).unwrap());
     assert_eq!(
         context.eval(observation).unwrap(),
         Value::String(JsString::try_from_utf8("TypeError|0").unwrap())

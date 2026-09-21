@@ -585,13 +585,15 @@ fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
             filterSource)"#,
         "caller filter species source",
     );
-    caller
-        .call(
-            &filter,
-            Value::Object(filter_source),
-            &[Value::Object(identity.as_object().clone())],
-        )
-        .expect("cross-realm filter");
+    drop(
+        caller
+            .call(
+                &filter,
+                Value::Object(filter_source),
+                &[Value::Object(identity.as_object().clone())],
+            )
+            .expect("cross-realm filter"),
+    );
     let captured = eval_object(
         &mut caller,
         "capturedFilterValues",

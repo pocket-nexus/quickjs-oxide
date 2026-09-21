@@ -45,7 +45,7 @@ fn dynamic_import_preserves_module_loader_exception_identity() {
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Rejected);
     assert_eq!(
-        runtime.root_raw_value(&snapshot.result).unwrap(),
+        runtime.root_raw_value(snapshot.result.clone()).unwrap(),
         Value::Object(reason)
     );
     assert_eq!(loads.borrow().as_slice(), ["pkg/dependency.js"]);
@@ -72,7 +72,7 @@ fn dynamic_import_attribute_checker_preserves_exception_identity() {
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Rejected);
     assert_eq!(
-        runtime.root_raw_value(&snapshot.result).unwrap(),
+        runtime.root_raw_value(snapshot.result.clone()).unwrap(),
         Value::Object(reason)
     );
     assert!(loads.borrow().is_empty());
@@ -135,7 +135,7 @@ fn dependency_attribute_exception_rolls_back_the_resolution_graph_for_retry() {
     let module = context
         .compile_module_with_filename(source, "pkg/entry.js")
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__dependencyAbruptRetry === 42");
     assert_eq!(
         loads.borrow().as_slice(),

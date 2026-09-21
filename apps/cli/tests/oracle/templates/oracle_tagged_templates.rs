@@ -455,14 +455,16 @@ fn tagged_template_site_identity_survives_gc_in_strip_debug_mode() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
                 function __qjoTaggedGcTag(strings) { return strings; }
                 function __qjoTaggedGcSite() { return __qjoTaggedGcTag`alive`; }
             "#,
-        )
-        .expect("compile StripDebug tagged-template GC fixture");
+            )
+            .expect("compile StripDebug tagged-template GC fixture"),
+    );
 
     let Value::Object(first) = context
         .eval("__qjoTaggedGcSite()")

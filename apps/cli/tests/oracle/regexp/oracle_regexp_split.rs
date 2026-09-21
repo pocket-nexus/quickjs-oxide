@@ -745,9 +745,10 @@ fn mixed_string_and_regexp_split_recursion_guard_is_catchable_and_recovers() {
             let runtime =
                 Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
             let mut context = runtime.new_context();
-            context
-                .eval(
-                    r#"function mixedSplitRecurse(kind,depth){
+            drop(
+                context
+                    .eval(
+                        r#"function mixedSplitRecurse(kind,depth){
                         if(kind===0){
                             var separator=Object();
                             separator[Symbol.split]=function(){
@@ -768,8 +769,9 @@ fn mixed_string_and_regexp_split_recursion_guard_is_catchable_and_recovers() {
                         holder[Symbol.species]=Species;regexp.constructor=holder;regexp.flags="";
                         return RegExp.prototype[Symbol.split].call(regexp,"x");
                     }"#,
-                )
-                .unwrap();
+                    )
+                    .unwrap(),
+            );
 
             // The legacy engine uses the original physical native-frame ceiling.
             // Owned callbacks retain the unchanged logical-frame budget instead:

@@ -36,7 +36,7 @@ fn promise_all_settled_and_any_match_pinned_quickjs() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
-    eval(&mut context, FIXTURE);
+    drop(eval(&mut context, FIXTURE));
     runtime.run_gc().unwrap();
     while runtime.is_job_pending() {
         runtime.run_gc().unwrap();
@@ -57,7 +57,7 @@ fn promise_aggregate_internal_values_follow_quickjs_context_realms() {
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
-    eval(
+    drop(eval(
         &mut defining,
         r#"
 var capturedSettledFulfill;
@@ -117,7 +117,7 @@ AnyConstructor.resolve = function (value) {
 };
 var capturedAnyResult = Promise.any.call(AnyConstructor, [0, 1]);
 "#,
-    );
+    ));
 
     let settled_fulfill = global_object(&mut defining, "capturedSettledFulfill");
     let settled_fulfill = runtime
@@ -139,13 +139,13 @@ var capturedAnyResult = Promise.any.call(AnyConstructor, [0, 1]);
         Ok(Value::Undefined)
     );
 
-    eval(
+    drop(eval(
         &mut defining,
         r#"
 var capturedSettledEntry0 = capturedSettledValues[0];
 var capturedSettledEntry1 = capturedSettledValues[1];
 "#,
-    );
+    ));
     let settled_values = global_object(&mut defining, "capturedSettledValues");
     let settled_entry0 = global_object(&mut defining, "capturedSettledEntry0");
     let settled_entry1 = global_object(&mut defining, "capturedSettledEntry1");
@@ -188,10 +188,10 @@ var capturedSettledEntry1 = capturedSettledValues[1];
         Ok(Value::Undefined)
     );
 
-    eval(
+    drop(eval(
         &mut defining,
         "var capturedAnyErrors = capturedAnyError.errors;",
-    );
+    ));
     let any_error = global_object(&mut defining, "capturedAnyError");
     let any_errors = global_object(&mut defining, "capturedAnyErrors");
     let caller_aggregate_error_prototype =

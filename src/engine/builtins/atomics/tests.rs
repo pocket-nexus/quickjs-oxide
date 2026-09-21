@@ -376,13 +376,15 @@ fn shared_add_is_atomic_across_two_runtime_threads() {
             worker_ready.send(()).unwrap();
             drop(worker_ready);
             start_receiver.recv().unwrap();
-            context
-                .eval(&format!(
-                    "var __view=new Int32Array(__shared);\
+            drop(
+                context
+                    .eval(&format!(
+                        "var __view=new Int32Array(__shared);\
                      for(var __index=0;__index<{ITERATIONS};__index++)\
                          Atomics.add(__view,0,1);"
-                ))
-                .unwrap();
+                    ))
+                    .unwrap(),
+            );
         }));
     }
 
@@ -426,16 +428,18 @@ fn distinct_shared_backings_follow_one_sequentially_consistent_order() {
             let mut context = runtime.new_context();
             publish_shared_buffer(&runtime, &mut context, "__own", own);
             publish_shared_buffer(&runtime, &mut context, "__other", other);
-            context
-                .eval(
-                    "var __ownView=new Int32Array(__own);\
+            drop(
+                context
+                    .eval(
+                        "var __ownView=new Int32Array(__own);\
                      var __otherView=new Int32Array(__other);\
                      function __seqCstStep(){\
                          Atomics.store(__ownView,0,1);\
                          return Atomics.load(__otherView,0);\
                      }",
-                )
-                .unwrap();
+                    )
+                    .unwrap(),
+            );
             worker_ready.send(()).unwrap();
 
             for _ in 0..ITERATIONS {
@@ -768,9 +772,11 @@ fn bigint_wait_is_notified_by_int32_view_in_another_runtime() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     publish_shared_buffer(&runtime, &mut context, "__shared", handle);
-    context
-        .eval("globalThis.__notifyView=new Int32Array(__shared)")
-        .unwrap();
+    drop(
+        context
+            .eval("globalThis.__notifyView=new Int32Array(__shared)")
+            .unwrap(),
+    );
     ready.recv_timeout(Duration::from_secs(1)).unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(1);
@@ -819,9 +825,11 @@ fn lazy_and_materialized_atomics_edges_are_released() {
 
     let mut materialized = runtime.new_context();
     let materialized_realm = materialized.realm;
-    materialized
-        .eval("void Atomics.load; delete globalThis.Atomics")
-        .unwrap();
+    drop(
+        materialized
+            .eval("void Atomics.load; delete globalThis.Atomics")
+            .unwrap(),
+    );
     drop(materialized);
     runtime.run_gc().unwrap();
     assert!(

@@ -472,9 +472,11 @@ fn array_concat_species_boxing_results_and_errors_use_pinned_realms() {
         "Array.concat passed a nonzero length to custom species",
     );
 
-    caller
-        .eval("globalThis.concatArgument=Object()")
-        .expect("install caller concat argument");
+    drop(
+        caller
+            .eval("globalThis.concatArgument=Object()")
+            .expect("install caller concat argument"),
+    );
     let argument = eval_object(&mut caller, "concatArgument", "caller concat argument");
     let empty = eval_object(&mut caller, "[]", "caller empty Array");
     let Value::Object(identity_result) = caller

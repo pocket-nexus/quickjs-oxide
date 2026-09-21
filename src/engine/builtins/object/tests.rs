@@ -414,7 +414,7 @@ fn object_assign_autoinit_and_ordinary_snapshot_semantics_match_pinned_quickjs()
         )),
     );
 
-    context.eval("Object.assign(Object(),Object)").unwrap();
+    drop(context.eval("Object.assign(Object(),Object)").unwrap());
     for (name, kind) in [
         ("values", ObjectKeysKind::Values),
         ("entries", ObjectKeysKind::Entries),
@@ -586,9 +586,10 @@ fn recursive_object_has_own_key_conversion_is_guarded_and_runtime_recovers() {
         .spawn(|| {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context
-                .eval(
-                    r#"function objectHasOwnRecurse(depth){
+            drop(
+                context
+                    .eval(
+                        r#"function objectHasOwnRecurse(depth){
                     var key=Object();
                     key[Symbol.toPrimitive]=function(){
                         if(depth!==0)objectHasOwnRecurse(depth-1);
@@ -597,8 +598,9 @@ fn recursive_object_has_own_key_conversion_is_guarded_and_runtime_recovers() {
                     var target=Object();target.x=1;
                     return Object.hasOwn(target,key);
                 }"#,
-                )
-                .unwrap();
+                    )
+                    .unwrap(),
+            );
 
             assert_eq!(
                 context.eval("objectHasOwnRecurse(8)").unwrap(),
@@ -942,9 +944,10 @@ fn object_integrity_preserves_descriptor_values_and_covers_array_string_and_symb
 fn recursive_object_assign_callbacks_are_catchable_before_host_stack_exhaustion() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"function objectAssignRecurse(depth){
+    drop(
+        context
+            .eval(
+                r#"function objectAssignRecurse(depth){
                    var source=Object(),descriptor=Object();
                    descriptor.enumerable=true;
                    descriptor.get=function(){
@@ -978,8 +981,9 @@ fn recursive_object_assign_callbacks_are_catchable_before_host_stack_exhaustion(
                    Object.defineProperty(source,"value",descriptor);
                    return Object.assign(Object(),source).value;
                }"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     for name in ["objectAssignRecurse", "objectAssignSetterRecurse"] {
         assert_eq!(context.eval(&format!("{name}(8)")).unwrap(), Value::Int(1),);
         for depth in [9, 10, 11] {
@@ -1056,9 +1060,10 @@ fn object_descriptor_statics_publish_complete_fields_without_calling_accessors()
 fn recursive_object_descriptor_key_coercion_is_catchable_before_host_stack_exhaustion() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"var descriptorTarget=Object();descriptorTarget.x=1;
+    drop(
+        context
+            .eval(
+                r#"var descriptorTarget=Object();descriptorTarget.x=1;
                function objectDescriptorRecurse(depth){
                    var key=Object();
                    key[Symbol.toPrimitive]=function(hint){
@@ -1110,8 +1115,9 @@ fn recursive_object_descriptor_key_coercion_is_catchable_before_host_stack_exhau
                    };
                    return Object.getOwnPropertyDescriptor(descriptorTarget,key).value;
                }"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     assert_eq!(
         context.eval("objectDescriptorRecurse(8)").unwrap(),
         Value::Int(1),
@@ -1372,9 +1378,10 @@ fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
 fn recursive_object_keys_family_ceiling_protects_the_heaviest_measured_path() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"function objectKeysHeavyRecurse(depth){
+    drop(
+        context
+            .eval(
+                r#"function objectKeysHeavyRecurse(depth){
                     var object=Object();
                     var descriptor=Object();
                     descriptor.enumerable=true;
@@ -1399,8 +1406,9 @@ fn recursive_object_keys_family_ceiling_protects_the_heaviest_measured_path() {
                     Object.defineProperty(object,"value",descriptor);
                     return Object.values(object)[0];
                 }"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
 
     assert_eq!(
         context.eval("objectKeysHeavyRecurse(8)").unwrap(),

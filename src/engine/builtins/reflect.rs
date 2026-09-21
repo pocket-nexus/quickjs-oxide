@@ -160,7 +160,7 @@ impl Runtime {
         }
         let values = raw_values
             .iter()
-            .map(|value| self.root_raw_value(value))
+            .map(|value| self.root_raw_value(value.clone()))
             .collect::<Result<Vec<_>, _>>()?;
         #[cfg(feature = "profiling")]
         {

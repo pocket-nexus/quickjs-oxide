@@ -633,9 +633,11 @@ fn regexp_literal_uses_the_bytecode_realm_and_is_fresh_on_every_execution() {
 
     // Mutating the constructor relationship after compilation must not affect
     // QuickJS's realm-canonical literal shape.
-    defining
-        .eval("RegExp.prototype={replacement:true}")
-        .unwrap();
+    drop(
+        defining
+            .eval("RegExp.prototype={replacement:true}")
+            .unwrap(),
+    );
     let first = expect_object(caller.execute(&function).unwrap(), "first RegExp literal");
     let second = expect_object(caller.execute(&function).unwrap(), "second RegExp literal");
 

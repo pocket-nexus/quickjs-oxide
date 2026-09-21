@@ -1033,16 +1033,16 @@ fn rust_observations() -> Vec<String> {
         "powerAnonymousName",
         Value::String(JsString::try_from_utf8("unset").unwrap()),
     );
-    context
+    drop(context
         .eval(
             "Function.prototype.valueOf = function(){ powerAnonymousName = this.name; return 3; }",
         )
-        .unwrap();
-    context.eval("target.powerAnonymous = 2").unwrap();
+        .unwrap());
+    drop(context.eval("target.powerAnonymous = 2").unwrap());
     let power_anonymous_result = context
         .eval("target.powerAnonymous **= function(){}")
         .unwrap();
-    context.eval("delete Function.prototype.valueOf").unwrap();
+    drop(context.eval("delete Function.prototype.valueOf").unwrap());
     output.push(format!(
         "power-anonymous-name={}|{}",
         show(power_anonymous_result),
@@ -1109,7 +1109,7 @@ fn rust_observations() -> Vec<String> {
         string_global(&runtime, &mut context, "log")
     ));
 
-    context.eval("target[compoundSymbol] = 3").unwrap();
+    drop(context.eval("target[compoundSymbol] = 3").unwrap());
     set_global(
         &runtime,
         &mut context,
@@ -1139,7 +1139,7 @@ fn rust_observations() -> Vec<String> {
         )),
     ));
 
-    context.eval("target[compoundSymbol] = 0").unwrap();
+    drop(context.eval("target[compoundSymbol] = 0").unwrap());
     set_global(
         &runtime,
         &mut context,
@@ -1836,8 +1836,8 @@ fn rust_observations() -> Vec<String> {
         "otherSymbol",
         Value::Symbol(other_symbol),
     );
-    context.eval("target[symbol] = 1").unwrap();
-    context.eval("target[otherSymbol] = 2").unwrap();
+    drop(context.eval("target[symbol] = 1").unwrap());
+    drop(context.eval("target[otherSymbol] = 2").unwrap());
     let symbol_result = context.eval("target[symbol] = 5").unwrap();
     let symbol_compound = context.eval("target[symbol] += 2").unwrap();
     output.push(format!(

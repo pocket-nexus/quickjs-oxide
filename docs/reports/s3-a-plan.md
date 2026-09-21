@@ -408,3 +408,21 @@ current-source receipt，不改 `current.conf`）→
 
 **验收**：clippy `-D warnings` 全绿；全量测试全绿（teardown 断言照常）；
 评审规则写入「采纳签名一律 by value」。
+
+### 7.3 实现记录（2026-09-21）
+
+- 值类型标注 `#[must_use]`：`Value`、`JsValue`、`RawValue` 三个类型定义
+  直接标注；删除 5 处冗余的函数级 `#[must_use]`（clippy
+  `double_must_use`）；库内 28 处、非库目标（CLI oracle 测试与 conformance
+  runner）99 处「丢弃返回值」改为显式 `drop(...)`，全仓无
+  `#[allow(unused_must_use)]`。
+- 采纳签名改 by value（本轮清单）：`retain_raw_root`、`root_raw_value`、
+  `decode_raw_jsvalue`（suspend 与 async-from-sync 两处实现）、
+  `CollectionIndex::insert/remove` 由 `&RawValue` 改为 `RawValue`；调用方在
+  仍需句柄处显式 `.clone()`，dups 从被调方挪到调用方。
+- 诚实缺口：行式 rg 清单低估了规模——全仓实际有约 106 个 `&Value` 与 28 个
+  `&RawValue` 参数签名；属性写、dense array、typed array 等 `&Value` 采纳
+  路径仍是借用签名。按 §7.3「逐文件推进，编译器驱动」在下一波继续。
+- 验证：默认 lib 2270 通过、`test262-host` 2326 通过，clippy
+  `--workspace --all-targets -- -D warnings` 零警告，`cargo fmt --check` /
+  source-layout / rust-only 全绿。

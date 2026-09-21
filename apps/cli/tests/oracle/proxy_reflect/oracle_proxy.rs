@@ -1341,9 +1341,11 @@ fn proxy_hidden_edges_survive_gc_and_revocation_is_safe_across_collection() {
         Value::Int(42),
     );
 
-    context
-        .call(&revoke, Value::Undefined, &[])
-        .expect("revoke after collection");
+    drop(
+        context
+            .call(&revoke, Value::Undefined, &[])
+            .expect("revoke after collection"),
+    );
     drop(revoke);
     drop(revoke_object);
     runtime

@@ -16,9 +16,9 @@ use crate::engine::vm::{
 /// retaining every edge so the decoded value owns them independently.
 fn decode_raw_jsvalue(
     runtime: &Runtime,
-    raw: &crate::engine::heap::RawValue,
+    raw: crate::engine::heap::RawValue,
 ) -> Result<JsValue, RuntimeError> {
-    let value = JsValue::from_raw(raw.clone()).ok_or(RuntimeError::Invariant(
+    let value = JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
         "Async-from-Sync wrapper held an internal-only sentinel",
     ))?;
     runtime.dup_jsvalue(&value)
@@ -201,7 +201,7 @@ impl FromSyncStep {
         match kind {
             GeneratorResumeKind::Next => continuation(realm, Phase::Method(state)).resume(
                 runtime,
-                Completion::Return(decode_raw_jsvalue(runtime, &cached_next)?),
+                Completion::Return(decode_raw_jsvalue(runtime, cached_next.clone())?),
             ),
             GeneratorResumeKind::Return | GeneratorResumeKind::Throw => Ok({
                 let __pending_field_receiver =

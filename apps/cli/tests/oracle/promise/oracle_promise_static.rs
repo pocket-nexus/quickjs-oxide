@@ -22,7 +22,7 @@ fn promise_try_with_resolvers_and_race_match_pinned_quickjs() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
-    eval(&mut context, FIXTURE);
+    drop(eval(&mut context, FIXTURE));
     runtime.run_gc().unwrap();
     while runtime.is_job_pending() {
         assert!(runtime.execute_pending_job().unwrap().executed());

@@ -257,7 +257,7 @@ impl Runtime {
         }
         if let Some(value) = self.dense_array_index_value(object, key)? {
             return Ok(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                value: self.root_raw_value(&value)?,
+                value: self.root_raw_value(value.clone())?,
                 writable: true,
                 enumerable: true,
                 configurable: true,
@@ -309,7 +309,7 @@ impl Runtime {
         match snapshot {
             PropertySnapshot::Data { value, flags } => {
                 Ok(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                    value: self.root_raw_value(&value)?,
+                    value: self.root_raw_value(value.clone())?,
                     writable: flags.writable,
                     enumerable: flags.enumerable,
                     configurable: flags.configurable,
@@ -326,7 +326,7 @@ impl Runtime {
                     )?));
                 }
                 Ok(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                    value: self.root_raw_value(&value)?,
+                    value: self.root_raw_value(value.clone())?,
                     writable: flags.writable,
                     enumerable: flags.enumerable,
                     configurable: flags.configurable,
@@ -1082,7 +1082,7 @@ impl Runtime {
                         RuntimeError::Invariant("validated dense Array index disappeared"),
                     )?;
                     Some(CompleteOrdinaryPropertyDescriptor::Data {
-                        value: self.root_raw_value(&value)?,
+                        value: self.root_raw_value(value.clone())?,
                         writable: true,
                         enumerable: true,
                         configurable: true,

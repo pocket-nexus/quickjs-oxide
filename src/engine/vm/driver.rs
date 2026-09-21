@@ -178,7 +178,9 @@ pub(super) fn enter_call(
                 arguments.push(execution.slots.pop(window)?);
             }
             arguments.reverse();
-            execution.slots.pop(window)?;
+            runtime
+                .release_jsvalue(execution.slots.pop(window)?)
+                .map_err(runtime_error_to_vm_error)?;
             let receiver = if method {
                 execution.slots.pop(window)?
             } else {
@@ -305,7 +307,9 @@ pub(super) fn enter_call(
                     arguments.push(execution.slots.pop(window)?);
                 }
                 arguments.reverse();
-                execution.slots.pop(window)?;
+                runtime
+                    .release_jsvalue(execution.slots.pop(window)?)
+                    .map_err(runtime_error_to_vm_error)?;
                 let receiver = if method {
                     execution.slots.pop(window)?
                 } else {

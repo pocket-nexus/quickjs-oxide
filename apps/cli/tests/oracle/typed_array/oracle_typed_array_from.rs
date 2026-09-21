@@ -679,16 +679,18 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
         "({0:1,length:1})",
         "caller sloppy-mapper source",
     );
-    caller
-        .call(
-            &from,
-            Value::Object(constructor.as_object().clone()),
-            &[
-                Value::Object(sloppy_source),
-                Value::Object(sloppy_map.as_object().clone()),
-            ],
-        )
-        .expect("cross-realm sloppy mapper");
+    drop(
+        caller
+            .call(
+                &from,
+                Value::Object(constructor.as_object().clone()),
+                &[
+                    Value::Object(sloppy_source),
+                    Value::Object(sloppy_map.as_object().clone()),
+                ],
+            )
+            .expect("cross-realm sloppy mapper"),
+    );
     assert_eq!(
         caller
             .eval("__typedArrayFromSloppyThis")
@@ -712,16 +714,18 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
         "({0:1,length:1})",
         "caller strict-mapper source",
     );
-    caller
-        .call(
-            &from,
-            Value::Object(constructor.as_object().clone()),
-            &[
-                Value::Object(strict_source),
-                Value::Object(strict_map.as_object().clone()),
-            ],
-        )
-        .expect("cross-realm strict mapper");
+    drop(
+        caller
+            .call(
+                &from,
+                Value::Object(constructor.as_object().clone()),
+                &[
+                    Value::Object(strict_source),
+                    Value::Object(strict_map.as_object().clone()),
+                ],
+            )
+            .expect("cross-realm strict mapper"),
+    );
     assert_eq!(
         caller
             .eval("__typedArrayFromStrictThis")

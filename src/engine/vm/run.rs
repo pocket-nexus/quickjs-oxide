@@ -650,7 +650,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     false
                 };
                 if stored {
-                    slots.pop()?;
+                    drop(slots.pop()?);
                     #[cfg(feature = "profiling")]
                     cold::event("global_immediate_cell_write");
                     true
@@ -1159,7 +1159,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 };
                 if stored {
                     if !matches!(instruction, Instruction::SetVarRef(_)) {
-                        slots.pop()?;
+                        drop(slots.pop()?);
                     }
                     #[cfg(feature = "profiling")]
                     cold::event("captured_immediate_cell_write");
@@ -1198,7 +1198,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         instruction,
                         Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
                     ) {
-                        slots.pop()?;
+                        drop(slots.pop()?);
                     }
                     #[cfg(feature = "profiling")]
                     cold::event("captured_immediate_cell_write");
@@ -1260,7 +1260,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                 {
                     if !matches!(instruction, Instruction::SetArg(_)) {
-                        slots.pop()?;
+                        drop(slots.pop()?);
                     }
                     #[cfg(feature = "profiling")]
                     cold::event("captured_immediate_cell_write");
@@ -1624,7 +1624,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::Drop => {
                 if slots.release_operand(0, runtime)? {
-                    slots.pop()?;
+                    drop(slots.pop()?);
                     true
                 } else if primitive_release_owner(slots.peek(0)?) {
                     let released = slots.pop()?;
@@ -1642,7 +1642,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::Nip => {
                 if slots.release_operand(1, runtime)? {
                     let right = slots.pop()?;
-                    slots.pop()?;
+                    drop(slots.pop()?);
                     slots.push(right)?;
                     true
                 } else if primitive_release_owner(slots.peek(1)?) {
@@ -1815,7 +1815,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         )),
                     };
                     if !matches!(instruction, Instruction::PostInc | Instruction::PostDec) {
-                        slots.pop()?;
+                        drop(slots.pop()?);
                     }
                     slots.push(value(next))?;
                     true

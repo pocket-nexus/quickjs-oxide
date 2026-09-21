@@ -234,7 +234,7 @@ mod tests {
             match (seed >> 16) % 7 {
                 0..=2 => {
                     if let Some(id) = existing {
-                        records.replace_value(id, RawValue::Int(step)).unwrap();
+                        drop(records.replace_value(id, RawValue::Int(step)).unwrap());
                         model[id] = Some((key, step));
                     } else {
                         records.preflight_insert().unwrap();

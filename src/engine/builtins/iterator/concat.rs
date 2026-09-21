@@ -484,7 +484,7 @@ impl ConcatResume {
                 "Iterator Concat current input was already released",
             ))?;
         let iterable = ObjectRef::from_borrowed_handle(runtime.clone(), item.iterable)?;
-        let method = runtime.root_raw_value(&item.method)?;
+        let method = runtime.root_raw_value(item.method.clone())?;
         let callable = match runtime.iterator_callable_value(self.0.realm, &method)? {
             NativeConversion::Value(callable) => callable,
             NativeConversion::Throw(_) => {
@@ -532,7 +532,7 @@ impl ConcatResume {
                 )
             });
         }
-        let method = runtime.root_raw_value(&snapshot.next)?;
+        let method = runtime.root_raw_value(snapshot.next.clone())?;
         self.0.phase = ConcatPhase::Next;
         Ok({
             let __pending_field_iterator = iterator;

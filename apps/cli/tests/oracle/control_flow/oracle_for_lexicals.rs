@@ -243,9 +243,11 @@ fn script_for_capture_survives_a_following_eval_like_pinned_quickjs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    context
-        .eval(setup)
-        .unwrap_or_else(|error| panic!("Rust rejected lexical-for setup: {error}"));
+    drop(
+        context
+            .eval(setup)
+            .unwrap_or_else(|error| panic!("Rust rejected lexical-for setup: {error}")),
+    );
     let value = context
         .eval(observation)
         .unwrap_or_else(|error| panic!("Rust rejected lexical-for observation: {error}"));

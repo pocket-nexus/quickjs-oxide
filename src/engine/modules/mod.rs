@@ -249,7 +249,6 @@ impl ModuleImportMetaProperty {
         &self.key
     }
 
-    #[must_use]
     pub const fn value(&self) -> &Value {
         &self.value
     }
@@ -3551,7 +3550,7 @@ impl Runtime {
             }
         }
         let mut state = self.0.state.borrow_mut();
-        state.retain_raw_root(&raw)?;
+        state.retain_raw_root(raw.clone())?;
         let retained_atoms = match &raw {
             RawValue::Symbol(atom) => {
                 let count = evaluating.len();

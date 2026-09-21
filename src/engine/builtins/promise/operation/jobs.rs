@@ -52,7 +52,7 @@ impl PromiseStep {
         reaction: &PromiseReaction,
         argument: &RawValue,
     ) -> Result<Self, RuntimeError> {
-        let argument = runtime.root_raw_value(argument)?;
+        let argument = runtime.root_raw_value(argument.clone())?;
         let targets = reaction
             .capability
             .map(|capability| {

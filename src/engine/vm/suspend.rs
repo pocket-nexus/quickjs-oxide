@@ -31,8 +31,8 @@ pub(super) use owned::{OwnedSuspension, PreparedResume};
 
 /// Reconstruct one owned internal value from a dormant heap record, retaining
 /// every edge so the decoded value owns them independently of the record.
-fn decode_raw_jsvalue(runtime: &Runtime, raw: &RawValue) -> Result<JsValue, RuntimeError> {
-    let value = JsValue::from_raw(raw.clone()).ok_or(RuntimeError::Invariant(
+fn decode_raw_jsvalue(runtime: &Runtime, raw: RawValue) -> Result<JsValue, RuntimeError> {
+    let value = JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
         "dormant activation held an internal-only sentinel",
     ))?;
     runtime.dup_jsvalue(&value)
@@ -132,7 +132,7 @@ fn decode_generator_frame_binding(
 ) -> Result<FrameBinding, RuntimeError> {
     let binding = match binding {
         GeneratorFrameBinding::Direct(value) => {
-            FrameBinding::Direct(decode_raw_jsvalue(runtime, value)?)
+            FrameBinding::Direct(decode_raw_jsvalue(runtime, value.clone())?)
         }
         GeneratorFrameBinding::Private(atom) => {
             if runtime.0.state.borrow().atoms.kind(*atom)? != AtomKind::Private {
@@ -525,7 +525,7 @@ pub(crate) fn thaw(
         for value in &data.original_arguments {
             storage
                 .original_arguments
-                .push(decode_raw_jsvalue(&runtime, value)?);
+                .push(decode_raw_jsvalue(&runtime, value.clone())?);
         }
         for (index, binding) in data.arguments.iter().enumerate() {
             storage.parameters.push(decode_generator_frame_binding(
@@ -542,7 +542,9 @@ pub(crate) fn thaw(
             )?);
         }
         for value in &data.vm.stack {
-            storage.operands.push(decode_raw_jsvalue(&runtime, value)?);
+            storage
+                .operands
+                .push(decode_raw_jsvalue(&runtime, value.clone())?);
         }
     }
     if kind != VmSuspendKind::Initial
@@ -555,8 +557,8 @@ pub(crate) fn thaw(
             "dormant suspension output was not cleared",
         ));
     }
-    let this_value = decode_raw_jsvalue(&runtime, &data.vm.this_value)?;
-    let new_target = match decode_raw_jsvalue(&runtime, &data.vm.new_target) {
+    let this_value = decode_raw_jsvalue(&runtime, data.vm.this_value.clone())?;
+    let new_target = match decode_raw_jsvalue(&runtime, data.vm.new_target.clone()) {
         Ok(value) => value,
         Err(error) => {
             let _ = runtime.release_jsvalue(this_value);
@@ -568,7 +570,7 @@ pub(crate) fn thaw(
         .vm
         .normalized_this
         .as_ref()
-        .map(|value| runtime.root_raw_value(value))
+        .map(|value| runtime.root_raw_value(value.clone()))
         .transpose()?;
     let storage = roots.take();
     let mut entry = super::frame::FrameEntry {

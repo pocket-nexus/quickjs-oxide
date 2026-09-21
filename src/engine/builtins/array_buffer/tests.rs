@@ -70,7 +70,7 @@ fn shrinking_resize_releases_the_oversized_backing_allocation() {
     write_bytes(&runtime, &source, &bytes);
     let (original_pointer, original_capacity) = backing_layout(&runtime, &source);
 
-    context.eval("__source.resize(37)").unwrap();
+    drop(context.eval("__source.resize(37)").unwrap());
 
     let (shrunk_pointer, shrunk_capacity) = backing_layout(&runtime, &source);
     assert_ne!(shrunk_pointer, original_pointer);
@@ -127,7 +127,7 @@ fn failed_transfer_keeps_the_source_backing_store_attached() {
         context.eval("__source.transfer(5)"),
         Err(RuntimeError::Exception),
     );
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         snapshot(&runtime, &source),
         (vec![5, 6, 7, 8], Some(4), false),
@@ -176,7 +176,7 @@ fn ordinary_layout_changes_preserve_large_backing_store_in_place() {
         "Object.defineProperty(__source,'marker',{enumerable:false})",
         "delete __source.marker",
     ] {
-        context.eval(operation).unwrap();
+        drop(context.eval(operation).unwrap());
         let state = runtime.0.state.borrow();
         let ObjectPayload::ArrayBuffer(data) =
             &state.heap.object(source.object_id()).unwrap().payload

@@ -29,7 +29,7 @@ fn promise_all_matches_pinned_quickjs() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
-    eval(&mut context, FIXTURE);
+    drop(eval(&mut context, FIXTURE));
     runtime.run_gc().unwrap();
     while runtime.is_job_pending() {
         runtime.run_gc().unwrap();
@@ -50,7 +50,7 @@ fn promise_all_values_and_element_callback_use_quickjs_realms() {
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
 
-    eval(
+    drop(eval(
         &mut defining,
         r#"
 var capturedAllElement;
@@ -77,7 +77,7 @@ CapturingConstructor.resolve = function (value) {
 };
 var capturedAllResult = Promise.all.call(CapturingConstructor, [42]);
 "#,
-    );
+    ));
 
     let Value::Object(element) = global_value(&mut defining, "capturedAllElement") else {
         panic!("Promise.all did not expose its internal element callback");
@@ -110,7 +110,7 @@ var capturedAllResult = Promise.all.call(CapturingConstructor, [42]);
         "Promise.all values Array did not use the builtin's defining realm"
     );
 
-    eval(
+    drop(eval(
         &mut defining,
         r#"
 var capturedThrowingAllElement;
@@ -138,7 +138,7 @@ ThrowingConstructor.resolve = function (value) {
 };
 Promise.all.call(ThrowingConstructor, [42]);
 "#,
-    );
+    ));
 
     let Value::Object(throwing_element) = global_value(&mut defining, "capturedThrowingAllElement")
     else {

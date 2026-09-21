@@ -6,7 +6,7 @@ use super::*;
 fn dependency_free_top_level_await_fulfills_the_evaluation_promise() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval("globalThis.__tlaLog = []").unwrap();
+    drop(context.eval("globalThis.__tlaLog = []").unwrap());
     let module = context
         .compile_module(
             r#"
@@ -28,7 +28,7 @@ fn dependency_free_top_level_await_fulfills_the_evaluation_promise() {
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Fulfilled);
     assert_eq!(
-        runtime.root_raw_value(&snapshot.result).unwrap(),
+        runtime.root_raw_value(snapshot.result.clone()).unwrap(),
         Value::Undefined
     );
     assert_script_true(
@@ -49,7 +49,7 @@ fn dependency_free_top_level_await_fulfills_the_evaluation_promise() {
 fn async_dependency_does_not_block_a_sibling_but_delays_its_parent() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval("globalThis.__tlaOrder = []").unwrap();
+    drop(context.eval("globalThis.__tlaOrder = []").unwrap());
     let (loader, _, _) = MapModuleLoader::new([
         (
             "pkg/async.js",
@@ -131,7 +131,10 @@ fn async_dependency_rejection_preserves_identity_and_skips_the_parent_body() {
 
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Rejected);
-    assert_eq!(runtime.root_raw_value(&snapshot.result).unwrap(), reason);
+    assert_eq!(
+        runtime.root_raw_value(snapshot.result.clone()).unwrap(),
+        reason
+    );
     assert_script_true(
         &mut context,
         "typeof globalThis.__tlaParentRan === 'undefined'",
@@ -147,7 +150,10 @@ fn async_dependency_rejection_preserves_identity_and_skips_the_parent_body() {
     assert_eq!(cached.object_id(), promise.object_id());
     let cached = promise_snapshot(&runtime, &cached);
     assert_eq!(cached.state, PromiseState::Rejected);
-    assert_eq!(runtime.root_raw_value(&cached.result).unwrap(), reason);
+    assert_eq!(
+        runtime.root_raw_value(cached.result.clone()).unwrap(),
+        reason
+    );
     assert!(!runtime.is_job_pending());
 }
 
@@ -217,9 +223,11 @@ fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order()
         ));
     });
 
-    context
-        .eval("globalThis.__rejectSharedBranchGate(globalThis.__sharedBranchReason)")
-        .unwrap();
+    drop(
+        context
+            .eval("globalThis.__rejectSharedBranchGate(globalThis.__sharedBranchReason)")
+            .unwrap(),
+    );
     assert!(drain_jobs(&runtime) > 0);
 
     assert_eq!(
@@ -253,15 +261,17 @@ fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order()
 fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
     let runtime = Runtime::new();
     let mut first_context = runtime.new_context();
-    first_context
-        .eval(
-            r#"
+    drop(
+        first_context
+            .eval(
+                r#"
             globalThis.__crossRealmGate = new Promise(function (resolve) {
                 globalThis.__releaseCrossRealmGate = resolve;
             });
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let dependency = first_context
         .compile_module_with_filename(
             "await globalThis.__crossRealmGate; export const value = 42;",
@@ -298,9 +308,10 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
         promise_snapshot(&runtime, &async_parent_promise).state,
         PromiseState::Pending
     );
-    first_context
-        .eval(
-            r#"
+    drop(
+        first_context
+            .eval(
+                r#"
             globalThis.__crossRealmSpecies = [];
             Object.defineProperty(Promise, Symbol.species, {
                 configurable: true,
@@ -310,11 +321,13 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
                 },
             });
             "#,
-        )
-        .unwrap();
-    second_context
-        .eval(
-            r#"
+            )
+            .unwrap(),
+    );
+    drop(
+        second_context
+            .eval(
+                r#"
             globalThis.__crossRealmSpecies = [];
             Object.defineProperty(Promise, Symbol.species, {
                 configurable: true,
@@ -324,8 +337,9 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
                 },
             });
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
 
     let events = Rc::new(RefCell::new(Vec::new()));
     let captured = events.clone();
@@ -336,9 +350,11 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
                 .push((event.context(), event.reason().clone()));
         }
     });
-    first_context
-        .eval("globalThis.__releaseCrossRealmGate()")
-        .unwrap();
+    drop(
+        first_context
+            .eval("globalThis.__releaseCrossRealmGate()")
+            .unwrap(),
+    );
     assert!(drain_jobs(&runtime) > 0);
 
     assert_eq!(
@@ -419,7 +435,10 @@ fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
     let promise = module_evaluation_promise(&mut context, &module);
     let initial = promise_snapshot(&runtime, &promise);
     assert_eq!(initial.state, PromiseState::Rejected);
-    assert_eq!(runtime.root_raw_value(&initial.result).unwrap(), reason);
+    assert_eq!(
+        runtime.root_raw_value(initial.result.clone()).unwrap(),
+        reason
+    );
     assert_script_true(
         &mut context,
         "globalThis.__lateTlaLog.join(',') === 'wait:start,throw' && typeof globalThis.__lateTlaParentRan === 'undefined'",
@@ -434,10 +453,10 @@ fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
         else {
             panic!("synchronous module failure was not cached on its active ancestor");
         };
-        assert_eq!(runtime.root_raw_value(&raw_reason).unwrap(), reason);
+        assert_eq!(runtime.root_raw_value(raw_reason.clone()).unwrap(), reason);
     }
 
-    context.eval("globalThis.__releaseLateTlaGate()").unwrap();
+    drop(context.eval("globalThis.__releaseLateTlaGate()").unwrap());
     assert!(drain_jobs(&runtime) > 0);
 
     assert_script_true(
@@ -454,13 +473,16 @@ fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
         else {
             panic!("late TLA fulfillment changed the cached rejection state");
         };
-        assert_eq!(runtime.root_raw_value(&raw_reason).unwrap(), reason);
+        assert_eq!(runtime.root_raw_value(raw_reason.clone()).unwrap(), reason);
     }
     let cached = module_evaluation_promise(&mut context, &module);
     assert_eq!(cached.object_id(), promise.object_id());
     let cached = promise_snapshot(&runtime, &cached);
     assert_eq!(cached.state, PromiseState::Rejected);
-    assert_eq!(runtime.root_raw_value(&cached.result).unwrap(), reason);
+    assert_eq!(
+        runtime.root_raw_value(cached.result.clone()).unwrap(),
+        reason
+    );
     assert!(!runtime.is_job_pending());
 }
 
@@ -468,7 +490,7 @@ fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
 fn top_level_await_inside_a_cycle_unblocks_the_cycle_before_its_outer_parent() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval("globalThis.__tlaCycleOrder = []").unwrap();
+    drop(context.eval("globalThis.__tlaCycleOrder = []").unwrap());
     let (loader, _, _) = MapModuleLoader::new([
         (
             "pkg/a.js",

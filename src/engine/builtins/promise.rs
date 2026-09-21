@@ -62,7 +62,6 @@ impl PromiseSnapshot {
         self.state
     }
 
-    #[must_use]
     pub const fn result(&self) -> &Value {
         &self.result
     }
@@ -79,7 +78,6 @@ impl PromiseRejectionEvent {
         &self.promise
     }
 
-    #[must_use]
     pub const fn reason(&self) -> &Value {
         &self.reason
     }
@@ -127,7 +125,7 @@ impl Runtime {
         };
         Ok(Some(PromiseSnapshot {
             state: snapshot.state,
-            result: self.root_raw_value(&snapshot.result)?,
+            result: self.root_raw_value(snapshot.result.clone())?,
         }))
     }
 
@@ -510,8 +508,8 @@ impl Runtime {
                 "resolving function is not callable",
             )?));
         };
-        let resolve = self.root_raw_value(&resolve)?;
-        let reject = self.root_raw_value(&reject)?;
+        let resolve = self.root_raw_value(resolve.clone())?;
+        let reject = self.root_raw_value(reject.clone())?;
         let resolve = match resolve {
             Value::Object(object) => match self.as_callable(&object)? {
                 Some(callable) => callable,
@@ -851,7 +849,7 @@ impl Runtime {
             }
             PromiseState::Rejected => {
                 if !snapshot.is_handled {
-                    let reason = self.root_raw_value(&snapshot.result)?;
+                    let reason = self.root_raw_value(snapshot.result.clone())?;
                     self.notify_host_promise_rejection_tracker(
                         realm,
                         promise.clone(),
@@ -1046,7 +1044,7 @@ impl Runtime {
             }
             PromiseState::Rejected => {
                 if !snapshot.is_handled {
-                    let reason = self.root_raw_value(&snapshot.result)?;
+                    let reason = self.root_raw_value(snapshot.result.clone())?;
                     self.notify_host_promise_rejection_tracker(
                         realm,
                         promise.clone(),

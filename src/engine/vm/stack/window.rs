@@ -462,7 +462,9 @@ impl RunSlots<'_> {
             return Ok(false);
         };
         if !keep_key {
-            self.pop()?;
+            runtime
+                .release_jsvalue(self.pop()?)
+                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
         }
         self.push(value)?;
         Ok(true)
@@ -823,9 +825,11 @@ mod primitive_transaction_tests {
             panic!("pending getter");
         };
         assert_eq!(store.depth(&window), 1);
-        context
-            .eval("Object.defineProperty(linkedBase,'x',{get(){throw 99}})")
-            .unwrap();
+        drop(
+            context
+                .eval("Object.defineProperty(linkedBase,'x',{get(){throw 99}})")
+                .unwrap(),
+        );
         let result = runtime
             .finish_prepared_read(
                 context.realm,

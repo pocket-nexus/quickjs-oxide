@@ -26,7 +26,7 @@ fn failed_resolution_unpublishes_the_root_from_the_context_cache() {
             "pkg/importer.js",
         )
         .unwrap();
-    context.execute_module(&importer).unwrap();
+    drop(context.execute_module(&importer).unwrap());
     assert_script_true(&mut context, "__recoveredModule === 42");
     assert_eq!(&*loads.borrow(), &["pkg/missing.js"]);
 }
@@ -138,7 +138,7 @@ fn failed_resolution_rolls_back_every_active_loaded_module() {
             "pkg/importer.js",
         )
         .unwrap();
-    context.execute_module(&importer).unwrap();
+    drop(context.execute_module(&importer).unwrap());
     assert_script_true(&mut context, "__activeRollback === 42");
     assert_eq!(
         &*loads.borrow(),
@@ -176,7 +176,7 @@ fn failed_resolution_preserves_an_independently_completed_dependency() {
             "pkg/importer.js",
         )
         .unwrap();
-    context.execute_module(&importer).unwrap();
+    drop(context.execute_module(&importer).unwrap());
     assert_script_true(&mut context, "__completedCache === 42");
     assert_eq!(&*loads.borrow(), &["pkg/complete.js", "pkg/missing.js"]);
 }
@@ -211,7 +211,7 @@ fn failed_resolution_unpublishes_cycle_members_that_reference_the_root() {
             "pkg/importer.js",
         )
         .unwrap();
-    context.execute_module(&importer).unwrap();
+    drop(context.execute_module(&importer).unwrap());
     assert_script_true(&mut context, "__cycleRecovered === 42");
     assert_eq!(
         &*loads.borrow(),

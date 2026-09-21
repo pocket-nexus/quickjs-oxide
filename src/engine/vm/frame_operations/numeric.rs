@@ -254,7 +254,7 @@ mod tests {
             }
         }
         let frame = execution.frames.current_mut(id).unwrap();
-        execution.slots.pop(&mut frame.window).unwrap();
+        drop(execution.slots.pop(&mut frame.window).unwrap());
         let fault = frame.fault_pc;
         let resume = frame.resume_pc;
         assert!(
@@ -328,7 +328,7 @@ mod tests {
             }
         }
         let frame = execution.frames.current_mut(id).unwrap();
-        execution.slots.pop(&mut frame.window).unwrap();
+        drop(execution.slots.pop(&mut frame.window).unwrap());
         execution
             .slots
             .push(&mut frame.window, runtime.into_jsvalue(text).unwrap())

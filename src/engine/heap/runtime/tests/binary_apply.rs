@@ -370,7 +370,7 @@ fn trusted_quickjs_ordinary_apply_raw_prototype_get_preserves_order_and_receiver
         Some(context.object_prototype().unwrap())
     );
 
-    context.eval("__qjo_raw_get_body_count = 0").unwrap();
+    drop(context.eval("__qjo_raw_get_body_count = 0").unwrap());
     assert_eq!(
         context.call(
             &wrapper,
@@ -388,9 +388,10 @@ fn trusted_quickjs_ordinary_apply_raw_prototype_get_preserves_order_and_receiver
         Value::Int(0)
     );
 
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
                 globalThis.__qjo_number_receiver = undefined;
                 globalThis.__qjo_number_custom_prototype = {};
                 Object.defineProperty(Number.prototype, "prototype", {
@@ -402,8 +403,9 @@ fn trusted_quickjs_ordinary_apply_raw_prototype_get_preserves_order_and_receiver
                     }
                 });
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let Value::Object(number_instance) = context
         .call(
             &wrapper,
@@ -426,11 +428,12 @@ fn trusted_quickjs_ordinary_apply_raw_prototype_get_preserves_order_and_receiver
         context.eval("__qjo_number_receiver").unwrap(),
         Value::Int(17)
     );
-    context.eval("delete Number.prototype.prototype").unwrap();
+    drop(context.eval("delete Number.prototype.prototype").unwrap());
 
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
                 globalThis.__qjo_raw_get_sentinel = {};
                 globalThis.__qjo_throwing_new_target = {};
                 Object.defineProperty(__qjo_throwing_new_target, "prototype", {
@@ -438,8 +441,9 @@ fn trusted_quickjs_ordinary_apply_raw_prototype_get_preserves_order_and_receiver
                 });
                 __qjo_raw_get_body_count = 0;
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let throwing_new_target = context.eval("__qjo_throwing_new_target").unwrap();
     assert_eq!(
         context.call(
@@ -493,7 +497,7 @@ fn trusted_quickjs_ordinary_apply_raw_prototype_get_preserves_order_and_receiver
             "#,
         )
         .unwrap();
-    context.eval("__qjo_raw_get_body_count = 0").unwrap();
+    drop(context.eval("__qjo_raw_get_body_count = 0").unwrap());
     assert_eq!(
         context.call(
             &wrapper,
@@ -826,7 +830,7 @@ fn trusted_quickjs_ordinary_apply_construct_preserves_raw_new_target_across_disp
         panic!("inner Proxy was not an object");
     };
     runtime.set_constructor_bit(&inner_proxy, false).unwrap();
-    context.eval("__qjo_inner_record.revoke()").unwrap();
+    drop(context.eval("__qjo_inner_record.revoke()").unwrap());
     assert_eq!(
         context.call(
             &wrapper,
@@ -1201,9 +1205,10 @@ fn trusted_quickjs_ordinary_apply_raw_calling_realm_functions_fall_back_to_the_c
         );
     }
 
-    foreign
-        .eval(
-            r#"
+    drop(
+        foreign
+            .eval(
+                r#"
                 globalThis.__qjo_calling_realm_caught = undefined;
                 globalThis.__qjo_calling_realm_promise = new Promise(function (resolve) {
                     globalThis.__qjo_calling_realm_resolve = resolve;
@@ -1212,8 +1217,9 @@ fn trusted_quickjs_ordinary_apply_raw_calling_realm_functions_fall_back_to_the_c
                     globalThis.__qjo_calling_realm_caught = error;
                 });
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let promise = foreign.eval("__qjo_calling_realm_promise").unwrap();
     let resolve = foreign.eval("__qjo_calling_realm_resolve").unwrap();
     let promise_list = foreign.eval("[__qjo_calling_realm_promise]").unwrap();
@@ -1249,12 +1255,14 @@ fn trusted_quickjs_ordinary_apply_raw_calling_realm_functions_fall_back_to_the_c
     );
     drop(promise);
 
-    foreign
-        .eval(
-            "globalThis.__qjo_revoke_record = Proxy.revocable({}, {}); \
+    drop(
+        foreign
+            .eval(
+                "globalThis.__qjo_revoke_record = Proxy.revocable({}, {}); \
              globalThis.__qjo_revoke_proxy = __qjo_revoke_record.proxy;",
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let revoke = foreign.eval("__qjo_revoke_record.revoke").unwrap();
     let Value::Object(revoke_object) = revoke.clone() else {
         panic!("Proxy revoke function was not an object");

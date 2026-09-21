@@ -611,7 +611,7 @@ impl Runtime {
         };
         Ok(match selected {
             Selected::Value(value) => {
-                let value = self.root_raw_value(&value)?;
+                let value = self.root_raw_value(value.clone())?;
                 if let (Some(output), Some(data), Value::Object(function)) =
                     (native.as_mut(), native_data, &value)
                 {
@@ -1662,24 +1662,28 @@ mod ordinary_field_leaf_tests {
             runtime.try_array_immediate_read(&base, 0),
             Some(JsValue::Int(1))
         );
-        context.eval("change(7)").unwrap();
+        drop(context.eval("change(7)").unwrap());
         assert_eq!(
             runtime.try_array_immediate_read(&base, 0),
             Some(JsValue::Int(7))
         );
-        context
-            .eval("Object.defineProperty(args,'0',{value:8,writable:false});change(9)")
-            .unwrap();
+        drop(
+            context
+                .eval("Object.defineProperty(args,'0',{value:8,writable:false});change(9)")
+                .unwrap(),
+        );
         assert_eq!(
             runtime.try_array_immediate_read(&base, 0),
             Some(JsValue::Int(8))
         );
-        context
-            .eval("Object.defineProperty(args,'0',{get(){return 11},configurable:true})")
-            .unwrap();
+        drop(
+            context
+                .eval("Object.defineProperty(args,'0',{get(){return 11},configurable:true})")
+                .unwrap(),
+        );
         assert!(runtime.try_array_immediate_read(&base, 0).is_none());
         assert_eq!(context.eval("args[0]").unwrap(), Value::Int(11));
-        context.eval("delete args[0]").unwrap();
+        drop(context.eval("delete args[0]").unwrap());
         assert!(runtime.try_array_immediate_read(&base, 0).is_none());
         runtime.release_jsvalue(retained).unwrap();
         runtime.release_jsvalue(base).unwrap();
@@ -1708,7 +1712,7 @@ mod ordinary_field_leaf_tests {
         let Value::Object(callee) = runtime.root_and_release_jsvalue(value).unwrap() else {
             panic!("own native")
         };
-        context.eval("selectedNative.x=Math.max").unwrap();
+        drop(context.eval("selectedNative.x=Math.max").unwrap());
         let data = fact.take().unwrap().into_parts(&callee).unwrap();
         assert_eq!(
             data.target,
@@ -1749,9 +1753,11 @@ mod ordinary_field_leaf_tests {
             .unwrap()
             .unwrap();
         assert_eq!(context.eval("readLog").unwrap(), Value::Int(0));
-        context
-            .eval("Object.defineProperty(o,'x',{get(){throw 99}})")
-            .unwrap();
+        drop(
+            context
+                .eval("Object.defineProperty(o,'x',{get(){throw 99}})")
+                .unwrap(),
+        );
         let key = PropertyKey::from_borrowed_atom(
             runtime.clone(),
             code.property_key_atoms.as_ref().unwrap()[index as usize],

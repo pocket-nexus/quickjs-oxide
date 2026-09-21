@@ -37,6 +37,7 @@ use crate::engine::value::Value;
 /// It deliberately does not derive `PartialEq`: handle identity is not value
 /// equality (two distinct string nodes can hold equal text), so equality must
 /// go through the heap-aware helpers instead.
+#[must_use]
 pub enum JsValue {
     Undefined,
     Null,
@@ -129,7 +130,6 @@ impl JsValue {
     }
 
     /// Borrow as the heap storage payload: the same handle ids, no allocation.
-    #[must_use]
     pub(crate) fn as_raw(&self) -> RawValue {
         match self {
             Self::Undefined => RawValue::Undefined,

@@ -48,9 +48,11 @@ fn direct_eval_identity_is_realm_local_and_independent_of_the_global_property() 
             .is_original_eval(second.realm, &second_value)
             .unwrap()
     );
-    second
-        .eval("globalThis.eval = function replacement() { return 17; }")
-        .unwrap();
+    drop(
+        second
+            .eval("globalThis.eval = function replacement() { return 17; }")
+            .unwrap(),
+    );
     let replacement = global_callable(&runtime, &mut second, "eval");
     assert!(
         !runtime

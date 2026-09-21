@@ -77,7 +77,7 @@ impl ComputedStep {
         };
         if let Some(value) = runtime.find_weak_map_record(&map, key)? {
             return Ok(Self::Complete(Completion::Return(
-                runtime.into_jsvalue(runtime.root_raw_value(&value)?)?,
+                runtime.into_jsvalue(runtime.root_raw_value(value.clone())?)?,
             )));
         }
         Ok(Self::Call {

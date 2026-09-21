@@ -546,12 +546,16 @@ fn match_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
     );
     assert_ne!(defining_type_error, caller_type_error);
 
-    defining
-        .eval("RegExp.prototype[Symbol.match]=function(){return 41}")
-        .unwrap();
-    caller
-        .eval("RegExp.prototype[Symbol.match]=function(){return 99}")
-        .unwrap();
+    drop(
+        defining
+            .eval("RegExp.prototype[Symbol.match]=function(){return 41}")
+            .unwrap(),
+    );
+    drop(
+        caller
+            .eval("RegExp.prototype[Symbol.match]=function(){return 99}")
+            .unwrap(),
+    );
     assert_eq!(
         caller
             .call(
@@ -663,9 +667,10 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
             let runtime =
                 Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
             let mut context = runtime.new_context();
-            context
-                .eval(
-                    r#"function mixedMatchRecurse(kind,depth){
+            drop(
+                context
+                    .eval(
+                        r#"function mixedMatchRecurse(kind,depth){
                         if(kind===0){
                             var pattern=Object();
                             pattern[Symbol.match]=function(){
@@ -681,8 +686,9 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
                         };
                         return RegExp.prototype[Symbol.match].call(regexp,"x");
                     }"#,
-                )
-                .unwrap();
+                    )
+                    .unwrap(),
+            );
 
             // The legacy engine uses the original physical native-frame ceiling.
             // Owned callbacks retain the unchanged logical-frame budget instead:

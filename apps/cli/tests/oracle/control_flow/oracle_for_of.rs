@@ -681,9 +681,11 @@ fn for_of_cross_realm_regression() {
 }
 
 fn install_accessor_fixture(runtime: &Runtime, context: &mut Context) {
-    context
-        .eval(ACCESSOR_FIXTURE_BASE)
-        .expect("install for-of accessor fixture functions");
+    drop(
+        context
+            .eval(ACCESSOR_FIXTURE_BASE)
+            .expect("install for-of accessor fixture functions"),
+    );
     let object_prototype = context.object_prototype().unwrap();
     let result_prototype = runtime.new_object(Some(&object_prototype)).unwrap();
     let iterator_prototype = runtime.new_object(Some(&object_prototype)).unwrap();
@@ -730,11 +732,11 @@ fn install_accessor_fixture(runtime: &Runtime, context: &mut Context) {
         "ForOfIteratorPrototype",
         Value::Object(iterator_prototype),
     );
-    context
+    drop(context
         .eval(
             "ForOfResult.prototype=ForOfResultPrototype;ForOfIterator.prototype=ForOfIteratorPrototype;0",
         )
-        .expect("connect for-of accessor fixture prototypes");
+        .expect("connect for-of accessor fixture prototypes"));
 }
 
 fn oracle_accessor_setup() -> String {

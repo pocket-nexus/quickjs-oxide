@@ -51,9 +51,11 @@ fn raw_module_context_apis_preserve_authored_bytes_and_execute() {
                 .compile_module_bytes_with_options(source, &CompileOptions::new("raw-options.mjs")),
         }
         .unwrap_or_else(|error| panic!("{api:?} raw module compilation failed: {error}"));
-        context
-            .execute_module(&module)
-            .unwrap_or_else(|error| panic!("{api:?} raw module execution failed: {error}"));
+        drop(
+            context
+                .execute_module(&module)
+                .unwrap_or_else(|error| panic!("{api:?} raw module execution failed: {error}")),
+        );
     }
 
     assert_script_true(
@@ -145,7 +147,7 @@ fn loader_accepts_raw_static_and_dynamic_sources_with_import_meta() {
         )
         .unwrap();
 
-    context.execute_module(&entry).unwrap();
+    drop(context.execute_module(&entry).unwrap());
     assert_script_true(&mut context, "__rawStatic === 40");
     let mut jobs = 0;
     while runtime.execute_pending_job().unwrap().executed() {
@@ -253,7 +255,7 @@ fn raw_json_static_loading_keeps_attributes_cache_and_import_meta_paths() {
         )
         .unwrap();
 
-    context.execute_module(&entry).unwrap();
+    drop(context.execute_module(&entry).unwrap());
     assert_script_true(&mut context, "__rawJsonStatic === true");
     assert_eq!(
         loads.borrow().as_slice(),
@@ -292,7 +294,7 @@ fn dynamic_raw_json5_loading_skips_malformed_comment_bytes() {
     assert!(drain_jobs(&runtime) > 0);
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Fulfilled);
-    let Value::Object(namespace) = runtime.root_raw_value(&snapshot.result).unwrap() else {
+    let Value::Object(namespace) = runtime.root_raw_value(snapshot.result.clone()).unwrap() else {
         panic!("dynamic raw JSON5 import did not fulfill with a module namespace");
     };
     let default = runtime.intern_property_key("default").unwrap();

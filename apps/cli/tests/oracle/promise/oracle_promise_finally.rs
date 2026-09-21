@@ -22,7 +22,7 @@ fn promise_finally_matches_pinned_quickjs() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
 
-    eval(&mut context, FIXTURE);
+    drop(eval(&mut context, FIXTURE));
     runtime.run_gc().unwrap();
     while runtime.is_job_pending() {
         runtime.run_gc().unwrap();
@@ -46,7 +46,7 @@ fn promise_finally_cfunction_data_handler_uses_calling_context() {
     // A generic receiver exposes the internal fulfill handler without
     // scheduling it. The undefined constructor makes invoking that handler
     // materialize a TypeError in whichever Context executes the CFunctionData.
-    eval(
+    drop(eval(
         &mut defining,
         r#"
 var capturedFinallyHandler;
@@ -61,7 +61,7 @@ Promise.prototype.finally.call(
     function () { return 7; }
 );
 "#,
-    );
+    ));
 
     let handler_key = runtime
         .intern_property_key("capturedFinallyHandler")

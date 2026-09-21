@@ -71,7 +71,7 @@ impl BodyStep {
                         "linked JSON module has no default live cell",
                     ))?;
                 let slot = VarRefRoot::from_borrowed_handle(runtime.clone(), slot)?;
-                let default_value = runtime.root_raw_value(default_value)?;
+                let default_value = runtime.root_raw_value(default_value.clone())?;
                 runtime.write_var_ref(&slot, runtime.into_jsvalue(default_value)?)?;
                 Ok(Self::Complete(Completion::Return(JsValue::Undefined)))
             }
@@ -159,7 +159,7 @@ fn inspect_sync(runtime: &Runtime, completion: Completion) -> Result<Completion,
         .borrow()
         .heap
         .promise_snapshot(promise.object_id())?;
-    let result = runtime.root_raw_value(&snapshot.result)?;
+    let result = runtime.root_raw_value(snapshot.result.clone())?;
     match snapshot.state {
         PromiseState::Fulfilled => Ok(Completion::Return(runtime.into_jsvalue(result)?)),
         PromiseState::Rejected => Ok(Completion::Throw(runtime.into_jsvalue(result)?)),

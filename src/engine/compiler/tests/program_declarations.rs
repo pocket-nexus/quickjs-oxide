@@ -250,7 +250,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
         context.eval("Function.hostRead()"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("var hostValue;hostValue").unwrap(),
         Value::Undefined
@@ -297,7 +297,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
         context.eval("'use strict';var fixedVar=2"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.get_own_property(&global, &fixed).unwrap(),
         Some(CompleteOrdinaryPropertyDescriptor::Data {
@@ -450,7 +450,7 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
         context.eval("varMarker=1;var freshBefore=(varMarker=2),existingLexical=(varMarker=3),freshAfter=(varMarker=4)"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("varMarker").unwrap(), Value::Int(0));
     assert_eq!(
         context
@@ -497,7 +497,7 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
         atomic.eval("atomicMarker=1;var atomicExisting=6,atomicMissing=7"),
         Err(RuntimeError::Exception)
     ));
-    atomic.take_exception().unwrap().unwrap();
+    drop(atomic.take_exception().unwrap().unwrap());
     assert_eq!(atomic.eval("atomicMarker").unwrap(), Value::Int(0));
     assert_eq!(atomic.eval("atomicExisting").unwrap(), Value::Int(5));
     assert_eq!(
@@ -697,7 +697,7 @@ fn program_var_cross_realm_instantiation_and_fallback_match_quickjs() {
     );
 
     let mut syntax_caller = runtime.new_context();
-    syntax_caller.eval("let crossConflict=1").unwrap();
+    drop(syntax_caller.eval("let crossConflict=1").unwrap());
     let Value::Object(syntax_prototype) = syntax_caller.eval("SyntaxError.prototype").unwrap()
     else {
         panic!("caller SyntaxError.prototype was not an object");
@@ -908,7 +908,7 @@ fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
         context.execute(&delayed),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
 
     let atomic = context
         .compile("let untouched=function(){return Infinity},NaN=1,Infinity=2")
@@ -975,7 +975,7 @@ fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
         context.eval("let captured=1"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
 
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();

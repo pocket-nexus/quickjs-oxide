@@ -342,7 +342,7 @@ impl Runtime {
                     }
                 };
                 Ok(Completion::Return(
-                    self.into_jsvalue(self.root_raw_value(&raw)?)?,
+                    self.into_jsvalue(self.root_raw_value(raw.clone())?)?,
                 ))
             }
         }

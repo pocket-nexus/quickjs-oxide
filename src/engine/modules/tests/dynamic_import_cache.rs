@@ -19,7 +19,7 @@ fn dynamic_import_load_job_samples_the_current_loader() {
     assert!(runtime.execute_pending_job().unwrap().executed());
 
     let snapshot = promise_snapshot(&runtime, &promise);
-    let Value::Object(namespace) = runtime.root_raw_value(&snapshot.result).unwrap() else {
+    let Value::Object(namespace) = runtime.root_raw_value(snapshot.result.clone()).unwrap() else {
         panic!("sampled dynamic import did not return a namespace");
     };
     let source = runtime.intern_property_key("source").unwrap();
@@ -359,7 +359,9 @@ fn static_throw_then_cached_dynamic_import_preserves_both_promise_histories() {
     let evaluation_snapshot = promise_snapshot(&runtime, &evaluation);
     assert_eq!(evaluation_snapshot.state, PromiseState::Rejected);
     assert_eq!(
-        runtime.root_raw_value(&evaluation_snapshot.result).unwrap(),
+        runtime
+            .root_raw_value(evaluation_snapshot.result.clone())
+            .unwrap(),
         reason
     );
     {

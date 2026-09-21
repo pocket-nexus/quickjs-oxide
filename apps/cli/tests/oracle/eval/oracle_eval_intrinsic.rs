@@ -1739,8 +1739,8 @@ fn foreign_realm_primitive_string_eval_uses_its_defining_realm() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
-    defining.eval("globalThis.evalRealmMarker = 42").unwrap();
-    caller.eval("globalThis.evalRealmMarker = 7").unwrap();
+    drop(defining.eval("globalThis.evalRealmMarker = 42").unwrap());
+    drop(caller.eval("globalThis.evalRealmMarker = 7").unwrap());
 
     let defining_array_prototype = eval_object(&mut defining, "Array.prototype");
     let caller_array_prototype = eval_object(&mut caller, "Array.prototype");

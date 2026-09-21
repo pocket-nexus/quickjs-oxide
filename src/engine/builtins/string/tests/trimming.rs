@@ -169,17 +169,19 @@ fn string_trim_throws_in_defining_realm_preserves_user_throw_and_recovers_from_o
         "trim receiver TypeError did not use the function's defining realm",
     );
 
-    caller
-        .eval(
-            r#"globalThis.trimThrowReceiver=Object();
+    drop(
+        caller
+            .eval(
+                r#"globalThis.trimThrowReceiver=Object();
                 trimThrowReceiver[Symbol.toPrimitive]=function(hint){throw 73};
                 globalThis.trimReservationLog="";
                 globalThis.trimReservationReceiver=Object();
                 trimReservationReceiver[Symbol.toPrimitive]=function(hint){
                     trimReservationLog+="receiver:"+hint+";";return "  xy  "
                 };"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let throwing_receiver = caller.eval("trimThrowReceiver").unwrap();
     assert_eq!(
         caller.call(&trim, throwing_receiver, &[Value::Int(91)]),

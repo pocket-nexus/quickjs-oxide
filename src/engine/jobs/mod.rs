@@ -303,7 +303,7 @@ impl RuntimeState {
         match root {
             PendingJobRoot::Context(context) => self.heap.retain_context(context)?,
             PendingJobRoot::Object(object) => self.heap.retain_object(object)?,
-            PendingJobRoot::Value(value) => self.retain_raw_root(value)?,
+            PendingJobRoot::Value(value) => self.retain_raw_root(value.clone())?,
         }
         Ok(())
     }
@@ -554,7 +554,7 @@ impl Runtime {
         let callback = self.as_callable(&callback)?.ok_or(RuntimeError::Invariant(
             "FinalizationRegistry job callback lost its callable brand",
         ))?;
-        let held_value = self.root_raw_value(held_value)?;
+        let held_value = self.root_raw_value(held_value.clone())?;
 
         crate::engine::vm::entry::call(
             self,

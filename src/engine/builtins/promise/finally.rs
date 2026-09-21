@@ -121,7 +121,7 @@ impl Runtime {
                 "Promise finally thunk had the wrong internal capture",
             ));
         };
-        let value = self.root_raw_value(&value)?;
+        let value = self.root_raw_value(value.clone())?;
         let value = self.into_jsvalue(value)?;
         Ok(match kind {
             PromiseReactionKind::Fulfill => Completion::Return(value),

@@ -97,7 +97,7 @@ fn default_import_clauses_share_the_exporters_live_cell() {
         .unwrap();
 
     assert_eq!(&*loads.borrow(), &["pkg/exporter.js"]);
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(
         &mut context,
         r#"
@@ -128,7 +128,7 @@ fn default_function_declarations_are_hoisted_named_and_live_through_self_imports
             "pkg/anonymous.js",
         )
         .unwrap();
-    context.execute_module(&anonymous).unwrap();
+    drop(context.execute_module(&anonymous).unwrap());
 
     let named = context
         .compile_module_with_filename(
@@ -144,7 +144,7 @@ fn default_function_declarations_are_hoisted_named_and_live_through_self_imports
             "pkg/named.js",
         )
         .unwrap();
-    context.execute_module(&named).unwrap();
+    drop(context.execute_module(&named).unwrap());
 
     assert_script_true(
         &mut context,
@@ -171,7 +171,7 @@ fn anonymous_default_generator_and_async_declarations_receive_the_default_name()
             "pkg/generator.js",
         )
         .unwrap();
-    context.execute_module(&generator).unwrap();
+    drop(context.execute_module(&generator).unwrap());
 
     let async_function = context
         .compile_module_with_filename(
@@ -183,7 +183,7 @@ fn anonymous_default_generator_and_async_declarations_receive_the_default_name()
             "pkg/async-function.js",
         )
         .unwrap();
-    context.execute_module(&async_function).unwrap();
+    drop(context.execute_module(&async_function).unwrap());
 
     let async_generator = context
         .compile_module_with_filename(
@@ -195,7 +195,7 @@ fn anonymous_default_generator_and_async_declarations_receive_the_default_name()
             "pkg/async-generator.js",
         )
         .unwrap();
-    context.execute_module(&async_generator).unwrap();
+    drop(context.execute_module(&async_generator).unwrap());
 
     assert_script_true(
         &mut context,
@@ -229,7 +229,7 @@ fn default_class_declarations_keep_tdz_and_name_before_static_initializers() {
             "pkg/anonymous-class.js",
         )
         .unwrap();
-    context.execute_module(&anonymous).unwrap();
+    drop(context.execute_module(&anonymous).unwrap());
 
     let named = context
         .compile_module_with_filename(
@@ -243,7 +243,7 @@ fn default_class_declarations_keep_tdz_and_name_before_static_initializers() {
             "pkg/named-class.js",
         )
         .unwrap();
-    context.execute_module(&named).unwrap();
+    drop(context.execute_module(&named).unwrap());
 
     let static_name = context
         .compile_module_with_filename(
@@ -255,7 +255,7 @@ fn default_class_declarations_keep_tdz_and_name_before_static_initializers() {
             "pkg/static-name-class.js",
         )
         .unwrap();
-    context.execute_module(&static_name).unwrap();
+    drop(context.execute_module(&static_name).unwrap());
 
     assert_script_true(
         &mut context,
@@ -293,7 +293,7 @@ fn imported_mutable_cell_has_an_immutable_importer_view() {
             "pkg/importer.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(
         &mut context,
         r#"
@@ -390,7 +390,7 @@ fn import_declaration_collisions_match_pinned_quickjs_single_slot_semantics() {
             "pkg/collision.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__importDeclarationCollision === true");
 
     let var_initializer = context

@@ -153,7 +153,7 @@ impl Runtime {
             var_ref.value.clone()
         };
         let mut state = self.0.state.borrow_mut();
-        state.retain_raw_root(&raw)?;
+        state.retain_raw_root(raw.clone())?;
         JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
             "internal value sentinel occupied a captured variable cell",
         ))
@@ -204,7 +204,7 @@ impl Runtime {
         let raw = cell.value.clone();
         // The cell keeps its own edge; this read retains one new edge for
         // every heap-backed kind before handing out the owned value.
-        state.retain_raw_root(&raw)?;
+        state.retain_raw_root(raw.clone())?;
         drop(state);
         Ok(Some(JsValue::from_raw(raw).ok_or(
             RuntimeError::Invariant("internal value sentinel occupied a captured cell"),
@@ -348,7 +348,7 @@ impl Runtime {
             return Ok(None);
         }
         let raw = raw.clone();
-        state.retain_raw_root(&raw)?;
+        state.retain_raw_root(raw.clone())?;
         drop(state);
         Ok(Some(JsValue::from_raw(raw).ok_or(
             RuntimeError::Invariant("internal value sentinel occupied a global binding cell"),
@@ -493,18 +493,18 @@ impl Runtime {
         converted
     }
 
-    pub(crate) fn root_raw_value(&self, value: &RawValue) -> Result<Value, RuntimeError> {
+    pub(crate) fn root_raw_value(&self, value: RawValue) -> Result<Value, RuntimeError> {
         let state = self.0.state.borrow();
         Ok(match value {
             RawValue::Undefined => Value::Undefined,
             RawValue::Null => Value::Null,
-            RawValue::Bool(value) => Value::Bool(*value),
-            RawValue::Int(value) => Value::Int(*value),
-            RawValue::Float(value) => Value::Float(*value),
-            RawValue::BigInt(id) => Value::BigInt(state.heap.bigint(*id)?.clone()),
-            RawValue::String(id) => Value::String(state.heap.string(*id)?.clone()),
+            RawValue::Bool(value) => Value::Bool(value),
+            RawValue::Int(value) => Value::Int(value),
+            RawValue::Float(value) => Value::Float(value),
+            RawValue::BigInt(id) => Value::BigInt(state.heap.bigint(id)?.clone()),
+            RawValue::String(id) => Value::String(state.heap.string(id)?.clone()),
             RawValue::Symbol(index) => {
-                let atom = state.atoms.brand(*index)?;
+                let atom = state.atoms.brand(index)?;
                 Value::Symbol(SymbolRef::from_borrowed_atom(self.clone(), atom)?)
             }
             RawValue::Private(_) => {
@@ -513,7 +513,7 @@ impl Runtime {
                 ));
             }
             RawValue::Object(object) => {
-                Value::Object(ObjectRef::from_borrowed_handle(self.clone(), *object)?)
+                Value::Object(ObjectRef::from_borrowed_handle(self.clone(), object)?)
             }
             RawValue::Uninitialized | RawValue::Exception => {
                 return Err(RuntimeError::Invariant(
@@ -575,9 +575,11 @@ mod owned_cell_tests {
     fn unresolved_global_leaf_observes_replacement_and_declines_accessors_and_tdz() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
-            .eval("globalThis.nativeLeaf = { value: 1 }")
-            .unwrap();
+        drop(
+            context
+                .eval("globalThis.nativeLeaf = { value: 1 }")
+                .unwrap(),
+        );
         let atom = runtime
             .0
             .state
@@ -592,21 +594,21 @@ mod owned_cell_tests {
             .unwrap();
         assert!(matches!(&first, JsValue::Object(_)));
         runtime.release_jsvalue(first).unwrap();
-        context.eval("nativeLeaf = 7").unwrap();
+        drop(context.eval("nativeLeaf = 7").unwrap());
         assert_eq!(
             runtime
                 .try_read_unresolved_global(&root, context.realm, atom)
                 .unwrap(),
             Some(JsValue::Int(7))
         );
-        context.eval("Object.defineProperty(globalThis, 'nativeLeaf', { get() { throw 99; }, configurable: true })").unwrap();
+        drop(context.eval("Object.defineProperty(globalThis, 'nativeLeaf', { get() { throw 99; }, configurable: true })").unwrap());
         assert!(
             runtime
                 .try_read_unresolved_global(&root, context.realm, atom)
                 .unwrap()
                 .is_none()
         );
-        context.eval("delete globalThis.nativeLeaf").unwrap();
+        drop(context.eval("delete globalThis.nativeLeaf").unwrap());
         assert!(
             runtime
                 .try_read_unresolved_global(&root, context.realm, atom)

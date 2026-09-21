@@ -466,12 +466,16 @@ fn array_stringification_boxing_errors_user_throws_and_overflow_use_pinned_realm
     );
     let join = property_callable(&runtime, &mut defining, &defining_array_prototype, "join");
 
-    defining
-        .eval("Number.prototype.length=1;Number.prototype[0]='defining-box'")
-        .expect("install defining realm Number array-like properties");
-    caller
-        .eval("Number.prototype.length=1;Number.prototype[0]='caller-box'")
-        .expect("install caller realm Number array-like properties");
+    drop(
+        defining
+            .eval("Number.prototype.length=1;Number.prototype[0]='defining-box'")
+            .expect("install defining realm Number array-like properties"),
+    );
+    drop(
+        caller
+            .eval("Number.prototype.length=1;Number.prototype[0]='caller-box'")
+            .expect("install caller realm Number array-like properties"),
+    );
     assert_eq!(
         caller
             .call(&join, Value::Int(7), &[])

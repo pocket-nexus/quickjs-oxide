@@ -161,7 +161,7 @@ fn queued_jobs_retain_their_graph_across_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var gcAnswer = 0;
@@ -169,7 +169,7 @@ var gcAnswer = 0;
     Promise.resolve(41).then(function (value) { gcAnswer = value + 1; });
 })();
 "#,
-    );
+    ));
     runtime.run_gc().unwrap();
     assert!(drain(&runtime) >= 1);
     assert_eq!(integer(eval(&mut context, "gcAnswer")), 42);
@@ -232,14 +232,14 @@ fn host_rejection_tracker_reports_unhandled_then_late_handled() {
             .borrow_mut()
             .push((event.context(), event.is_handled(), event.reason().clone()));
         if event.is_handled() {
-            eval(
+            drop(eval(
                 &mut callback_realm.borrow_mut(),
                 "Promise.resolve().then(function () { trackerOrder.push('tracker'); });",
-            );
+            ));
         }
     });
 
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var trackerOrder = [];
@@ -250,7 +250,7 @@ var early = new Promise(function (_, reject) { rejectEarly = reject; });
 early.then(undefined, function () {});
 rejectEarly('early');
 "#,
-    );
+    ));
     runtime.clear_host_promise_rejection_tracker();
 
     let events = events.borrow();
@@ -275,7 +275,7 @@ fn pending_job_reports_its_originating_context_on_success_and_throw() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut first = runtime.new_context();
     let mut second = runtime.new_context();
-    eval(
+    drop(eval(
         &mut first,
         r#"
 var source = Promise.resolve();
@@ -290,11 +290,11 @@ source.constructor = {
 };
 source.then(function () { return 1; });
 "#,
-    );
-    eval(
+    ));
+    drop(eval(
         &mut second,
         "Promise.resolve().then(function () { return 42; });",
-    );
+    ));
 
     let failure = runtime.execute_pending_job().unwrap_err();
     assert_eq!(failure.context(), Some(first.realm_id()));

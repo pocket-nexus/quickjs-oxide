@@ -208,7 +208,7 @@ fn fallthrough_throw_this_and_arguments_settle_the_outer_promise() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var results = [];
@@ -227,7 +227,7 @@ receiver.call({ base: 40 }, 1).then(function (value) {
     results.push(value);
 });
 "#,
-    );
+    ));
     assert_eq!(drain(&runtime), 3);
     assert_eq!(
         text(eval(&mut context, "results.join('|')")),
@@ -405,7 +405,7 @@ fn await_handles_every_thenable_abrupt_and_first_settlement_boundary() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var getterResult = 'pending';
@@ -442,7 +442,7 @@ observe(nonCallable).then(function (value) {
 });
 observe(repeated).then(function (value) { repeatedResult = value; });
 "#,
-    );
+    ));
     assert!(drain(&runtime) >= 8);
     assert_eq!(
         text(eval(
@@ -508,7 +508,7 @@ fn await_uses_intrinsics_instead_of_mutable_promise_properties() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var IntrinsicPromise = Promise;
@@ -537,7 +537,7 @@ originalThen.call(
     function (error) { answer = 'bad:' + error; }
 );
 "#,
-    );
+    ));
     assert_eq!(drain(&runtime), 2);
     assert_eq!(integer(eval(&mut context, "answer")), 42);
     assert_eq!(text(eval(&mut context, "hits.join('|')")), "");
@@ -582,7 +582,7 @@ fn direct_eval_keeps_async_function_variable_environments_alive() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var beforeResult = 'pending';
@@ -605,7 +605,7 @@ beforeAwait().then(function (value) { beforeResult = value; });
 afterAwait().then(function (value) { afterResult = value; });
 parameterEval().then(function (value) { parameterResult = value; });
 "#,
-    );
+    ));
     assert!(drain(&runtime) >= 4);
     assert_eq!(
         text(eval(
@@ -649,7 +649,7 @@ fn cross_realm_call_uses_caller_promise_and_jobs_but_callee_body_realm() {
     );
 
     define_global(&mut caller, "crossPromise", Value::Object(promise));
-    eval(
+    drop(eval(
         &mut caller,
         r#"
 var crossReason;
@@ -657,7 +657,7 @@ crossPromise.then(undefined, function (error) {
     crossReason = error;
 });
 "#,
-    );
+    ));
     drop(callee);
     runtime.run_gc().unwrap();
 

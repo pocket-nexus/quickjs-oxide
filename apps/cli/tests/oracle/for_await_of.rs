@@ -89,7 +89,7 @@ fn pending_for_await_next_record_survives_repeated_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var release;
@@ -159,12 +159,12 @@ generatorSource = null;
 generatorIterator = null;
 generatorGate = null;
 "#,
-    );
+    ));
 
     for _ in 0..3 {
         runtime.run_gc().unwrap();
     }
-    eval(&mut context, "release(); generatorRelease();");
+    drop(eval(&mut context, "release(); generatorRelease();"));
     while runtime.is_job_pending() {
         assert!(runtime.execute_pending_job().unwrap().executed());
         runtime.run_gc().unwrap();

@@ -122,8 +122,8 @@ impl CollectionIndex {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn insert(&mut self, heap: &Heap, key: &RawValue, index: usize) -> u64 {
-        let hash = self.hash(heap, key);
+    pub(super) fn insert(&mut self, heap: &Heap, key: RawValue, index: usize) -> u64 {
+        let hash = self.hash(heap, &key);
         self.insert_hashed(hash, index);
         hash
     }
@@ -135,8 +135,8 @@ impl CollectionIndex {
     }
 
     #[cfg(test)]
-    pub(super) fn remove(&mut self, heap: &Heap, key: &RawValue, index: usize) {
-        self.remove_hashed(self.hash(heap, key), index);
+    pub(super) fn remove(&mut self, heap: &Heap, key: RawValue, index: usize) {
+        self.remove_hashed(self.hash(heap, &key), index);
     }
 
     pub(super) fn remove_hashed(&mut self, hash: u64, index: usize) {
@@ -355,7 +355,7 @@ mod tests {
         let hash = index.hash(&heap, &RawValue::Int(2));
         index.buckets.insert(hash, vec![0, 1]);
         assert_eq!(index.find(&heap, &records, &RawValue::Int(2)), Some(1));
-        index.remove(&heap, &RawValue::Int(2), 1);
+        index.remove(&heap, RawValue::Int(2), 1);
         assert_eq!(index.find(&heap, &records, &RawValue::Int(2)), None);
         assert_eq!(index.buckets[&hash], vec![0]);
     }
@@ -366,7 +366,7 @@ mod tests {
         let mut index = CollectionIndex::default();
         let mut records = record_store(&heap, vec![RawValue::Int(1)]);
         assert!(index.validate(&heap, &records).is_err());
-        index.insert(&heap, &RawValue::Int(1), 0);
+        index.insert(&heap, RawValue::Int(1), 0);
         assert!(index.validate(&heap, &records).is_ok());
         records.get_mut(0).unwrap().key = RawValue::Int(2);
         assert!(index.validate(&heap, &records).is_err());

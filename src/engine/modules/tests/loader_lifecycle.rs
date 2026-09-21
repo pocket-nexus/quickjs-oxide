@@ -61,7 +61,7 @@ fn attribute_check_replacement_is_visible_to_the_next_clause_and_resolution() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__attributeLoaderReplacement === 42");
     assert_eq!(
         initial_checks.borrow().as_slice(),
@@ -94,7 +94,7 @@ fn loader_boundary_preserves_distinct_lone_surrogate_specifiers() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__surrogateModuleNames === 42");
     assert_eq!(&*loads.borrow(), &[vec![0xd800], vec![0xd801]]);
 }
@@ -140,7 +140,7 @@ fn loader_boundary_retains_quickjs_c_string_nul_truncation() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__nulModuleNames === 42");
     assert_eq!(
         &*loads.borrow(),
@@ -219,7 +219,7 @@ fn load_samples_replacement_installed_by_normalize() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__normalizeReplacement === 42");
     assert_eq!(initial_normalizations.borrow().len(), 1);
     assert!(initial_loads.borrow().is_empty());
@@ -255,7 +255,7 @@ fn loader_panic_rolls_back_the_active_resolution_transaction() {
             "pkg/importer.js",
         )
         .unwrap();
-    context.execute_module(&importer).unwrap();
+    drop(context.execute_module(&importer).unwrap());
     assert_script_true(&mut context, "__panicRollback === 42");
 }
 
@@ -303,7 +303,7 @@ fn module_callbacks_receive_the_exact_initiating_context() {
             "pkg/entry.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__callbackContextAnswer === 42");
     assert_eq!(
         callbacks.borrow().as_slice(),
@@ -332,7 +332,7 @@ fn loader_accepts_a_compiled_module_from_the_initiating_context() {
             "pkg/entry.js",
         )
         .unwrap();
-    context.execute_module(&entry).unwrap();
+    drop(context.execute_module(&entry).unwrap());
     assert_script_true(&mut context, "__compiledLoaderAnswer === 42");
     assert_eq!(
         context.runtime().module_dependencies(&entry).unwrap(),

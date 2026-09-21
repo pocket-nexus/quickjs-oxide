@@ -78,7 +78,7 @@ impl WrapStep {
             }
             Err(error) => return Err(error.into()),
         };
-        let source = runtime.root_raw_value(&source)?;
+        let source = runtime.root_raw_value(source.clone())?;
         let resume = WrapResume(Box::new(WrapResumeState {
             pending_effect: WrapStepPending::default(),
             realm,
@@ -98,7 +98,7 @@ impl WrapStep {
                 )
             }),
             IteratorResumeKind::Next => {
-                let method = runtime.root_raw_value(&next)?;
+                let method = runtime.root_raw_value(next.clone())?;
                 if let Value::Object(iterator) = source {
                     return Ok({
                         let __pending_field_iterator = iterator;

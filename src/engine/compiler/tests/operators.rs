@@ -360,16 +360,16 @@ fn relational_membership_uses_runtime_object_protocols() {
 
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
+    drop(context
         .eval(
             "Function.membershipTrace=''; Function[Symbol.toPrimitive]=function(hint){ Function.membershipTrace+=hint; return 'prototype'; };",
         )
-        .unwrap();
+        .unwrap());
     assert!(matches!(
         context.eval("Function in (Function.membershipTrace+='R',1)"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("Function.membershipTrace").unwrap(),
         Value::String(JsString::from_static("R"))
