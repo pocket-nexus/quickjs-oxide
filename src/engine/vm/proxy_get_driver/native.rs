@@ -218,7 +218,7 @@ pub(super) fn begin_synchronous(
                     native_realm,
                     invocation,
                     &call.activation.arguments,
-                    &call.activation.callable,
+                    call.activation.callable(),
                 );
                 if let Some(invocation) = unwind.adapted.take() {
                     let _ = invocation.release(runtime);
@@ -554,7 +554,7 @@ pub(super) fn begin_local(
                 native_realm,
                 invocation,
                 &call.activation.arguments,
-                &call.activation.callable,
+                call.activation.callable(),
                 |step| match capture_native_step(
                     runtime,
                     slots,
@@ -922,7 +922,7 @@ pub(super) fn begin_selected_into(
                     native_realm,
                     invocation.as_ref(),
                     &call.activation.arguments,
-                    &call.activation.callable,
+                    call.activation.callable(),
                     &mut waiting,
                 ),
             };

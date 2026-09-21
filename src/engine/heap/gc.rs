@@ -1226,14 +1226,14 @@ impl Heap {
         Ok(self.release_reference(id)?.unwrap_or_default())
     }
 
-    /// Release one reference, returning cleanup when a node is finalized.
-    /// Inspect the whole queue: an earlier no-drain release may have queued a
-    /// different node even when this reference remains nonzero.
+    /// Runtime releases only need to know whether this leaf was consumed.
+    /// Public heap callers reconstruct exact cleanup statistics on finalization.
+    /// A decline never changes the slot or any queued work.
     #[inline]
-    pub(super) fn release_reference(
+    pub(super) fn try_release_leaf_reference(
         &mut self,
         id: RawId,
-    ) -> Result<Option<HeapCleanup>, HeapError> {
+    ) -> Result<Option<bool>, HeapError> {
         // A sole live leaf has no heap/atom edges or callbacks. With no older
         // queued work, retire it directly instead of moving the wide Node
         // through Live -> ZeroQueued -> finish_node. Explicit string tracing
@@ -1252,7 +1252,7 @@ impl Heap {
                 // The live leaf and its identity are already validated. With
                 // no queued work this decrement cannot trigger finalization.
                 node.strong.set(node.strong.get() - 1);
-                return Ok(None);
+                return Ok(Some(false));
             }
             if !traced
                 && matches!(&self.slots[index].state, SlotState::Live(node) if node.strong.get() == 1)
@@ -1261,18 +1261,32 @@ impl Heap {
                 // drops the leaf in place, without moving the whole Node enum.
                 self.slots[index].state = SlotState::Vacant;
                 self.reclaim_vacant_slot(id.index())?;
-                return Ok(Some(match id {
-                    RawId::String(_) => HeapCleanup {
-                        finalized_strings: 1,
-                        ..HeapCleanup::default()
-                    },
-                    RawId::BigInt(_) => HeapCleanup {
-                        finalized_bigints: 1,
-                        ..HeapCleanup::default()
-                    },
-                    _ => unreachable!("validated leaf reference"),
-                }));
+                return Ok(Some(true));
             }
+        }
+        Ok(None)
+    }
+
+    /// Release one reference, returning cleanup when a node is finalized.
+    /// Inspect the whole queue: an earlier no-drain release may have queued a
+    /// different node even when this reference remains nonzero.
+    #[inline]
+    pub(super) fn release_reference(
+        &mut self,
+        id: RawId,
+    ) -> Result<Option<HeapCleanup>, HeapError> {
+        if let Some(finalized) = self.try_release_leaf_reference(id)? {
+            return Ok(finalized.then(|| match id {
+                RawId::String(_) => HeapCleanup {
+                    finalized_strings: 1,
+                    ..HeapCleanup::default()
+                },
+                RawId::BigInt(_) => HeapCleanup {
+                    finalized_bigints: 1,
+                    ..HeapCleanup::default()
+                },
+                _ => unreachable!("validated leaf reference"),
+            }));
         }
         self.release_raw_no_drain(id)?;
         if self.zero_queue.is_empty() {
@@ -1595,26 +1609,26 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
         }
         ObjectPayload::IteratorHelper(data) => {
             edges.push(RawId::Object(data.source));
-            edges.extend(raw_value_edges(&data.next));
-            edges.extend(raw_value_edges(&data.callback));
+            edges.extend(raw_value_edge(&data.next));
+            edges.extend(raw_value_edge(&data.callback));
             edges.extend(data.inner.map(RawId::Object));
         }
         ObjectPayload::IteratorWrap(data) => {
-            edges.extend(raw_value_edges(&data.source));
-            edges.extend(raw_value_edges(&data.next));
+            edges.extend(raw_value_edge(&data.source));
+            edges.extend(raw_value_edge(&data.next));
         }
         ObjectPayload::AsyncFromSyncIterator(data) => {
             edges.push(RawId::Object(data.sync_iterator));
-            edges.extend(raw_value_edges(&data.next));
+            edges.extend(raw_value_edge(&data.next));
         }
         ObjectPayload::IteratorConcat(data) => {
             // This order mirrors the class finalizer: active iterator, cached
             // next, then the unconsumed captured pairs.
             edges.extend(data.iterator.map(RawId::Object));
-            edges.extend(raw_value_edges(&data.next));
+            edges.extend(raw_value_edge(&data.next));
             for item in data.items.iter().flatten() {
                 edges.push(RawId::Object(item.iterable));
-                edges.extend(raw_value_edges(&item.method));
+                edges.extend(raw_value_edge(&item.method));
             }
         }
         ObjectPayload::Proxy(data) => {
@@ -1632,8 +1646,8 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
         }
         ObjectPayload::Map { records, .. } => {
             for record in records.iter() {
-                edges.extend(raw_value_edges(&record.key));
-                edges.extend(raw_value_edges(&record.value));
+                edges.extend(raw_value_edge(&record.key));
+                edges.extend(raw_value_edge(&record.value));
             }
         }
         ObjectPayload::MapIterator { object, .. } => {
@@ -1641,7 +1655,7 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
         }
         ObjectPayload::Set { records, .. } => {
             for record in records.iter() {
-                edges.extend(raw_value_edges(&record.key));
+                edges.extend(raw_value_edge(&record.key));
             }
         }
         ObjectPayload::SetIterator { object, .. } => {
@@ -1651,7 +1665,7 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
             for value in records.values() {
                 // Weak keys are intentionally absent from the graph. Values
                 // retain their ordinary owned edges, matching QuickJS mark.
-                edges.extend(raw_value_edges(value));
+                edges.extend(raw_value_edge(value));
             }
         }
         ObjectPayload::FinalizationRegistry(data) => {
@@ -1660,7 +1674,7 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
             for entry in &data.entries {
                 // target and unregister_token are intentionally weak. Only
                 // held values participate in ordinary trial-deletion tracing.
-                edges.extend(raw_value_edges(&entry.held_value));
+                edges.extend(raw_value_edge(&entry.held_value));
             }
         }
         ObjectPayload::ForInIterator(data) => {
@@ -1681,9 +1695,9 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
             arguments,
         } => {
             edges.push(RawId::Object(*target));
-            edges.extend(raw_value_edges(this_value));
+            edges.extend(raw_value_edge(this_value));
             for argument in arguments.iter() {
-                edges.extend(raw_value_edges(argument));
+                edges.extend(raw_value_edge(argument));
             }
         }
         ObjectPayload::BytecodeFunction {
@@ -1725,7 +1739,7 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
             }
         }
         ObjectPayload::Promise(data) => {
-            edges.extend(raw_value_edges(&data.result));
+            edges.extend(raw_value_edge(&data.result));
             for reaction in data.fulfill_reactions.iter().chain(&data.reject_reactions) {
                 edges.extend(promise_reaction_edges(reaction));
             }
@@ -1848,11 +1862,11 @@ pub(super) fn generator_activation_edges(activation: &GeneratorActivationData) -
         .chain(vm.normalized_this.iter())
         .chain(std::iter::once(&vm.new_target))
     {
-        edges.extend(raw_value_edges(value));
+        edges.extend(raw_value_edge(value));
     }
     for binding in activation.arguments.iter().chain(activation.locals.iter()) {
         match binding {
-            GeneratorFrameBinding::Direct(value) => edges.extend(raw_value_edges(value)),
+            GeneratorFrameBinding::Direct(value) => edges.extend(raw_value_edge(value)),
             GeneratorFrameBinding::PrivateCallable(object) => {
                 edges.push(RawId::Object(*object));
             }
@@ -1879,7 +1893,7 @@ pub(super) fn var_ref_edges(var_ref: &VarRefData) -> Edges {
 pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
     let mut edges = Edges::new();
     match slot {
-        PropertySlot::Data(value) => edges.extend(raw_value_edges(value)),
+        PropertySlot::Data(value) => edges.extend(raw_value_edge(value)),
         PropertySlot::VarRef(var_ref) => edges.push(RawId::VarRef(*var_ref)),
         PropertySlot::Accessor { get, set } => {
             edges.extend(get.iter().chain(set.iter()).copied().map(RawId::Object))
@@ -2047,7 +2061,7 @@ pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
     );
     edges.extend(context.global_objects.iter().copied().map(RawId::Object));
     for value in &context.intrinsics {
-        edges.extend(raw_value_edges(value));
+        edges.extend(raw_value_edge(value));
     }
     edges.extend(context.initial_shapes.iter().copied().map(RawId::Shape));
     edges.extend(
@@ -2074,7 +2088,7 @@ pub(super) fn raw_module_record_edges(record: &RawModuleRecord) -> Vec<RawId> {
             edges.push(RawId::FunctionBytecode(*function));
         }
         RawModuleRecordBody::Json { default_value } => {
-            edges.extend(raw_value_edges(default_value));
+            edges.extend(raw_value_edge(default_value));
         }
     }
     edges.extend(record.import_meta.map(RawId::Object));
@@ -2088,7 +2102,7 @@ pub(super) fn raw_module_record_edges(record: &RawModuleRecord) -> Vec<RawId> {
         | RawModuleNamespaceState::Ready(namespace) => edges.push(RawId::Object(namespace)),
     }
     if let RawModuleEvaluationState::Errored(exception) = &record.evaluation {
-        edges.extend(raw_value_edges(exception));
+        edges.extend(raw_value_edge(exception));
     }
     edges.extend(record.evaluation_promise.map(RawId::Object));
     edges.extend(record.evaluation_resolve.map(RawId::Object));
@@ -2100,7 +2114,7 @@ pub(super) fn function_bytecode_edges(bytecode: &FunctionBytecodeData) -> Vec<Ra
     let mut edges = Vec::with_capacity(bytecode.constants.len().saturating_add(1));
     for constant in bytecode.constants.iter() {
         match constant {
-            BytecodeConstant::Value(value) => edges.extend(raw_value_edges(value)),
+            BytecodeConstant::Value(value) => edges.extend(raw_value_edge(value)),
             BytecodeConstant::RegExp { .. } => {}
             BytecodeConstant::Function(function) => {
                 edges.push(RawId::FunctionBytecode(*function));

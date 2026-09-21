@@ -179,6 +179,11 @@ impl Runtime {
             // (or a successful release) drains this work after the borrow ends.
             return;
         };
+        self.finish_reference_release(operation, result);
+    }
+
+    #[inline]
+    fn finish_reference_release(&self, operation: DeferredRefOp, result: Result<(), RuntimeError>) {
         // Successful releases are a VM hot path. Consult diagnostic settings
         // only after an error; probing the process environment on every edge
         // release adds a global environment-lock lookup to ordinary value flow.
@@ -375,9 +380,6 @@ impl Runtime {
                 );
             }
         }
-        if let Ok(mut state) = self.0.state.try_borrow_mut() {
-            return state.heap.retain_string(id);
-        }
         let state = self.0.state.try_borrow().map_err(|_| {
             HeapError::Invariant("string node retained during a runtime state borrow")
         })?;
@@ -400,7 +402,7 @@ impl Runtime {
                 );
             }
         }
-        self.release_or_defer(DeferredRefOp::String(id));
+        self.release_leaf_or_defer(DeferredRefOp::String(id), RawId::String(id));
     }
 
     #[track_caller]
@@ -418,9 +420,6 @@ impl Runtime {
                     std::backtrace::Backtrace::force_capture()
                 );
             }
-        }
-        if let Ok(mut state) = self.0.state.try_borrow_mut() {
-            return state.heap.retain_bigint(id);
         }
         let state = self.0.state.try_borrow().map_err(|_| {
             HeapError::Invariant("bigint node retained during a runtime state borrow")
@@ -444,7 +443,24 @@ impl Runtime {
                 );
             }
         }
-        self.release_or_defer(DeferredRefOp::BigInt(id));
+        self.release_leaf_or_defer(DeferredRefOp::BigInt(id), RawId::BigInt(id));
+    }
+
+    #[inline]
+    fn release_leaf_or_defer(&self, operation: DeferredRefOp, id: RawId) {
+        let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
+            match state.heap.try_release_leaf_reference(id) {
+                Ok(Some(_)) => Ok(()),
+                Ok(None) => state.apply_deferred_operation(operation),
+                Err(error) => Err(error.into()),
+            }
+        } else {
+            // Keep diagnostics, enqueue order, and blocked-drain behavior in
+            // the existing path. The failed borrow did not alter the node.
+            self.release_or_defer(operation);
+            return;
+        };
+        self.finish_reference_release(operation, result);
     }
 
     /// Release one producer-owned string/BigInt conversion edge after the
@@ -563,5 +579,109 @@ impl RuntimeState {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bigint_leaf_tests {
+    use super::*;
+    use crate::engine::{heap::Heap, value::bigint::JsBigInt};
+
+    fn payload() -> JsBigInt {
+        JsBigInt::parse_js_string("170141183460469231731687303715884105729").unwrap()
+    }
+
+    #[test]
+    fn bigint_shared_retain_and_deferred_release_preserve_owners_and_order() {
+        let runtime = Runtime::new();
+        let first = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_bigint(payload())
+            .unwrap();
+        let second = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_bigint(payload())
+            .unwrap();
+        {
+            let state = runtime.0.state.borrow();
+            runtime.retain_bigint_handle(first).unwrap();
+            runtime.release_bigint_handle(first);
+            runtime.release_bigint_handle(second);
+            let pending = runtime.0.deferred_references.borrow();
+            assert!(matches!(pending.front(), Some(DeferredRefOp::BigInt(id)) if *id == first));
+            assert!(matches!(pending.back(), Some(DeferredRefOp::BigInt(id)) if *id == second));
+            assert!(state.heap.bigint(first).is_ok());
+            assert!(state.heap.bigint(second).is_ok());
+        }
+        // Immediate release must also drain older deferred work.
+        runtime.release_bigint_handle(first);
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(runtime.0.state.borrow().heap.bigint(first).is_err());
+        assert!(runtime.0.state.borrow().heap.bigint(second).is_err());
+        assert!(runtime.retain_bigint_handle(first).is_err());
+
+        let id = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_bigint(payload())
+            .unwrap();
+        {
+            let _state = runtime.0.state.borrow_mut();
+            assert!(runtime.retain_bigint_handle(id).is_err());
+            runtime.release_bigint_handle(id);
+        }
+        runtime.drain_deferred_references().unwrap();
+        assert!(runtime.0.state.borrow().heap.bigint(id).is_err());
+    }
+
+    #[test]
+    fn string_shared_retain_and_deferred_release_preserve_owners() {
+        let runtime = Runtime::new();
+        let id = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_string(crate::engine::value::JsString::from_static("shared leaf"))
+            .unwrap();
+        {
+            let state = runtime.0.state.borrow();
+            runtime.retain_string_handle(id).unwrap();
+            runtime.release_string_handle(id);
+            assert!(state.heap.string(id).is_ok());
+        }
+        runtime.release_string_handle(id);
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(runtime.0.state.borrow().heap.string(id).is_err());
+    }
+
+    #[test]
+    fn bigint_leaf_decline_preserves_zero_queue_and_public_cleanup_counts() {
+        let mut heap = Heap::new();
+        let first = heap.allocate_bigint(payload()).unwrap();
+        let second = heap.allocate_bigint(payload()).unwrap();
+        heap.release_raw_no_drain(RawId::BigInt(first)).unwrap();
+        assert_eq!(
+            heap.try_release_leaf_reference(RawId::BigInt(second))
+                .unwrap(),
+            None
+        );
+        assert!(heap.bigint(second).is_ok());
+        let cleanup = heap.release_bigint(second).unwrap();
+        assert_eq!(cleanup.finalized_bigints, 2);
+        assert!(
+            heap.try_release_leaf_reference(RawId::BigInt(second))
+                .is_err()
+        );
+        let third = heap.allocate_bigint(payload()).unwrap();
+        assert_eq!(heap.release_bigint(third).unwrap().finalized_bigints, 1);
     }
 }

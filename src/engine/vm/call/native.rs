@@ -20,7 +20,7 @@ pub(in crate::engine::vm) struct NativeActivation {
     runtime: Option<Runtime>,
     // Retire the non-owning diagnostic descriptor before callable roots on unwind.
     active_frame: Option<ActiveFrameGuard>,
-    pub callable: CallableRef,
+    callable: Option<CallableRef>,
     pub realm: ContextId,
     pub target: NativeFunctionId,
     pub mode: NativeInvokeMode,
@@ -218,7 +218,7 @@ impl Runtime {
         Ok(PreparedNativeCall {
             activation: NativeActivation {
                 runtime: Some(self.clone()),
-                callable,
+                callable: Some(callable),
                 realm,
                 target,
                 mode,
@@ -417,7 +417,7 @@ impl Runtime {
         Ok(PreparedNativeCall {
             activation: NativeActivation {
                 runtime: Some(self.clone()),
-                callable: callable_input.into_owned(),
+                callable: Some(callable_input.into_owned()),
                 realm,
                 target,
                 mode,
@@ -466,6 +466,10 @@ impl Drop for NativeActivation {
 }
 
 impl NativeActivation {
+    pub(in crate::engine::vm) fn callable(&self) -> &CallableRef {
+        self.callable.as_ref().expect("native callable present")
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
         self.active_frame
@@ -584,13 +588,14 @@ impl NativeActivation {
         (Err(error), self.release_arguments_reusing())
     }
 
-    fn release_arguments_reusing(mut self) -> Vec<JsValue> {
-        // Transfer the existing Runtime owner only after no fallible preparation
-        // remains. Until then Drop can release arguments on every unwind path.
+    fn release_arguments_reusing(&mut self) -> Vec<JsValue> {
+        // finish_value/finish_error already retired the diagnostic frame. Retire
+        // the callable in place before argv, leaving the activation empty for
+        // its automatic Drop instead of moving the whole record twice.
+        debug_assert!(self.active_frame.is_none());
+        drop(self.callable.take());
+        let runtime = self.runtime.as_ref().expect("native runtime present");
         let mut readable = std::mem::take(&mut self.arguments.readable);
-        let runtime = self.runtime.take().expect("native runtime present");
-        // Callable roots retire before argument roots, as on the public path.
-        drop(self);
         for value in readable.drain(..) {
             let _ = runtime.release_jsvalue(value);
         }
