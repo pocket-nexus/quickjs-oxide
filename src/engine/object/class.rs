@@ -16,15 +16,15 @@ use crate::engine::code::function::metadata::ConstructorKind;
 
 use crate::engine::heap::{ContextId, ObjectPayload};
 use crate::engine::object::{CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::{Completion, DefineClassOutcome};
 
 impl Runtime {
     pub(crate) fn define_class_pair(
         &self,
         realm: ContextId,
-        parent: Value,
-        constructor: Value,
+        parent: &JsValue,
+        constructor: &JsValue,
         name: &JsString,
         has_heritage: bool,
     ) -> Result<DefineClassOutcome, RuntimeError> {
@@ -34,7 +34,7 @@ impl Runtime {
         // before the candidate constructor is mutated.
         let (constructor_parent, prototype_parent, expected_constructor_kind) = if has_heritage {
             match parent {
-                Value::Null => {
+                JsValue::Null => {
                     let function_prototype = {
                         let prototype = self
                             .0
@@ -47,7 +47,9 @@ impl Runtime {
                     };
                     (function_prototype, None, ConstructorKind::Derived)
                 }
-                Value::Object(parent_constructor) => {
+                JsValue::Object(parent_constructor) => {
+                    let parent_constructor =
+                        ObjectRef::from_borrowed_handle(self.clone(), *parent_constructor)?;
                     self.validate_class_parent(&parent_constructor)?;
                     let prototype_key = self
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
@@ -56,10 +58,7 @@ impl Runtime {
                         &parent_constructor,
                         &prototype_key,
                     )? {
-                        Completion::Return(value) => {
-                            let value = self.root_and_release_jsvalue(value)?;
-                            Self::class_parent_prototype(value)?
-                        }
+                        Completion::Return(value) => self.class_parent_prototype(value)?,
                         Completion::Throw(value) => {
                             return Ok(DefineClassOutcome::Throw(value));
                         }
@@ -78,7 +77,7 @@ impl Runtime {
                 }
             }
         } else {
-            if !matches!(parent, Value::Undefined) {
+            if !matches!(parent, JsValue::Undefined) {
                 return Err(RuntimeError::Invariant(
                     "base class definition parent was not undefined",
                 ));
@@ -118,14 +117,19 @@ impl Runtime {
         Ok(())
     }
 
-    fn class_parent_prototype(value: Value) -> Result<Option<ObjectRef>, RuntimeError> {
+    fn class_parent_prototype(&self, value: JsValue) -> Result<Option<ObjectRef>, RuntimeError> {
         match value {
-            Value::Object(prototype) => Ok(Some(prototype)),
-            Value::Null => Ok(None),
-            _ => Err(RuntimeError::Engine(Error::new(
-                ErrorKind::Type,
-                "parent prototype must be an object or null",
-            ))),
+            JsValue::Object(prototype) => {
+                Ok(Some(ObjectRef::from_owned_handle(self.clone(), prototype)))
+            }
+            JsValue::Null => Ok(None),
+            value => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Engine(Error::new(
+                    ErrorKind::Type,
+                    "parent prototype must be an object or null",
+                )))
+            }
         }
     }
 
@@ -134,12 +138,12 @@ impl Runtime {
     pub(crate) fn finish_derived_class_pair(
         &self,
         realm: ContextId,
-        constructor: Value,
+        constructor: &JsValue,
         name: &JsString,
         parent: ObjectRef,
-        prototype: Value,
+        prototype: JsValue,
     ) -> Result<DefineClassOutcome, RuntimeError> {
-        let prototype = Self::class_parent_prototype(prototype)?;
+        let prototype = self.class_parent_prototype(prototype)?;
         self.finish_class_pair(
             realm,
             constructor,
@@ -154,13 +158,13 @@ impl Runtime {
     fn finish_class_pair(
         &self,
         realm: ContextId,
-        constructor: Value,
+        constructor: &JsValue,
         name: &JsString,
         constructor_parent: ObjectRef,
         prototype_parent: Option<ObjectRef>,
         expected_constructor_kind: ConstructorKind,
     ) -> Result<DefineClassOutcome, RuntimeError> {
-        let constructor = self.callable_from_value(constructor)?;
+        let constructor = self.callable_from_jsvalue(constructor)?;
         self.validate_class_constructor(realm, &constructor, expected_constructor_kind)?;
 
         // The new prototype is not reachable until the operation succeeds.
@@ -178,24 +182,43 @@ impl Runtime {
         // constructor/prototype cycle. The metadata gate keeps constructors
         // which never read `super` free of an unnecessary heap edge.
         self.install_object_literal_home_object(&constructor, &prototype)?;
-        self.define_function_data_property(
-            &prototype,
-            "constructor",
-            Value::Object(constructor.as_object().clone()),
-            true,
-            true,
-        )?;
-        self.define_function_data_property(
-            constructor.as_object(),
-            "prototype",
-            Value::Object(prototype.clone()),
-            false,
-            false,
-        )?;
+        for (object, key, value, writable, configurable) in [
+            (
+                &prototype,
+                "constructor",
+                constructor.as_object().object_id(),
+                true,
+                true,
+            ),
+            (
+                constructor.as_object(),
+                "prototype",
+                prototype.object_id(),
+                false,
+                false,
+            ),
+        ] {
+            let key = self.intern_property_key(key)?;
+            if !self.define_raw_property(
+                object,
+                &key,
+                &crate::engine::object::property::PropertyDescriptor {
+                    value: Some(crate::engine::heap::RawValue::Object(value)),
+                    writable: Some(writable),
+                    enumerable: Some(false),
+                    configurable: Some(configurable),
+                    ..crate::engine::object::property::PropertyDescriptor::new()
+                },
+            )? {
+                return Err(RuntimeError::Invariant(
+                    "function intrinsic property definition was rejected",
+                ));
+            }
+        }
 
         Ok(DefineClassOutcome::Defined {
-            constructor: self.unroot_value(&Value::Object(constructor.as_object().clone()))?,
-            prototype: self.unroot_value(&Value::Object(prototype))?,
+            constructor: JsValue::Object(constructor.as_object().clone().into_handle()),
+            prototype: JsValue::Object(prototype.into_handle()),
         })
     }
 
@@ -368,8 +391,8 @@ mod tests {
         } = runtime
             .define_class_pair(
                 context.realm,
-                Value::Undefined,
-                Value::Object(constructor.as_object().clone()),
+                &JsValue::Undefined,
+                &JsValue::Object(constructor.as_object().object_id()),
                 &JsString::from_static("C"),
                 false,
             )
@@ -595,8 +618,8 @@ mod tests {
         let error = runtime
             .define_class_pair(
                 context.realm,
-                Value::Int(1),
-                Value::Object(candidate.as_object().clone()),
+                &JsValue::Int(1),
+                &JsValue::Object(candidate.as_object().object_id()),
                 &JsString::from_static("Derived"),
                 true,
             )
@@ -628,8 +651,8 @@ mod tests {
         let error = runtime
             .define_class_pair(
                 context.realm,
-                Value::Null,
-                Value::Object(base_constructor.as_object().clone()),
+                &JsValue::Null,
+                &JsValue::Object(base_constructor.as_object().object_id()),
                 &JsString::from_static("Derived"),
                 true,
             )

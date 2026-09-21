@@ -57,15 +57,9 @@ pub(super) fn primitive(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("argument continuation allocation failed"))?;
                 query.parents.push(resume);
-                *step = crate::engine::builtins::ArgumentsStep::start(
-                    runtime,
-                    realm,
-                    runtime
-                        .root_and_release_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?,
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .into();
+                *step = crate::engine::builtins::ArgumentsStep::start(runtime, realm, value)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
                 continue;
             }
             Step::ArgumentsComplete(result) => {
@@ -249,19 +243,14 @@ pub(super) fn constructor(
         let realm = query.realm;
         match &mut *step {
             Step::ConstructorSource { new_target, resume } => {
-                let new_target = new_target.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("constructor source continuation allocation failed")
                 })?;
+                let new_target = new_target.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
                 *step = super::super::call::prototype::ProtoSourceStep::start(
-                    runtime,
-                    realm,
-                    runtime
-                        .root_and_release_jsvalue(new_target)
-                        .map_err(runtime_error_to_vm_error)?,
+                    runtime, realm, new_target,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -306,22 +295,17 @@ pub(super) fn constructor(
                 continue;
             }
             Step::TypedIteratorMethod { source, resume } => {
-                let source = source.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("typed iterator method continuation allocation failed")
                 })?;
+                let source = source.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
-                *step = crate::engine::builtins::TypedIteratorMethodStep::start(
-                    runtime,
-                    realm,
-                    runtime
-                        .root_and_release_jsvalue(source)
-                        .map_err(runtime_error_to_vm_error)?,
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .into();
+                *step =
+                    crate::engine::builtins::TypedIteratorMethodStep::start(runtime, realm, source)
+                        .map_err(runtime_error_to_vm_error)?
+                        .into();
                 continue;
             }
             Step::TypedIteratorMethodComplete(result) => {
@@ -342,23 +326,17 @@ pub(super) fn constructor(
                 element,
                 resume,
             } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("typed collection continuation allocation failed")
+                })?;
                 let source = source.take().expect("selected Step field");
                 let method = method.take().expect("selected Step field");
                 let element = element.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                query.parents.try_reserve(1).map_err(|_| {
-                    Error::internal("typed collection continuation allocation failed")
-                })?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::TypedCollectStep::start(
-                    runtime,
-                    realm,
-                    runtime
-                        .root_and_release_jsvalue(source)
-                        .map_err(runtime_error_to_vm_error)?,
-                    method,
-                    element,
+                    runtime, realm, source, method, element,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -367,10 +345,16 @@ pub(super) fn constructor(
             Step::TypedCollectComplete(result) => {
                 let result = result.take().expect("selected Step field");
 
-                let resume = query
-                    .parents
-                    .pop()
-                    .ok_or_else(|| Error::internal("typed collection lost parent"))?;
+                let Some(resume) = query.parents.pop() else {
+                    if let crate::engine::value::conversion::NativeConversion::Value(values) =
+                        result
+                    {
+                        for value in values {
+                            let _ = runtime.release_jsvalue(value);
+                        }
+                    }
+                    return Err(Error::internal("typed collection lost parent"));
+                };
                 *step = resume
                     .typed_collected(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -381,20 +365,18 @@ pub(super) fn constructor(
                 length,
                 resume,
             } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("typed creation continuation allocation failed")
+                })?;
                 let constructor = constructor.take().expect("selected Step field");
                 let length = length.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                query.parents.try_reserve(1).map_err(|_| {
-                    Error::internal("typed creation continuation allocation failed")
-                })?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::TypedSpeciesStep::create(
                     runtime,
                     realm,
-                    runtime
-                        .root_and_release_jsvalue(constructor)
-                        .map_err(runtime_error_to_vm_error)?,
+                    constructor,
                     vec![
                         crate::engine::value::number::operations::Number::compact(length as f64)
                             .into(),

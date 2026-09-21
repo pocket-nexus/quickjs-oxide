@@ -3,8 +3,8 @@ use super::{Phase, PromiseResume, PromiseStep, capability};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::builtins::{native::PromiseNativeKind, promise::RootedPromiseCapability};
 use crate::engine::heap::ContextId;
-use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
-use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
+use crate::engine::object::ObjectRef;
+use crate::engine::value::{JsValue, conversion::NativeConversion};
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -28,7 +28,7 @@ impl PromiseStep {
         };
         let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object_id)?;
         let constructor =
-            match runtime.constructor_from_value(realm, Value::Object(object.clone()))? {
+            match runtime.constructor_from_jsvalue(realm, JsValue::Object(object.into_handle()))? {
                 NativeConversion::Throw(value) => {
                     return Ok(Self::Complete(Completion::Throw(
                         runtime.into_jsvalue(value)?,
@@ -86,32 +86,23 @@ pub(super) fn ready(
             reject,
         } = capability;
         let result = runtime.new_ordinary_object_in_realm(realm)?;
-        for (name, value) in [
-            ("promise", Value::Object(promise)),
-            ("resolve", Value::Object(resolve.as_object().clone())),
-            ("reject", Value::Object(reject.as_object().clone())),
+        for (name, object) in [
+            ("promise", promise),
+            ("resolve", resolve.as_object().clone()),
+            ("reject", reject.as_object().clone()),
         ] {
-            let key = runtime.intern_property_key(name)?;
-            if !runtime.define_own_property(
+            runtime.define_fresh_promise_property(
                 &result,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )? {
-                return Err(RuntimeError::Invariant(
-                    "fresh Promise.withResolvers result rejected a data property",
-                ));
-            }
+                name,
+                JsValue::Object(object.into_handle()),
+                "fresh Promise.withResolvers result rejected a data property",
+            )?;
         }
-        return Ok(PromiseStep::Complete(Completion::Return(
-            runtime.into_jsvalue(Value::Object(result))?,
-        )));
+        return Ok(PromiseStep::Complete(Completion::Return(JsValue::Object(
+            result.into_handle(),
+        ))));
     }
+
     let outcome = match readable.first() {
         Some(callback) => runtime.promise_callable(realm, callback),
         None => Err(RuntimeError::Invariant(

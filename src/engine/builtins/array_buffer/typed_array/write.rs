@@ -142,6 +142,35 @@ impl TypedWriteStep {
         }
     }
 
+    pub(crate) fn finish_context_free(
+        self,
+        runtime: &Runtime,
+    ) -> Result<NativeConversion<bool>, RuntimeError> {
+        match self {
+            Self::Complete(result) => Ok(result),
+            Self::Element {
+                element,
+                value,
+                resume,
+            } => {
+                // This is the public context-free primitive conversion boundary.
+                // No descriptor or storage value is re-admitted to the heap.
+                let bytes = runtime.root_value(&value).and_then(|value| {
+                    runtime.typed_array_convert_primitive_element(element, &value)
+                });
+                runtime.release_jsvalue(value)?;
+                let Self::Complete(result) =
+                    resume.element(runtime, NativeConversion::Value(bytes?))?
+                else {
+                    return Err(RuntimeError::Invariant(
+                        "TypedArray primitive write failed to complete",
+                    ));
+                };
+                Ok(result)
+            }
+        }
+    }
+
     pub(crate) fn finish_sync(
         self,
         runtime: &Runtime,
@@ -257,6 +286,7 @@ mod tests {
                 } else {
                     Value::Object(runtime.new_object(None).unwrap())
                 };
+                let receiver = runtime.into_jsvalue(receiver).unwrap();
                 let key = runtime.intern_property_key(key).unwrap();
                 let value = runtime.into_jsvalue(context.eval(input).unwrap()).unwrap();
                 let result = if wrapper {
@@ -282,6 +312,7 @@ mod tests {
                         .unwrap()
                 };
                 runtime.release_jsvalue(value).unwrap();
+                runtime.release_jsvalue(receiver).unwrap();
                 assert!(matches!(
                     (expected, result),
                     ("decline", None)
@@ -309,7 +340,7 @@ mod tests {
         };
         context.detach_array_buffer(&Value::Object(buffer)).unwrap();
         let key = runtime.intern_property_key("0").unwrap();
-        let receiver = Value::Object(object.clone());
+        let receiver = JsValue::Object(object.clone().into_handle());
         assert!(matches!(
             runtime
                 .try_typed_array_set_primitive(
@@ -329,7 +360,7 @@ mod tests {
                 .unwrap(),
             Some(NativeConversion::Throw(_))
         ));
-        let other_receiver = Value::Object(runtime.new_object(None).unwrap());
+        let other_receiver = JsValue::Object(runtime.new_object(None).unwrap().into_handle());
         assert!(matches!(
             runtime
                 .try_typed_array_set_primitive(
@@ -365,6 +396,8 @@ mod tests {
         );
         runtime.release_jsvalue(value).unwrap();
         runtime.release_jsvalue(bigint).unwrap();
+        runtime.release_jsvalue(receiver).unwrap();
+        runtime.release_jsvalue(other_receiver).unwrap();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 

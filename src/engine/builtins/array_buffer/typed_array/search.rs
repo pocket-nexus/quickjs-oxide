@@ -12,13 +12,15 @@ use crate::engine::{
     builtins::native::ArraySearchKind,
     heap::ContextId,
     object::ObjectRef,
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
     },
 };
 
+#[cfg(test)]
+use crate::engine::value::Value;
 #[cfg(test)]
 mod tests;
 
@@ -58,56 +60,34 @@ impl Runtime {
 
     fn finish_typed_array_search(
         &self,
-        realm: ContextId,
+        _realm: ContextId,
         kind: ArraySearchKind,
-        target: ObjectRef,
+        target: &ObjectRef,
         initial_length: i64,
-        search: Value,
-        from_index: Option<Value>,
+        search: &JsValue,
+        from_index: Option<i64>,
     ) -> Result<Completion, RuntimeError> {
         let not_found = || match kind {
-            ArraySearchKind::Includes => Value::Bool(false),
-            ArraySearchKind::IndexOf | ArraySearchKind::LastIndexOf => Value::Int(-1),
+            ArraySearchKind::Includes => JsValue::Bool(false),
+            ArraySearchKind::IndexOf | ArraySearchKind::LastIndexOf => JsValue::Int(-1),
+        };
+        let clamp = |mut value: i64, minimum, maximum| {
+            if value < 0 {
+                value += initial_length;
+            }
+            value.clamp(minimum, maximum)
         };
         let (mut index, step) = match kind {
-            ArraySearchKind::Includes | ArraySearchKind::IndexOf => {
-                let index = if let Some(from_index) = &from_index {
-                    match self.native_to_int64_clamp(
-                        realm,
-                        from_index,
-                        0,
-                        initial_length,
-                        initial_length,
-                    )? {
-                        NativeConversion::Value(value) => value,
-                        NativeConversion::Throw(value) => {
-                            return Ok(Completion::Throw(self.into_jsvalue(value)?));
-                        }
-                    }
-                } else {
-                    0
-                };
-                (index, 1)
-            }
+            ArraySearchKind::Includes | ArraySearchKind::IndexOf => (
+                from_index.map_or(0, |value| clamp(value, 0, initial_length)),
+                1,
+            ),
             ArraySearchKind::LastIndexOf => {
-                let index = if let Some(from_index) = &from_index {
-                    match self.native_to_int64_clamp(
-                        realm,
-                        from_index,
-                        -1,
-                        initial_length - 1,
-                        initial_length,
-                    )? {
-                        NativeConversion::Value(value) => value,
-                        NativeConversion::Throw(value) => {
-                            return Ok(Completion::Throw(self.into_jsvalue(value)?));
-                        }
-                    }
-                } else {
-                    initial_length - 1
-                };
+                let index = from_index.map_or(initial_length - 1, |value| {
+                    clamp(value, -1, initial_length - 1)
+                });
                 if index < 0 {
-                    return Ok(Completion::Return(self.into_jsvalue(not_found())?));
+                    return Ok(Completion::Return(not_found()));
                 }
                 (index, -1)
             }
@@ -118,7 +98,7 @@ impl Runtime {
         // coercion as `undefined` only for includes. indexOf/lastIndexOf scan
         // direct machine words and therefore never observe that missing tail.
         if kind == ArraySearchKind::Includes
-            && matches!(search, Value::Undefined)
+            && matches!(search, JsValue::Undefined)
             && initial_length > current_length
             && index < initial_length
         {
@@ -127,7 +107,7 @@ impl Runtime {
 
         let length = initial_length.min(current_length);
         if length == 0 {
-            return Ok(Completion::Return(self.into_jsvalue(not_found())?));
+            return Ok(Completion::Return(not_found()));
         }
         let end = match kind {
             ArraySearchKind::Includes | ArraySearchKind::IndexOf => {
@@ -141,7 +121,7 @@ impl Runtime {
         };
         while index != end {
             let value = self
-                .typed_array_read_index(
+                .typed_array_read_index_jsvalue(
                     &target,
                     u64::try_from(index).map_err(|_| {
                         RuntimeError::Invariant("TypedArray search index was negative")
@@ -150,24 +130,31 @@ impl Runtime {
                 .ok_or(RuntimeError::Invariant(
                     "stable TypedArray search range lost an element",
                 ))?;
-            let matches = match kind {
-                ArraySearchKind::Includes => search.same_value_zero(&value),
-                ArraySearchKind::IndexOf | ArraySearchKind::LastIndexOf => {
-                    search.strict_equal(&value)
-                }
+            let matches = {
+                let state = self.0.state.borrow();
+                let equal = crate::engine::value::collection_key::same_value_zero(
+                    &state.heap,
+                    &search.as_raw(),
+                    &value.as_raw(),
+                );
+                equal
+                    && (kind == ArraySearchKind::Includes
+                        || !matches!(&value, JsValue::Float(number) if number.is_nan()))
             };
+            self.release_jsvalue(value)?;
             if matches {
                 let result = match kind {
-                    ArraySearchKind::Includes => Value::Bool(true),
+                    ArraySearchKind::Includes => JsValue::Bool(true),
                     ArraySearchKind::IndexOf | ArraySearchKind::LastIndexOf => {
-                        Value::number(index as f64)
+                        crate::engine::value::number::operations::Number::compact(index as f64)
+                            .into()
                     }
                 };
-                return Ok(Completion::Return(self.into_jsvalue(result)?));
+                return Ok(Completion::Return(result));
             }
             index += step;
         }
-        Ok(Completion::Return(self.into_jsvalue(not_found())?))
+        Ok(Completion::Return(not_found()))
     }
 }
 #[derive(Clone, Copy)]
@@ -209,7 +196,15 @@ pub(crate) struct TypedSearchResumeState {
     target: ObjectRef,
     length: i64,
     kind: TypedSearchKind,
-    search: Value,
+    search: JsValue,
+}
+impl Drop for TypedSearchResumeState {
+    fn drop(&mut self) {
+        let _ = self
+            .target
+            .runtime()
+            .release_jsvalue(std::mem::replace(&mut self.search, JsValue::Undefined));
+    }
 }
 impl TypedSearchStep {
     pub(crate) fn start(
@@ -224,7 +219,7 @@ impl TypedSearchStep {
                 "TypedArray search received a constructor invocation",
             ));
         };
-        let target = match runtime.require_typed_array(realm, runtime.root_value(this_value)?)? {
+        let target = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(Self::Complete(Completion::Throw(
@@ -264,44 +259,41 @@ impl TypedSearchStep {
                     target,
                     length,
                     kind,
-                    search: Value::Undefined,
+                    search: JsValue::Undefined,
                 })),
             }),
             TypedSearchKind::Search(search_kind) => {
                 if length == 0 {
                     let result = match search_kind {
-                        ArraySearchKind::Includes => Value::Bool(false),
-                        _ => Value::Int(-1),
+                        ArraySearchKind::Includes => JsValue::Bool(false),
+                        _ => JsValue::Int(-1),
                     };
-                    return Ok(Self::Complete(Completion::Return(
-                        runtime.into_jsvalue(result)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Return(result)));
                 }
-                let search = runtime.root_value(arguments.readable.first().ok_or(
+                let mut resume = TypedSearchResume(Box::new(TypedSearchResumeState {
+                    realm,
+                    target,
+                    length,
+                    kind,
+                    search: JsValue::Undefined,
+                }));
+                resume.0.search = runtime.dup_jsvalue(arguments.readable.first().ok_or(
                     RuntimeError::Invariant("TypedArray search value argv was not padded"),
                 )?)?;
                 if arguments.actual_arg_count <= 1 {
                     return Ok(Self::Complete(runtime.finish_typed_array_search(
                         realm,
                         search_kind,
-                        target,
+                        &resume.0.target,
                         length,
-                        search,
+                        &resume.0.search,
                         None,
                     )?));
                 }
-                Ok(Self::Primitive {
-                    value: runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
-                        RuntimeError::Invariant("TypedArray search fromIndex argv was missing"),
-                    )?)?,
-                    resume: TypedSearchResume(Box::new(TypedSearchResumeState {
-                        realm,
-                        target,
-                        length,
-                        kind,
-                        search,
-                    })),
-                })
+                let value = runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
+                    RuntimeError::Invariant("TypedArray search fromIndex argv was missing"),
+                )?)?;
+                Ok(Self::Primitive { value, resume })
             }
         }
     }
@@ -318,17 +310,18 @@ impl TypedSearchResume {
                 return Ok(TypedSearchStep::Complete(Completion::Throw(value)));
             }
         };
+        let number = runtime.number_from_primitive_jsvalue(self.0.realm, &value);
+        runtime.release_jsvalue(value)?;
+        let index = match number? {
+            NativeConversion::Value(number) => Runtime::int64_from_number(number),
+            NativeConversion::Throw(value) => {
+                return Ok(TypedSearchStep::Complete(Completion::Throw(
+                    runtime.into_jsvalue(value)?,
+                )));
+            }
+        };
         Ok(TypedSearchStep::Complete(match self.0.kind {
             TypedSearchKind::At => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                let index = match runtime.native_to_int64_sat(self.0.realm, &value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(TypedSearchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
-                };
                 let index = if index < 0 {
                     self.0.length + index
                 } else {
@@ -337,24 +330,20 @@ impl TypedSearchResume {
                 if index < 0 {
                     Completion::Return(JsValue::Undefined)
                 } else {
-                    let value = runtime
-                        .typed_array_read_index(
-                            &self.0.target,
-                            u64::try_from(index).map_err(|_| {
-                                RuntimeError::Invariant("TypedArray.at index overflowed u64")
-                            })?,
-                        )?
-                        .unwrap_or(Value::Undefined);
-                    Completion::Return(runtime.into_jsvalue(value)?)
+                    Completion::Return(
+                        runtime
+                            .typed_array_read_index_jsvalue(&self.0.target, index as u64)?
+                            .unwrap_or(JsValue::Undefined),
+                    )
                 }
             }
             TypedSearchKind::Search(kind) => runtime.finish_typed_array_search(
                 self.0.realm,
                 kind,
-                self.0.target,
+                &self.0.target,
                 self.0.length,
-                self.0.search,
-                Some(runtime.root_value(&value)?),
+                &self.0.search,
+                Some(index),
             )?,
         }))
     }

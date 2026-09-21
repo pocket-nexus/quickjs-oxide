@@ -2,9 +2,7 @@
 use crate::engine::{
     api::{Error, ErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
-    object::{
-        ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, operations::InternalDefineResult,
-    },
+    object::{ObjectRef, OwnedPropertyDescriptor, PropertyKey, operations::InternalDefineResult},
     value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
@@ -22,7 +20,7 @@ struct LiteralDefinitionState {
     value: Option<JsValue>,
     primitive: Option<JsValue>,
     key: Option<PropertyKey>,
-    descriptor: Option<OrdinaryPropertyDescriptor>,
+    descriptor: Option<OwnedPropertyDescriptor>,
 }
 impl Drop for LiteralDefinitionState {
     fn drop(&mut self) {
@@ -40,7 +38,7 @@ impl LiteralDefinitionStep {
     pub(crate) fn define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
     ) -> Self {
         let runtime = object.runtime().clone();
         Self::Define {
@@ -84,7 +82,7 @@ impl LiteralDefinitionResume {
     pub(crate) fn take_primitive(&mut self) -> JsValue {
         self.0.primitive.take().expect("literal primitive request")
     }
-    pub(crate) fn take_define(&mut self) -> (ObjectRef, PropertyKey, OrdinaryPropertyDescriptor) {
+    pub(crate) fn take_define(&mut self) -> (ObjectRef, PropertyKey, OwnedPropertyDescriptor) {
         (
             self.0.object.take().expect("literal object"),
             self.0.key.take().expect("literal key"),
@@ -150,9 +148,7 @@ impl LiteralDefinitionResume {
             };
         }
         let value = self.0.value.take().expect("literal value");
-        self.0.descriptor = Some(Runtime::public_class_field_descriptor(
-            runtime.root_and_release_jsvalue(value)?,
-        ));
+        self.0.descriptor = Some(OwnedPropertyDescriptor::data(runtime, value));
         Ok(LiteralDefinitionStep::Define { resume: self })
     }
     pub(crate) fn defined(

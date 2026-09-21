@@ -19,7 +19,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::{ContextId, ObjectData, ObjectPayload};
 use crate::engine::object::ObjectRef;
 
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -72,15 +72,12 @@ impl Runtime {
         )
     }
 
-    fn genuine_date_value(&self, value: &Value) -> Result<Option<f64>, RuntimeError> {
-        let Value::Object(object) = value else {
+    fn genuine_date_value(&self, value: &JsValue) -> Result<Option<f64>, RuntimeError> {
+        let JsValue::Object(object) = value else {
             return Ok(None);
         };
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("Date argument"));
-        }
         let state = self.0.state.borrow();
-        let object = state.heap.object(object.object_id())?;
+        let object = state.heap.object(*object)?;
         Ok(match &object.payload {
             ObjectPayload::Date(value) => Some(*value),
             _ => None,

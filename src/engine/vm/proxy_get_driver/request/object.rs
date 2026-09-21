@@ -288,7 +288,7 @@ impl From<SetStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::OrdinarySet(resume)),
                 }
             }
@@ -381,7 +381,7 @@ impl From<ProxyDefineStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::Define(resume)),
                 }
             }
@@ -581,7 +581,7 @@ impl From<crate::engine::object::object_literal::element::LiteralDefinitionStep>
                 Self::DefineOrdinary {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::LiteralDefinition(resume)),
                 }
             }

@@ -28,16 +28,25 @@ mod operation;
 pub(crate) use operation::{AsyncGeneratorResume, AsyncGeneratorStep};
 
 struct RootedAsyncGeneratorRequest {
+    runtime: Runtime,
     completion: GeneratorResumeKind,
-    result: Value,
+    result: Option<JsValue>,
     _promise: ObjectRef,
-    resolve: CallableRef,
-    reject: CallableRef,
+    resolve: Option<CallableRef>,
+    reject: Option<CallableRef>,
+}
+
+impl Drop for RootedAsyncGeneratorRequest {
+    fn drop(&mut self) {
+        if let Some(value) = self.result.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 
 enum AsyncGeneratorSettlement {
-    Resolve { value: Value, done: bool },
-    Reject(Value),
+    Resolve { value: JsValue, done: bool },
+    Reject(JsValue),
 }
 
 impl Runtime {
@@ -355,7 +364,6 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant(
                 "AsyncGenerator request queue is empty",
             ))?;
-        let result = self.root_raw_value(request.result.clone())?;
         let promise = ObjectRef::from_borrowed_handle(self.clone(), request.promise)?;
         let resolve = ObjectRef::from_borrowed_handle(self.clone(), request.resolve)?;
         let resolve = self.as_callable(&resolve)?.ok_or(RuntimeError::Invariant(
@@ -365,12 +373,17 @@ impl Runtime {
         let reject = self.as_callable(&reject)?.ok_or(RuntimeError::Invariant(
             "AsyncGenerator request reject is not callable",
         ))?;
+        let value = JsValue::from_raw(request.result.clone()).ok_or(RuntimeError::Invariant(
+            "AsyncGenerator request contains an internal sentinel",
+        ))?;
+        let result = self.dup_jsvalue(&value)?;
         Ok(RootedAsyncGeneratorRequest {
+            runtime: self.clone(),
             completion: request.completion,
-            result,
+            result: Some(result),
             _promise: promise,
-            resolve,
-            reject,
+            resolve: Some(resolve),
+            reject: Some(reject),
         })
     }
 

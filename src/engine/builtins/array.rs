@@ -596,18 +596,6 @@ impl Runtime {
     /// still returned to the caller. Promise aggregate element handlers use
     /// this form, which is observably distinct after a custom capability
     /// exposes and freezes their output Array early.
-    pub(crate) fn define_array_data_property_without_throw(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        index: u32,
-        value: Value,
-    ) -> Result<Option<Value>, RuntimeError> {
-        match self.define_indexed_data_property(realm, object, u64::from(index), value)? {
-            NativeConversion::Value(_) => Ok(None),
-            NativeConversion::Throw(value) => Ok(Some(value)),
-        }
-    }
 
     fn create_indexed_data_property(
         &self,

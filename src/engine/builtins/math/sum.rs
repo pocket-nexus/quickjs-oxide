@@ -8,7 +8,7 @@ use crate::engine::{
     },
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{JsValue, Value},
+    value::JsValue,
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -90,17 +90,17 @@ impl SumStep {
                 "Math.sumPrecise requires generic invocation",
             ));
         }
-        let iterable = runtime.root_value(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Math.sumPrecise argv was not padded"),
-        )?)?;
-        if matches!(iterable, Value::Null | Value::Undefined) {
+        let iterable = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Math.sumPrecise argv was not padded",
+        ))?;
+        if matches!(iterable, JsValue::Null | JsValue::Undefined) {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     &format!(
                         "cannot read property 'Symbol.iterator' of {}",
-                        if matches!(iterable, Value::Null) {
+                        if matches!(iterable, JsValue::Null) {
                             "null"
                         } else {
                             "undefined"
@@ -109,9 +109,8 @@ impl SumStep {
                 )?,
             )));
         }
-        let iterable = runtime.into_jsvalue(iterable)?;
+        let iterable = runtime.dup_jsvalue(iterable)?;
         Ok({
-            let __pending_field_receiver = runtime.dup_jsvalue(&iterable)?;
             let __pending_field_key =
                 PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
             let __pending_field_resume = SumResume(Box::new(SumResumeState {
@@ -124,6 +123,7 @@ impl SumStep {
                 sum: SumPrecise::new(),
                 runtime: runtime.clone(),
             }));
+            let __pending_field_receiver = runtime.dup_jsvalue(&__pending_field_resume.iterable)?;
             Self::request_read(
                 __pending_field_receiver,
                 __pending_field_key,
@@ -139,15 +139,19 @@ impl SumResume {
         result: Completion,
     ) -> Result<SumStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(SumStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Method => {
-                let callable = match value {
-                    Value::Object(object) => runtime.as_callable(&object)?,
-                    _ => None,
+                let callable = match &value {
+                    JsValue::Object(id) => ObjectRef::from_borrowed_handle(runtime.clone(), *id)
+                        .map_err(RuntimeError::from)
+                        .and_then(|object| runtime.as_callable(&object)),
+                    _ => Ok(None),
                 };
+                runtime.release_jsvalue(value)?;
+                let callable = callable?;
                 let Some(callable) = callable else {
                     return Ok(SumStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
@@ -170,7 +174,8 @@ impl SumResume {
                 })
             }
             Phase::Iterator => {
-                let Value::Object(iterator) = value else {
+                let JsValue::Object(id) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Ok(SumStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
                             self.0.realm,
@@ -179,14 +184,15 @@ impl SumResume {
                         )?,
                     )));
                 };
+                let iterator = ObjectRef::from_owned_handle(runtime.clone(), id);
                 runtime
                     .release_jsvalue(std::mem::replace(&mut self.0.iterable, JsValue::Undefined))?;
                 self.0.iterator = Some(iterator.clone());
                 self.0.phase = Phase::NextMethod;
                 Ok({
-                    let __pending_field_receiver = JsValue::Object(iterator.into_handle());
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
+                    let __pending_field_receiver = JsValue::Object(iterator.into_handle());
                     let __pending_field_resume = self;
                     SumStep::request_read(
                         __pending_field_receiver,
@@ -196,11 +202,14 @@ impl SumResume {
                 })
             }
             Phase::NextMethod => {
-                let next = runtime.into_jsvalue(value)?;
+                let next = value;
                 runtime.release_jsvalue(std::mem::replace(&mut self.0.next, next))?;
                 self.next()
             }
-            _ => Err(RuntimeError::Invariant("Math sum value phase mismatch")),
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant("Math sum value phase mismatch"))
+            }
         }
     }
     fn next(mut self) -> Result<SumStep, RuntimeError> {
@@ -279,30 +288,30 @@ pub(crate) fn finish(
         step = match step {
             SumStep::Complete(result) => return Ok(result),
             SumStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             SumStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let receiver = resume.take_call_receiver();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &[])?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, Vec::new())?,
                 )?
             }
             SumStep::Next { mut resume } => {
                 let iterator = resume.take_next_iterator();
-                let next = runtime.root_and_release_jsvalue(resume.take_next_next())?;
+                let next = resume.take_next_next();
                 resume.item(
                     runtime,
                     finish_next(
                         runtime,
                         realm,
-                        NextStep::start(runtime, realm, iterator, next)?,
+                        NextStep::start_jsvalue(runtime, realm, iterator, next)?,
                     )?,
                 )?
             }
@@ -333,7 +342,7 @@ fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
     };
     let arguments = NativeArguments {
         actual_arg_count: 1,
-        readable: vec![JsValue::Object(object.object_id())],
+        readable: vec![JsValue::Object(object.clone().into_handle())],
     };
     let SumStep::Read { mut resume } =
         SumStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()
@@ -362,15 +371,20 @@ fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
     let SumStep::Read { mut resume } = resume
         .resume(
             &runtime,
-            Completion::Return(JsValue::Object(object.object_id())),
+            Completion::Return(JsValue::Object(object.clone().into_handle())),
         )
         .unwrap()
     else {
         panic!("next read")
     };
-    let _ = resume.take_read_receiver();
+    runtime
+        .release_jsvalue(resume.take_read_receiver())
+        .unwrap();
     let _ = resume.take_read_key();
     assert_eq!(&*resume.0 as *const SumResumeState, address);
+    for value in arguments.readable {
+        runtime.release_jsvalue(value).unwrap();
+    }
 }
 
 #[derive(Default)]

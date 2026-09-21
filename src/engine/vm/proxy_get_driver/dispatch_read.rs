@@ -340,15 +340,9 @@ pub(super) fn get(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
                 query.parents.push(resume);
-                *step = DescriptorStep::start(
-                    runtime,
-                    realm,
-                    runtime
-                        .root_and_release_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?,
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .into();
+                *step = DescriptorStep::start_jsvalue(runtime, realm, value)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
                 continue;
             }
             Step::Converted(result) => {
@@ -527,7 +521,7 @@ pub(super) fn get(
                     continue;
                 }
                 let descriptor = runtime
-                    .internal_get_own_property(realm, &object, &key)
+                    .internal_get_own_property_owned(realm, &object, &key)
                     .map_err(runtime_error_to_vm_error)?;
                 *step = resume
                     .descriptor(runtime, descriptor)

@@ -484,16 +484,16 @@ impl Runtime {
         completion: Completion,
     ) -> Result<NativeConversion<RootedPromiseCapability>, RuntimeError> {
         let promise = match completion {
+            Completion::Return(JsValue::Object(id)) => {
+                ObjectRef::from_owned_handle(self.clone(), id)
+            }
             Completion::Return(value) => {
-                let value = self.root_and_release_jsvalue(value)?;
-                let Value::Object(promise) = value else {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "not an object",
-                    )?));
-                };
-                promise
+                self.release_jsvalue(value)?;
+                return Ok(NativeConversion::Throw(self.new_native_error(
+                    realm,
+                    NativeErrorKind::Type,
+                    "not an object",
+                )?));
             }
             Completion::Throw(value) => {
                 return Ok(NativeConversion::Throw(
@@ -822,14 +822,15 @@ impl Runtime {
         &self,
         realm: ContextId,
         promise: ObjectRef,
-        handlers: [Value; 2],
+        handlers: &[JsValue; 2],
         capability: RootedPromiseCapability,
     ) -> Result<Completion, RuntimeError> {
-        let handler_id = |value: &Value| -> Result<Option<ObjectId>, RuntimeError> {
-            let Value::Object(object) = value else {
+        let handler_id = |value: &JsValue| -> Result<Option<ObjectId>, RuntimeError> {
+            let JsValue::Object(id) = value else {
                 return Ok(None);
             };
-            Ok(self.as_callable(object)?.map(|_| object.object_id()))
+            let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+            Ok(self.as_callable(&object)?.map(|_| *id))
         };
         let fulfill = PromiseReaction {
             kind: PromiseReactionKind::Fulfill,
@@ -873,9 +874,9 @@ impl Runtime {
             .borrow_mut()
             .heap
             .promise_mark_handled(promise.object_id())?;
-        Ok(Completion::Return(
-            self.into_jsvalue(Value::Object(capability.promise))?,
-        ))
+        Ok(Completion::Return(JsValue::Object(
+            capability.promise.into_handle(),
+        )))
     }
 
     fn call_promise_catch(
@@ -903,45 +904,39 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Promise resolve/reject received a constructor invocation",
-            ));
-        };
-        let argument = self.root_value(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Promise resolve/reject argv was not padded"),
-        )?)?;
-        self.promise_static_resolve_core(
-            realm,
-            kind,
-            self.root_and_release_jsvalue(this_value)?,
-            argument,
-        )
-    }
-
-    fn promise_static_resolve_core(
-        &self,
-        realm: ContextId,
-        kind: PromiseNativeKind,
-        this_value: Value,
-        argument: Value,
-    ) -> Result<Completion, RuntimeError> {
-        operation::PromiseStep::static_resolve(self, realm, kind, this_value, argument)?
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            operation::PromiseStep::start(
+                self,
+                realm,
+                NativeFunctionId::Promise(kind),
+                invocation,
+                arguments,
+            )?
             .finish(self, realm)
+        })
     }
 
     pub(crate) fn prepare_intrinsic_promise_resolve(
         &self,
         realm: ContextId,
-        value: Value,
+        value: JsValue,
     ) -> Result<operation::PromiseStep, RuntimeError> {
-        let constructor = self.promise_realm_data(realm)?.constructor;
-        let constructor = ObjectRef::from_borrowed_handle(self.clone(), constructor)?;
-        operation::PromiseStep::static_resolve(
+        let constructor = (|| {
+            let id = self.promise_realm_data(realm)?.constructor;
+            ObjectRef::from_borrowed_handle(self.clone(), id).map_err(RuntimeError::from)
+        })();
+        let constructor = match constructor {
+            Ok(constructor) => constructor,
+            Err(error) => {
+                self.release_jsvalue(value)?;
+                return Err(error);
+            }
+        };
+        operation::PromiseStep::static_resolve_jsvalue(
             self,
             realm,
             PromiseNativeKind::Resolve,
-            Value::Object(constructor),
+            JsValue::Object(constructor.into_handle()),
             value,
         )
     }

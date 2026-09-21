@@ -415,7 +415,7 @@ impl ConversionTask {
             runtime,
             realm,
             runtime
-                .unroot_value(&input.key)
+                .dup_jsvalue(&input.key)
                 .map_err(runtime_error_to_vm_error)?,
             ToPrimitiveHint::String,
         );
@@ -600,8 +600,9 @@ impl ConversionTask {
                             )?,
                             Finish::Predicate(input) => {
                                 let mut input = input.take().expect("predicate conversion input");
-                                input.key = runtime
-                                    .root_and_release_jsvalue(value)
+                                let previous = std::mem::replace(&mut input.key, value);
+                                runtime
+                                    .release_jsvalue(previous)
                                     .map_err(runtime_error_to_vm_error)?;
                                 return Ok(Progress::Predicate(input));
                             }
@@ -621,12 +622,8 @@ impl ConversionTask {
                                 let assigned = std::mem::replace(assigned, JsValue::Undefined);
                                 return Ok(Progress::PropertyWrite(Box::new(
                                     super::property_write_driver::ConvertedWrite {
-                                        base: runtime
-                                            .root_and_release_jsvalue(base)
-                                            .map_err(runtime_error_to_vm_error)?,
-                                        key: runtime
-                                            .root_and_release_jsvalue(value)
-                                            .map_err(runtime_error_to_vm_error)?,
+                                        base: Some(base),
+                                        key: Some(value),
                                         value: Some(assigned),
                                         runtime: runtime.clone(),
                                     },

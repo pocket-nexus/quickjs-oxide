@@ -14,37 +14,39 @@ use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 
 impl Runtime {
-    /// Virtual own properties of primitive bases; object deletion has its own protocol.
-    pub(crate) fn primitive_delete_property(
+    /// Internal primitive bases remain borrowed arena handles throughout delete.
+    pub(crate) fn primitive_delete_property_jsvalue(
         &self,
-        base: &Value,
+        base: &JsValue,
         key: &PropertyKey,
     ) -> Result<bool, RuntimeError> {
-        self.validate_value_domain(base, "delete base")?;
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("delete property key"));
         }
         Ok(match base {
-            Value::Null | Value::Undefined => {
+            JsValue::Null | JsValue::Undefined => {
                 return Err(RuntimeError::Engine(crate::engine::api::Error::new(
                     ErrorKind::Type,
                     "cannot convert to object",
                 )));
             }
-            Value::Object(_) => {
+            JsValue::Object(_) => {
                 return Err(RuntimeError::Invariant(
                     "primitive Delete received an object",
                 ));
             }
-            Value::String(string) => {
-                let index = self.0.state.borrow().atoms.array_index(key.atom())?;
+            JsValue::String(id) => {
+                let state = self.0.state.borrow();
+                let string = state.heap.string(*id)?;
+                let index = state.atoms.array_index(key.atom())?;
                 let indexed = index.is_some_and(|index| {
                     usize::try_from(index).is_ok_and(|index| index < string.len())
                 });
                 !indexed
-                    && key
-                        != &self
-                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?
+                    && key.atom()
+                        != state
+                            .pinned_atoms
+                            .get(crate::engine::atom::pinned::PinnedAtom::Length)
             }
             _ => true,
         })
@@ -111,26 +113,6 @@ impl Runtime {
 
     /// Select a read without invoking its getter. Primitive receivers stay
     /// primitive; String own units/length retain the existing unboxed kernel.
-    pub(crate) fn prepare_value_property_read(
-        &self,
-        realm: ContextId,
-        receiver: Value,
-        key: &PropertyKey,
-    ) -> Result<OrdinaryRead, RuntimeError> {
-        self.prepare_value_property_read_borrowed(realm, &receiver, key)
-    }
-
-    pub(crate) fn prepare_value_property_read_borrowed(
-        &self,
-        realm: ContextId,
-        receiver: &Value,
-        key: &PropertyKey,
-    ) -> Result<OrdinaryRead, RuntimeError> {
-        let receiver = self.unroot_value(receiver)?;
-        let result = self.prepare_value_property_read_selected_jsvalue(realm, &receiver, key, None);
-        self.release_jsvalue(receiver)?;
-        result
-    }
     pub(crate) fn prepare_value_property_read_borrowed_jsvalue(
         &self,
         realm: ContextId,
@@ -193,12 +175,11 @@ impl Runtime {
         key: &PropertyKey,
         read: OrdinaryRead,
     ) -> Result<Completion, RuntimeError> {
-        Ok(match self.finish_prepared_read(realm, key, read)? {
-            NativeConversion::Value(value) => Completion::Return(match value {
-                Some(value) => self.unroot_value(&value)?,
-                None => JsValue::Undefined,
-            }),
-            NativeConversion::Throw(value) => Completion::Throw(self.unroot_value(&value)?),
+        Ok(match self.finish_prepared_read_jsvalue(realm, key, read)? {
+            NativeConversion::Value(value) => {
+                Completion::Return(value.unwrap_or(JsValue::Undefined))
+            }
+            NativeConversion::Throw(value) => Completion::Throw(self.into_jsvalue(value)?),
         })
     }
 
@@ -206,11 +187,13 @@ impl Runtime {
     pub(crate) fn prepare_value_property_read_completion(
         &self,
         realm: ContextId,
-        receiver: Value,
+        receiver: JsValue,
         key: &PropertyKey,
     ) -> Result<NativeConversion<OrdinaryRead>, RuntimeError> {
-        let nullish = matches!(receiver, Value::Null | Value::Undefined);
-        match self.prepare_value_property_read(realm, receiver, key) {
+        let nullish = matches!(receiver, JsValue::Null | JsValue::Undefined);
+        let read = self.prepare_value_property_read_borrowed_jsvalue(realm, &receiver, key);
+        self.release_jsvalue(receiver)?;
+        match read {
             Ok(read) => Ok(NativeConversion::Value(read)),
             Err(RuntimeError::Engine(error)) if nullish && error.kind() == ErrorKind::Type => {
                 Ok(NativeConversion::Throw(self.new_native_error_from_error(
@@ -229,9 +212,26 @@ impl Runtime {
         receiver: Value,
         key: &PropertyKey,
     ) -> Result<Completion, RuntimeError> {
-        match self.prepare_value_property_read_completion(realm, receiver, key)? {
-            NativeConversion::Value(read) => self.finish_value_property_read(realm, key, read),
-            NativeConversion::Throw(reason) => Ok(Completion::Throw(self.unroot_value(&reason)?)),
+        self.get_value_property_in_realm_jsvalue(realm, self.into_jsvalue(receiver)?, key)
+    }
+
+    pub(crate) fn get_value_property_in_realm_jsvalue(
+        &self,
+        realm: ContextId,
+        receiver: JsValue,
+        key: &PropertyKey,
+    ) -> Result<Completion, RuntimeError> {
+        let nullish = matches!(receiver, JsValue::Null | JsValue::Undefined);
+        let read = self.prepare_value_property_read_borrowed_jsvalue(realm, &receiver, key);
+        self.release_jsvalue(receiver)?;
+        match read {
+            Ok(read) => self.finish_value_property_read(realm, key, read),
+            Err(RuntimeError::Engine(error)) if nullish && error.kind() == ErrorKind::Type => {
+                Ok(Completion::Throw(self.into_jsvalue(
+                    self.new_native_error_from_error(realm, NativeErrorKind::Type, &error)?,
+                )?))
+            }
+            Err(error) => Err(error),
         }
     }
 

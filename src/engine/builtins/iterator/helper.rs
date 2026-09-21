@@ -3,11 +3,13 @@ use super::{
     ObjectIteratorStep,
     step::{CloseStep, NextStep, finish_close, finish_next},
 };
+#[cfg(test)]
+use crate::engine::value::Value;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, HeapError, IteratorHelperKind, IteratorResumeKind},
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{Completion, call::NativeInvocation},
 };
 pub(crate) enum HelperResumeStep {
@@ -75,12 +77,30 @@ pub(crate) struct HelperResumeState {
     original_count: i64,
     method: JsValue,
     phase: Phase,
+    item: Option<JsValue>,
+    close_reason: Option<JsValue>,
+    reply_value: Option<JsValue>,
 }
 impl Drop for HelperResumeState {
     /// Release the internal edges the pending effect still owns when the
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        for value in [
+            self.item.take(),
+            self.close_reason.take(),
+            self.reply_value.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(Completion::Return(value) | Completion::Throw(value)) =
+            self.pending_effect.close_completion.take()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
         for value in [&mut self.next, &mut self.callback, &mut self.method] {
             let _ = self
                 .runtime
@@ -102,14 +122,14 @@ impl Drop for HelperResumeState {
 enum Phase {
     Method,
     OuterNext { dropping: bool },
-    Callback(Value),
+    Callback,
     MappedMethod(ObjectRef),
     MappedIterator,
     InnerMethod,
     InnerNext,
     CloseOuter,
     CloseTake,
-    CloseInner { original: Option<Value> },
+    CloseInner,
 }
 impl HelperResumeStep {
     pub(crate) fn start(
@@ -157,9 +177,11 @@ impl HelperResumeStep {
             )));
         }
         if state.done {
-            return Ok(Self::Complete(Completion::Return(runtime.into_jsvalue(
-                Value::Object(runtime.new_iterator_result(realm, Value::Undefined, true)?),
-            )?)));
+            return Ok(Self::Complete(Completion::Return(JsValue::Object(
+                runtime
+                    .new_iterator_result_jsvalue(realm, JsValue::Undefined, true)?
+                    .into_handle(),
+            ))));
         }
         runtime
             .0
@@ -191,6 +213,9 @@ impl HelperResumeStep {
             count: state.count,
             original_count: state.count,
             method: JsValue::Undefined,
+            item: None,
+            close_reason: None,
+            reply_value: None,
             phase: Phase::Method,
         }));
         resume.next = runtime.dup_iterator_raw(&state.next)?;
@@ -202,31 +227,30 @@ impl HelperResume {
     fn done(
         mut self,
         runtime: &Runtime,
-        value: Value,
+        value: JsValue,
         done: bool,
     ) -> Result<HelperResumeStep, RuntimeError> {
+        self.0.reply_value = Some(value);
         self.0
             .guard
             .finish(done || self.0.mode == IteratorResumeKind::Return)?;
+        let value = self.0.reply_value.take().expect("helper result");
+        let result = runtime.new_iterator_result_jsvalue(self.0.realm, value, done)?;
         Ok(HelperResumeStep::Complete(Completion::Return(
-            runtime.into_jsvalue(Value::Object(runtime.new_iterator_result(
-                self.0.realm,
-                value,
-                done,
-            )?))?,
+            JsValue::Object(result.into_handle()),
         )))
     }
     fn fail(
         mut self,
-        runtime: &Runtime,
-        value: Value,
+        _runtime: &Runtime,
+        value: JsValue,
         close_outer: bool,
     ) -> Result<HelperResumeStep, RuntimeError> {
         if close_outer {
             self.0.phase = Phase::CloseOuter;
             return Ok({
                 let __pending_field_iterator = self.0.source.clone();
-                let __pending_field_completion = Completion::Throw(runtime.into_jsvalue(value)?);
+                let __pending_field_completion = Completion::Throw(value);
                 let __pending_field_resume = self;
                 HelperResumeStep::request_close(
                     __pending_field_iterator,
@@ -237,9 +261,10 @@ impl HelperResume {
         }
         let done = self.0.mode == IteratorResumeKind::Return
             || (self.0.kind == IteratorHelperKind::Take && self.0.original_count == 0);
+        self.0.reply_value = Some(value);
         self.0.guard.finish(done)?;
         Ok(HelperResumeStep::Complete(Completion::Throw(
-            runtime.into_jsvalue(value)?,
+            self.0.reply_value.take().expect("helper error"),
         )))
     }
     fn begin(mut self, runtime: &Runtime) -> Result<HelperResumeStep, RuntimeError> {
@@ -330,7 +355,8 @@ impl HelperResume {
             )
         })
     }
-    fn close_inner(mut self, original: Option<Value>) -> Result<HelperResumeStep, RuntimeError> {
+    fn close_inner(mut self, original: Option<JsValue>) -> Result<HelperResumeStep, RuntimeError> {
+        self.0.close_reason = original;
         let iterator = self
             .0
             .inner
@@ -338,7 +364,7 @@ impl HelperResume {
             .ok_or(RuntimeError::Invariant("flatMap close inner missing"))?;
         // Even with a pending failure, this is a normal close: its exception
         // replaces the inner failure before the outer preserving close.
-        self.0.phase = Phase::CloseInner { original };
+        self.0.phase = Phase::CloseInner;
         Ok({
             let __pending_field_iterator = iterator;
             let __pending_field_completion = Completion::Return(JsValue::Undefined);
@@ -357,31 +383,31 @@ impl HelperResume {
     ) -> Result<HelperResumeStep, RuntimeError> {
         if matches!(self.0.phase, Phase::InnerNext) {
             return match reply {
-                ObjectIteratorStep::Yield(value) => {
-                    self.done(runtime, runtime.root_and_release_jsvalue(value)?, false)
-                }
+                ObjectIteratorStep::Yield(value) => self.done(runtime, value, false),
                 ObjectIteratorStep::Done => self.close_inner(None),
-                ObjectIteratorStep::Throw(value) => {
-                    self.close_inner(Some(runtime.root_and_release_jsvalue(value)?))
-                }
+                ObjectIteratorStep::Throw(value) => self.close_inner(Some(value)),
             };
         }
         let Phase::OuterNext { dropping } = std::mem::replace(&mut self.0.phase, Phase::Method)
         else {
+            if let ObjectIteratorStep::Yield(value) | ObjectIteratorStep::Throw(value) = reply {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "helper iterator reply has wrong phase",
             ));
         };
         let value = match reply {
             ObjectIteratorStep::Throw(value) => {
-                return self.fail(runtime, runtime.root_and_release_jsvalue(value)?, false);
+                return self.fail(runtime, value, false);
             }
-            ObjectIteratorStep::Done => return self.done(runtime, Value::Undefined, true),
-            ObjectIteratorStep::Yield(value) => runtime.root_and_release_jsvalue(value)?,
+            ObjectIteratorStep::Done => return self.done(runtime, JsValue::Undefined, true),
+            ObjectIteratorStep::Yield(value) => value,
         };
         if dropping {
+            runtime.release_jsvalue(value)?;
             if self.0.mode == IteratorResumeKind::Return {
-                return self.done(runtime, Value::Undefined, true);
+                return self.done(runtime, JsValue::Undefined, true);
             }
             return self.outer_next(runtime);
         }
@@ -392,6 +418,9 @@ impl HelperResume {
             )
         {
             return self.done(runtime, value, false);
+        }
+        if let Some(previous) = self.0.item.replace(value) {
+            runtime.release_jsvalue(previous)?;
         }
         let callable = match runtime.iterator_callable_jsvalue(self.0.realm, &self.0.callback)? {
             NativeConversion::Value(callback) => callback,
@@ -404,12 +433,14 @@ impl HelperResume {
         let index = self.0.count;
         self.0.count = self.0.count.wrapping_add(1);
         runtime.set_helper_count(&self.0.guard.helper, self.0.count)?;
-        self.0.phase = Phase::Callback(value.clone());
+        self.0.phase = Phase::Callback;
         Ok({
             let __pending_field_callable = callable;
             let __pending_field_receiver = JsValue::Undefined;
-            let __pending_field_arguments =
-                vec![runtime.into_jsvalue(value)?, JsValue::Float(index as f64)];
+            let __pending_field_arguments = vec![
+                runtime.dup_jsvalue(self.0.item.as_ref().expect("helper callback item"))?,
+                JsValue::Float(index as f64),
+            ];
             let __pending_field_resume = self;
             HelperResumeStep::request_call(
                 __pending_field_callable,
@@ -425,20 +456,23 @@ impl HelperResume {
         reply: Completion,
     ) -> Result<HelperResumeStep, RuntimeError> {
         let phase = std::mem::replace(&mut self.0.phase, Phase::Method);
-        if let Phase::CloseInner { original } = phase {
+        if let Phase::CloseInner = phase {
+            let throwing = matches!(reply, Completion::Throw(_));
+            let (Completion::Return(value) | Completion::Throw(value)) = reply;
+            self.0.reply_value = Some(value);
             runtime.set_helper_inner(&self.0.guard.helper, None)?;
             self.0.inner = None;
-            return if let Some(original) = original {
-                let value = match reply {
-                    Completion::Return(value) => {
-                        runtime.release_jsvalue(value)?;
-                        original
-                    }
-                    Completion::Throw(value) => runtime.root_and_release_jsvalue(value)?,
+            let value = self.0.reply_value.take().expect("inner close result");
+            return if let Some(original) = self.0.close_reason.take() {
+                let value = if throwing {
+                    runtime.release_jsvalue(original)?;
+                    value
+                } else {
+                    runtime.release_jsvalue(value)?;
+                    original
                 };
                 self.fail(runtime, value, true)
             } else {
-                let (Completion::Return(value) | Completion::Throw(value)) = reply;
                 runtime.release_jsvalue(value)?;
                 self.begin(runtime)
             };
@@ -452,15 +486,14 @@ impl HelperResume {
         reply: Completion,
         phase: Phase,
     ) -> Result<HelperResumeStep, RuntimeError> {
-        if matches!(phase, Phase::Method)
-            && let Completion::Return(value) = reply
-        {
-            return self.method(runtime, value);
-        }
         let value = match reply {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
-                let value = runtime.root_and_release_jsvalue(value)?;
+                if matches!(phase, Phase::Callback) {
+                    if let Some(item) = self.0.item.take() {
+                        runtime.release_jsvalue(item)?;
+                    }
+                }
                 return match phase {
                     Phase::InnerMethod => self.close_inner(Some(value)),
                     Phase::CloseTake | Phase::CloseOuter => self.fail(runtime, value, false),
@@ -468,105 +501,121 @@ impl HelperResume {
                 };
             }
         };
+        self.0.reply_value = Some(value);
         match phase {
-            Phase::Method => self.method(runtime, runtime.into_jsvalue(value)?),
-            Phase::Callback(item) => match self.0.kind {
-                IteratorHelperKind::Map => self.done(runtime, value, false),
+            Phase::Method => {
+                let value = self.0.reply_value.take().expect("helper method");
+                self.method(runtime, value)
+            }
+            Phase::Callback => match self.0.kind {
+                IteratorHelperKind::Map => {
+                    runtime.release_jsvalue(self.0.item.take().expect("map item"))?;
+                    let value = self.0.reply_value.take().expect("mapped value");
+                    self.done(runtime, value, false)
+                }
                 IteratorHelperKind::Filter => {
-                    if runtime.value_to_boolean(&value)? {
+                    let keep = runtime.value_to_boolean_jsvalue(
+                        self.0.reply_value.as_ref().expect("filter result"),
+                    )?;
+                    runtime.release_jsvalue(self.0.reply_value.take().expect("filter result"))?;
+                    let item = self.0.item.take().expect("filter item");
+                    if keep {
                         self.done(runtime, item, false)
                     } else {
+                        runtime.release_jsvalue(item)?;
                         self.outer_next(runtime)
                     }
                 }
                 IteratorHelperKind::FlatMap => {
-                    let Value::Object(mapped) = value else {
-                        let error = runtime.new_native_error(
+                    runtime.release_jsvalue(self.0.item.take().expect("flatMap item"))?;
+                    let value = self.0.reply_value.take().expect("mapped value");
+                    let JsValue::Object(mapped) = value else {
+                        runtime.release_jsvalue(value)?;
+                        let error = runtime.new_native_error_jsvalue(
                             self.0.realm,
                             NativeErrorKind::Type,
                             "not an object",
                         )?;
                         return self.fail(runtime, error, true);
                     };
+                    let mapped = ObjectRef::from_owned_handle(runtime.clone(), mapped);
                     self.0.phase = Phase::MappedMethod(mapped.clone());
-                    Ok({
-                        let __pending_field_object = mapped;
-                        let __pending_field_key =
-                            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
-                        let __pending_field_resume = self;
-                        HelperResumeStep::request_read(
-                            __pending_field_object,
-                            __pending_field_key,
-                            __pending_field_resume,
-                        )
-                    })
+                    let key =
+                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+                    Ok(HelperResumeStep::request_read(mapped, key, self))
                 }
                 _ => Err(RuntimeError::Invariant(
                     "non-callback helper received callback reply",
                 )),
             },
             Phase::MappedMethod(mapped) => {
-                if matches!(value, Value::Undefined | Value::Null) {
+                if matches!(
+                    self.0.reply_value.as_ref(),
+                    Some(JsValue::Undefined | JsValue::Null)
+                ) {
+                    runtime.release_jsvalue(self.0.reply_value.take().expect("mapped method"))?;
                     runtime.set_helper_inner(&self.0.guard.helper, Some(&mapped))?;
                     self.0.inner = Some(mapped);
                     return self.inner_method(runtime);
                 }
-                let callable = match runtime.iterator_callable_value(self.0.realm, &value)? {
+                let callable = runtime.iterator_callable_jsvalue(
+                    self.0.realm,
+                    self.0.reply_value.as_ref().expect("mapped method"),
+                )?;
+                runtime.release_jsvalue(self.0.reply_value.take().expect("mapped method"))?;
+                let callable = match callable {
                     NativeConversion::Value(callable) => callable,
                     NativeConversion::Throw(value) => {
-                        return self.fail(runtime, value, true);
+                        return self.fail(runtime, runtime.into_jsvalue(value)?, true);
                     }
                 };
                 self.0.phase = Phase::MappedIterator;
-                Ok({
-                    let __pending_field_callable = callable;
-                    let __pending_field_receiver = runtime.into_jsvalue(Value::Object(mapped))?;
-                    let __pending_field_arguments = Vec::new();
-                    let __pending_field_resume = self;
-                    HelperResumeStep::request_call(
-                        __pending_field_callable,
-                        __pending_field_receiver,
-                        __pending_field_arguments,
-                        __pending_field_resume,
-                    )
-                })
+                Ok(HelperResumeStep::request_call(
+                    callable,
+                    JsValue::Object(mapped.into_handle()),
+                    Vec::new(),
+                    self,
+                ))
             }
             Phase::MappedIterator => {
-                let Value::Object(iterator) = value else {
-                    let error = runtime.new_native_error(
+                let value = self.0.reply_value.take().expect("mapped iterator");
+                let JsValue::Object(iterator) = value else {
+                    runtime.release_jsvalue(value)?;
+                    let error = runtime.new_native_error_jsvalue(
                         self.0.realm,
                         NativeErrorKind::Type,
                         "not an object",
                     )?;
                     return self.fail(runtime, error, true);
                 };
+                let iterator = ObjectRef::from_owned_handle(runtime.clone(), iterator);
                 runtime.set_helper_inner(&self.0.guard.helper, Some(&iterator))?;
                 self.0.inner = Some(iterator);
                 self.inner_method(runtime)
             }
             Phase::InnerMethod => {
                 if self.0.mode == IteratorResumeKind::Return
-                    && matches!(value, Value::Undefined | Value::Null)
+                    && matches!(
+                        self.0.reply_value.as_ref(),
+                        Some(JsValue::Undefined | JsValue::Null)
+                    )
                 {
+                    runtime.release_jsvalue(self.0.reply_value.take().expect("inner method"))?;
                     return self.close_inner(None);
                 }
+                let iterator = self
+                    .0
+                    .inner
+                    .clone()
+                    .ok_or(RuntimeError::Invariant("flatMap inner missing"))?;
                 self.0.phase = Phase::InnerNext;
-                Ok({
-                    let __pending_field_iterator = self
-                        .0
-                        .inner
-                        .clone()
-                        .ok_or(RuntimeError::Invariant("flatMap inner missing"))?;
-                    let __pending_field_method = runtime.into_jsvalue(value)?;
-                    let __pending_field_resume = self;
-                    HelperResumeStep::request_next(
-                        __pending_field_iterator,
-                        __pending_field_method,
-                        __pending_field_resume,
-                    )
-                })
+                let method = self.0.reply_value.take().expect("inner method");
+                Ok(HelperResumeStep::request_next(iterator, method, self))
             }
-            Phase::CloseTake => self.done(runtime, Value::Undefined, true),
+            Phase::CloseTake => {
+                runtime.release_jsvalue(self.0.reply_value.take().expect("close result"))?;
+                self.done(runtime, JsValue::Undefined, true)
+            }
             Phase::CloseOuter => Err(RuntimeError::Invariant(
                 "preserving helper close returned normally",
             )),
@@ -594,26 +643,22 @@ pub(crate) fn finish(
             }
             HelperResumeStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
             HelperResumeStep::Next { mut resume } => {
                 let iterator = resume.take_next_iterator();
-                let method = runtime.root_and_release_jsvalue(resume.take_next_method())?;
+                let method = resume.take_next_method();
                 resume.next(
                     runtime,
                     finish_next(
                         runtime,
                         realm,
-                        NextStep::start(runtime, realm, iterator, method)?,
+                        NextStep::start_jsvalue(runtime, realm, iterator, method)?,
                     )?,
                 )?
             }

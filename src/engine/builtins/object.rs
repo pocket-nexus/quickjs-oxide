@@ -12,8 +12,7 @@ use crate::engine::builtins::native::{
 use crate::engine::heap::{ContextId, ObjectPayload, PrimitiveObjectData};
 use crate::engine::object::operations::{ArrayOwnKey, InternalDefineResult};
 use crate::engine::object::{
-    AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
+    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
@@ -944,48 +943,61 @@ impl Runtime {
     fn complete_descriptor_to_object(
         &self,
         realm: ContextId,
-        descriptor: CompleteOrdinaryPropertyDescriptor,
+        descriptor: crate::engine::object::OwnedCompletePropertyDescriptor,
     ) -> Result<ObjectRef, RuntimeError> {
+        use crate::engine::object::property::CompletePropertyDescriptor;
         let object = self.new_ordinary_object_in_realm(realm)?;
-        let mut fields = Vec::with_capacity(4);
-        match descriptor {
-            CompleteOrdinaryPropertyDescriptor::Data {
+        // The reply owner keeps all borrowed field handles live while stores retain them.
+        let fields = match descriptor.record() {
+            CompletePropertyDescriptor::Data {
                 value,
                 writable,
                 enumerable,
                 configurable,
-            } => {
-                fields.push(("value", value));
-                fields.push(("writable", Value::Bool(writable)));
-                fields.push(("enumerable", Value::Bool(enumerable)));
-                fields.push(("configurable", Value::Bool(configurable)));
-            }
-            CompleteOrdinaryPropertyDescriptor::Accessor {
+            } => [
+                (
+                    "value",
+                    JsValue::from_raw(value.clone())
+                        .expect("descriptor contains initialized values"),
+                ),
+                ("writable", JsValue::Bool(*writable)),
+                ("enumerable", JsValue::Bool(*enumerable)),
+                ("configurable", JsValue::Bool(*configurable)),
+            ],
+            CompletePropertyDescriptor::Accessor {
                 get,
                 set,
                 enumerable,
                 configurable,
-            } => {
-                fields.push((
+            } => [
+                (
                     "get",
-                    get.map_or(Value::Undefined, |value| Value::Object(value.into_object())),
-                ));
-                fields.push((
+                    get.as_ref().map_or(JsValue::Undefined, |value| {
+                        JsValue::from_raw(value.clone())
+                            .expect("descriptor contains initialized values")
+                    }),
+                ),
+                (
                     "set",
-                    set.map_or(Value::Undefined, |value| Value::Object(value.into_object())),
-                ));
-                fields.push(("enumerable", Value::Bool(enumerable)));
-                fields.push(("configurable", Value::Bool(configurable)));
-            }
-        }
+                    set.as_ref().map_or(JsValue::Undefined, |value| {
+                        JsValue::from_raw(value.clone())
+                            .expect("descriptor contains initialized values")
+                    }),
+                ),
+                ("enumerable", JsValue::Bool(*enumerable)),
+                ("configurable", JsValue::Bool(*configurable)),
+            ],
+        };
         for (name, value) in fields {
             let key = self.intern_property_key(name)?;
-            self.define_fresh_object_descriptor_property(
-                &object,
-                &key,
-                value,
-                "fresh property descriptor object rejected a field",
-            )?;
+            if !matches!(
+                self.define_selected_set_data(&object, &key, &value, false)?,
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(true)
+            ) {
+                return Err(RuntimeError::Invariant(
+                    "fresh property descriptor object rejected a field",
+                ));
+            }
         }
         Ok(object)
     }
@@ -1079,9 +1091,12 @@ impl Runtime {
             .readable
             .get(1)
             .ok_or(RuntimeError::Invariant("Object.is rhs argv was not padded"))?;
-        let left = self.root_value(left)?;
-        let right = self.root_value(right)?;
-        Ok(Completion::Return(JsValue::Bool(left.same_value(&right))))
+        let equal = crate::engine::value::collection_key::same_value(
+            &self.0.state.borrow().heap,
+            &left.as_raw(),
+            &right.as_raw(),
+        );
+        Ok(Completion::Return(JsValue::Bool(equal)))
     }
 
     pub(crate) fn call_object_assign(

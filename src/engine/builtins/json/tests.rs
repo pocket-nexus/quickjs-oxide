@@ -124,12 +124,13 @@ fn json_module_parser_returns_the_strict_json_value() {
     let mut context = runtime.new_context();
     let source = JsString::from_static("{\"answer\":42}");
     let filename = JsString::from_static("answer.json");
-    let NativeConversion::Value(Value::Object(value)) = runtime
+    let NativeConversion::Value(crate::engine::value::JsValue::Object(value)) = runtime
         .parse_json_module_text(context.realm, &source, &filename)
         .unwrap()
     else {
         panic!("strict JSON module text did not return its object value");
     };
+    let value = crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), value);
     let answer = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Answer)
         .unwrap();
@@ -162,12 +163,13 @@ fn quickjs_extended_json_module_parser_is_host_selected_and_keeps_strict_json_st
     )
     .unwrap();
     let filename = JsString::from_static("fixtures/value.data");
-    let NativeConversion::Value(Value::Object(value)) = runtime
+    let NativeConversion::Value(crate::engine::value::JsValue::Object(value)) = runtime
         .parse_json5_module_text(context.realm, &source, &filename)
         .unwrap()
     else {
         panic!("QuickJS extended JSON did not return its object value");
     };
+    let value = crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), value);
     let global = context.global_object().unwrap();
     let key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Json5Value)
@@ -211,12 +213,13 @@ fn quickjs_extended_json_module_parser_is_host_selected_and_keeps_strict_json_st
     );
 
     let line_separator = JsString::try_from_utf8("// comment\u{2028}{answer: 42}").unwrap();
-    let NativeConversion::Value(Value::Object(value)) = runtime
+    let NativeConversion::Value(crate::engine::value::JsValue::Object(value)) = runtime
         .parse_json5_module_text(context.realm, &line_separator, &filename)
         .unwrap()
     else {
         panic!("extended JSON line comment did not consume its Unicode terminator");
     };
+    let value = crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), value);
     let answer = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Answer)
         .unwrap();

@@ -192,17 +192,18 @@ impl Runtime {
     fn atomics_prepare_access(
         &self,
         realm: ContextId,
-        typed_array: &Value,
+        typed_array: &JsValue,
         mode: AtomicAccessMode,
     ) -> Result<NativeConversion<AtomicAccessPreparation>, RuntimeError> {
-        let Value::Object(object) = typed_array else {
+        let JsValue::Object(id) = typed_array else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,
                 "integer TypedArray expected",
             )?));
         };
-        let Some(snapshot) = self.typed_array_snapshot_if_branded(object)? else {
+        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+        let Some(snapshot) = self.typed_array_snapshot_if_branded(&object)? else {
             return Ok(NativeConversion::Throw(self.new_native_error(
                 realm,
                 NativeErrorKind::Type,
@@ -487,13 +488,13 @@ impl Runtime {
     fn atomics_store_converted(
         &self,
         access: &AtomicAccess,
-        stored_value: Value,
+        stored_value: &JsValue,
         bytes: [u8; 8],
     ) -> Result<Completion, RuntimeError> {
         let width = usize::from(access.snapshot.element.byte_length());
         let offset = atomic_absolute_byte_offset(access)?;
         with_atomics_seq_cst(|| self.write_buffer_word(&access.buffer, offset, &bytes[..width]))?;
-        Ok(Completion::Return(self.into_jsvalue(stored_value)?))
+        Ok(Completion::Return(self.dup_jsvalue(stored_value)?))
     }
     fn atomics_wait_converted(
         &self,

@@ -3,6 +3,7 @@ use crate::engine::code::function::metadata::{
     EvalCallerProfile, EvalCallerVariableTarget, EvalKind, EvalRootBinding, EvalVariableEnvironment,
 };
 use crate::engine::compiler::{EvalCompileContext, compile_unlinked_eval_source_with_filename};
+use crate::engine::value::JsValue;
 use crate::engine::vm::DirectEvalInvocation;
 use crate::source::text::SourceText;
 
@@ -11,7 +12,7 @@ pub(crate) enum DirectEvalPreparation {
     Complete(Completion),
     Ready {
         callable: CallableRef,
-        this_value: Value,
+        invocation: DirectEvalInvocation,
     },
 }
 
@@ -73,13 +74,13 @@ impl Runtime {
             ));
         };
         invocation.release(self)?;
-        let input = match arguments.readable.first() {
-            Some(value) => self.root_and_release_jsvalue(self.dup_jsvalue(value)?)?,
-            None => Value::Undefined,
+        let Some(input) = arguments.readable.first() else {
+            return Ok(Completion::Return(JsValue::Undefined));
         };
-        let Value::String(source) = input else {
-            return Ok(Completion::Return(self.into_jsvalue(input)?));
+        let JsValue::String(id) = input else {
+            return Ok(Completion::Return(self.dup_jsvalue(input)?));
         };
+        let source = self.0.state.borrow().heap.string(*id)?.clone();
         self.execute_indirect_string_eval(realm, &source)
     }
 
@@ -87,7 +88,7 @@ impl Runtime {
     pub(crate) fn prepare_direct_eval_original<F>(
         &self,
         realm: ContextId,
-        invocation: DirectEvalInvocation,
+        mut invocation: DirectEvalInvocation,
         environment: Option<crate::engine::vm::eval_bindings::PreparedEvalEnvironment>,
         materialize: F,
     ) -> Result<DirectEvalPreparation, RuntimeError>
@@ -97,20 +98,16 @@ impl Runtime {
         )
             -> Result<crate::engine::vm::eval_bindings::MaterializedEvalEnvironment, Error>,
     {
-        let DirectEvalInvocation {
-            input,
-            environment: environment_index,
-            this_value,
-            caller_strict,
-        } = invocation;
-        if !matches!(input, Value::String(_)) {
+        let environment_index = invocation.environment;
+        let caller_strict = invocation.caller_strict;
+        if !matches!(invocation.input, JsValue::String(_)) {
             if environment.is_some() {
                 return Err(RuntimeError::Invariant(
                     "non-String direct eval prepared a caller environment",
                 ));
             }
             return Ok(DirectEvalPreparation::Complete(Completion::Return(
-                self.into_jsvalue(input)?,
+                invocation.take_input(),
             )));
         }
 
@@ -134,10 +131,13 @@ impl Runtime {
             .map(|scope| scope.bindings.len())
             .sum::<usize>();
         let expected_descriptor = environment.descriptor.clone();
-        let source = Self::eval_source_text(match &input {
-            Value::String(source) => source,
-            _ => unreachable!("String direct eval was checked above"),
-        })?;
+        let JsValue::String(id) = &invocation.input else {
+            unreachable!("String direct eval was checked above");
+        };
+        let source = {
+            let state = self.0.state.borrow();
+            Self::eval_source_text(state.heap.string(*id)?)?
+        };
         let (bindings, caller_profile) = self.direct_eval_root_bindings(realm, &environment)?;
         let arguments_forbidden = self
             .snapshot_function_bytecode(environment.descriptor.owner())?
@@ -189,13 +189,14 @@ impl Runtime {
             &bindings,
             &environment.roots,
         )?;
+        self.release_jsvalue(invocation.take_input())?;
         Ok(DirectEvalPreparation::Ready {
             callable,
-            this_value,
+            invocation,
         })
     }
 
-    /// Internal-value form of [`Runtime::is_original_eval`].
+    /// Compare the internal callable handle with the realm's original eval.
     pub(crate) fn is_original_eval_jsvalue(
         &self,
         realm: ContextId,
@@ -204,10 +205,20 @@ impl Runtime {
         let crate::engine::value::JsValue::Object(object) = function else {
             return Ok(false);
         };
-        let object = crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *object)?;
-        self.is_original_eval(realm, &Value::Object(object))
+        let original = self
+            .0
+            .state
+            .borrow()
+            .heap
+            .context(realm)?
+            .eval_function
+            .ok_or(RuntimeError::Invariant(
+                "context has no original eval function root",
+            ))?;
+        Ok(*object == original)
     }
 
+    #[cfg(test)]
     pub(crate) fn is_original_eval(
         &self,
         realm: ContextId,
@@ -426,8 +437,10 @@ impl Runtime {
         source: &JsString,
         context: EvalCompileContext,
         environment_roots: &[VarRefRoot],
-        this_value: Value,
+        this_value: JsValue,
     ) -> Result<DirectEvalPreparation, RuntimeError> {
+        let mut invocation = DirectEvalInvocation::new(self, 0, false);
+        invocation.this_value = this_value;
         let source = Self::eval_source_text(source)?;
         let kind = context.kind;
         let bindings = context.bindings.clone();
@@ -444,7 +457,7 @@ impl Runtime {
             self.new_eval_bytecode_closure(realm, &function, kind, &bindings, environment_roots)?;
         Ok(DirectEvalPreparation::Ready {
             callable,
-            this_value,
+            invocation,
         })
     }
 
@@ -460,8 +473,8 @@ impl Runtime {
             DirectEvalPreparation::Complete(completion) => Ok(completion),
             DirectEvalPreparation::Ready {
                 callable,
-                this_value,
-            } => self.call_internal(realm, &callable, this_value, &[]),
+                mut invocation,
+            } => self.call_internal_jsvalue(realm, &callable, invocation.take_this(), Vec::new()),
         }
     }
 
@@ -476,7 +489,7 @@ impl Runtime {
             source,
             EvalCompileContext::indirect(),
             &[],
-            Value::Object(global_object),
+            JsValue::Object(global_object.into_handle()),
         )
     }
 

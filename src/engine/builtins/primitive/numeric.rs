@@ -58,12 +58,19 @@ impl std::ops::DerefMut for NumericResume {
 }
 const _: () = assert!(std::mem::size_of::<NumericResume>() <= 8);
 pub(crate) struct NumericResumeState {
+    runtime: Runtime,
     realm: ContextId,
     kind: NumericKind,
-    value: Value,
-    argument: Value,
+    value: JsValue,
+    argument_undefined: bool,
     phase: Phase,
     bits: u64,
+}
+impl Drop for NumericResumeState {
+    fn drop(&mut self) {
+        let value = std::mem::replace(&mut self.value, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(value);
+    }
 }
 impl NumericStep {
     pub(crate) fn start(
@@ -78,12 +85,9 @@ impl NumericStep {
                 "scalar numeric method requires generic invocation",
             ));
         };
-        let argument = match arguments.readable.first() {
-            Some(value) => runtime.root_value(value)?,
-            None => Value::Undefined,
-        };
+        let argument = arguments.readable.first().unwrap_or(&JsValue::Undefined);
         let value = match kind {
-            NumericKind::BigIntAsN(_) => runtime.root_value(
+            NumericKind::BigIntAsN(_) => runtime.dup_jsvalue(
                 arguments
                     .readable
                     .get(1)
@@ -94,8 +98,7 @@ impl NumericStep {
                     NumericKind::ToString(kind) => kind,
                     _ => PrimitiveKind::Number,
                 };
-                let this_value = runtime.root_value(this_value)?;
-                match runtime.primitive_this_value(realm, brand, this_value)? {
+                match runtime.primitive_this_value_jsvalue(realm, brand, this_value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(Self::Complete(Completion::Throw(
@@ -107,7 +110,7 @@ impl NumericStep {
         };
         if let NumericKind::ToString(brand) = kind {
             if !matches!(brand, PrimitiveKind::Number | PrimitiveKind::BigInt)
-                || matches!(argument, Value::Undefined)
+                || matches!(argument, JsValue::Undefined)
             {
                 return Ok(Self::Complete(
                     runtime.finish_branded_to_string(realm, brand, value, 10)?,
@@ -120,22 +123,23 @@ impl NumericStep {
             NumericKind::BigIntAsN(_) => Phase::Width,
         };
         let resume = NumericResume(Box::new(NumericResumeState {
+            runtime: runtime.clone(),
             realm,
             kind,
             value,
-            argument: argument.clone(),
+            argument_undefined: matches!(argument, JsValue::Undefined),
             phase,
             bits: 0,
         }));
         match kind {
             NumericKind::Format(NumberFormatKind::LocaleString) => resume.format(runtime, 0),
             NumericKind::Format(NumberFormatKind::Precision)
-                if matches!(argument, Value::Undefined) =>
+                if matches!(argument, JsValue::Undefined) =>
             {
                 resume.format(runtime, 0)
             }
             _ => Ok(Self::Number {
-                value: runtime.unroot_value(&argument)?,
+                value: runtime.dup_jsvalue(argument)?,
                 resume,
             }),
         }
@@ -173,7 +177,7 @@ impl NumericResume {
                 Ok(NumericStep::Complete(runtime.finish_branded_to_string(
                     self.0.realm,
                     kind,
-                    self.0.value,
+                    std::mem::replace(&mut self.0.value, JsValue::Undefined),
                     radix as u32,
                 )?))
             }
@@ -190,9 +194,9 @@ impl NumericResume {
                     }
                 };
                 self.0.phase = Phase::BigInt;
-                let value = std::mem::replace(&mut self.0.value, Value::Undefined);
+                let value = std::mem::replace(&mut self.0.value, JsValue::Undefined);
                 Ok(NumericStep::Primitive {
-                    value: runtime.into_jsvalue(value)?,
+                    value,
                     resume: self,
                 })
             }
@@ -215,11 +219,11 @@ impl NumericResume {
             NumberFormatKind::Fixed => crate::engine::value::number::to_fixed(number, digits),
             NumberFormatKind::Exponential => crate::engine::value::number::to_exponential(
                 number,
-                (!matches!(self.0.argument, Value::Undefined)).then_some(digits),
+                (!self.0.argument_undefined).then_some(digits),
             ),
             NumberFormatKind::Precision => crate::engine::value::number::to_precision(
                 number,
-                (!matches!(self.0.argument, Value::Undefined)).then_some(digits),
+                (!self.0.argument_undefined).then_some(digits),
             ),
         };
         Ok(NumericStep::Complete(
@@ -237,10 +241,12 @@ impl NumericResume {
             ));
         }
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(NumericStep::Complete(Completion::Throw(value))),
         };
-        let value = match runtime.bigint_from_primitive(self.0.realm, value)? {
+        let result = runtime.bigint_from_primitive_jsvalue(self.0.realm, &value);
+        runtime.release_jsvalue(value)?;
+        let value = match result? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(NumericStep::Complete(Completion::Throw(
@@ -274,14 +280,13 @@ pub(crate) fn finish(
         step = match step {
             NumericStep::Complete(result) => return Ok(result),
             NumericStep::Number { value, resume } => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             NumericStep::Primitive { value, resume } => resume.primitive(
                 runtime,
-                runtime.to_primitive(
+                runtime.to_primitive_jsvalue(
                     realm,
-                    runtime.root_and_release_jsvalue(value)?,
+                    value,
                     crate::engine::vm::ToPrimitiveHint::Number,
                 )?,
             )?,

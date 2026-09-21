@@ -381,28 +381,6 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn iterator_callable_value(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not a function",
-            )?));
-        };
-        let Some(callable) = self.as_callable(object)? else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not a function",
-            )?));
-        };
-        Ok(NativeConversion::Value(callable))
-    }
-
     fn dup_iterator_raw(&self, raw: &RawValue) -> Result<JsValue, RuntimeError> {
         let value = JsValue::from_raw(raw.clone()).ok_or(RuntimeError::Invariant(
             "iterator value was an internal sentinel",

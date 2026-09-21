@@ -12,7 +12,7 @@ use crate::engine::{
     api::{Error, runtime::Runtime},
     builtins::DirectEvalPreparation,
     code::function::metadata::EvalBindingSource,
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
 };
 
 #[inline(never)]
@@ -36,11 +36,18 @@ pub(super) fn step(
     }
     let result = prepare_and_enter(runtime, execution, id, arguments, environment);
     if !matches!(result, Ok(CallStep::Entered)) {
-        execution
-            .frames
-            .current_mut(id)?
-            .cold
-            .release_eval_arguments();
+        match execution.frames.current_mut(id) {
+            Ok(frame) => frame.cold.release_eval_arguments(),
+            Err(error) => {
+                if let Ok(CallStep::Complete(
+                    Completion::Return(value) | Completion::Throw(value),
+                )) = result
+                {
+                    let _ = runtime.release_jsvalue(value);
+                }
+                return Err(error);
+            }
+        }
     }
     let Err(error) = result else { return result };
     let Some(kind) =
@@ -66,28 +73,28 @@ fn prepare_and_enter(
     let can_push = execution.frames.can_push();
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
-    // Direct-eval preparation receives one public boundary input. The resident
-    // argument snapshot remains internal and preserves its payload handles.
-    let input = if let Some(values) = &frame.cold.eval_arguments {
+    let mut invocation =
+        DirectEvalInvocation::new(runtime, environment, frame.executable.metadata.strict);
+    invocation.input = if let Some(values) = &frame.cold.eval_arguments {
         values
             .first()
-            .map(|value| runtime.root_value(value))
+            .map(|value| runtime.dup_jsvalue(value))
             .transpose()
             .map_err(runtime_error_to_vm_error)?
-            .unwrap_or(Value::Undefined)
+            .unwrap_or(JsValue::Undefined)
     } else if arguments == 0 {
-        Value::Undefined
+        JsValue::Undefined
     } else {
         runtime
-            .root_value(
+            .dup_jsvalue(
                 execution
                     .slots
                     .peek(&frame.window, usize::from(arguments) - 1)?,
             )
             .map_err(runtime_error_to_vm_error)?
     };
-    let string = matches!(input, Value::String(_));
-    let this_value = if !string {
+    let string = matches!(invocation.input, JsValue::String(_));
+    invocation.this_value = if !string {
         runtime
             .dup_jsvalue(&frame.cold.input.this_value)
             .map_err(runtime_error_to_vm_error)?
@@ -116,7 +123,7 @@ fn prepare_and_enter(
             .map_err(heap_error_to_vm_error)?;
         JsValue::Object(id)
     } else {
-        let value = match runtime
+        match runtime
             .native_to_object_jsvalue(
                 realm,
                 runtime
@@ -126,11 +133,8 @@ fn prepare_and_enter(
             .map_err(runtime_error_to_vm_error)?
         {
             NativeConversion::Value(object) => {
-                let id = object.object_id();
-                runtime
-                    .retain_object_handle(id)
-                    .map_err(heap_error_to_vm_error)?;
-                JsValue::Object(id)
+                frame.cold.normalized_this = Some(JsValue::Object(object.clone().into_handle()));
+                JsValue::Object(object.into_handle())
             }
             NativeConversion::Throw(value) => {
                 let value = runtime
@@ -138,13 +142,7 @@ fn prepare_and_enter(
                     .map_err(runtime_error_to_vm_error)?;
                 return Ok(CallStep::Complete(Completion::Throw(value)));
             }
-        };
-        frame.cold.normalized_this = Some(
-            runtime
-                .dup_jsvalue(&value)
-                .map_err(runtime_error_to_vm_error)?,
-        );
-        value
+        }
     };
     let prepared = if string {
         frame
@@ -172,14 +170,6 @@ fn prepare_and_enter(
     } else {
         None
     };
-    let invocation = DirectEvalInvocation {
-        input,
-        environment,
-        this_value: runtime
-            .root_and_release_jsvalue(this_value)
-            .map_err(runtime_error_to_vm_error)?,
-        caller_strict: frame.executable.metadata.strict,
-    };
     let prepared = runtime
         .prepare_direct_eval_original(realm, invocation, prepared, |prepared| {
             eval_bindings::materialize(prepared, &frame.cold.closure_slots, |source, descriptor| {
@@ -203,15 +193,31 @@ fn prepare_and_enter(
     let request = match prepared {
         DirectEvalPreparation::Complete(completion) => {
             frame.cold.release_eval_arguments();
-            for _ in 0..=arguments {
-                let discarded = execution.slots.pop(&mut frame.window)?;
-                runtime
-                    .release_jsvalue(discarded)
-                    .map_err(runtime_error_to_vm_error)?;
+            let cleanup = (|| -> Result<(), Error> {
+                for _ in 0..=arguments {
+                    let discarded = execution.slots.pop(&mut frame.window)?;
+                    runtime
+                        .release_jsvalue(discarded)
+                        .map_err(runtime_error_to_vm_error)?;
+                }
+                frame.resume_pc = frame
+                    .fault_pc
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("eval resume PC overflow"))?;
+                Ok(())
+            })();
+            if let Err(error) = cleanup {
+                let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                let _ = runtime.release_jsvalue(value);
+                return Err(error);
             }
             match completion {
-                Completion::Return(value) => {
-                    execution.slots.push(&mut frame.window, value)?;
+                Completion::Return(mut value) => {
+                    let push = execution.slots.push_owned(&mut frame.window, &mut value);
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                    push?;
                     None
                 }
                 completion => return Ok(CallStep::Complete(completion)),
@@ -219,7 +225,7 @@ fn prepare_and_enter(
         }
         DirectEvalPreparation::Ready {
             callable,
-            this_value,
+            mut invocation,
         } => {
             let CallableExecution::Bytecode {
                 bytecode,
@@ -236,11 +242,13 @@ fn prepare_and_enter(
                     .map(CallStep::Complete)
                     .map_err(runtime_error_to_vm_error);
             }
+            frame.resume_pc = frame
+                .fault_pc
+                .checked_add(1)
+                .ok_or_else(|| Error::internal("eval resume PC overflow"))?;
             Some(BytecodeCallRequest {
                 callable,
-                receiver: runtime
-                    .into_jsvalue(this_value)
-                    .map_err(runtime_error_to_vm_error)?,
+                receiver: invocation.take_this(),
                 new_target: JsValue::Undefined,
                 arguments: Vec::new(),
                 bytecode,
@@ -255,10 +263,6 @@ fn prepare_and_enter(
             })
         }
     };
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("eval resume PC overflow"))?;
     if let Some(request) = request {
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
         push_frame(execution, entry)?;
@@ -278,10 +282,7 @@ pub(super) fn apply(
     let can_push = execution.frames.can_push();
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
-    let array = runtime
-        .root_value(execution.slots.peek(&frame.window, 0)?)
-        .map_err(runtime_error_to_vm_error)?;
-    let Value::Object(array) = array else {
+    let JsValue::Object(array_id) = execution.slots.peek(&frame.window, 0)? else {
         return Ok(CallStep::Complete(Completion::Throw(
             runtime
                 .new_native_error_jsvalue(
@@ -292,6 +293,8 @@ pub(super) fn apply(
                 .map_err(runtime_error_to_vm_error)?,
         )));
     };
+    let array = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *array_id)
+        .map_err(heap_error_to_vm_error)?;
     let Some(values) = runtime
         .prepare_fast_array_arguments_jsvalue(realm, &array)
         .map_err(runtime_error_to_vm_error)?
@@ -445,7 +448,7 @@ mod capture_tests {
     use crate::engine::code::function::{
         UnlinkedConstant, UnlinkedFunction, UnlinkedVariableDefinition,
     };
-    use crate::engine::value::JsString;
+    use crate::engine::value::{JsString, Value};
     use crate::engine::vm::{
         bindings::FrameBinding,
         execution::ExecutionLimits,

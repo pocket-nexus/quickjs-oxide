@@ -861,7 +861,7 @@ mod dense_set_tests {
             array.clone(),
             key.clone(),
             runtime.into_jsvalue(Value::Object(replacement)).unwrap(),
-            Value::Object(array.clone()),
+            runtime.into_jsvalue(Value::Object(array.clone())).unwrap(),
             |_| panic!("dense overwrite suspended"),
         )
         .unwrap();
@@ -966,13 +966,13 @@ impl Runtime {
         }
         let state = self.0.state.try_borrow().ok()?;
         if let JsValue::String(id) = base {
-            let info = state.atoms.resolve(atom).ok()?;
-            let crate::engine::atom::AtomSpelling::Text(name) = info.spelling else {
-                return None;
-            };
-            if info.kind != crate::engine::atom::AtomKind::String
-                || name.len() != 6
-                || !name.utf16_units().eq("length".encode_utf16())
+            // The executable owns a same-runtime interned atom; the pinned
+            // spelling has that same canonical identity. No text traversal is
+            // needed for each primitive string length read.
+            if atom
+                != state
+                    .pinned_atoms
+                    .get(crate::engine::atom::pinned::PinnedAtom::Length)
             {
                 return None;
             }

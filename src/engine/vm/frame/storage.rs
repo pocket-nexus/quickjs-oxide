@@ -175,6 +175,8 @@ impl CallStorage {
     pub(in crate::engine::vm) fn recycle(&mut self, mut cold: ColdFrame) {
         cold.release_normalized_this();
         cold.release_eval_arguments();
+        cold.release_resume_throw();
+        cold.release_constructor_return();
         let mut flags = std::mem::take(&mut cold.reusable_captured_locals);
         flags.clear();
 

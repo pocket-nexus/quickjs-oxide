@@ -377,21 +377,30 @@ impl FromSyncResume {
                         }
                     });
                 }
-                let value = runtime.root_and_release_jsvalue(value)?;
-                let callable =
-                    match runtime.async_from_sync_callable(realm, value, "not a function")? {
-                        NativeConversion::Value(callable) => callable,
-                        NativeConversion::Throw(reason) => {
-                            for argument in std::mem::take(&mut state.arguments) {
-                                runtime.release_jsvalue(argument)?;
-                            }
-                            return self.settle(
-                                runtime,
-                                state.capability,
-                                Completion::Throw(runtime.into_jsvalue(reason)?),
-                            );
+                let callable = runtime.async_from_sync_callable_jsvalue(realm, &value);
+                runtime.release_jsvalue(value)?;
+                let callable = match callable {
+                    Ok(callable) => callable,
+                    Err(error) => {
+                        for argument in std::mem::take(&mut state.arguments) {
+                            runtime.release_jsvalue(argument)?;
                         }
-                    };
+                        return Err(error);
+                    }
+                };
+                let callable = match callable {
+                    NativeConversion::Value(callable) => callable,
+                    NativeConversion::Throw(reason) => {
+                        for argument in std::mem::take(&mut state.arguments) {
+                            runtime.release_jsvalue(argument)?;
+                        }
+                        return self.settle(
+                            runtime,
+                            state.capability,
+                            Completion::Throw(runtime.into_jsvalue(reason)?),
+                        );
+                    }
+                };
                 Ok({
                     let __pending_field_callable = callable;
                     let __pending_field_receiver =

@@ -6,8 +6,8 @@ use super::{
 };
 use crate::engine::api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
-use crate::engine::object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey};
-use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
+use crate::engine::object::{ObjectRef, PropertyKey};
+use crate::engine::value::{JsValue, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyGetStep {
@@ -224,7 +224,7 @@ impl ProxyGetResume {
                     ));
                 }
                 let descriptor =
-                    NativeConversion::Value(runtime.get_own_property(&rooted.target, &key)?);
+                    NativeConversion::Value(runtime.get_own_property_owned(&rooted.target, &key)?);
                 complete_get_invariant(runtime, realm, value, descriptor)
             }
             Phase::Invariant { .. } => Err(RuntimeError::Invariant(
@@ -236,7 +236,9 @@ impl ProxyGetResume {
     pub(crate) fn descriptor(
         self,
         runtime: &Runtime,
-        descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+        descriptor: NativeConversion<
+            Option<crate::engine::object::OwnedCompletePropertyDescriptor>,
+        >,
     ) -> Result<ProxyGetStep, RuntimeError> {
         let mut state = self.0.into_inner();
         let Phase::Invariant { _rooted } = state.phase else {
@@ -257,21 +259,27 @@ impl ProxyGetResume {
 /// property must return the same value, and a setter-less non-configurable
 /// accessor must return `undefined`.
 fn get_invariant_violation(
-    result: &Value,
-    descriptor: &Option<CompleteOrdinaryPropertyDescriptor>,
+    runtime: &Runtime,
+    result: &JsValue,
+    descriptor: &Option<crate::engine::object::OwnedCompletePropertyDescriptor>,
 ) -> bool {
-    match descriptor {
-        Some(CompleteOrdinaryPropertyDescriptor::Data {
+    use crate::engine::object::property::CompletePropertyDescriptor;
+    match descriptor.as_ref().map(|descriptor| descriptor.record()) {
+        Some(CompletePropertyDescriptor::Data {
             value,
             writable: false,
             configurable: false,
             ..
-        }) => !result.same_value(value),
-        Some(CompleteOrdinaryPropertyDescriptor::Accessor {
+        }) => !crate::engine::value::collection_key::same_value(
+            &runtime.0.state.borrow().heap,
+            &result.as_raw(),
+            value,
+        ),
+        Some(CompletePropertyDescriptor::Accessor {
             get: None,
             configurable: false,
             ..
-        }) => !matches!(result, Value::Undefined),
+        }) => !matches!(result, JsValue::Undefined),
         _ => false,
     }
 }
@@ -280,7 +288,7 @@ fn complete_get_invariant(
     runtime: &Runtime,
     realm: ContextId,
     result: JsValue,
-    descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+    descriptor: NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
 ) -> Result<ProxyGetStep, RuntimeError> {
     let descriptor = match descriptor {
         NativeConversion::Value(descriptor) => descriptor,
@@ -291,7 +299,7 @@ fn complete_get_invariant(
             )));
         }
     };
-    if get_invariant_violation(&runtime.root_value(&result)?, &descriptor) {
+    if get_invariant_violation(runtime, &result, &descriptor) {
         let _ = runtime.release_jsvalue(result);
         Ok(ProxyGetStep::Complete(Completion::Throw(
             runtime.new_native_error_jsvalue(
@@ -453,6 +461,7 @@ const _: () = assert!(std::mem::size_of::<ProxyGetStep>() <= 64);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::value::Value;
 
     #[test]
     fn abandoned_proxy_method_releases_roots_and_depth_guard() {

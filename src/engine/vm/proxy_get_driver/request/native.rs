@@ -1,5 +1,5 @@
 //! Mechanical adapters for native domain requests.
-use super::{Resume, Step, Value};
+use super::{Resume, Step};
 
 impl From<crate::engine::builtins::continuation::NativeStep> for Step {
     fn from(step: crate::engine::builtins::continuation::NativeStep) -> Self {
@@ -43,12 +43,9 @@ impl From<crate::engine::builtins::continuation::NativeStep> for Step {
             NativeStep::RegExpMatch(step) => step.into(),
             NativeStep::RegExpCompile(step) => step.into(),
             NativeStep::StringProtocol(step) => step.into(),
-            NativeStep::GlobalEval(input) => match input {
-                Value::String(source) => Self::IndirectEval {
-                    source: Some(source),
-                    resume: Some(Resume::Identity),
-                },
-                _ => unreachable!("global eval non-string is completed before scheduling"),
+            NativeStep::GlobalEval(source) => Self::IndirectEval {
+                source: Some(source),
+                resume: Some(Resume::Identity),
             },
             NativeStep::JsonRaw { value, resume } => Self::String {
                 value: Some(value),

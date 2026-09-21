@@ -529,7 +529,7 @@ impl MutationResume {
                             self.0.realm,
                             &key,
                             value,
-                            Value::Object(self.0.object.clone()),
+                            JsValue::Object(self.0.object.clone().into_handle()),
                             |step| pending = Some(step),
                         )?;
                         let step = match selected {
@@ -660,7 +660,7 @@ pub(crate) fn finish(
                                 break match runtime.call_internal_jsvalue(
                                     realm,
                                     &setter,
-                                    runtime.into_jsvalue(receiver)?,
+                                    receiver,
                                     vec![argument],
                                 )? {
                                     Completion::Return(value) => {

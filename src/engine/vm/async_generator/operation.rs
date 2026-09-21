@@ -7,7 +7,7 @@ use crate::engine::heap::{
     AsyncGeneratorResumeKind, AsyncGeneratorState, ContextId, InternalCallableData, ObjectPayload,
 };
 use crate::engine::object::{CallableRef, ObjectRef};
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -103,7 +103,7 @@ impl AsyncGeneratorStep {
         ))?;
         if let NativeFunctionId::AsyncGeneratorPrototypeResume(kind) = target {
             let capability = runtime.new_default_promise_capability(realm)?;
-            let promise = runtime.into_jsvalue(Value::Object(capability.promise.clone()))?;
+            let promise = JsValue::Object(capability.promise.clone().into_handle());
             let generator = match this_value {
                 JsValue::Object(generator)
                     if matches!(
@@ -261,11 +261,11 @@ impl AsyncGeneratorStep {
                 runtime.finish_async_generator_completed_return(&generator)?;
                 let settlement = if kind == AsyncGeneratorResumeKind::ReturnFulfill {
                     AsyncGeneratorSettlement::Resolve {
-                        value: runtime.root_value(argument)?,
+                        value: runtime.dup_jsvalue(argument)?,
                         done: true,
                     }
                 } else {
-                    AsyncGeneratorSettlement::Reject(runtime.root_value(argument)?)
+                    AsyncGeneratorSettlement::Reject(runtime.dup_jsvalue(argument)?)
                 };
                 // Completed-return reactions service exactly one request.
                 resume.settle(settlement, false)
@@ -354,19 +354,24 @@ impl AsyncGeneratorResume {
                     return match request.completion {
                         GeneratorResumeKind::Next => self.settle(
                             AsyncGeneratorSettlement::Resolve {
-                                value: Value::Undefined,
+                                value: JsValue::Undefined,
                                 done: true,
                             },
                             false,
                         ),
                         GeneratorResumeKind::Throw => {
-                            let request = self
+                            let mut request = self
                                 .runtime
                                 .root_front_async_generator_request(&generator)?;
-                            self.settle(AsyncGeneratorSettlement::Reject(request.result), false)
+                            self.settle(
+                                AsyncGeneratorSettlement::Reject(
+                                    request.result.take().expect("queued result owner"),
+                                ),
+                                false,
+                            )
                         }
                         GeneratorResumeKind::Return => {
-                            let request = self
+                            let mut request = self
                                 .runtime
                                 .root_front_async_generator_request(&generator)?;
                             self.runtime
@@ -382,7 +387,7 @@ impl AsyncGeneratorResume {
                             self.phase = Phase::CompletedReturn;
                             Ok({
                                 let __pending_field_value =
-                                    self.runtime.into_jsvalue(request.result)?;
+                                    request.result.take().expect("queued result owner");
                                 let __pending_field_realm = self.realm;
                                 let __pending_field_resume = self;
                                 AsyncGeneratorStep::request_resolve(
@@ -416,14 +421,14 @@ impl AsyncGeneratorResume {
                 activation,
                 FunctionKind::AsyncGenerator,
             )?;
-            let request = self
+            let mut request = self
                 .runtime
                 .root_front_async_generator_request(&generator)?;
             self.detach(previous)?;
             let input = match previous {
                 AsyncGeneratorState::SuspendedStart => VmActivationResume::Initial,
                 AsyncGeneratorState::SuspendedYield | AsyncGeneratorState::SuspendedYieldStar => {
-                    let result = self.runtime.into_jsvalue(request.result)?;
+                    let result = request.result.take().expect("queued result owner");
                     VmActivationResume::Generator(match request.completion {
                         GeneratorResumeKind::Next => VmResume::Next(result),
                         GeneratorResumeKind::Return => VmResume::Return(result),
@@ -453,100 +458,126 @@ impl AsyncGeneratorResume {
         settlement: AsyncGeneratorSettlement,
         pump: bool,
     ) -> Result<AsyncGeneratorStep, RuntimeError> {
-        let generator = self.generator()?;
-        let request = self.runtime.root_front_async_generator_request(generator)?;
-        let (callable, value) = match settlement {
-            AsyncGeneratorSettlement::Resolve { value, done } => (
-                request.resolve,
-                self.runtime.into_jsvalue(Value::Object(
-                    self.runtime.new_iterator_result(self.realm, value, done)?,
-                ))?,
-            ),
-            AsyncGeneratorSettlement::Reject(reason) => {
-                (request.reject, self.runtime.into_jsvalue(reason)?)
+        // Install the settlement edge before any fallible queue lookup. The
+        // existing continuation owner releases it if settlement is abandoned.
+        let done = match settlement {
+            AsyncGeneratorSettlement::Resolve { value, done } => {
+                self.pending_effect.call_value = Some(value);
+                Some(done)
+            }
+            AsyncGeneratorSettlement::Reject(value) => {
+                self.pending_effect.call_value = Some(value);
+                None
             }
         };
-        // Allocate and root the result before transferring the queued capability.
+        let generator = self.generator()?.clone();
+        let mut request = self
+            .runtime
+            .root_front_async_generator_request(&generator)?;
+        let callable = if let Some(done) = done {
+            let value = self
+                .pending_effect
+                .call_value
+                .take()
+                .expect("settlement value owner");
+            let result = self
+                .runtime
+                .new_iterator_result_jsvalue(self.realm, value, done)?;
+            self.pending_effect.call_value = Some(JsValue::Object(result.into_handle()));
+            request.resolve.take().expect("queued resolve owner")
+        } else {
+            request.reject.take().expect("queued reject owner")
+        };
+        // Allocate the result before transferring the queued capability.
         self.runtime
-            .remove_front_async_generator_request(generator)?;
+            .remove_front_async_generator_request(&generator)?;
         self.phase = Phase::Settled { pump };
-        Ok({
-            let __pending_field_callable = callable;
-            let __pending_field_value = value;
-            let __pending_field_resume = self;
-            AsyncGeneratorStep::request_call(
-                __pending_field_callable,
-                __pending_field_value,
-                __pending_field_resume,
-            )
-        })
+        let value = self
+            .pending_effect
+            .call_value
+            .take()
+            .expect("settlement call owner");
+        Ok(AsyncGeneratorStep::request_call(callable, value, self))
     }
+
     pub(crate) fn body(
         mut self: Box<Self>,
         outcome: VmRunOutcome,
     ) -> Result<AsyncGeneratorStep, RuntimeError> {
         if !matches!(self.phase, Phase::Body) {
+            match outcome {
+                VmRunOutcome::Complete(Completion::Return(value) | Completion::Throw(value))
+                | VmRunOutcome::Suspend { value, .. } => self.runtime.release_jsvalue(value)?,
+            }
             return Err(RuntimeError::Invariant(
                 "async generator body reply has wrong phase",
             ));
         }
         match outcome {
             VmRunOutcome::Complete(completion) => {
+                let (value, rejected) = match completion {
+                    Completion::Return(value) => (value, false),
+                    Completion::Throw(value) => (value, true),
+                };
+                self.pending_effect.call_value = Some(value);
                 self.runtime.complete_async_generator(self.generator()?)?;
                 self.cleanup = Cleanup::None;
-                let settlement = match completion {
-                    Completion::Return(value) => AsyncGeneratorSettlement::Resolve {
-                        value: self.runtime.root_and_release_jsvalue(value)?,
-                        done: true,
-                    },
-                    Completion::Throw(value) => AsyncGeneratorSettlement::Reject(
-                        self.runtime.root_and_release_jsvalue(value)?,
-                    ),
+                let value = self
+                    .pending_effect
+                    .call_value
+                    .take()
+                    .expect("body result owner");
+                let settlement = if rejected {
+                    AsyncGeneratorSettlement::Reject(value)
+                } else {
+                    AsyncGeneratorSettlement::Resolve { value, done: true }
                 };
                 self.settle(settlement, true)
             }
             VmRunOutcome::Suspend {
                 value,
                 mut activation,
-            } => match activation.kind {
-                VmSuspendKind::Yield | VmSuspendKind::AsyncYieldStar => {
-                    let state = if activation.kind == VmSuspendKind::Yield {
-                        AsyncGeneratorState::SuspendedYield
-                    } else {
-                        AsyncGeneratorState::SuspendedYieldStar
-                    };
-                    self.runtime.store_async_generator_suspension(
-                        self.generator()?,
-                        state,
-                        None,
-                        &mut activation,
-                    )?;
-                    self.cleanup = Cleanup::None;
-                    // Keep the encoded owner alive through the raw-edge publication.
-                    drop(activation);
-                    let value = self.runtime.root_and_release_jsvalue(value)?;
-                    self.settle(
-                        AsyncGeneratorSettlement::Resolve { value, done: false },
-                        true,
-                    )
-                }
-                VmSuspendKind::Await => {
-                    self.phase = Phase::Await(activation);
-                    Ok({
-                        let __pending_field_value = value;
-                        let __pending_field_realm = self.realm;
-                        let __pending_field_resume = self;
-                        AsyncGeneratorStep::request_resolve(
-                            __pending_field_value,
-                            __pending_field_realm,
-                            __pending_field_resume,
+            } => {
+                self.pending_effect.call_value = Some(value);
+                match activation.kind {
+                    VmSuspendKind::Yield | VmSuspendKind::AsyncYieldStar => {
+                        let state = if activation.kind == VmSuspendKind::Yield {
+                            AsyncGeneratorState::SuspendedYield
+                        } else {
+                            AsyncGeneratorState::SuspendedYieldStar
+                        };
+                        self.runtime.store_async_generator_suspension(
+                            self.generator()?,
+                            state,
+                            None,
+                            &mut activation,
+                        )?;
+                        self.cleanup = Cleanup::None;
+                        drop(activation);
+                        let value = self
+                            .pending_effect
+                            .call_value
+                            .take()
+                            .expect("yield result owner");
+                        self.settle(
+                            AsyncGeneratorSettlement::Resolve { value, done: false },
+                            true,
                         )
-                    })
+                    }
+                    VmSuspendKind::Await => {
+                        self.phase = Phase::Await(activation);
+                        let value = self
+                            .pending_effect
+                            .call_value
+                            .take()
+                            .expect("await result owner");
+                        Ok(AsyncGeneratorStep::request_resolve(value, self.realm, self))
+                    }
+                    _ => Err(RuntimeError::Invariant(
+                        "AsyncGenerator stopped at an unsupported suspension",
+                    )),
                 }
-                _ => Err(RuntimeError::Invariant(
-                    "AsyncGenerator stopped at an unsupported suspension",
-                )),
-            },
+            }
         }
     }
     pub(crate) fn resume(
@@ -572,16 +603,16 @@ impl AsyncGeneratorResume {
             Phase::Await(mut activation) => {
                 let promise = match completion {
                     Completion::Return(value) => {
-                        let Value::Object(promise) =
-                            self.runtime.root_and_release_jsvalue(value)?
-                        else {
+                        let JsValue::Object(promise) = value else {
+                            self.runtime.release_jsvalue(value)?;
                             return Err(RuntimeError::Invariant(
                                 "intrinsic PromiseResolve returned a non-object",
                             ));
                         };
-                        promise
+                        ObjectRef::from_owned_handle(self.runtime.clone(), promise)
                     }
                     Completion::Throw(reason) => {
+                        self.pending_effect.call_value = Some(reason);
                         let rooted = suspend::thaw(
                             self.runtime.clone(),
                             VmSuspendKind::Await,
@@ -592,7 +623,12 @@ impl AsyncGeneratorResume {
                         drop(activation);
                         return Ok({
                             let __pending_field_activation = Box::new(rooted);
-                            let __pending_field_input = VmActivationResume::AwaitReject(reason);
+                            let __pending_field_input = VmActivationResume::AwaitReject(
+                                self.pending_effect
+                                    .call_value
+                                    .take()
+                                    .expect("await rejection owner"),
+                            );
                             let __pending_field_resume = self;
                             AsyncGeneratorStep::request_run(
                                 __pending_field_activation,
@@ -628,14 +664,13 @@ impl AsyncGeneratorResume {
             Phase::CompletedReturn => {
                 let promise = match completion {
                     Completion::Return(value) => {
-                        let Value::Object(promise) =
-                            self.runtime.root_and_release_jsvalue(value)?
-                        else {
+                        let JsValue::Object(promise) = value else {
+                            self.runtime.release_jsvalue(value)?;
                             return Err(RuntimeError::Invariant(
                                 "completed-return PromiseResolve returned a non-object",
                             ));
                         };
-                        promise
+                        ObjectRef::from_owned_handle(self.runtime.clone(), promise)
                     }
                     Completion::Throw(reason) => self
                         .runtime

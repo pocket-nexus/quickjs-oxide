@@ -4,9 +4,7 @@ use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
-    object::{
-        ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, operations::InternalDefineResult,
-    },
+    object::{ObjectRef, PropertyKey, operations::InternalDefineResult},
     value::{JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::NativeArguments},
 };
@@ -266,7 +264,7 @@ impl DefinitionsResume {
     pub(crate) fn converted(
         mut self,
         runtime: &Runtime,
-        result: NativeConversion<OrdinaryPropertyDescriptor>,
+        result: NativeConversion<crate::engine::object::OwnedPropertyDescriptor>,
     ) -> Result<DefinitionsStep, RuntimeError> {
         let Phase::Convert { remaining, key } = self.0.phase else {
             return Err(RuntimeError::Invariant(
@@ -338,10 +336,10 @@ pub(super) fn finish(
                 )?
             }
             DefinitionsStep::Convert { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_convert_value())?;
+                let value = resume.take_convert_value();
                 resume.converted(
                     runtime,
-                    runtime.native_to_property_descriptor(realm, value)?,
+                    runtime.native_to_property_descriptor_jsvalue(realm, value)?,
                 )?
             }
             DefinitionsStep::Define { mut resume } => {
@@ -350,7 +348,7 @@ pub(super) fn finish(
                 let descriptor = resume.take_define_descriptor();
                 resume.defined(
                     runtime,
-                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
                 )?
             }
         };
@@ -367,7 +365,7 @@ struct DefinitionsStepPending {
     convert_value: Option<JsValue>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<crate::engine::object::OwnedPropertyDescriptor>,
 }
 impl DefinitionsStep {
     pub(crate) fn request_keys(object: ObjectRef, mut resume: DefinitionsResume) -> Self {
@@ -399,7 +397,7 @@ impl DefinitionsStep {
     pub(crate) fn request_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: crate::engine::object::OwnedPropertyDescriptor,
         mut resume: DefinitionsResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -465,7 +463,9 @@ impl DefinitionsResume {
             .take()
             .expect("DefinitionsStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(
+        &mut self,
+    ) -> crate::engine::object::OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor

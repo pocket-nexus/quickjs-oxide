@@ -173,26 +173,14 @@ impl Runtime {
         })
     }
 
-    fn weak_target_key(
-        &self,
-        value: &Value,
-        role: &'static str,
-    ) -> Result<Option<WeakCollectionKey>, RuntimeError> {
+    fn weak_target_key(&self, value: &JsValue) -> Result<Option<WeakCollectionKey>, RuntimeError> {
         match value {
-            Value::Object(object) => {
-                if !object.belongs_to(self) {
-                    return Err(RuntimeError::WrongRuntime(role));
-                }
-                Ok(Some(WeakCollectionKey::Object(object.object_id())))
-            }
-            Value::Symbol(symbol) => {
-                if !symbol.belongs_to(self) {
-                    return Err(RuntimeError::WrongRuntime(role));
-                }
-                let atom = symbol.atom();
-                let can_be_held_weakly =
-                    self.0.state.borrow().atoms.kind(atom)? == AtomKind::Symbol;
-                Ok(can_be_held_weakly.then_some(WeakCollectionKey::Symbol(atom)))
+            JsValue::Object(object) => Ok(Some(WeakCollectionKey::Object(*object))),
+            JsValue::Symbol(index) => {
+                let state = self.0.state.borrow();
+                let atom = state.atoms.brand(*index)?;
+                Ok((state.atoms.kind(atom)? == AtomKind::Symbol)
+                    .then_some(WeakCollectionKey::Symbol(atom)))
             }
             _ => Ok(None),
         }
@@ -415,16 +403,15 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        let first = self.root_value(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("FinalizationRegistry first argv was not padded"),
-        )?)?;
+        let first = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "FinalizationRegistry first argv was not padded",
+        ))?;
         match kind {
             FinalizationRegistryNativeKind::Constructor => {
                 unreachable!("FinalizationRegistry constructor returned before receiver validation")
             }
             FinalizationRegistryNativeKind::Register => {
-                let Some(target) = self.weak_target_key(&first, "FinalizationRegistry target")?
-                else {
+                let Some(target) = self.weak_target_key(first)? else {
                     return self.invalid_weak_target(realm, "invalid target");
                 };
                 let held_value = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
@@ -441,16 +428,13 @@ impl Runtime {
                 if same_target {
                     return self.invalid_weak_target(realm, "held value cannot be the target");
                 }
-                let token_value =
-                    self.root_value(arguments.readable.get(2).ok_or(RuntimeError::Invariant(
-                        "FinalizationRegistry unregister token argv was not padded",
-                    ))?)?;
-                let unregister_token = if matches!(token_value, Value::Undefined) {
+                let token_value = arguments.readable.get(2).ok_or(RuntimeError::Invariant(
+                    "FinalizationRegistry unregister token argv was not padded",
+                ))?;
+                let unregister_token = if matches!(token_value, JsValue::Undefined) {
                     None
                 } else {
-                    let Some(token) = self
-                        .weak_target_key(&token_value, "FinalizationRegistry unregister token")?
-                    else {
+                    let Some(token) = self.weak_target_key(token_value)? else {
                         return self.invalid_weak_target(realm, "invalid unregister token");
                     };
                     Some(token)
@@ -471,9 +455,7 @@ impl Runtime {
                 Ok(Completion::Return(JsValue::Undefined))
             }
             FinalizationRegistryNativeKind::Unregister => {
-                let Some(token) =
-                    self.weak_target_key(&first, "FinalizationRegistry unregister token")?
-                else {
+                let Some(token) = self.weak_target_key(first)? else {
                     return self.invalid_weak_target(realm, "invalid unregister token");
                 };
                 let mut state = self.0.state.borrow_mut();

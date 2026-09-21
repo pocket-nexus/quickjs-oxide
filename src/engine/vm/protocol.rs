@@ -1,8 +1,4 @@
-use crate::engine::{
-    api::Error,
-    object::ObjectRef,
-    value::{JsValue, Value},
-};
+use crate::engine::{api::Error, object::ObjectRef, value::JsValue};
 
 /// Caller state attached to one original direct-eval invocation.
 ///
@@ -12,12 +8,42 @@ use crate::engine::{
 /// normalization before crossing the runtime boundary, while non-String input
 /// retains the raw call value and cannot allocate a wrapper merely to be
 /// returned unchanged.
-#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DirectEvalInvocation {
-    pub input: Value,
+    runtime: crate::engine::api::runtime::Runtime,
+    pub input: JsValue,
     pub environment: u16,
-    pub this_value: Value,
+    pub this_value: JsValue,
     pub caller_strict: bool,
+}
+
+impl DirectEvalInvocation {
+    pub(crate) fn new(
+        runtime: &crate::engine::api::runtime::Runtime,
+        environment: u16,
+        caller_strict: bool,
+    ) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            input: JsValue::Undefined,
+            this_value: JsValue::Undefined,
+            environment,
+            caller_strict,
+        }
+    }
+    pub(crate) fn take_input(&mut self) -> JsValue {
+        std::mem::replace(&mut self.input, JsValue::Undefined)
+    }
+    pub(crate) fn take_this(&mut self) -> JsValue {
+        std::mem::replace(&mut self.this_value, JsValue::Undefined)
+    }
+}
+impl Drop for DirectEvalInvocation {
+    fn drop(&mut self) {
+        let input = self.take_input();
+        let this_value = self.take_this();
+        let _ = self.runtime.release_jsvalue(input);
+        let _ = self.runtime.release_jsvalue(this_value);
+    }
 }
 
 pub(crate) struct CallInput {

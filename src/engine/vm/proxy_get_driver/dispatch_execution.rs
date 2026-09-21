@@ -420,17 +420,17 @@ pub(super) fn prepare(
                 let resolve_realm = resolve_realm.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                query.parents.try_reserve(1).map_err(|_| {
-                    Error::internal("await resolution continuation allocation failed")
-                })?;
+                if query.parents.try_reserve(1).is_err() {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                    return Err(Error::internal(
+                        "await resolution continuation allocation failed",
+                    ));
+                }
                 query.parents.push(resume);
                 *step = runtime
-                    .prepare_intrinsic_promise_resolve(
-                        resolve_realm,
-                        runtime
-                            .root_and_release_jsvalue(value)
-                            .map_err(runtime_error_to_vm_error)?,
-                    )
+                    .prepare_intrinsic_promise_resolve(resolve_realm, value)
                     .map_err(runtime_error_to_vm_error)?
                     .into();
                 continue;
@@ -496,14 +496,10 @@ pub(super) fn prepare(
                         .map_err(runtime_error_to_vm_error)?,
                     crate::engine::builtins::DirectEvalPreparation::Ready {
                         callable,
-                        this_value,
+                        mut invocation,
                     } => Step::Call {
                         target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(
-                            runtime
-                                .into_jsvalue(this_value)
-                                .map_err(runtime_error_to_vm_error)?,
-                        ),
+                        receiver: Some(invocation.take_this()),
                         arguments: Some(Vec::new()),
                         resume: Some(resume),
                     },
@@ -514,16 +510,12 @@ pub(super) fn prepare(
                 let value = value.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                let value = runtime
-                    .root_and_release_jsvalue(value)
+                let html_dda = runtime.value_is_html_dda_jsvalue(&value);
+                runtime
+                    .release_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?;
                 *step = resume
-                    .html_dda(
-                        runtime,
-                        runtime
-                            .value_is_html_dda(&value)
-                            .map_err(runtime_error_to_vm_error)?,
-                    )?
+                    .html_dda(runtime, html_dda.map_err(runtime_error_to_vm_error)?)?
                     .into();
                 continue;
             }

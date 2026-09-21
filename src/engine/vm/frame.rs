@@ -9,7 +9,7 @@ use crate::engine::api::error::Error;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::ContextId;
 use crate::engine::object::ObjectRef;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 use crate::engine::vm::CallInput;
 use crate::engine::vm::frames::{ActiveFrameGuard, ActiveFrameToken};
 use crate::engine::vm::stack::FrameStorage;
@@ -59,7 +59,7 @@ pub(super) enum OperationTarget {
 }
 
 pub(super) enum ConstructorReturn {
-    Base(crate::engine::value::Value),
+    Base(JsValue),
     Derived,
 }
 
@@ -69,7 +69,7 @@ pub(super) struct FrameRare {
     pub normalized_this: Option<JsValue>,
     property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub iterator_wait: Option<crate::engine::vm::iterator_driver::PendingIterator>,
-    pub resume_throw: Option<Value>,
+    pub resume_throw: Option<JsValue>,
     pub regions: Vec<crate::engine::vm::VmUnwindRegion>,
     pub eval_arguments: Option<Vec<crate::engine::value::JsValue>>,
     pub constructor_return: Option<ConstructorReturn>,
@@ -369,10 +369,32 @@ impl Drop for FrameCold {
     fn drop(&mut self) {
         self.release_normalized_this();
         self.release_eval_arguments();
+        self.release_resume_throw();
+        self.release_constructor_return();
     }
 }
 
 impl FrameCold {
+    pub(super) fn release_resume_throw(&mut self) {
+        if let Some(value) = self
+            .rare
+            .get_mut()
+            .and_then(|rare| rare.resume_throw.take())
+        {
+            let _ = self.function.runtime().release_jsvalue(value);
+        }
+    }
+
+    pub(super) fn release_constructor_return(&mut self) {
+        if let Some(ConstructorReturn::Base(value)) = self
+            .rare
+            .get_mut()
+            .and_then(|rare| rare.constructor_return.take())
+        {
+            let _ = self.function.runtime().release_jsvalue(value);
+        }
+    }
+
     pub(super) fn release_eval_arguments(&mut self) {
         if let Some(values) = self
             .rare

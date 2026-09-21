@@ -6,7 +6,7 @@ use super::{
 use crate::engine::{
     api::{Error, ErrorKind, runtime::Runtime},
     object::ProxyBooleanKind,
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,10 +16,21 @@ pub(super) enum Kind {
     Delete,
 }
 pub(super) struct Input {
-    base: Value,
-    pub key: Value,
+    runtime: Runtime,
+    base: JsValue,
+    pub key: JsValue,
     kind: Kind,
     depth: usize,
+}
+impl Drop for Input {
+    fn drop(&mut self) {
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.base, JsValue::Undefined));
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.key, JsValue::Undefined));
+    }
 }
 pub(super) enum Progress {
     Convert(Box<Input>),
@@ -40,12 +51,14 @@ pub(super) fn start(
     let right = execution.slots.pop(&mut frame.window)?;
     let left = execution.slots.pop(&mut frame.window)?;
     if kind == Kind::Instance {
-        let target = match runtime
-            .root_and_release_jsvalue(right)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            Value::Object(target) => target,
-            _ => {
+        let target = match right {
+            JsValue::Object(target) => {
+                crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), target)
+            }
+            value => {
+                runtime
+                    .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
                 runtime
                     .release_jsvalue(left)
                     .map_err(runtime_error_to_vm_error)?;
@@ -81,19 +94,14 @@ pub(super) fn start(
         )
         .map(Progress::Call);
     }
-    let base = runtime
-        .root_and_release_jsvalue(base)
-        .map_err(runtime_error_to_vm_error)?;
-    let key = runtime
-        .root_and_release_jsvalue(key)
-        .map_err(runtime_error_to_vm_error)?;
     let input = Box::new(Input {
+        runtime: runtime.clone(),
         base,
         key,
         kind,
         depth,
     });
-    if matches!(input.key, Value::Object(_)) {
+    if matches!(input.key, JsValue::Object(_)) {
         Ok(Progress::Convert(input))
     } else {
         converted(runtime, execution, id, input).map(Progress::Call)
@@ -105,24 +113,21 @@ pub(super) fn converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
-    input: Box<Input>,
+    mut input: Box<Input>,
 ) -> Result<CallStep, Error> {
-    let Input {
-        base,
-        key,
-        kind,
-        depth,
-    } = *input;
+    let kind = input.kind;
+    let depth = input.depth;
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     let strict = frame.executable.metadata.strict;
-    if matches!(key, Value::Object(_)) {
+    if matches!(input.key, JsValue::Object(_)) {
         return Err(Error::internal(
             "predicate key conversion returned an object",
         ));
     }
+    let key = std::mem::replace(&mut input.key, JsValue::Undefined);
     let key = match runtime
-        .native_to_property_key(realm, key)
+        .native_to_property_key_jsvalue(realm, key)
         .map_err(runtime_error_to_vm_error)?
     {
         NativeConversion::Value(key) => key,
@@ -134,7 +139,9 @@ pub(super) fn converted(
             )));
         }
     };
-    if let Value::Object(object) = base {
+    if let JsValue::Object(object) = &input.base {
+        let object = crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), *object);
+        input.base = JsValue::Undefined;
         let op = if kind == Kind::Has {
             ProxyBooleanKind::Has(key)
         } else {
@@ -154,7 +161,7 @@ pub(super) fn converted(
         return Err(Error::internal("in lost its validated object"));
     }
     let result = runtime
-        .primitive_delete_property(&base, &key)
+        .primitive_delete_property_jsvalue(&input.base, &key)
         .and_then(|value| runtime.finish_property_delete(NativeConversion::Value(value), strict));
     let completion = match result {
         Ok(result) => result,

@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::{StringIncludesKind, StringIndexOfKind, StringSubrangeKind},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{JsString, JsValue, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -55,12 +55,22 @@ impl std::ops::DerefMut for StringSearchResume {
 }
 const _: () = assert!(std::mem::size_of::<StringSearchResume>() <= 8);
 pub(crate) struct StringSearchResumeState {
+    runtime: Runtime,
     realm: ContextId,
     kind: StringSearchKind,
-    first: Value,
-    second: Value,
+    first: JsValue,
+    second: JsValue,
     actual: usize,
     phase: SearchPhase,
+}
+impl Drop for StringSearchResumeState {
+    fn drop(&mut self) {
+        for value in [&mut self.first, &mut self.second] {
+            let _ = self
+                .runtime
+                .release_jsvalue(std::mem::replace(value, JsValue::Undefined));
+        }
+    }
 }
 enum SearchPhase {
     Source,
@@ -83,8 +93,7 @@ impl StringSearchStep {
                 "String search did not receive a call",
             ));
         };
-        let this_value = runtime.root_value(this_value)?;
-        if matches!(this_value, Value::Undefined | Value::Null) {
+        if matches!(this_value, JsValue::Undefined | JsValue::Null) {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
                     realm,
@@ -93,24 +102,28 @@ impl StringSearchStep {
                 )?,
             )));
         }
-        let first = runtime.root_value(arguments.readable.first().ok_or(
+        let mut resume = StringSearchResume(Box::new(StringSearchResumeState {
+            runtime: runtime.clone(),
+            realm,
+            kind,
+            first: JsValue::Undefined,
+            second: JsValue::Undefined,
+            actual: arguments.actual_arg_count,
+            phase: SearchPhase::Source,
+        }));
+        resume.first = runtime.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("String search first argument was not padded"),
         )?)?;
-        let second = match arguments.readable.get(1) {
-            Some(value) => runtime.root_value(value)?,
-            None => Value::Undefined,
-        };
+        resume.second = arguments
+            .readable
+            .get(1)
+            .map(|value| runtime.dup_jsvalue(value))
+            .transpose()?
+            .unwrap_or(JsValue::Undefined);
         Ok(Self::Primitive {
-            value: runtime.into_jsvalue(this_value)?,
+            value: runtime.dup_jsvalue(this_value)?,
             hint: ToPrimitiveHint::String,
-            resume: StringSearchResume(Box::new(StringSearchResumeState {
-                realm,
-                kind,
-                first,
-                second,
-                actual: arguments.actual_arg_count,
-                phase: SearchPhase::Source,
-            })),
+            resume,
         })
     }
 }
@@ -132,7 +145,7 @@ impl StringSearchResume {
         }
     }
     fn needle(self, runtime: &Runtime, source: JsString) -> Result<StringSearchStep, RuntimeError> {
-        let value = runtime.unroot_value(&self.0.first)?;
+        let value = runtime.dup_jsvalue(&self.0.first)?;
         Ok(self.primitive(value, ToPrimitiveHint::String, SearchPhase::Needle(source)))
     }
     fn finish_search(
@@ -162,13 +175,13 @@ impl StringSearchResume {
         result: Completion,
     ) -> Result<StringSearchStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(StringSearchStep::Complete(Completion::Throw(value)));
             }
         };
         let realm = self.0.realm;
-        match self.0.phase {
+        match std::mem::replace(&mut self.0.phase, SearchPhase::Source) {
             SearchPhase::Source => {
                 let source = match string_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
@@ -185,7 +198,7 @@ impl StringSearchResume {
                                 "String length exceeded QuickJS's signed index range",
                             )
                         })?;
-                        let value = runtime.unroot_value(&self.0.first)?;
+                        let value = runtime.dup_jsvalue(&self.0.first)?;
                         Ok(self.primitive(
                             value,
                             ToPrimitiveHint::Number,
@@ -193,9 +206,9 @@ impl StringSearchResume {
                         ))
                     }
                     StringSearchKind::Includes(_) => {
-                        if let Value::Object(object) = &self.0.first {
+                        if let JsValue::Object(id) = &self.0.first {
                             Ok(StringSearchStep::Read {
-                                object: object.clone(),
+                                object: ObjectRef::from_borrowed_handle(runtime.clone(), *id)?,
                                 key: PropertyKey::from(
                                     runtime.well_known_symbol(WellKnownSymbol::Match),
                                 ),
@@ -213,10 +226,19 @@ impl StringSearchResume {
                 }
             }
             SearchPhase::Regexp(source) => {
-                let Value::Object(object) = &self.0.first else {
+                let JsValue::Object(id) = &self.0.first else {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant("String IsRegExp lost its object"));
                 };
-                let regexp = runtime.is_regexp_from_match(object, &value)?;
+                let regexp = if matches!(value, JsValue::Undefined) {
+                    ObjectRef::from_borrowed_handle(runtime.clone(), *id)
+                        .map_err(RuntimeError::from)
+                        .and_then(|object| runtime.native_object_has_regexp_brand(&object))
+                } else {
+                    runtime.value_to_boolean_jsvalue(&value)
+                };
+                runtime.release_jsvalue(value)?;
+                let regexp = regexp?;
                 if regexp {
                     return Ok(StringSearchStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
@@ -257,9 +279,9 @@ impl StringSearchResume {
                 };
                 if next.actual > 1
                     && !(matches!(next.kind, StringSearchKind::Includes(_))
-                        && matches!(next.second, Value::Undefined))
+                        && matches!(next.second, JsValue::Undefined))
                 {
-                    let value = runtime.unroot_value(&next.second)?;
+                    let value = runtime.dup_jsvalue(&next.second)?;
                     Ok(next.primitive(
                         value,
                         ToPrimitiveHint::Number,
@@ -299,7 +321,7 @@ impl StringSearchResume {
                     self.0.phase = updated_0;
                     self
                 };
-                if matches!(next.second, Value::Undefined) {
+                if matches!(next.second, JsValue::Undefined) {
                     let StringSearchKind::Subrange(kind) = next.kind else {
                         return Err(RuntimeError::Invariant("String start reply lost its kind"));
                     };
@@ -307,7 +329,7 @@ impl StringSearchResume {
                         runtime.finish_string_subrange(kind, source, start, None)?,
                     ))
                 } else {
-                    let value = runtime.unroot_value(&next.second)?;
+                    let value = runtime.dup_jsvalue(&next.second)?;
                     Ok(next.primitive(
                         value,
                         ToPrimitiveHint::Number,
@@ -340,26 +362,20 @@ impl StringSearchResume {
 fn string_value(
     runtime: &Runtime,
     realm: ContextId,
-    value: Value,
+    value: JsValue,
 ) -> Result<NativeConversion<JsString>, RuntimeError> {
-    if matches!(value, Value::Object(_)) {
-        return Err(RuntimeError::Invariant(
-            "String search conversion returned an object",
-        ));
-    }
-    runtime.native_to_js_string(realm, &value)
+    let result = runtime.string_from_primitive_jsvalue(realm, &value);
+    runtime.release_jsvalue(value)?;
+    result
 }
 fn number_value(
     runtime: &Runtime,
     realm: ContextId,
-    value: Value,
+    value: JsValue,
 ) -> Result<NativeConversion<f64>, RuntimeError> {
-    if matches!(value, Value::Object(_)) {
-        return Err(RuntimeError::Invariant(
-            "String search position conversion returned an object",
-        ));
-    }
-    runtime.native_to_number(realm, &value)
+    let result = runtime.number_from_primitive_jsvalue(realm, &value);
+    runtime.release_jsvalue(value)?;
+    result
 }
 pub(super) fn finish(
     runtime: &Runtime,

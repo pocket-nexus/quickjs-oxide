@@ -282,7 +282,7 @@ mod tests {
                 context.realm,
                 &key,
                 runtime.into_jsvalue(Value::Int(0)).unwrap(),
-                Value::Object(object),
+                runtime.into_jsvalue(Value::Object(object)).unwrap(),
                 |_| panic!("standard own Set published a waiting state"),
             )
             .unwrap();

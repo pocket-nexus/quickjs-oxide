@@ -4,7 +4,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, WeakCollectionKey},
     object::{CallableRef, ObjectRef},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -34,7 +34,13 @@ const _: () = assert!(std::mem::size_of::<ComputedResume>() <= 8);
 pub(crate) struct ComputedResumeState {
     map: ObjectRef,
     key: WeakCollectionKey,
-    _key_owner: Value,
+    _key_owner: JsValue,
+}
+impl Drop for ComputedResumeState {
+    fn drop(&mut self) {
+        let value = std::mem::replace(&mut self._key_owner, JsValue::Undefined);
+        let _ = self.map.runtime().release_jsvalue(value);
+    }
 }
 impl ComputedStep {
     pub(crate) fn start(
@@ -52,17 +58,15 @@ impl ComputedStep {
                     )));
                 }
             };
-        let key_value = runtime.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant("WeakMap key argv was not padded"))?,
-        )?;
-        let callback_value = runtime.root_value(arguments.readable.get(1).ok_or(
-            RuntimeError::Invariant("WeakMap computed value argv was not padded"),
-        )?)?;
+        let key_value = arguments
+            .readable
+            .first()
+            .ok_or(RuntimeError::Invariant("WeakMap key argv was not padded"))?;
+        let callback_value = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
+            "WeakMap computed value argv was not padded",
+        ))?;
         let callback = match callback_value {
-            Value::Object(ref object) => runtime.as_callable(object)?,
+            JsValue::Object(object) => runtime.as_callable_object(*object)?,
             _ => None,
         };
         let Some(callable) = callback else {
@@ -70,7 +74,7 @@ impl ComputedStep {
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
             )));
         };
-        let Some(key) = runtime.weak_collection_key(&key_value, "WeakMap key")? else {
+        let Some(key) = runtime.weak_collection_key(key_value)? else {
             return Ok(Self::Complete(
                 runtime.invalid_weak_key(realm, WeakCollectionKind::Map)?,
             ));
@@ -82,14 +86,15 @@ impl ComputedStep {
                 ))?,
             )?)));
         }
+        let resume = ComputedResume(Box::new(ComputedResumeState {
+            map,
+            key,
+            _key_owner: runtime.dup_jsvalue(key_value)?,
+        }));
         Ok(Self::Call {
             callable,
-            arguments: vec![runtime.into_jsvalue(key_value.clone())?],
-            resume: ComputedResume(Box::new(ComputedResumeState {
-                map: map.clone(),
-                key,
-                _key_owner: key_value,
-            })),
+            arguments: vec![runtime.dup_jsvalue(key_value)?],
+            resume,
         })
     }
 }

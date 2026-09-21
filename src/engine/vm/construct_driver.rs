@@ -3,8 +3,8 @@
 //! use the same owned property query as other Get operations.
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
+use crate::engine::value::JsValue;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::driver::{CallStep, push_frame};
@@ -22,12 +22,12 @@ pub(super) fn enter(
     let count = usize::from(count);
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
-    // The constructor classifier consumes a public root; the slot owner keeps
-    // its own edge until `start_construct` consumes the operands.
+    // The classifier consumes a duplicate; the slot owner retains its edge
+    // until `start_construct` consumes the operands.
     let target = runtime
-        .root_value(execution.slots.peek(&frame.window, count + 1)?)
+        .dup_jsvalue(execution.slots.peek(&frame.window, count + 1)?)
         .map_err(runtime_error_to_vm_error)?;
-    let constructor = match runtime.constructor_from_value(realm, target) {
+    let constructor = match runtime.constructor_from_jsvalue(realm, target) {
         Ok(NativeConversion::Value(target)) => target,
         Ok(NativeConversion::Throw(value)) => {
             let value = runtime
@@ -86,15 +86,17 @@ pub(super) fn enter_default_derived(
     // constructor validation order, including null and non-constructor errors.
     let target = runtime
         .get_prototype_of(&frame.cold.function)
-        .map_err(runtime_error_to_vm_error)?
-        .map_or(Value::Null, Value::Object);
+        .map_err(runtime_error_to_vm_error)?;
     let arguments = execution
         .slots
         .snapshot_actual_arguments(&frame.window, runtime)?;
     let new_target = runtime
         .dup_jsvalue(&frame.cold.input.new_target)
         .map_err(runtime_error_to_vm_error)?;
-    let constructor = match runtime.constructor_from_value(realm, target) {
+    let target = target.map_or(JsValue::Null, |object| {
+        JsValue::Object(object.into_handle())
+    });
+    let constructor = match runtime.constructor_from_jsvalue(realm, target) {
         Ok(NativeConversion::Value(constructor)) => constructor,
         Ok(NativeConversion::Throw(value)) => {
             runtime
@@ -161,34 +163,24 @@ pub(super) fn initializer(
                 runtime
                     .install_class_instance_initializer(
                         realm,
-                        runtime
-                            .root_value(execution.slots.peek(&frame.window, 2)?)
-                            .map_err(runtime_error_to_vm_error)?,
-                        runtime
-                            .root_value(execution.slots.peek(&frame.window, 1)?)
-                            .map_err(runtime_error_to_vm_error)?,
-                        runtime
-                            .root_value(execution.slots.peek(&frame.window, 0)?)
-                            .map_err(runtime_error_to_vm_error)?,
+                        execution.slots.peek(&frame.window, 2)?,
+                        execution.slots.peek(&frame.window, 1)?,
+                        execution.slots.peek(&frame.window, 0)?,
                     )
                     .map_err(runtime_error_to_vm_error)?;
                 (None, JsValue::Undefined)
             }
             InitializerKind::Instance => {
-                let receiver = runtime
-                    .root_value(execution.slots.peek(&frame.window, 1)?)
-                    .map_err(runtime_error_to_vm_error)?;
+                let receiver = execution.slots.peek(&frame.window, 1)?;
                 let callable = runtime
                     .begin_class_instance_initializer(
                         realm,
-                        runtime
-                            .root_value(execution.slots.peek(&frame.window, 0)?)
-                            .map_err(runtime_error_to_vm_error)?,
-                        &receiver,
+                        execution.slots.peek(&frame.window, 0)?,
+                        receiver,
                     )
                     .map_err(runtime_error_to_vm_error)?;
                 let receiver = runtime
-                    .into_jsvalue(receiver)
+                    .dup_jsvalue(receiver)
                     .map_err(runtime_error_to_vm_error)?;
                 (callable, receiver)
             }
@@ -196,35 +188,24 @@ pub(super) fn initializer(
                 let (callable, receiver) = runtime
                     .begin_class_static_initializer(
                         realm,
-                        runtime
-                            .root_value(execution.slots.peek(&frame.window, 1)?)
-                            .map_err(runtime_error_to_vm_error)?,
-                        runtime
-                            .root_value(execution.slots.peek(&frame.window, 0)?)
-                            .map_err(runtime_error_to_vm_error)?,
+                        execution.slots.peek(&frame.window, 1)?,
+                        execution.slots.peek(&frame.window, 0)?,
                     )
-                    .map_err(runtime_error_to_vm_error)?;
-                let receiver = runtime
-                    .into_jsvalue(receiver)
                     .map_err(runtime_error_to_vm_error)?;
                 (Some(callable), receiver)
             }
             InitializerKind::Block => {
-                let receiver = runtime
-                    .root_value(&frame.cold.input.this_value)
-                    .map_err(runtime_error_to_vm_error)?;
+                let receiver = &frame.cold.input.this_value;
                 let callable = runtime
                     .begin_class_static_block(
                         realm,
                         &frame.cold.function,
-                        &receiver,
-                        runtime
-                            .root_value(execution.slots.peek(&frame.window, 0)?)
-                            .map_err(runtime_error_to_vm_error)?,
+                        receiver,
+                        execution.slots.peek(&frame.window, 0)?,
                     )
                     .map_err(runtime_error_to_vm_error)?;
                 let receiver = runtime
-                    .into_jsvalue(receiver)
+                    .dup_jsvalue(receiver)
                     .map_err(runtime_error_to_vm_error)?;
                 (Some(callable), receiver)
             }
@@ -360,12 +341,8 @@ pub(super) fn define_class(
     }
     let result = runtime.define_class_pair(
         realm,
-        runtime
-            .root_value(parent)
-            .map_err(runtime_error_to_vm_error)?,
-        runtime
-            .root_value(execution.slots.peek(&frame.window, 0)?)
-            .map_err(runtime_error_to_vm_error)?,
+        parent,
+        execution.slots.peek(&frame.window, 0)?,
         &name,
         has_heritage,
     );
@@ -467,24 +444,17 @@ fn enter_class_parent(
 pub(super) fn finish_class_reply(
     runtime: &Runtime,
     execution: &mut RunningExecution,
-    mut pending: PendingClass,
+    pending: PendingClass,
     completion: Completion,
 ) -> Result<CallStep, Error> {
     let result = match completion {
         Completion::Throw(value) => Ok(crate::engine::vm::DefineClassOutcome::Throw(value)),
         Completion::Return(prototype) => runtime.finish_derived_class_pair(
             pending.realm,
-            runtime
-                .root_and_release_jsvalue(std::mem::replace(
-                    &mut pending.constructor,
-                    JsValue::Undefined,
-                ))
-                .map_err(runtime_error_to_vm_error)?,
+            &pending.constructor,
             &pending.name,
             pending.parent.clone(),
-            runtime
-                .root_and_release_jsvalue(prototype)
-                .map_err(runtime_error_to_vm_error)?,
+            prototype,
         ),
     };
     finish_class_result(runtime, execution, pending.frame, result)
@@ -556,15 +526,9 @@ pub(super) fn define_property(
     let (kind, enumerable) = method.expect("method checked above");
     let object = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *object)
         .map_err(super::exception::heap_error_to_vm_error)?;
-    let descriptor = match runtime.prepare_object_literal_method(
-        &object,
-        &key,
-        runtime
-            .root_value(value)
-            .map_err(runtime_error_to_vm_error)?,
-        kind,
-        enumerable,
-    ) {
+    let descriptor = match runtime
+        .prepare_object_literal_method(&object, &key, value, kind, enumerable)
+    {
         Ok(descriptor) => descriptor,
         Err(error) => {
             return super::driver::rejected_call(runtime, realm, runtime_error_to_vm_error(error));

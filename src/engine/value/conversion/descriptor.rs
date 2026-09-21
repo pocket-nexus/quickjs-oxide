@@ -2,7 +2,7 @@
 use crate::engine::api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
+    AccessorValue, DescriptorField, ObjectRef, OwnedPropertyDescriptor, PropertyKey,
 };
 use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::Completion;
@@ -39,7 +39,7 @@ enum Phase {
 struct State {
     realm: ContextId,
     object: ObjectRef,
-    descriptor: OrdinaryPropertyDescriptor,
+    descriptor: OwnedPropertyDescriptor,
     field: usize,
 }
 const FIELDS: [&str; 6] = [
@@ -52,6 +52,23 @@ const FIELDS: [&str; 6] = [
 ];
 
 impl DescriptorStep {
+    pub(crate) fn start_jsvalue(
+        runtime: &Runtime,
+        realm: ContextId,
+        value: JsValue,
+    ) -> Result<Self, RuntimeError> {
+        let JsValue::Object(id) = value else {
+            runtime.release_jsvalue(value)?;
+            return invalid(runtime, realm, "not an object");
+        };
+        Self::from_object(
+            runtime,
+            realm,
+            ObjectRef::from_owned_handle(runtime.clone(), id),
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
@@ -60,12 +77,20 @@ impl DescriptorStep {
         let Value::Object(object) = value else {
             return invalid(runtime, realm, "not an object");
         };
+        Self::from_object(runtime, realm, object)
+    }
+
+    fn from_object(
+        runtime: &Runtime,
+        realm: ContextId,
+        object: ObjectRef,
+    ) -> Result<Self, RuntimeError> {
         DescriptorResume(Box::new(DescriptorResumeState {
             pending_effect: DescriptorStepPending::new(runtime),
             state: State {
                 realm,
                 object,
-                descriptor: OrdinaryPropertyDescriptor::new(),
+                descriptor: OwnedPropertyDescriptor::new(runtime),
                 field: 0,
             },
             phase: Phase::Read,
@@ -103,7 +128,7 @@ impl DescriptorResume {
         let object = self.state.object.clone();
         Ok(DescriptorStep::request_has(object, key, self))
     }
-    pub(crate) fn take_descriptor(self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_descriptor(self) -> OwnedPropertyDescriptor {
         self.0.state.descriptor
     }
 }
@@ -143,7 +168,7 @@ impl DescriptorResume {
         }
         let state = &mut self.0.state;
         let value = match completion {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 if state.field >= 4 {
                     drop(runtime.root_and_release_jsvalue(value)?);
@@ -163,19 +188,18 @@ impl DescriptorResume {
             }
         };
         match state.field {
-            0 => {
-                state.descriptor.enumerable =
-                    DescriptorField::Present(runtime.value_to_boolean(&value)?)
-            }
-            1 => {
-                state.descriptor.configurable =
-                    DescriptorField::Present(runtime.value_to_boolean(&value)?)
+            0 | 1 | 3 => {
+                let boolean = runtime.value_to_boolean_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                let flag = DescriptorField::Present(boolean?);
+                match state.field {
+                    0 => state.descriptor.enumerable = flag,
+                    1 => state.descriptor.configurable = flag,
+                    3 => state.descriptor.writable = flag,
+                    _ => unreachable!(),
+                }
             }
             2 => state.descriptor.value = DescriptorField::Present(value),
-            3 => {
-                state.descriptor.writable =
-                    DescriptorField::Present(runtime.value_to_boolean(&value)?)
-            }
             4 | 5 => {
                 let error_message = if state.field == 4 {
                     "invalid getter"
@@ -183,14 +207,18 @@ impl DescriptorResume {
                     "invalid setter"
                 };
                 let accessor = match value {
-                    Value::Undefined => AccessorValue::Undefined,
-                    Value::Object(object) => {
-                        let Some(callable) = runtime.as_callable(&object)? else {
-                            return invalid(runtime, state.realm, error_message);
-                        };
-                        AccessorValue::Callable(callable)
+                    JsValue::Undefined => Some(AccessorValue::Undefined),
+                    JsValue::Object(id) => {
+                        let object = ObjectRef::from_owned_handle(runtime.clone(), id);
+                        runtime.as_callable(&object)?.map(AccessorValue::Callable)
                     }
-                    _ => return invalid(runtime, state.realm, error_message),
+                    value => {
+                        runtime.release_jsvalue(value)?;
+                        None
+                    }
+                };
+                let Some(accessor) = accessor else {
+                    return invalid(runtime, state.realm, error_message);
                 };
                 if state.field == 4 {
                     state.descriptor.get = DescriptorField::Present(accessor);
@@ -199,6 +227,7 @@ impl DescriptorResume {
                 }
             }
             _ => {
+                runtime.release_jsvalue(value)?;
                 return Err(RuntimeError::Invariant(
                     "descriptor field cursor is outside its protocol",
                 ));

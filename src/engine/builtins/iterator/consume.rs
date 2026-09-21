@@ -10,7 +10,7 @@ use crate::engine::{
     builtins::native::NativeFunctionId,
     heap::{ContextId, IteratorConsumerKind},
     object::{CallableRef, ObjectRef, PropertyKey},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -66,17 +66,44 @@ pub(crate) struct ConsumeResumeState {
     realm: ContextId,
     kind: ConsumeKind,
     source: ObjectRef,
-    next: Value,
+    next: JsValue,
     callback: Option<CallableRef>,
-    accumulator: Option<Value>,
+    accumulator: Option<JsValue>,
     array: Option<ObjectRef>,
     index: i64,
     phase: Phase,
 }
+impl Drop for ConsumeResumeState {
+    fn drop(&mut self) {
+        let runtime = self.source.runtime();
+        let _ = runtime.release_jsvalue(std::mem::replace(&mut self.next, JsValue::Undefined));
+        for value in [
+            self.accumulator.take(),
+            self.pending_effect.next_method.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = runtime.release_jsvalue(value);
+        }
+        if let Phase::Callback(item) = std::mem::replace(&mut self.phase, Phase::Next) {
+            let _ = runtime.release_jsvalue(item);
+        }
+        for value in self
+            .pending_effect
+            .call_arguments
+            .take()
+            .into_iter()
+            .flatten()
+        {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
+}
 enum Phase {
     Method,
     Next,
-    Callback(Value),
+    Callback(JsValue),
 }
 impl ConsumeStep {
     pub(crate) fn start(
@@ -97,10 +124,10 @@ impl ConsumeStep {
         let callback = if matches!(kind, ConsumeKind::Array) {
             None
         } else {
-            let value = runtime.root_value(arguments.readable.first().ok_or(
-                RuntimeError::Invariant("Iterator consumer callback was not padded"),
-            )?)?;
-            match runtime.iterator_callable_value(realm, &value)? {
+            let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
+                "Iterator consumer callback was not padded",
+            ))?;
+            match runtime.iterator_callable_jsvalue(realm, value)? {
                 NativeConversion::Value(callback) => Some(callback),
                 NativeConversion::Throw(value) => {
                     return Ok(Self::Close {
@@ -110,8 +137,9 @@ impl ConsumeStep {
                 }
             }
         };
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
         let accumulator = if matches!(kind, ConsumeKind::Reduce) && arguments.actual_arg_count > 1 {
-            Some(runtime.root_value(arguments.readable.get(1).ok_or(
+            Some(runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
                 RuntimeError::Invariant("Iterator reduce initial value disappeared"),
             )?)?)
         } else {
@@ -119,14 +147,13 @@ impl ConsumeStep {
         };
         Ok({
             let __pending_field_object = source.clone();
-            let __pending_field_key =
-                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
+            let __pending_field_key = key;
             let __pending_field_resume = ConsumeResume(Box::new(ConsumeResumeState {
                 pending_effect: ConsumeStepPending::default(),
                 realm,
                 kind,
                 source,
-                next: Value::Undefined,
+                next: JsValue::Undefined,
                 callback,
                 accumulator,
                 array: None,
@@ -144,7 +171,7 @@ impl ConsumeStep {
 impl ConsumeResume {
     fn close(self, completion: Completion) -> ConsumeStep {
         ConsumeStep::Close {
-            iterator: self.0.source,
+            iterator: self.0.source.clone(),
             completion,
         }
     }
@@ -152,7 +179,7 @@ impl ConsumeResume {
         self.0.phase = Phase::Next;
         {
             let __pending_field_iterator = self.0.source.clone();
-            let __pending_field_method = runtime.into_jsvalue(self.0.next.clone())?;
+            let __pending_field_method = runtime.dup_jsvalue(&self.0.next)?;
             let __pending_field_resume = self;
             Ok(ConsumeStep::request_next(
                 __pending_field_iterator,
@@ -167,7 +194,7 @@ impl ConsumeResume {
         reply: Completion,
     ) -> Result<ConsumeStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(
                     if matches!(self.0.phase, Phase::Callback(_))
@@ -182,7 +209,7 @@ impl ConsumeResume {
         };
         match std::mem::replace(&mut self.0.phase, Phase::Next) {
             Phase::Method => {
-                self.0.next = value;
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.next, value))?;
                 if matches!(self.0.kind, ConsumeKind::Array) {
                     self.0.array = Some(runtime.new_array(self.0.realm)?);
                 }
@@ -190,36 +217,61 @@ impl ConsumeResume {
             }
             Phase::Callback(item) => {
                 self.0.index = self.0.index.wrapping_add(1);
+                if matches!(self.0.kind, ConsumeKind::Reduce) {
+                    runtime.release_jsvalue(item)?;
+                    if let Some(old) = self.0.accumulator.replace(value) {
+                        runtime.release_jsvalue(old)?;
+                    }
+                    return self.next_step(runtime);
+                }
+                let truth = if matches!(
+                    self.0.kind,
+                    ConsumeKind::Predicate(IteratorConsumerKind::ForEach)
+                ) {
+                    Ok(false)
+                } else {
+                    runtime.value_to_boolean_jsvalue(&value)
+                };
+                runtime.release_jsvalue(value)?;
+                let truth = match truth {
+                    Ok(truth) => truth,
+                    Err(error) => {
+                        runtime.release_jsvalue(item)?;
+                        return Err(error);
+                    }
+                };
                 let early = match self.0.kind {
-                    ConsumeKind::Predicate(IteratorConsumerKind::Every) => {
-                        (!runtime.value_to_boolean(&value)?).then_some(Value::Bool(false))
-                    }
-                    ConsumeKind::Predicate(IteratorConsumerKind::Some) => runtime
-                        .value_to_boolean(&value)?
-                        .then_some(Value::Bool(true)),
-                    ConsumeKind::Predicate(IteratorConsumerKind::Find) => {
-                        runtime.value_to_boolean(&value)?.then_some(item)
-                    }
-                    ConsumeKind::Predicate(IteratorConsumerKind::ForEach) => None,
-                    ConsumeKind::Reduce => {
-                        self.0.accumulator = Some(value);
-                        None
-                    }
-                    ConsumeKind::Array => {
-                        return Err(RuntimeError::Invariant(
-                            "Iterator.toArray received a callback reply",
-                        ));
+                    ConsumeKind::Predicate(IteratorConsumerKind::Find) if truth => Some(item),
+                    kind => {
+                        runtime.release_jsvalue(item)?;
+                        match kind {
+                            ConsumeKind::Predicate(IteratorConsumerKind::Every) if !truth => {
+                                Some(JsValue::Bool(false))
+                            }
+                            ConsumeKind::Predicate(IteratorConsumerKind::Some) if truth => {
+                                Some(JsValue::Bool(true))
+                            }
+                            ConsumeKind::Array => {
+                                return Err(RuntimeError::Invariant(
+                                    "Iterator.toArray received a callback reply",
+                                ));
+                            }
+                            _ => None,
+                        }
                     }
                 };
                 Ok(if let Some(value) = early {
-                    self.close(Completion::Return(runtime.into_jsvalue(value)?))
+                    self.close(Completion::Return(value))
                 } else {
                     self.next_step(runtime)?
                 })
             }
-            Phase::Next => Err(RuntimeError::Invariant(
-                "Iterator consumer received a completion in step phase",
-            )),
+            Phase::Next => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "Iterator consumer received a completion in step phase",
+                ))
+            }
         }
     }
     pub(crate) fn next(
@@ -228,6 +280,9 @@ impl ConsumeResume {
         reply: ObjectIteratorStep,
     ) -> Result<ConsumeStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Next) {
+            if let ObjectIteratorStep::Yield(value) | ObjectIteratorStep::Throw(value) = reply {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "Iterator consumer next has wrong phase",
             ));
@@ -238,16 +293,17 @@ impl ConsumeResume {
             }
             ObjectIteratorStep::Done => {
                 let value = match self.0.kind {
-                    ConsumeKind::Predicate(IteratorConsumerKind::Every) => Value::Bool(true),
-                    ConsumeKind::Predicate(IteratorConsumerKind::Some) => Value::Bool(false),
+                    ConsumeKind::Predicate(IteratorConsumerKind::Every) => JsValue::Bool(true),
+                    ConsumeKind::Predicate(IteratorConsumerKind::Some) => JsValue::Bool(false),
                     ConsumeKind::Predicate(
                         IteratorConsumerKind::Find | IteratorConsumerKind::ForEach,
-                    ) => Value::Undefined,
-                    ConsumeKind::Array => Value::Object(
+                    ) => JsValue::Undefined,
+                    ConsumeKind::Array => JsValue::Object(
                         self.0
                             .array
                             .take()
-                            .ok_or(RuntimeError::Invariant("Iterator.toArray result missing"))?,
+                            .ok_or(RuntimeError::Invariant("Iterator.toArray result missing"))?
+                            .into_handle(),
                     ),
                     ConsumeKind::Reduce => match self.0.accumulator.take() {
                         Some(value) => value,
@@ -261,29 +317,38 @@ impl ConsumeResume {
                         }
                     },
                 };
-                return Ok(ConsumeStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ConsumeStep::Complete(Completion::Return(value)));
             }
-            ObjectIteratorStep::Yield(value) => runtime.root_and_release_jsvalue(value)?,
+            ObjectIteratorStep::Yield(value) => value,
         };
+        self.0.phase = Phase::Callback(item);
         if matches!(self.0.kind, ConsumeKind::Array) {
-            // This unpublished fresh Array has no callback-capable definition;
-            // CreateDataProperty deliberately bypasses inherited index setters.
             let array = self
                 .0
                 .array
                 .as_ref()
                 .ok_or(RuntimeError::Invariant("Iterator.toArray result missing"))?;
-            if let Some(value) = runtime.create_array_data_property(
-                self.0.realm,
-                array,
-                self.0.index as u32,
-                item,
-            )? {
-                return Ok(ConsumeStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+            let key = runtime.property_key_for_index(self.0.index as u32 as u64)?;
+            let Phase::Callback(ref item) = self.0.phase else {
+                unreachable!()
+            };
+            let defined = runtime.define_selected_set_data(array, &key, item, false)?;
+            let Phase::Callback(item) = std::mem::replace(&mut self.0.phase, Phase::Next) else {
+                unreachable!()
+            };
+            runtime.release_jsvalue(item)?;
+            match defined {
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {}
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
+                    return Err(RuntimeError::Invariant(
+                        "fresh iterator array rejected definition",
+                    ));
+                }
+                crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                    return Ok(ConsumeStep::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
             }
             self.0.index = u32::try_from(self.0.index)
                 .ok()
@@ -295,6 +360,9 @@ impl ConsumeResume {
             return self.next_step(runtime);
         }
         if matches!(self.0.kind, ConsumeKind::Reduce) && self.0.accumulator.is_none() {
+            let Phase::Callback(item) = std::mem::replace(&mut self.0.phase, Phase::Next) else {
+                unreachable!()
+            };
             self.0.accumulator = Some(item);
             self.0.index = 1;
             return self.next_step(runtime);
@@ -302,30 +370,25 @@ impl ConsumeResume {
         let callable = self.0.callback.clone().ok_or(RuntimeError::Invariant(
             "Iterator consumer callback missing",
         ))?;
-        let arguments = match self.0.kind {
-            ConsumeKind::Reduce => vec![
-                runtime.into_jsvalue(self.0.accumulator.take().ok_or(
-                    RuntimeError::Invariant("Iterator reduce accumulator missing"),
-                )?)?,
-                runtime.into_jsvalue(item.clone())?,
-                JsValue::Float(self.0.index as f64),
-            ],
-            _ => vec![
-                runtime.into_jsvalue(item.clone())?,
-                JsValue::Float(self.0.index as f64),
-            ],
+        let Phase::Callback(ref item) = self.0.phase else {
+            unreachable!()
         };
-        self.0.phase = Phase::Callback(item);
-        Ok({
-            let __pending_field_callable = callable;
-            let __pending_field_arguments = arguments;
-            let __pending_field_resume = self;
-            ConsumeStep::request_call(
-                __pending_field_callable,
-                __pending_field_arguments,
-                __pending_field_resume,
-            )
-        })
+        let item_argument = runtime.dup_jsvalue(item)?;
+        self.0.pending_effect.call_arguments =
+            Some(vec![item_argument, JsValue::Float(self.0.index as f64)]);
+        if matches!(self.0.kind, ConsumeKind::Reduce) {
+            let accumulator = self.0.accumulator.take().ok_or(RuntimeError::Invariant(
+                "Iterator reduce accumulator missing",
+            ))?;
+            self.0
+                .pending_effect
+                .call_arguments
+                .as_mut()
+                .unwrap()
+                .insert(0, accumulator);
+        }
+        self.0.pending_effect.call_callable = Some(callable);
+        Ok(ConsumeStep::Call { resume: self })
     }
 }
 pub(crate) fn finish(
@@ -351,30 +414,36 @@ pub(crate) fn finish(
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_property_in_realm(realm, &object, &key)?,
+                    runtime.internal_get_jsvalue(
+                        realm,
+                        &object,
+                        &key,
+                        JsValue::Object(object.clone().into_handle()),
+                    )?,
                 )?
             }
             ConsumeStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, Value::Undefined, &arguments)?,
+                    runtime.call_internal_jsvalue(
+                        realm,
+                        &callable,
+                        JsValue::Undefined,
+                        arguments,
+                    )?,
                 )?
             }
             ConsumeStep::Next { mut resume } => {
                 let iterator = resume.take_next_iterator();
-                let method = runtime.root_and_release_jsvalue(resume.take_next_method())?;
+                let method = resume.take_next_method();
                 resume.next(
                     runtime,
                     finish_next(
                         runtime,
                         realm,
-                        NextStep::start(runtime, realm, iterator, method)?,
+                        NextStep::start_jsvalue(runtime, realm, iterator, method)?,
                     )?,
                 )?
             }
@@ -409,15 +478,6 @@ impl ConsumeStep {
         resume.0.pending_effect.next_iterator = Some(iterator);
         resume.0.pending_effect.next_method = Some(method);
         Self::Next { resume }
-    }
-    pub(crate) fn request_call(
-        callable: CallableRef,
-        arguments: Vec<JsValue>,
-        mut resume: ConsumeResume,
-    ) -> Self {
-        resume.0.pending_effect.call_callable = Some(callable);
-        resume.0.pending_effect.call_arguments = Some(arguments);
-        Self::Call { resume }
     }
 }
 impl ConsumeResume {

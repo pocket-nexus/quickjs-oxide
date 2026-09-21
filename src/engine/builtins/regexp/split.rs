@@ -33,17 +33,20 @@ impl Runtime {
         &self,
         result: &ObjectRef,
         length: &mut u32,
-        value: Value,
+        value: JsValue,
     ) -> Result<(), RuntimeError> {
         let index = *length;
-        let next = index.checked_add(1).ok_or(RuntimeError::Invariant(
-            "RegExp split output index exceeded Uint32",
-        ))?;
+        let Some(next) = index.checked_add(1) else {
+            self.release_jsvalue(value)?;
+            return Err(RuntimeError::Invariant(
+                "RegExp split output index exceeded Uint32",
+            ));
+        };
         // The output is an intrinsic fresh Array, never the species-created
         // splitter and never exposed to exec/capture callbacks. Preserve the
         // original allocation and append timing using the shared constructor
         // kernel, which defines own C/W/E data without inherited setters.
-        self.append_fresh_array_value(result, value)?;
+        self.append_fresh_array_value_jsvalue(result, value)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("regexp_result.split_append");
         *length = next;
@@ -74,35 +77,42 @@ impl std::ops::DerefMut for RegExpSplitResume {
 }
 const _: () = assert!(std::mem::size_of::<RegExpSplitResume>() <= 8);
 pub(crate) struct RegExpSplitResumeState {
+    limit_value: JsValue,
+    input_value: JsValue,
     step_pending: RegExpSplitStepPending,
     realm: ContextId,
     phase: Phase,
 }
+impl Drop for RegExpSplitResumeState {
+    fn drop(&mut self) {
+        let runtime = &self.step_pending.runtime;
+        let _ =
+            runtime.release_jsvalue(std::mem::replace(&mut self.limit_value, JsValue::Undefined));
+        let _ =
+            runtime.release_jsvalue(std::mem::replace(&mut self.input_value, JsValue::Undefined));
+    }
+}
 enum Phase {
+    Vacant,
     Input {
         regexp: ObjectRef,
-        limit: Value,
     },
     Species {
         regexp: ObjectRef,
         input: JsString,
-        limit: Value,
     },
     Flags {
         regexp: ObjectRef,
         input: JsString,
-        limit: Value,
         constructor: ConstructorRef,
     },
     FlagsPrimitive {
         regexp: ObjectRef,
         input: JsString,
-        limit: Value,
         constructor: ConstructorRef,
     },
     Construct {
         input: JsString,
-        limit: Value,
         unicode: bool,
     },
     Limit(SplitState),
@@ -133,6 +143,7 @@ enum Phase {
     },
 }
 struct SplitState {
+    input_value: JsValue,
     input: JsString,
     splitter: ObjectRef,
     result: ObjectRef,
@@ -142,13 +153,21 @@ struct SplitState {
     p: usize,
     q: usize,
 }
+impl Drop for SplitState {
+    fn drop(&mut self) {
+        let _ = self
+            .splitter
+            .runtime()
+            .release_jsvalue(std::mem::replace(&mut self.input_value, JsValue::Undefined));
+    }
+}
 impl SplitState {
     fn complete(self) -> RegExpSplitStep {
         RegExpSplitStep::Complete(Completion::Return(JsValue::Object(
-            self.result.into_handle(),
+            self.result.clone().into_handle(),
         )))
     }
-    fn append(&mut self, runtime: &Runtime, value: Value) -> Result<(), RuntimeError> {
+    fn append(&mut self, runtime: &Runtime, value: JsValue) -> Result<(), RuntimeError> {
         runtime.append_regexp_split_value(&self.result, &mut self.length, value)
     }
     fn advance(&mut self) -> Result<(), RuntimeError> {
@@ -170,17 +189,19 @@ impl SplitState {
                 self.input
                     .sub_string(self.p.min(self.input.len()), self.input.len()),
             );
-            self.append(runtime, value)?;
+            self.append(runtime, runtime.into_jsvalue(value)?)?;
             return Ok(self.complete());
         }
-        let value = Value::Int(i32::try_from(self.q).map_err(|_| {
+        let value = JsValue::Int(i32::try_from(self.q).map_err(|_| {
             RuntimeError::Invariant("RegExp split index exceeded signed String range")
         })?);
         Ok(RegExpSplitStep::make_set(
             self.splitter.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
-            runtime.into_jsvalue(value)?,
+            value,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
+                limit_value: JsValue::Undefined,
+                input_value: JsValue::Undefined,
                 step_pending: RegExpSplitStepPending::new(runtime),
                 realm,
                 phase: Phase::Set(self),
@@ -193,10 +214,14 @@ impl SplitState {
         realm: ContextId,
         empty: bool,
     ) -> Result<RegExpSplitStep, RuntimeError> {
+        let input = runtime.dup_jsvalue(&self.input_value)?;
+        let regexp = JsValue::Object(self.splitter.clone().into_handle());
         Ok(RegExpSplitStep::make_exec(
-            runtime.into_jsvalue(Value::Object(self.splitter.clone()))?,
-            runtime.into_jsvalue(Value::String(self.input.clone()))?,
+            regexp,
+            input,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
+                limit_value: JsValue::Undefined,
+                input_value: JsValue::Undefined,
                 step_pending: RegExpSplitStepPending::new(runtime),
                 realm,
                 phase: if empty {
@@ -223,6 +248,8 @@ impl SplitState {
             matched.clone(),
             runtime.intern_property_key(&index.to_string())?,
             RegExpSplitResume(Box::new(RegExpSplitResumeState {
+                limit_value: JsValue::Undefined,
+                input_value: JsValue::Undefined,
                 step_pending: RegExpSplitStepPending::new(runtime),
                 realm,
                 phase: Phase::Capture {
@@ -247,35 +274,34 @@ impl RegExpSplitStep {
                 "RegExp @@split did not receive a generic invocation",
             ));
         };
-        let this_value = runtime.root_value(this_value)?;
-        let Value::Object(regexp) = this_value else {
+        let JsValue::Object(id) = this_value else {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
+        let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
+        let mut resume = RegExpSplitResume::new(runtime, realm, Phase::Input { regexp });
+        resume.0.limit_value = runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
+            RuntimeError::Invariant("RegExp @@split limit argv was not padded"),
+        )?)?;
         let input = runtime.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("RegExp @@split input argv was not padded"),
         )?)?;
-        let limit = runtime.root_value(arguments.readable.get(1).ok_or(
-            RuntimeError::Invariant("RegExp @@split limit argv was not padded"),
-        )?)?;
-        Ok(Self::make_primitive(
-            input,
-            ToPrimitiveHint::String,
-            RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                step_pending: RegExpSplitStepPending::new(runtime),
-                realm,
-                phase: Phase::Input {
-                    regexp: regexp.clone(),
-                    limit,
-                },
-            })),
-        ))
+        Ok(Self::make_primitive(input, ToPrimitiveHint::String, resume))
     }
 }
 impl RegExpSplitResume {
+    fn new(runtime: &Runtime, realm: ContextId, phase: Phase) -> Self {
+        Self(Box::new(RegExpSplitResumeState {
+            step_pending: RegExpSplitStepPending::new(runtime),
+            realm,
+            phase,
+            limit_value: JsValue::Undefined,
+            input_value: JsValue::Undefined,
+        }))
+    }
     pub(crate) fn species(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<ConstructorRef>,
     ) -> Result<RegExpSplitStep, RuntimeError> {
@@ -287,30 +313,20 @@ impl RegExpSplitResume {
                 )));
             }
         };
-        let Phase::Species {
-            regexp,
-            input,
-            limit,
-        } = self.0.phase
+        let Phase::Species { regexp, input } = std::mem::replace(&mut self.0.phase, Phase::Vacant)
         else {
             return Err(RuntimeError::Invariant(
                 "RegExp split species reply in wrong phase",
             ));
         };
-        Ok(RegExpSplitStep::make_read(
-            regexp.clone(),
-            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
-            Self(Box::new(RegExpSplitResumeState {
-                step_pending: RegExpSplitStepPending::new(runtime),
-                realm: self.0.realm,
-                phase: Phase::Flags {
-                    regexp,
-                    input,
-                    limit,
-                    constructor,
-                },
-            })),
-        ))
+        let object = regexp.clone();
+        self.0.phase = Phase::Flags {
+            regexp,
+            input,
+            constructor,
+        };
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?;
+        Ok(RegExpSplitStep::make_read(object, key, self))
     }
     pub(crate) fn set(
         self,
@@ -325,21 +341,46 @@ impl RegExpSplitResume {
         };
         self.resume(runtime, result)
     }
+    fn string_reply(
+        &mut self,
+        runtime: &Runtime,
+    ) -> Result<NativeConversion<JsString>, RuntimeError> {
+        runtime.string_from_primitive_jsvalue(
+            self.0.realm,
+            self.0
+                .step_pending
+                .value
+                .as_ref()
+                .expect("split primitive reply"),
+        )
+    }
+    fn number_reply(&mut self, runtime: &Runtime) -> Result<NativeConversion<f64>, RuntimeError> {
+        let value = self
+            .0
+            .step_pending
+            .value
+            .take()
+            .expect("split numeric reply");
+        let number = runtime.number_from_primitive_jsvalue(self.0.realm, &value);
+        runtime.release_jsvalue(value)?;
+        number
+    }
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<RegExpSplitStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
             }
         };
+        self.0.step_pending.value = Some(value);
         let realm = self.0.realm;
-        match self.0.phase {
-            Phase::Input { regexp, limit } => {
-                let input = match runtime.native_to_js_string(realm, &value)? {
+        match std::mem::replace(&mut self.0.phase, Phase::Vacant) {
+            Phase::Input { regexp } => {
+                let input = match self.string_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpSplitStep::Complete(Completion::Throw(
@@ -347,45 +388,40 @@ impl RegExpSplitResume {
                         )));
                     }
                 };
-                Ok(RegExpSplitStep::make_species(
-                    regexp.clone(),
-                    Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::new(runtime),
-                        realm,
-                        phase: Phase::Species {
-                            regexp,
-                            input,
-                            limit,
-                        },
-                    })),
-                ))
+                let value = self.0.step_pending.value.take().unwrap();
+                self.0.input_value = if matches!(value, JsValue::String(_)) {
+                    value
+                } else {
+                    runtime.release_jsvalue(value)?;
+                    runtime.into_jsvalue(Value::String(input.clone()))?
+                };
+                let object = regexp.clone();
+                self.0.phase = Phase::Species { regexp, input };
+                Ok(RegExpSplitStep::make_species(object, self))
             }
             Phase::Flags {
                 regexp,
                 input,
-                limit,
                 constructor,
-            } => Ok(RegExpSplitStep::make_primitive(
-                runtime.into_jsvalue(value)?,
-                ToPrimitiveHint::String,
-                Self(Box::new(RegExpSplitResumeState {
-                    step_pending: RegExpSplitStepPending::new(runtime),
-                    realm,
-                    phase: Phase::FlagsPrimitive {
-                        regexp,
-                        input,
-                        limit,
-                        constructor,
-                    },
-                })),
-            )),
+            } => {
+                self.0.phase = Phase::FlagsPrimitive {
+                    regexp,
+                    input,
+                    constructor,
+                };
+                let value = self.0.step_pending.value.take().unwrap();
+                Ok(RegExpSplitStep::make_primitive(
+                    value,
+                    ToPrimitiveHint::String,
+                    self,
+                ))
+            }
             Phase::FlagsPrimitive {
                 regexp,
                 input,
-                limit,
                 constructor,
             } => {
-                let flags = match runtime.native_to_js_string(realm, &value)? {
+                let flags = match self.string_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpSplitStep::Complete(Completion::Throw(
@@ -396,13 +432,22 @@ impl RegExpSplitResume {
                 let unicode = flags
                     .utf16_units()
                     .any(|unit| unit == u16::from(b'u') || unit == u16::from(b'v'));
-                let flags = if flags.utf16_units().any(|unit| unit == u16::from(b'y')) {
+                let sticky = flags.utf16_units().any(|unit| unit == u16::from(b'y'));
+                let flags = if sticky {
                     flags
                 } else {
                     flags.try_concat(&JsString::from_static("y"))?
                 };
-                let mut arguments = Vec::new();
-                if arguments.try_reserve_exact(2).is_err() {
+                self.0.step_pending.arguments = Some(Vec::new());
+                if self
+                    .0
+                    .step_pending
+                    .arguments
+                    .as_mut()
+                    .unwrap()
+                    .try_reserve_exact(2)
+                    .is_err()
+                {
                     return Ok(RegExpSplitStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
                             realm,
@@ -411,57 +456,64 @@ impl RegExpSplitResume {
                         )?,
                     )));
                 }
-                arguments.push(runtime.into_jsvalue(Value::Object(regexp))?);
-                arguments.push(runtime.into_jsvalue(Value::String(flags))?);
-                Ok(RegExpSplitStep::make_construct(
-                    constructor,
-                    arguments,
-                    Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::new(runtime),
-                        realm,
-                        phase: Phase::Construct {
-                            input,
-                            limit,
-                            unicode,
-                        },
-                    })),
-                ))
-            }
-            Phase::Construct {
-                input,
-                limit,
-                unicode,
-            } => {
-                let Value::Object(splitter) = value else {
-                    return Err(RuntimeError::Invariant(
-                        "RegExp species constructor returned a primitive",
-                    ));
+                self.0
+                    .step_pending
+                    .arguments
+                    .as_mut()
+                    .unwrap()
+                    .push(JsValue::Object(regexp.into_handle()));
+                let value = self.0.step_pending.value.take().unwrap();
+                let flags_value = if sticky && matches!(value, JsValue::String(_)) {
+                    value
+                } else {
+                    runtime.release_jsvalue(value)?;
+                    runtime.into_jsvalue(Value::String(flags))?
                 };
+                self.0
+                    .step_pending
+                    .arguments
+                    .as_mut()
+                    .unwrap()
+                    .push(flags_value);
+                self.0.step_pending.constructor = Some(constructor);
+                self.0.phase = Phase::Construct { input, unicode };
+                Ok(RegExpSplitStep::Construct { resume: self })
+            }
+            Phase::Construct { input, unicode } => {
+                let splitter = match self.0.step_pending.value.take().unwrap() {
+                    JsValue::Object(id) => ObjectRef::from_owned_handle(runtime.clone(), id),
+                    value => {
+                        runtime.release_jsvalue(value)?;
+                        return Err(RuntimeError::Invariant(
+                            "RegExp species constructor returned a primitive",
+                        ));
+                    }
+                };
+                let result = runtime.new_array(realm)?;
                 let state = SplitState {
                     input,
+                    input_value: std::mem::replace(&mut self.0.input_value, JsValue::Undefined),
                     splitter,
-                    result: runtime.new_array(realm)?,
+                    result,
                     unicode,
                     limit: u32::MAX,
                     length: 0,
                     p: 0,
                     q: 0,
                 };
-                if matches!(limit, Value::Undefined) {
+                if matches!(self.0.limit_value, JsValue::Undefined) {
                     return Self::after_limit(state, runtime, realm);
                 }
+                let value = std::mem::replace(&mut self.0.limit_value, JsValue::Undefined);
+                self.0.phase = Phase::Limit(state);
                 Ok(RegExpSplitStep::make_primitive(
-                    runtime.into_jsvalue(limit)?,
+                    value,
                     ToPrimitiveHint::Number,
-                    Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::new(runtime),
-                        realm,
-                        phase: Phase::Limit(state),
-                    })),
+                    self,
                 ))
             }
             Phase::Limit(mut state) => {
-                let number = match runtime.native_to_number(realm, &value)? {
+                let number = match self.number_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpSplitStep::Complete(Completion::Throw(
@@ -473,51 +525,56 @@ impl RegExpSplitResume {
                 Self::after_limit(state, runtime, realm)
             }
             Phase::Empty(mut state) => {
-                match value {
-                    Value::Null => {
-                        let input = Value::String(state.input.clone());
-                        state.append(runtime, input)?;
-                    }
-                    Value::Object(_) => {}
-                    _ => {
-                        return Err(RuntimeError::Invariant(
-                            "RegExpExec returned neither an object nor null",
-                        ));
-                    }
+                let value = self.0.step_pending.value.take().unwrap();
+                let valid = matches!(value, JsValue::Null | JsValue::Object(_));
+                let empty = matches!(value, JsValue::Null);
+                runtime.release_jsvalue(value)?;
+                if !valid {
+                    return Err(RuntimeError::Invariant(
+                        "RegExpExec returned neither an object nor null",
+                    ));
+                }
+                if empty {
+                    let input = runtime.dup_jsvalue(&state.input_value)?;
+                    state.append(runtime, input)?;
                 }
                 Ok(state.complete())
             }
-            Phase::Set(state) => state.execute(runtime, realm, false),
-            Phase::Exec(mut state) => match value {
-                Value::Null => {
+            Phase::Set(state) => {
+                runtime.release_jsvalue(self.0.step_pending.value.take().unwrap())?;
+                state.execute(runtime, realm, false)
+            }
+            Phase::Exec(mut state) => match self.0.step_pending.value.take().unwrap() {
+                JsValue::Null => {
                     state.advance()?;
                     state.next(runtime, realm)
                 }
-                Value::Object(matched) => Ok(RegExpSplitStep::make_read(
-                    state.splitter.clone(),
-                    runtime
-                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
-                    Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::new(runtime),
-                        realm,
-                        phase: Phase::End { state, matched },
-                    })),
-                )),
-                _ => Err(RuntimeError::Invariant(
-                    "RegExpExec returned neither an object nor null",
-                )),
+                JsValue::Object(id) => {
+                    let matched = ObjectRef::from_owned_handle(runtime.clone(), id);
+                    let object = state.splitter.clone();
+                    self.0.phase = Phase::End { state, matched };
+                    let key = runtime
+                        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+                    Ok(RegExpSplitStep::make_read(object, key, self))
+                }
+                value => {
+                    runtime.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "RegExpExec returned neither an object nor null",
+                    ))
+                }
             },
-            Phase::End { state, matched } => Ok(RegExpSplitStep::make_primitive(
-                runtime.into_jsvalue(value)?,
-                ToPrimitiveHint::Number,
-                Self(Box::new(RegExpSplitResumeState {
-                    step_pending: RegExpSplitStepPending::new(runtime),
-                    realm,
-                    phase: Phase::EndPrimitive { state, matched },
-                })),
-            )),
+            Phase::End { state, matched } => {
+                self.0.phase = Phase::EndPrimitive { state, matched };
+                let value = self.0.step_pending.value.take().unwrap();
+                Ok(RegExpSplitStep::make_primitive(
+                    value,
+                    ToPrimitiveHint::Number,
+                    self,
+                ))
+            }
             Phase::EndPrimitive { mut state, matched } => {
-                let end = match runtime.native_to_length(realm, &value)? {
+                let number = match self.number_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpSplitStep::Complete(Completion::Throw(
@@ -525,39 +582,38 @@ impl RegExpSplitResume {
                         )));
                     }
                 };
-                let end = usize::try_from(end.min(state.input.len() as u64))
-                    .map_err(|_| RuntimeError::Invariant("split end index did not fit usize"))?;
+                let end = usize::try_from(
+                    Runtime::length_from_number(number).min(state.input.len() as u64),
+                )
+                .map_err(|_| RuntimeError::Invariant("split end index did not fit usize"))?;
                 if end == state.p {
                     state.advance()?;
                     return state.next(runtime, realm);
                 }
-                let part = Value::String(state.input.sub_string(state.p, state.q));
+                let part = runtime
+                    .into_jsvalue(Value::String(state.input.sub_string(state.p, state.q)))?;
                 state.append(runtime, part)?;
                 if state.length == state.limit {
                     return Ok(state.complete());
                 }
                 state.p = end;
-                Ok(RegExpSplitStep::make_read(
-                    matched.clone(),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-                    Self(Box::new(RegExpSplitResumeState {
-                        step_pending: RegExpSplitStepPending::new(runtime),
-                        realm,
-                        phase: Phase::Count { state, matched },
-                    })),
+                let object = matched.clone();
+                self.0.phase = Phase::Count { state, matched };
+                let key =
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+                Ok(RegExpSplitStep::make_read(object, key, self))
+            }
+            Phase::Count { state, matched } => {
+                self.0.phase = Phase::CountPrimitive { state, matched };
+                let value = self.0.step_pending.value.take().unwrap();
+                Ok(RegExpSplitStep::make_primitive(
+                    value,
+                    ToPrimitiveHint::Number,
+                    self,
                 ))
             }
-            Phase::Count { state, matched } => Ok(RegExpSplitStep::make_primitive(
-                runtime.into_jsvalue(value)?,
-                ToPrimitiveHint::Number,
-                Self(Box::new(RegExpSplitResumeState {
-                    step_pending: RegExpSplitStepPending::new(runtime),
-                    realm,
-                    phase: Phase::CountPrimitive { state, matched },
-                })),
-            )),
             Phase::CountPrimitive { state, matched } => {
-                let count = match runtime.native_to_length(realm, &value)? {
+                let number = match self.number_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(RegExpSplitStep::Complete(Completion::Throw(
@@ -565,7 +621,13 @@ impl RegExpSplitResume {
                         )));
                     }
                 };
-                state.captures(runtime, realm, matched, 1, count)
+                state.captures(
+                    runtime,
+                    realm,
+                    matched,
+                    1,
+                    Runtime::length_from_number(number),
+                )
             }
             Phase::Capture {
                 mut state,
@@ -573,13 +635,13 @@ impl RegExpSplitResume {
                 index,
                 count,
             } => {
-                state.append(runtime, value)?;
+                state.append(runtime, self.0.step_pending.value.take().unwrap())?;
                 if state.length == state.limit {
                     return Ok(state.complete());
                 }
                 state.captures(runtime, realm, matched, index + 1, count)
             }
-            Phase::Species { .. } => Err(RuntimeError::Invariant(
+            Phase::Species { .. } | Phase::Vacant => Err(RuntimeError::Invariant(
                 "RegExp split completion in species phase",
             )),
         }
@@ -626,7 +688,12 @@ fn finish(
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_property_in_realm(realm, &object, &key)?,
+                    runtime.internal_get_jsvalue(
+                        realm,
+                        &object,
+                        &key,
+                        JsValue::Object(object.clone().into_handle()),
+                    )?,
                 )?
             }
             RegExpSplitStep::Species { mut resume } => {
@@ -635,39 +702,35 @@ fn finish(
             }
             RegExpSplitStep::Construct { mut resume } => {
                 let constructor = resume.take_construct_constructor();
-                let arguments = resume
-                    .take_construct_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let arguments = resume.take_construct_arguments();
                 resume.resume(
                     runtime,
-                    runtime.construct_constructor_internal(
+                    runtime.construct_internal_jsvalue(
                         realm,
                         &constructor,
-                        &constructor,
-                        &arguments,
+                        crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                        arguments,
                     )?,
                 )?
             }
             RegExpSplitStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 resume.set(
                     runtime,
-                    runtime.internal_set(
+                    runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?,
                 )?
             }
             RegExpSplitStep::Exec { mut resume } => {
-                let regexp = runtime.root_and_release_jsvalue(resume.take_exec_regexp())?;
-                let input = runtime.root_and_release_jsvalue(resume.take_exec_input())?;
+                let regexp = resume.take_exec_regexp();
+                let input = resume.take_exec_input();
                 resume.resume(runtime, runtime.regexp_exec_abstract(realm, regexp, input)?)?
             }
         }
@@ -747,15 +810,6 @@ impl RegExpSplitStep {
     pub(crate) fn make_species(regexp: ObjectRef, mut resume: RegExpSplitResume) -> Self {
         resume.0.step_pending.regexp = Some(regexp);
         Self::Species { resume }
-    }
-    pub(crate) fn make_construct(
-        constructor: ConstructorRef,
-        arguments: Vec<JsValue>,
-        mut resume: RegExpSplitResume,
-    ) -> Self {
-        resume.0.step_pending.constructor = Some(constructor);
-        resume.0.step_pending.arguments = Some(arguments);
-        Self::Construct { resume }
     }
     pub(crate) fn make_set(
         object: ObjectRef,

@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::NativeFunctionId,
     heap::{ContextId, ObjectPayload},
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -34,7 +34,7 @@ const _: () = assert!(std::mem::size_of::<InstanceResume>() <= 8);
 pub(crate) struct InstanceResumeState {
     pending_effect: InstanceStepPending,
     realm: ContextId,
-    candidate: Value,
+    candidate: JsValue,
     target: ObjectRef,
     phase: Phase,
 }
@@ -44,11 +44,26 @@ enum Phase {
     Prototype,
     Walk(ObjectRef),
 }
+impl Drop for InstanceResumeState {
+    fn drop(&mut self) {
+        let value = std::mem::replace(&mut self.candidate, JsValue::Undefined);
+        let runtime = self.target.runtime();
+        let _ = runtime.release_jsvalue(value);
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = runtime.release_jsvalue(value);
+            }
+        }
+    }
+}
 impl InstanceStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
-        candidate: Value,
+        candidate: JsValue,
         target: ObjectRef,
     ) -> Result<Self, RuntimeError> {
         Self::method(runtime, realm, candidate, target, false)
@@ -56,7 +71,7 @@ impl InstanceStep {
     fn method(
         runtime: &Runtime,
         realm: ContextId,
-        candidate: Value,
+        candidate: JsValue,
         target: ObjectRef,
         delegate: bool,
     ) -> Result<Self, RuntimeError> {
@@ -104,8 +119,8 @@ impl InstanceStep {
             realm,
             &target,
             match arguments.readable.first() {
-                Some(value) => runtime.root_value(value)?,
-                None => Value::Undefined,
+                Some(value) => runtime.dup_jsvalue(value)?,
+                None => JsValue::Undefined,
             },
         )
     }
@@ -113,7 +128,7 @@ impl InstanceStep {
         runtime: &Runtime,
         realm: ContextId,
         target: &CallableRef,
-        candidate: Value,
+        candidate: JsValue,
     ) -> Result<Self, RuntimeError> {
         let bound = {
             let state = runtime.0.state.borrow();
@@ -133,7 +148,8 @@ impl InstanceStep {
             let target = ObjectRef::from_borrowed_handle(runtime.clone(), bound)?;
             return Self::method(runtime, realm, candidate, target, true);
         }
-        if !matches!(candidate, Value::Object(_)) {
+        if !matches!(candidate, JsValue::Object(_)) {
+            runtime.release_jsvalue(candidate)?;
             return Ok(Self::Complete(Completion::Return(JsValue::Bool(false))));
         }
         Ok({
@@ -162,12 +178,12 @@ impl InstanceResume {
         result: Completion,
     ) -> Result<InstanceStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             result @ Completion::Throw(_) => return Ok(InstanceStep::Complete(result)),
         };
         match self.0.phase {
             Phase::Method { delegate } => {
-                if matches!(value, Value::Null | Value::Undefined) {
+                if matches!(value, JsValue::Null | JsValue::Undefined) {
                     let Some(target) = runtime.as_callable(&self.0.target)? else {
                         return if delegate {
                             Ok(InstanceStep::Complete(Completion::Throw(
@@ -188,10 +204,12 @@ impl InstanceResume {
                         runtime,
                         self.0.realm,
                         &target,
-                        self.0.candidate,
+                        std::mem::replace(&mut self.0.candidate, JsValue::Undefined),
                     );
                 }
-                let callable = match runtime.callable_from_value(value) {
+                let callable = runtime.callable_from_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                let callable = match callable {
                     Ok(callable) => callable,
                     Err(RuntimeError::Engine(error))
                         if delegate && error.kind() == ErrorKind::Type =>
@@ -209,10 +227,9 @@ impl InstanceResume {
                 Ok({
                     let __pending_field_callable = callable;
                     let __pending_field_receiver =
-                        runtime.into_jsvalue(Value::Object(self.0.target.clone()))?;
-                    let __pending_field_arguments = vec![runtime.into_jsvalue(
-                        std::mem::replace(&mut self.0.candidate, Value::Undefined),
-                    )?];
+                        JsValue::Object(self.0.target.clone().into_handle());
+                    let __pending_field_arguments =
+                        vec![std::mem::replace(&mut self.0.candidate, JsValue::Undefined)];
                     let __pending_field_delegate = delegate;
                     let __pending_field_resume = {
                         let updated_0 = Phase::Result;
@@ -228,11 +245,16 @@ impl InstanceResume {
                     )
                 })
             }
-            Phase::Result => Ok(InstanceStep::Complete(Completion::Return(JsValue::Bool(
-                runtime.value_to_boolean(&value)?,
-            )))),
+            Phase::Result => {
+                let boolean = runtime.value_to_boolean_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                Ok(InstanceStep::Complete(Completion::Return(JsValue::Bool(
+                    boolean?,
+                ))))
+            }
             Phase::Prototype => {
-                let Value::Object(prototype) = value else {
+                let JsValue::Object(prototype) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Ok(InstanceStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
                             self.0.realm,
@@ -241,11 +263,13 @@ impl InstanceResume {
                         )?,
                     )));
                 };
-                let Value::Object(candidate) = &self.0.candidate else {
+                let prototype = ObjectRef::from_owned_handle(runtime.clone(), prototype);
+                let JsValue::Object(candidate) = &self.0.candidate else {
                     return Err(RuntimeError::Invariant("instanceof lost object candidate"));
                 };
                 Ok({
-                    let __pending_field_object = candidate.clone();
+                    let __pending_field_object =
+                        ObjectRef::from_borrowed_handle(runtime.clone(), *candidate)?;
                     let __pending_field_resume = {
                         let updated_0 = Phase::Walk(prototype);
                         self.0.phase = updated_0;
@@ -254,9 +278,12 @@ impl InstanceResume {
                     InstanceStep::request_prototype(__pending_field_object, __pending_field_resume)
                 })
             }
-            Phase::Walk(_) => Err(RuntimeError::Invariant(
-                "prototype walk received untyped reply",
-            )),
+            Phase::Walk(_) => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "prototype walk received untyped reply",
+                ))
+            }
         }
     }
     pub(crate) fn prototype(
@@ -337,26 +364,22 @@ pub(super) fn finish(
                         let invocation = NativeInvocation::Call {
                             this_value: receiver,
                         };
-                        runtime.dispatch_borrowed_invocation(invocation, |invocation| {
-                            InstanceStep::native(
-                                runtime,
-                                realm,
-                                invocation,
-                                &NativeArguments {
-                                    actual_arg_count: 1,
-                                    readable: arguments,
-                                },
-                            )
-                        })?
+                        let arguments = NativeArguments {
+                            actual_arg_count: 1,
+                            readable: arguments,
+                        };
+                        let result =
+                            runtime.dispatch_borrowed_invocation(invocation, |invocation| {
+                                InstanceStep::native(runtime, realm, invocation, &arguments)
+                            });
+                        for value in arguments.readable {
+                            runtime.release_jsvalue(value)?;
+                        }
+                        result?
                     } else {
-                        let receiver = runtime.root_and_release_jsvalue(receiver)?;
-                        let arguments = arguments
-                            .into_iter()
-                            .map(|value| runtime.root_and_release_jsvalue(value))
-                            .collect::<Result<Vec<_>, _>>()?;
                         resume.resume(
                             runtime,
-                            runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                            runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                         )?
                     }
                 }

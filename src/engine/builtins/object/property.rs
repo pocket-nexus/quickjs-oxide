@@ -9,9 +9,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::operations::{InternalDefineResult, InternalSetResult},
-    object::{
-        CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    },
+    object::{ObjectRef, PropertyKey},
     value::{JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::NativeArguments},
 };
@@ -648,7 +646,7 @@ impl PropertyResume {
     pub(crate) fn converted(
         mut self,
         runtime: &Runtime,
-        result: NativeConversion<OrdinaryPropertyDescriptor>,
+        result: NativeConversion<crate::engine::object::OwnedPropertyDescriptor>,
     ) -> Result<PropertyStep, RuntimeError> {
         let Phase::Descriptor(key) = self.0.phase else {
             return Err(RuntimeError::Invariant(
@@ -715,7 +713,7 @@ impl PropertyResume {
     pub(crate) fn descriptor(
         mut self,
         runtime: &Runtime,
-        result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+        result: NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
     ) -> Result<PropertyStep, RuntimeError> {
         if let Phase::IntegrityDescriptor { remaining, key } = self.0.phase {
             let current = match result {
@@ -735,15 +733,16 @@ impl PropertyResume {
                 kind,
                 ObjectIntegrityKind::IsFrozen | ObjectIntegrityKind::IsSealed
             ) {
-                let violates = current.is_some_and(|descriptor| match descriptor {
-                    CompleteOrdinaryPropertyDescriptor::Data {
+                let violates = current.is_some_and(|descriptor| match descriptor.record() {
+                    crate::engine::object::property::CompletePropertyDescriptor::Data {
                         configurable,
                         writable,
                         ..
-                    } => configurable || (kind == ObjectIntegrityKind::IsFrozen && writable),
-                    CompleteOrdinaryPropertyDescriptor::Accessor { configurable, .. } => {
-                        configurable
-                    }
+                    } => *configurable || (kind == ObjectIntegrityKind::IsFrozen && *writable),
+                    crate::engine::object::property::CompletePropertyDescriptor::Accessor {
+                        configurable,
+                        ..
+                    } => *configurable,
                 });
                 return if violates {
                     Ok(PropertyStep::Complete(Completion::Return(JsValue::Bool(
@@ -758,14 +757,17 @@ impl PropertyResume {
                     .integrity_next(runtime, remaining)
                 };
             }
-            let mut descriptor = OrdinaryPropertyDescriptor {
-                configurable: crate::engine::object::DescriptorField::Present(false),
-                ..OrdinaryPropertyDescriptor::new()
-            };
+            let mut descriptor = crate::engine::object::OwnedPropertyDescriptor::new(runtime);
+            descriptor.configurable = crate::engine::object::DescriptorField::Present(false);
             if kind == ObjectIntegrityKind::Freeze
                 && matches!(
-                    current,
-                    Some(CompleteOrdinaryPropertyDescriptor::Data { writable: true, .. })
+                    current.as_ref().map(|descriptor| descriptor.record()),
+                    Some(
+                        crate::engine::object::property::CompletePropertyDescriptor::Data {
+                            writable: true,
+                            ..
+                        }
+                    )
                 )
             {
                 descriptor.writable = crate::engine::object::DescriptorField::Present(false);
@@ -1069,10 +1071,9 @@ pub(in crate::engine::builtins) fn finish(
             }
             PropertyStep::Convert { mut resume } => {
                 let value = resume.take_convert_value();
-                let value = runtime.root_and_release_jsvalue(value)?;
                 resume.converted(
                     runtime,
-                    runtime.native_to_property_descriptor(realm, value)?,
+                    runtime.native_to_property_descriptor_jsvalue(realm, value)?,
                 )?
             }
             PropertyStep::Read { mut resume } => {
@@ -1119,7 +1120,7 @@ pub(in crate::engine::builtins) fn finish(
                 let descriptor = resume.take_define_descriptor();
                 resume.defined(
                     runtime,
-                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
                 )?
             }
             PropertyStep::Descriptor { mut resume } => {
@@ -1127,7 +1128,7 @@ pub(in crate::engine::builtins) fn finish(
                 let key = resume.take_descriptor_key();
                 resume.descriptor(
                     runtime,
-                    runtime.internal_get_own_property(realm, &object, &key)?,
+                    runtime.internal_get_own_property_owned(realm, &object, &key)?,
                 )?
             }
             PropertyStep::Extensible { mut resume } => {
@@ -1163,7 +1164,7 @@ struct PropertyStepPending {
     delete_key: Option<PropertyKey>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<crate::engine::object::OwnedPropertyDescriptor>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
     extensible_object: Option<ObjectRef>,
@@ -1277,7 +1278,7 @@ impl PropertyStep {
     pub(crate) fn request_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: crate::engine::object::OwnedPropertyDescriptor,
         mut resume: PropertyResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -1416,7 +1417,9 @@ impl PropertyResume {
             .take()
             .expect("PropertyStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(
+        &mut self,
+    ) -> crate::engine::object::OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor
@@ -1498,12 +1501,18 @@ mod tests {
         let PropertyStep::Read { mut resume } = resume
             .descriptor(
                 &runtime,
-                NativeConversion::Value(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                    value: Value::Undefined,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                })),
+                NativeConversion::Value(Some(
+                    crate::engine::object::OwnedCompletePropertyDescriptor::from_public(
+                        &runtime,
+                        &crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data {
+                            value: Value::Undefined,
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                        },
+                    )
+                    .unwrap(),
+                )),
             )
             .unwrap()
         else {

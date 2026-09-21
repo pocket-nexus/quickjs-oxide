@@ -10,18 +10,16 @@
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind, NativeErrorMessage};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::object::ordinary_storage::SpecialKind;
 
 use crate::engine::atom::PropertyKeyKind;
 use crate::engine::builtins::CanonicalNumericIndex;
 use crate::engine::heap::{ContextId, ObjectPayload, ProxyData};
 use crate::engine::object::operations::{
     InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
-    complete_to_validation_record, descriptor_to_validation_record,
 };
 use crate::engine::object::property::validate_and_apply_property_descriptor;
 use crate::engine::object::{
-    AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
+    CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
 };
 use crate::engine::value::conversion::NativeConversion;
@@ -235,6 +233,19 @@ impl Runtime {
         self.function_realm_object_impl(Some(caller_realm), object.clone(), true)
     }
 
+    pub(crate) fn function_realm_from_jsvalue(
+        &self,
+        caller_realm: ContextId,
+        value: &JsValue,
+    ) -> Result<NativeConversion<ContextId>, RuntimeError> {
+        self.0.state.borrow().heap.context(caller_realm)?;
+        let JsValue::Object(id) = value else {
+            return Ok(NativeConversion::Value(caller_realm));
+        };
+        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+        self.function_realm_object_impl(Some(caller_realm), object, true)
+    }
+
     fn function_realm_object_impl(
         &self,
         caller_realm: Option<ContextId>,
@@ -370,6 +381,26 @@ impl Runtime {
         let Value::Object(object) = value else {
             return Ok(NativeConversion::Value(false));
         };
+        self.internal_is_array_object(realm, object)
+    }
+
+    pub(crate) fn internal_is_array_jsvalue(
+        &self,
+        realm: ContextId,
+        value: &JsValue,
+    ) -> Result<NativeConversion<bool>, RuntimeError> {
+        let JsValue::Object(id) = value else {
+            return Ok(NativeConversion::Value(false));
+        };
+        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+        self.internal_is_array_object(realm, &object)
+    }
+
+    fn internal_is_array_object(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+    ) -> Result<NativeConversion<bool>, RuntimeError> {
         let mut current = object.clone();
         let mut depth = 0_u32;
         loop {
@@ -484,11 +515,30 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>, RuntimeError> {
-        let Some(_) = self.proxy_snapshot_if_any(object)? else {
+        Ok(
+            match self.internal_get_own_property_owned(realm, object, key)? {
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                NativeConversion::Value(value) => {
+                    NativeConversion::Value(value.as_ref().map(|v| v.to_public()).transpose()?)
+                }
+            },
+        )
+    }
+
+    pub(crate) fn internal_get_own_property_owned(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<
+        NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
+        RuntimeError,
+    > {
+        if self.proxy_snapshot_if_any(object)?.is_none() {
             return self
-                .get_own_property(object, key)
+                .get_own_property_owned(object, key)
                 .map(NativeConversion::Value);
-        };
+        }
         self.proxy_get_own_property(realm, object, key)
     }
 
@@ -762,86 +812,49 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Completion, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        self.validate_value_domain(&receiver, "property receiver")?;
+        self.internal_get_jsvalue(realm, object, key, self.into_jsvalue(receiver)?)
+    }
+
+    pub(crate) fn internal_get_jsvalue(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        receiver: JsValue,
+    ) -> Result<Completion, RuntimeError> {
+        let read = self.prepare_ordinary_read_selected(object, key, &receiver, None);
+        self.release_jsvalue(receiver)?;
         Ok(
-            match self.internal_get_or_missing(realm, object, key, receiver)? {
-                NativeConversion::Value(value) => Completion::Return(match value {
-                    Some(value) => self.unroot_value(&value)?,
-                    None => JsValue::Undefined,
-                }),
-                NativeConversion::Throw(value) => Completion::Throw(self.unroot_value(&value)?),
+            match self.finish_prepared_read_jsvalue(realm, key, read?)? {
+                NativeConversion::Value(value) => {
+                    Completion::Return(value.unwrap_or(JsValue::Undefined))
+                }
+                NativeConversion::Throw(value) => Completion::Throw(self.into_jsvalue(value)?),
             },
         )
     }
 
-    /// Completion-aware property read which preserves QuickJS's internal
-    /// "missing" sentinel for ordinary prototype chains.
-    ///
-    /// A Proxy is deliberately a terminal observable boundary here. Even
-    /// when its `get` trap is absent and the target lookup ultimately returns
-    /// `undefined`, QuickJS treats the Proxy lookup as a completed Get rather
-    /// than recovering the ordinary-chain missing sentinel. Global binding
-    /// reads depend on that distinction to choose between `undefined` and a
-    /// ReferenceError.
-    pub(crate) fn internal_get_or_missing(
+    pub(crate) fn proxy_get_jsvalue(
         &self,
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
-        receiver: Value,
-    ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
-        let _operation = self.operation();
-        self.validate_object_and_key(object, key)?;
-        self.validate_value_domain(&receiver, "property receiver")?;
-        self.get_ordinary_chain(realm, object, key, receiver)
-    }
-
-    pub(super) fn get_special_or_missing(
-        &self,
-        kind: SpecialKind,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        receiver: Value,
-    ) -> Result<NativeConversion<Option<Value>>, RuntimeError> {
-        if !matches!(kind, SpecialKind::Proxy) {
-            return Err(RuntimeError::Invariant(
-                "prepared property read left a non-Proxy storage boundary",
-            ));
-        }
-        // Proxy Get observes undefined even when its target lookup is missing.
-        // Non-Proxy descriptor/prototype work is shared by prepared reads.
-        Ok(match self.proxy_get(realm, object, key, receiver)? {
-            Completion::Return(value) => {
-                NativeConversion::Value(Some(self.root_and_release_jsvalue(value)?))
-            }
-            Completion::Throw(value) => {
-                NativeConversion::Throw(self.root_and_release_jsvalue(value)?)
-            }
-        })
-    }
-
-    fn proxy_get(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
     ) -> Result<Completion, RuntimeError> {
-        let mut step = ProxyGetStep::start(
-            self,
-            realm,
-            object.clone(),
-            key.clone(),
-            self.into_jsvalue(receiver)?,
-        )?;
+        let mut step = ProxyGetStep::start(self, realm, object.clone(), key.clone(), receiver)?;
         loop {
             step = match step {
                 ProxyGetStep::Complete(completion) => return Ok(completion),
                 ProxyGetStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
-                    let receiver = self.root_and_release_jsvalue(resume.take_read_receiver())?;
-                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(
+                        self,
+                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
+                    )?
                 }
                 ProxyGetStep::Call { mut resume } => {
                     let target = resume.take_call_target();
@@ -862,8 +875,10 @@ impl Runtime {
                 ProxyGetStep::Descriptor { mut resume } => {
                     let object = resume.take_descriptor_object();
                     let key = resume.take_descriptor_key();
-                    resume
-                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                    resume.descriptor(
+                        self,
+                        self.internal_get_own_property_owned(realm, &object, &key)?,
+                    )?
                 }
             };
         }
@@ -877,13 +892,43 @@ impl Runtime {
         value: Value,
         receiver: Value,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
-        match self.prepare_set_property_with_receiver_in_realm(
+        self.validate_object_and_key(object, key)?;
+        self.validate_value_domain(&value, "property value")?;
+        self.validate_value_domain(&receiver, "property receiver")?;
+        let value = self.into_jsvalue(value)?;
+        let receiver = match self.into_jsvalue(receiver) {
+            Ok(receiver) => receiver,
+            Err(error) => {
+                self.release_jsvalue(value)?;
+                return Err(error);
+            }
+        };
+        self.internal_set_jsvalue(realm, object, key, value, receiver)
+    }
+
+    pub(crate) fn internal_set_jsvalue(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: JsValue,
+        receiver: JsValue,
+    ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
+        let mut step = super::ordinary::SetStep::start(
+            self,
             Some(realm),
-            object,
-            key,
+            object.clone(),
+            key.clone(),
             value,
             receiver,
-        )? {
+        )?;
+        let action = loop {
+            match step {
+                super::ordinary::SetStep::Complete(action) => break action,
+                request => step = request.finish_sync(self)?,
+            }
+        };
+        match action {
             PropertySetAction::Complete => Ok(NativeConversion::Value(InternalSetResult::Accepted)),
             PropertySetAction::RejectedProxyTrap => Ok(NativeConversion::Value(
                 InternalSetResult::RejectedProxyTrap,
@@ -896,12 +941,7 @@ impl Runtime {
                 let (setter, receiver, argument) = payload.into_parts();
 
                 let _operation = self.operation();
-                match self.call_internal_jsvalue(
-                    realm,
-                    &setter,
-                    self.into_jsvalue(receiver)?,
-                    vec![argument],
-                )? {
+                match self.call_internal_jsvalue(realm, &setter, receiver, vec![argument])? {
                     Completion::Return(value) => {
                         self.release_jsvalue(value)?;
                         Ok(NativeConversion::Value(InternalSetResult::Accepted))
@@ -919,7 +959,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
         value: &JsValue,
-        receiver: &Value,
+        receiver: &JsValue,
     ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
         self.prepare_typed_array_set_in_realm(None, object, key, value, receiver)
     }
@@ -930,7 +970,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
         value: &JsValue,
-        receiver: &Value,
+        receiver: &JsValue,
     ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
         use crate::engine::builtins::TypedWriteStep;
         match self.select_typed_array_set(object, key, receiver)? {
@@ -956,7 +996,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
         value: &JsValue,
-        receiver: &Value,
+        receiver: &JsValue,
     ) -> Result<Option<NativeConversion<bool>>, RuntimeError> {
         if matches!(value, JsValue::Object(_)) {
             return Err(RuntimeError::Invariant(
@@ -979,12 +1019,13 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        receiver: &Value,
+        receiver: &JsValue,
     ) -> Result<TypedSetSelection, RuntimeError> {
         let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
             return Ok(TypedSetSelection::Decline);
         };
-        let same_receiver = matches!(receiver, Value::Object(receiver) if receiver == object);
+        let same_receiver =
+            matches!(receiver, JsValue::Object(receiver) if *receiver == object.object_id());
         if same_receiver {
             return Ok(TypedSetSelection::Element(match numeric {
                 CanonicalNumericIndex::Valid(index) => Some(index),
@@ -1006,8 +1047,8 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: Value,
-        receiver: Value,
+        value: JsValue,
+        receiver: JsValue,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
         let mut step =
             ProxySetStep::start(self, realm, object.clone(), key.clone(), value, receiver)?;
@@ -1017,24 +1058,23 @@ impl Runtime {
                 ProxySetStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
-                    let receiver = self.root_and_release_jsvalue(resume.take_read_receiver())?;
-                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(
+                        self,
+                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
+                    )?
                 }
                 ProxySetStep::Call { mut resume } => {
                     let target = resume.take_call_target();
-                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|value| self.root_and_release_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     {
                         let completion = match target {
                             DirectCallTarget::Callable(callable) => {
-                                self.call_internal(realm, &callable, receiver, &arguments)?
+                                self.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                             }
                             DirectCallTarget::NonCallableProxy(proxy) => {
-                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                                self.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
                             }
                         };
                         resume.resume(self, completion)?
@@ -1043,81 +1083,20 @@ impl Runtime {
                 ProxySetStep::Set { mut resume } => {
                     let object = resume.take_set_object();
                     let key = resume.take_set_key();
-                    let value = self.root_and_release_jsvalue(resume.take_set_value())?;
-                    let receiver = self.root_and_release_jsvalue(resume.take_set_receiver())?;
-                    resume.set(self.internal_set(realm, &object, &key, value, receiver)?)?
+                    let receiver = resume.take_set_receiver();
+                    let value = resume.take_set_value();
+                    resume.set(self.internal_set_jsvalue(realm, &object, &key, value, receiver)?)?
                 }
                 ProxySetStep::Descriptor { mut resume } => {
                     let object = resume.take_descriptor_object();
                     let key = resume.take_descriptor_key();
-                    resume
-                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                    resume.descriptor(
+                        self,
+                        self.internal_get_own_property_owned(realm, &object, &key)?,
+                    )?
                 }
             };
         }
-    }
-
-    fn proxy_descriptor_object(
-        &self,
-        realm: ContextId,
-        descriptor: &OrdinaryPropertyDescriptor,
-    ) -> Result<ObjectRef, RuntimeError> {
-        let object = self.new_ordinary_object_in_realm(realm)?;
-        let mut fields = Vec::with_capacity(6);
-        if let DescriptorField::Present(value) = &descriptor.get {
-            fields.push((
-                "get",
-                match value {
-                    AccessorValue::Undefined => Value::Undefined,
-                    AccessorValue::Callable(callable) => {
-                        Value::Object(callable.as_object().clone())
-                    }
-                },
-            ));
-        }
-        if let DescriptorField::Present(value) = &descriptor.set {
-            fields.push((
-                "set",
-                match value {
-                    AccessorValue::Undefined => Value::Undefined,
-                    AccessorValue::Callable(callable) => {
-                        Value::Object(callable.as_object().clone())
-                    }
-                },
-            ));
-        }
-        if let DescriptorField::Present(value) = &descriptor.value {
-            fields.push(("value", value.clone()));
-        }
-        if let DescriptorField::Present(value) = descriptor.writable {
-            fields.push(("writable", Value::Bool(value)));
-        }
-        if let DescriptorField::Present(value) = descriptor.enumerable {
-            fields.push(("enumerable", Value::Bool(value)));
-        }
-        if let DescriptorField::Present(value) = descriptor.configurable {
-            fields.push(("configurable", Value::Bool(value)));
-        }
-        for (name, value) in fields {
-            let key = self.intern_property_key(name)?;
-            let accepted = self.define_own_property(
-                &object,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )?;
-            if !accepted {
-                return Err(RuntimeError::Invariant(
-                    "fresh Proxy descriptor object rejected a field",
-                ));
-            }
-        }
-        Ok(object)
     }
 
     fn proxy_get_own_property(
@@ -1125,7 +1104,10 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
-    ) -> Result<NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>, RuntimeError> {
+    ) -> Result<
+        NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
+        RuntimeError,
+    > {
         let mut step = ProxyOwnStep::start(self, realm, object.clone(), key.clone())?;
         loop {
             step = match step {
@@ -1133,8 +1115,11 @@ impl Runtime {
                 ProxyOwnStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
-                    let receiver = self.root_and_release_jsvalue(resume.take_read_receiver())?;
-                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(
+                        self,
+                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
+                    )?
                 }
                 ProxyOwnStep::Call { mut resume } => {
                     let target = resume.take_call_target();
@@ -1159,16 +1144,21 @@ impl Runtime {
                 ProxyOwnStep::Descriptor { mut resume } => {
                     let object = resume.take_descriptor_object();
                     let key = resume.take_descriptor_key();
-                    resume
-                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                    resume.descriptor(
+                        self,
+                        self.internal_get_own_property_owned(realm, &object, &key)?,
+                    )?
                 }
                 ProxyOwnStep::Extensible { mut resume } => {
                     let object = resume.take_extensible_object();
                     resume.extensible(self.internal_is_extensible(realm, &object)?)?
                 }
                 ProxyOwnStep::Convert { mut resume } => {
-                    let value = self.root_and_release_jsvalue(resume.take_convert_value())?;
-                    resume.converted(self, self.native_to_property_descriptor(realm, value)?)?
+                    let value = resume.take_convert_value();
+                    resume.converted(
+                        self,
+                        self.native_to_property_descriptor_jsvalue(realm, value)?,
+                    )?
                 }
             };
         }
@@ -1194,26 +1184,64 @@ impl Runtime {
                 },
             );
         };
-        self.proxy_define_own_property(realm, object, key, descriptor)
+        self.proxy_define_owned_property(
+            realm,
+            object,
+            key,
+            crate::engine::object::OwnedPropertyDescriptor::from_public(self, descriptor)?,
+        )
     }
 
-    fn proxy_define_own_property(
+    pub(crate) fn internal_define_owned_property(
         &self,
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
-        descriptor: &OrdinaryPropertyDescriptor,
+        descriptor: crate::engine::object::OwnedPropertyDescriptor,
+    ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
+        if self.proxy_snapshot_if_any(object)?.is_some() {
+            return self.proxy_define_owned_property(realm, object, key, descriptor);
+        }
+        if let Some(accepted) = self.try_define_owned_property(object, key, &descriptor)? {
+            return Ok(NativeConversion::Value(if accepted {
+                InternalDefineResult::Defined
+            } else {
+                InternalDefineResult::RejectedOrdinary(object.clone())
+            }));
+        }
+        Ok(
+            match self.define_owned_property_in_realm(Some(realm), object, key, &descriptor)? {
+                PropertyDefineOutcome::Defined(true) => {
+                    NativeConversion::Value(InternalDefineResult::Defined)
+                }
+                PropertyDefineOutcome::Defined(false) => {
+                    NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object.clone()))
+                }
+                PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
+            },
+        )
+    }
+
+    fn proxy_define_owned_property(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: crate::engine::object::OwnedPropertyDescriptor,
     ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
         let mut step =
-            ProxyDefineStep::start(self, realm, object.clone(), key.clone(), descriptor.clone())?;
+            ProxyDefineStep::start(self, realm, object.clone(), key.clone(), descriptor)?;
         loop {
             step = match step {
                 ProxyDefineStep::Complete(result) => return Ok(result),
                 ProxyDefineStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
-                    let receiver = self.root_and_release_jsvalue(resume.take_read_receiver())?;
-                    resume.resume(self, self.internal_get(realm, &object, &key, receiver)?)?
+                    let receiver = resume.take_read_receiver();
+                    resume.resume(
+                        self,
+                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
+                    )?
                 }
                 ProxyDefineStep::Call { mut resume } => {
                     let target = resume.take_call_target();
@@ -1239,18 +1267,17 @@ impl Runtime {
                     let object = resume.take_define_object();
                     let key = resume.take_define_key();
                     let descriptor = resume.take_define_descriptor();
-                    resume.defined(self.internal_define_own_property(
-                        realm,
-                        &object,
-                        &key,
-                        &descriptor,
-                    )?)?
+                    resume.defined(
+                        self.internal_define_owned_property(realm, &object, &key, descriptor)?,
+                    )?
                 }
                 ProxyDefineStep::Descriptor { mut resume } => {
                     let object = resume.take_descriptor_object();
                     let key = resume.take_descriptor_key();
-                    resume
-                        .descriptor(self, self.internal_get_own_property(realm, &object, &key)?)?
+                    resume.descriptor(
+                        self,
+                        self.internal_get_own_property_owned(realm, &object, &key)?,
+                    )?
                 }
             };
         }
@@ -1326,9 +1353,10 @@ impl Runtime {
                 ProxyCallStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
-                    let receiver = self.root_and_release_jsvalue(resume.take_read_receiver())?;
+                    let receiver = resume.take_read_receiver();
                     {
-                        let completion = self.internal_get(realm, &object, &key, receiver)?;
+                        let completion =
+                            self.internal_get_jsvalue(realm, &object, &key, receiver)?;
                         resume.resume(self, completion)?
                     }
                 }
@@ -1374,10 +1402,12 @@ impl Runtime {
 }
 
 fn proxy_gopd_descriptor_is_compatible(
-    target: Option<&CompleteOrdinaryPropertyDescriptor>,
-    result: &CompleteOrdinaryPropertyDescriptor,
+    target: Option<&crate::engine::object::OwnedCompletePropertyDescriptor>,
+    result: &crate::engine::object::OwnedCompletePropertyDescriptor,
     extensible: bool,
 ) -> bool {
+    let result = result.record();
+    let target = target.map(|value| value.record());
     let Some(target) = target else {
         return extensible && result.configurable();
     };
@@ -1385,15 +1415,19 @@ fn proxy_gopd_descriptor_is_compatible(
     if !target.configurable() {
         if result.configurable()
             || target.enumerable() != result.enumerable()
-            || complete_descriptor_is_data(target) != complete_descriptor_is_data(result)
+            || target.is_data_descriptor() != result.is_data_descriptor()
         {
             return false;
         }
         if let (
-            CompleteOrdinaryPropertyDescriptor::Data {
-                writable: false, ..
+            crate::engine::object::property::CompletePropertyDescriptor::Data {
+                writable: false,
+                ..
             },
-            CompleteOrdinaryPropertyDescriptor::Data { writable: true, .. },
+            crate::engine::object::property::CompletePropertyDescriptor::Data {
+                writable: true,
+                ..
+            },
         ) = (target, result)
         {
             return false;
@@ -1409,9 +1443,13 @@ fn proxy_gopd_descriptor_is_compatible(
             return false;
         }
         if let (
-            CompleteOrdinaryPropertyDescriptor::Data { writable: true, .. },
-            CompleteOrdinaryPropertyDescriptor::Data {
-                writable: false, ..
+            crate::engine::object::property::CompletePropertyDescriptor::Data {
+                writable: true,
+                ..
+            },
+            crate::engine::object::property::CompletePropertyDescriptor::Data {
+                writable: false,
+                ..
             },
         ) = (target, result)
         {
@@ -1422,36 +1460,34 @@ fn proxy_gopd_descriptor_is_compatible(
 }
 
 fn proxy_define_descriptor_is_compatible(
-    target: &CompleteOrdinaryPropertyDescriptor,
-    descriptor: &OrdinaryPropertyDescriptor,
+    runtime: &Runtime,
+    target: &crate::engine::object::OwnedCompletePropertyDescriptor,
+    descriptor: &crate::engine::object::OwnedPropertyDescriptor,
 ) -> bool {
-    let descriptor_record = descriptor_to_validation_record(descriptor);
-    let target_record = complete_to_validation_record(target);
+    let record = descriptor.raw_record();
+    let target = target.record();
+    let state = runtime.0.state.borrow();
     if validate_and_apply_property_descriptor(
         true,
-        &descriptor_record,
-        Some(&target_record),
-        &Value::Undefined,
-        Value::same_value,
+        &record,
+        Some(target),
+        &crate::engine::heap::RawValue::Undefined,
+        |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
     )
     .is_err()
     {
         return false;
     }
-    let setting_not_configurable =
-        matches!(descriptor.configurable, DescriptorField::Present(false));
-    if target.configurable() && setting_not_configurable {
+    if target.configurable() && matches!(descriptor.configurable, DescriptorField::Present(false)) {
         return false;
     }
-    if let CompleteOrdinaryPropertyDescriptor::Data { writable: true, .. } = target
+    if let crate::engine::object::property::CompletePropertyDescriptor::Data {
+        writable: true, ..
+    } = target
         && matches!(descriptor.writable, DescriptorField::Present(false))
         && !target.configurable()
     {
         return false;
     }
     true
-}
-
-const fn complete_descriptor_is_data(descriptor: &CompleteOrdinaryPropertyDescriptor) -> bool {
-    matches!(descriptor, CompleteOrdinaryPropertyDescriptor::Data { .. })
 }

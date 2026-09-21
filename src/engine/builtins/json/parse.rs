@@ -13,9 +13,9 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::ContextId;
 use crate::source::{LineColumn, QuickJsSourceLocator};
 
-use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey};
+use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsStringError, Value};
+use crate::engine::value::{JsString, JsStringError, JsValue, Value};
 use crate::engine::vm::frames::ExplicitBacktraceLocation;
 
 const MAX_JSON_PARSE_DEPTH: usize = 256;
@@ -26,6 +26,10 @@ enum JsonParseMode {
     QuickJsExtended,
 }
 
+fn parsed_number(value: f64) -> JsValue {
+    crate::engine::value::number::operations::Number::compact(value).into()
+}
+
 impl JsonParseMode {
     const fn is_extended(self) -> bool {
         matches!(self, Self::QuickJsExtended)
@@ -33,7 +37,8 @@ impl JsonParseMode {
 }
 
 pub(crate) struct JsonParseRecord {
-    original: Value,
+    runtime: Runtime,
+    original: JsValue,
     kind: JsonParseRecordKind,
 }
 
@@ -56,9 +61,23 @@ struct JsonObjectParseRecordEntry {
     record: Rc<JsonParseRecord>,
 }
 
+impl Drop for JsonParseRecord {
+    fn drop(&mut self) {
+        let value = std::mem::replace(&mut self.original, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(value);
+    }
+}
 impl JsonParseRecord {
-    pub(crate) fn matches(&self, value: &Value) -> bool {
-        self.original.same_value(value)
+    pub(crate) fn matches_jsvalue(
+        &self,
+        runtime: &Runtime,
+        value: &JsValue,
+    ) -> Result<bool, RuntimeError> {
+        Ok(crate::engine::value::collection_key::same_value(
+            &runtime.0.state.borrow().heap,
+            &self.original.as_raw(),
+            &value.as_raw(),
+        ))
     }
 
     pub(crate) fn primitive_span(&self) -> Option<(usize, usize)> {
@@ -136,7 +155,7 @@ impl Runtime {
         realm: ContextId,
         source: &JsString,
         retain_record: bool,
-    ) -> Result<NativeConversion<(Value, Option<JsonParseRecord>)>, RuntimeError> {
+    ) -> Result<NativeConversion<(JsValue, Option<JsonParseRecord>)>, RuntimeError> {
         self.0.state.borrow().heap.context(realm)?;
         let mut parser = JsonParser {
             runtime: self,
@@ -182,7 +201,7 @@ impl Runtime {
         realm: ContextId,
         source: &JsString,
         filename: &JsString,
-    ) -> Result<NativeConversion<Value>, RuntimeError> {
+    ) -> Result<NativeConversion<JsValue>, RuntimeError> {
         self.parse_json_module_source_with_mode(
             realm,
             JsonModuleSource::Text(source),
@@ -200,7 +219,7 @@ impl Runtime {
         realm: ContextId,
         source: &[u8],
         filename: &JsString,
-    ) -> Result<NativeConversion<Value>, RuntimeError> {
+    ) -> Result<NativeConversion<JsValue>, RuntimeError> {
         self.parse_json_module_source_with_mode(
             realm,
             JsonModuleSource::Bytes(source),
@@ -218,7 +237,7 @@ impl Runtime {
         realm: ContextId,
         source: &JsString,
         filename: &JsString,
-    ) -> Result<NativeConversion<Value>, RuntimeError> {
+    ) -> Result<NativeConversion<JsValue>, RuntimeError> {
         self.parse_json_module_source_with_mode(
             realm,
             JsonModuleSource::Text(source),
@@ -234,7 +253,7 @@ impl Runtime {
         realm: ContextId,
         source: &[u8],
         filename: &JsString,
-    ) -> Result<NativeConversion<Value>, RuntimeError> {
+    ) -> Result<NativeConversion<JsValue>, RuntimeError> {
         self.parse_json_module_source_with_mode(
             realm,
             JsonModuleSource::Bytes(source),
@@ -249,7 +268,7 @@ impl Runtime {
         source: JsonModuleSource<'source>,
         filename: &JsString,
         mode: JsonParseMode,
-    ) -> Result<NativeConversion<Value>, RuntimeError> {
+    ) -> Result<NativeConversion<JsValue>, RuntimeError> {
         self.0.state.borrow().heap.context(realm)?;
         let mut parser = match source {
             JsonModuleSource::Text(source) => JsonParser {
@@ -268,9 +287,12 @@ impl Runtime {
         };
         match parser.parse_document() {
             Ok((value, None)) => Ok(NativeConversion::Value(value)),
-            Ok((_, Some(_))) => Err(RuntimeError::Invariant(
-                "JSON module parsing unexpectedly retained a parse record",
-            )),
+            Ok((value, Some(_))) => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "JSON module parsing unexpectedly retained a parse record",
+                ))
+            }
             Err(JsonParseFailure::Syntax(failure)) => {
                 let position = parser.source_location(failure.offset)?;
                 let exception = self.new_native_error_without_backtrace_from_error(
@@ -350,21 +372,28 @@ impl<'a> JsonParser<'a> {
         })
     }
 
-    fn parse_document(&mut self) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
+    fn parse_document(&mut self) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
         self.skip_whitespace()?;
-        let result = self.parse_value(0)?;
-        self.skip_whitespace()?;
-        if self.cursor != self.units.len() {
-            // QuickJS lexes the next token before reporting trailing data, so
-            // malformed trailing strings/numbers retain their lexical error.
-            let trailing_start = self.cursor;
-            self.validate_current_token_lexically()?;
-            return self.syntax_at(trailing_start, "unexpected data at the end");
+        let (value, record) = self.parse_value(0)?;
+        let result = (|| {
+            self.skip_whitespace()?;
+            if self.cursor != self.units.len() {
+                let trailing_start = self.cursor;
+                self.validate_current_token_lexically()?;
+                return self.syntax_at(trailing_start, "unexpected data at the end");
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => Ok((value, record)),
+            Err(error) => {
+                self.runtime.release_jsvalue(value)?;
+                Err(error)
+            }
         }
-        Ok(result)
     }
 
-    fn parse_value(&mut self, depth: usize) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
+    fn parse_value(&mut self, depth: usize) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
         if depth > MAX_JSON_PARSE_DEPTH {
             return self.syntax("stack overflow");
         }
@@ -384,9 +413,8 @@ impl<'a> JsonParser<'a> {
                 let start = self.cursor;
                 let string = self.parse_string(unit)?;
                 let end = self.cursor;
-                let value = Value::String(string);
-                let record = self.primitive_record(value.clone(), start, end);
-                Ok((value, record))
+                let value = self.runtime.into_jsvalue(Value::String(string))?;
+                self.finish_value(value, JsonParseRecordKind::Primitive { start, end })
             }
             unit if unit == u16::from(b'-')
                 || is_ascii_digit(unit)
@@ -404,21 +432,23 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_object(&mut self, depth: usize) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
+    fn parse_object(
+        &mut self,
+        depth: usize,
+    ) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
         self.cursor += 1;
         let object = self.runtime.new_ordinary_object_in_realm(self.realm)?;
         let mut entries = Vec::new();
         self.skip_whitespace()?;
         if self.consume_ascii(b'}') {
-            let value = Value::Object(object);
-            let record = self.retain_record.then(|| JsonParseRecord {
-                original: value.clone(),
-                kind: JsonParseRecordKind::Object(JsonObjectParseRecord {
+            let value = JsValue::Object(object.into_handle());
+            return self.finish_value(
+                value,
+                JsonParseRecordKind::Object(JsonObjectParseRecord {
                     entries,
                     hashed: false,
                 }),
-            });
-            return Ok((value, record));
+            );
         }
 
         loop {
@@ -475,35 +505,29 @@ impl<'a> JsonParser<'a> {
             break;
         }
 
-        let value = Value::Object(object);
-        let record = self.retain_record.then(|| {
-            let hashed = entries.len() >= 9;
-            JsonParseRecord {
-                original: value.clone(),
-                kind: JsonParseRecordKind::Object(JsonObjectParseRecord { entries, hashed }),
-            }
-        });
-        Ok((value, record))
+        let value = JsValue::Object(object.into_handle());
+        let hashed = entries.len() >= 9;
+        self.finish_value(
+            value,
+            JsonParseRecordKind::Object(JsonObjectParseRecord { entries, hashed }),
+        )
     }
 
-    fn parse_array(&mut self, depth: usize) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
+    fn parse_array(&mut self, depth: usize) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
         self.cursor += 1;
         let array = self.runtime.new_array(self.realm)?;
         let mut elements = Vec::new();
         self.skip_whitespace()?;
         if self.consume_ascii(b']') {
-            let value = Value::Object(array);
-            let record = self.retain_record.then(|| JsonParseRecord {
-                original: value.clone(),
-                kind: JsonParseRecordKind::Array(elements),
-            });
-            return Ok((value, record));
+            let value = JsValue::Object(array.into_handle());
+            return self.finish_value(value, JsonParseRecordKind::Array(elements));
         }
 
         let mut index = 0_u32;
         loop {
             let (element, child_record) = self.parse_value(depth + 1)?;
-            self.runtime.append_fresh_array_value(&array, element)?;
+            self.runtime
+                .append_fresh_array_value_jsvalue(&array, element)?;
             if let Some(record) = child_record {
                 elements.push(Rc::new(record));
             }
@@ -529,12 +553,8 @@ impl<'a> JsonParser<'a> {
             break;
         }
 
-        let value = Value::Object(array);
-        let record = self.retain_record.then(|| JsonParseRecord {
-            original: value.clone(),
-            kind: JsonParseRecordKind::Array(elements),
-        });
-        Ok((value, record))
+        let value = JsValue::Object(array.into_handle());
+        self.finish_value(value, JsonParseRecordKind::Array(elements))
     }
 
     fn parse_string(&mut self, separator: u16) -> JsonParseResult<JsString> {
@@ -598,7 +618,7 @@ impl<'a> JsonParser<'a> {
         Ok(JsString::from_owned_utf16(output))
     }
 
-    fn parse_number_value(&mut self) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
+    fn parse_number_value(&mut self) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
         let start = self.cursor;
         let negative = if self.consume_ascii(b'-') {
             true
@@ -615,19 +635,29 @@ impl<'a> JsonParser<'a> {
         if self.mode.is_extended() {
             if ascii_starts_with(&self.units[self.cursor..], b"Infinity") {
                 self.cursor += b"Infinity".len();
-                let value = Value::number(if negative {
+                let value = parsed_number(if negative {
                     f64::NEG_INFINITY
                 } else {
                     f64::INFINITY
                 });
-                let record = self.primitive_record(value.clone(), start, self.cursor);
-                return Ok((value, record));
+                return self.finish_value(
+                    value,
+                    JsonParseRecordKind::Primitive {
+                        start,
+                        end: self.cursor,
+                    },
+                );
             }
             if ascii_starts_with(&self.units[self.cursor..], b"NaN") {
                 self.cursor += b"NaN".len();
-                let value = Value::number(f64::NAN);
-                let record = self.primitive_record(value.clone(), start, self.cursor);
-                return Ok((value, record));
+                let value = parsed_number(f64::NAN);
+                return self.finish_value(
+                    value,
+                    JsonParseRecordKind::Primitive {
+                        start,
+                        end: self.cursor,
+                    },
+                );
             }
 
             if self.peek() == Some(u16::from(b'0')) {
@@ -667,9 +697,14 @@ impl<'a> JsonParser<'a> {
                     if negative {
                         number = -number;
                     }
-                    let value = Value::number(number);
-                    let record = self.primitive_record(value.clone(), start, self.cursor);
-                    return Ok((value, record));
+                    let value = parsed_number(number);
+                    return self.finish_value(
+                        value,
+                        JsonParseRecordKind::Primitive {
+                            start,
+                            end: self.cursor,
+                        },
+                    );
                 }
             }
         }
@@ -724,9 +759,8 @@ impl<'a> JsonParser<'a> {
 
         let end = self.cursor;
         let spelling = JsString::from_owned_utf16(self.units[start..end].to_vec());
-        let value = Value::number(crate::engine::value::number_parse::parse_float(&spelling));
-        let record = self.primitive_record(value.clone(), start, end);
-        Ok((value, record))
+        let value = parsed_number(crate::engine::value::number_parse::parse_float(&spelling));
+        self.finish_value(value, JsonParseRecordKind::Primitive { start, end })
     }
 
     fn parse_identifier_name(&mut self) -> JsString {
@@ -739,7 +773,7 @@ impl<'a> JsonParser<'a> {
         JsString::from_owned_utf16(self.units[start..self.cursor].to_vec())
     }
 
-    fn parse_identifier_value(&mut self) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
+    fn parse_identifier_value(&mut self) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
         let start = self.cursor;
         self.cursor += 1;
         while self.peek().is_some_and(is_ascii_identifier_continue) {
@@ -748,15 +782,15 @@ impl<'a> JsonParser<'a> {
         let end = self.cursor;
         let spelling = &self.units[start..end];
         let value = if ascii_eq(spelling, b"true") {
-            Value::Bool(true)
+            JsValue::Bool(true)
         } else if ascii_eq(spelling, b"false") {
-            Value::Bool(false)
+            JsValue::Bool(false)
         } else if ascii_eq(spelling, b"null") {
-            Value::Null
+            JsValue::Null
         } else if self.mode.is_extended() && ascii_eq(spelling, b"NaN") {
-            Value::number(f64::NAN)
+            parsed_number(f64::NAN)
         } else if self.mode.is_extended() && ascii_eq(spelling, b"Infinity") {
-            Value::number(f64::INFINITY)
+            parsed_number(f64::INFINITY)
         } else {
             let token = spelling
                 .iter()
@@ -764,39 +798,46 @@ impl<'a> JsonParser<'a> {
                 .collect::<String>();
             return self.syntax_at(start, &format!("unexpected token: '{token}'"));
         };
-        let record = self.primitive_record(value.clone(), start, end);
-        Ok((value, record))
+        self.finish_value(value, JsonParseRecordKind::Primitive { start, end })
     }
 
-    fn primitive_record(
+    fn finish_value(
         &self,
-        original: Value,
-        start: usize,
-        end: usize,
-    ) -> Option<JsonParseRecord> {
-        self.retain_record.then(|| JsonParseRecord {
+        value: JsValue,
+        kind: JsonParseRecordKind,
+    ) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
+        if !self.retain_record {
+            return Ok((value, None));
+        }
+        let original = match self.runtime.dup_jsvalue(&value) {
+            Ok(value) => value,
+            Err(error) => {
+                self.runtime.release_jsvalue(value)?;
+                return Err(error.into());
+            }
+        };
+        let record = JsonParseRecord {
+            runtime: self.runtime.clone(),
             original,
-            kind: JsonParseRecordKind::Primitive { start, end },
-        })
+            kind,
+        };
+        Ok((value, Some(record)))
     }
 
     fn define_json_property(
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: Value,
+        value: JsValue,
     ) -> JsonParseResult<()> {
-        if !self.runtime.define_own_property(
-            object,
-            key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
+        let result = self
+            .runtime
+            .define_selected_set_data(object, key, &value, false);
+        self.runtime.release_jsvalue(value)?;
+        if !matches!(
+            result?,
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(true)
+        ) {
             return Err(JsonParseFailure::Runtime(RuntimeError::Invariant(
                 "fresh JSON property definition was rejected",
             )));
@@ -822,7 +863,8 @@ impl<'a> JsonParser<'a> {
                 && (unit == u16::from(b'+')
                     || (unit == u16::from(b'.') && self.peek_at(1).is_some_and(is_ascii_digit))))
         {
-            self.parse_number_value().map(|_| ())
+            self.parse_number_value()
+                .and_then(|(value, _)| self.runtime.release_jsvalue(value).map_err(Into::into))
         } else {
             Ok(())
         };

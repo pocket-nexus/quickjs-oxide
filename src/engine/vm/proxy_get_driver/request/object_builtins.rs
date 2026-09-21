@@ -99,7 +99,7 @@ impl From<crate::engine::builtins::PropertyStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::Property(resume)),
                 }
             }
@@ -158,7 +158,7 @@ impl From<crate::engine::builtins::PredicateStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::Predicate(resume)),
                 }
             }
@@ -230,7 +230,7 @@ impl From<crate::engine::builtins::DefinitionsStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::Definitions(resume)),
                 }
             }
@@ -315,7 +315,7 @@ impl From<crate::engine::builtins::ObjectIterationStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::ObjectIteration(resume)),
                 }
             }
@@ -465,7 +465,7 @@ impl From<crate::engine::builtins::JsonParseStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::JsonParse(resume)),
                 }
             }

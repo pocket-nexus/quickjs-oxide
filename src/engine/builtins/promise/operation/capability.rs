@@ -53,29 +53,25 @@ impl PromiseResume {
         match std::mem::replace(&mut self.phase, Phase::Identity) {
             Phase::AggregateCapability {
                 constructor,
-                iterable,
+                inputs,
                 kind,
-            } => super::aggregate::ready(
-                runtime,
-                self.realm,
-                constructor,
-                iterable,
-                kind,
-                capability,
-            ),
+            } => {
+                super::aggregate::ready(runtime, self.realm, constructor, inputs, kind, capability)
+            }
             Phase::ConvenienceCapability { kind, arguments } => {
                 super::convenience::ready(runtime, self.realm, kind, arguments, capability)
             }
-            Phase::StaticCapability { argument, kind } => {
-                let target = if kind == crate::engine::builtins::native::PromiseNativeKind::Reject {
-                    capability.reject
-                } else {
-                    capability.resolve
-                };
+            Phase::StaticCapability(mut state) => {
+                let target =
+                    if state.kind == crate::engine::builtins::native::PromiseNativeKind::Reject {
+                        capability.reject
+                    } else {
+                        capability.resolve
+                    };
                 Ok({
                     let __pending_field_callable = target;
                     let __pending_field_receiver = JsValue::Undefined;
-                    let __pending_field_arguments = vec![runtime.into_jsvalue(argument)?];
+                    let __pending_field_arguments = vec![state.take_argument()];
                     let __pending_field_resume = Box::new(Self {
                         runtime: runtime.clone(),
                         pending_effect: super::PromiseStepPending::default(),

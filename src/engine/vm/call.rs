@@ -255,9 +255,8 @@ impl Runtime {
         &self,
         realm: ContextId,
         callable: &CallableRef,
-        iterator: Value,
+        iterator: &JsValue,
     ) -> Result<Option<NativeInvokeOutcome>, RuntimeError> {
-        self.validate_value_domain(&iterator, "iterator-next receiver")?;
         let Some((target, _defining_realm, min_readable_args)) =
             self.direct_native_callable_metadata(callable)?
         else {
@@ -272,7 +271,7 @@ impl Runtime {
             target,
             min_readable_args,
             NativeInvocation::Call {
-                this_value: self.unroot_value(&iterator)?,
+                this_value: self.dup_jsvalue(iterator)?,
             },
             &[],
             NativeInvokeMode::IteratorNextRaw,
@@ -287,6 +286,23 @@ impl Runtime {
                 "not a function",
             )));
         };
+        self.callable_from_object(object)
+    }
+
+    pub(crate) fn callable_from_jsvalue(
+        &self,
+        value: &JsValue,
+    ) -> Result<CallableRef, RuntimeError> {
+        let JsValue::Object(id) = value else {
+            return Err(RuntimeError::Engine(Error::new(
+                ErrorKind::Type,
+                "not a function",
+            )));
+        };
+        self.callable_from_object(ObjectRef::from_borrowed_handle(self.clone(), *id)?)
+    }
+
+    fn callable_from_object(&self, object: ObjectRef) -> Result<CallableRef, RuntimeError> {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("callable"));
         }
@@ -365,6 +381,29 @@ impl Runtime {
                 "not a function",
             )));
         };
+        self.constructor_from_object(caller_realm, object)
+    }
+
+    pub(crate) fn constructor_from_jsvalue(
+        &self,
+        caller_realm: ContextId,
+        value: JsValue,
+    ) -> Result<NativeConversion<ConstructorRef>, RuntimeError> {
+        let JsValue::Object(id) = value else {
+            self.release_jsvalue(value)?;
+            return Err(RuntimeError::Engine(Error::new(
+                ErrorKind::Type,
+                "not a function",
+            )));
+        };
+        self.constructor_from_object(caller_realm, ObjectRef::from_owned_handle(self.clone(), id))
+    }
+
+    fn constructor_from_object(
+        &self,
+        caller_realm: ContextId,
+        object: ObjectRef,
+    ) -> Result<NativeConversion<ConstructorRef>, RuntimeError> {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("constructor"));
         }
@@ -725,12 +764,12 @@ impl Runtime {
     pub(crate) fn constructor_prototype_source(
         &self,
         caller_realm: ContextId,
-        new_target: &Value,
+        new_target: JsValue,
     ) -> Result<NativeConversion<ConstructorPrototypeSource>, RuntimeError> {
         prototype::finish(
             self,
             caller_realm,
-            prototype::ProtoSourceStep::start(self, caller_realm, new_target.clone())?,
+            prototype::ProtoSourceStep::start(self, caller_realm, new_target)?,
         )
     }
 

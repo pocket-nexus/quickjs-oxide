@@ -11,13 +11,15 @@ use crate::engine::{
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::ObjectRef,
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
     },
 };
 
+#[cfg(test)]
+use crate::engine::value::Value;
 #[cfg(test)]
 mod tests;
 
@@ -41,7 +43,7 @@ impl Runtime {
         element: TypedArrayElementKind,
         initial_length: u64,
         index: i64,
-        replacement: Value,
+        replacement: &JsValue,
     ) -> Result<Completion, RuntimeError> {
         let current = self.typed_array_state(&source)?;
         if current.out_of_bounds || index < 0 || index >= i64::from(current.length) {
@@ -64,15 +66,20 @@ impl Runtime {
             };
         let index = u64::try_from(index)
             .map_err(|_| RuntimeError::Invariant("validated TypedArray.with index was negative"))?;
-        match self.typed_array_set_index(realm, &target, index, &replacement)? {
-            NativeConversion::Value(()) => {}
+        match super::write::TypedWriteStep::set(
+            self,
+            target.clone(),
+            Some(index),
+            self.dup_jsvalue(replacement)?,
+        )?
+        .finish_sync(self, realm)?
+        {
+            NativeConversion::Value(_) => {}
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         }
-        Ok(Completion::Return(
-            self.into_jsvalue(Value::Object(target))?,
-        ))
+        Ok(Completion::Return(JsValue::Object(target.into_handle())))
     }
 
     pub(crate) fn call_typed_array_to_reversed(
@@ -85,17 +92,16 @@ impl Runtime {
                 "TypedArray.prototype.toReversed received a constructor invocation",
             ));
         };
-        let this_value = self.root_value(this_value)?;
-        let source = match self.require_typed_array_borrowed(realm, &this_value)? {
+        let source = match self.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        let state = self.typed_array_state(source)?;
+        let state = self.typed_array_state(&source)?;
         let target = match self.typed_array_copy_to_default(
             realm,
-            source,
+            &source,
             state.snapshot.element,
             u64::from(state.length),
         )? {
@@ -124,9 +130,7 @@ impl Runtime {
                 }
             })?;
         }
-        Ok(Completion::Return(
-            self.into_jsvalue(Value::Object(target))?,
-        ))
+        Ok(Completion::Return(JsValue::Object(target.into_handle())))
     }
 
     /// QuickJS's internal same-class TypedArray constructor used by copying
@@ -207,10 +211,12 @@ impl Runtime {
         } else {
             for index in 0..length {
                 let value = self
-                    .typed_array_read_index(source, index)?
-                    .unwrap_or(Value::Undefined);
-                match self.typed_array_set_index(realm, &target, index, &value)? {
-                    NativeConversion::Value(()) => {}
+                    .typed_array_read_index_jsvalue(source, index)?
+                    .unwrap_or(JsValue::Undefined);
+                match super::write::TypedWriteStep::set(self, target.clone(), Some(index), value)?
+                    .finish_sync(self, realm)?
+                {
+                    NativeConversion::Value(_) => {}
                     NativeConversion::Throw(value) => {
                         return Ok(NativeConversion::Throw(value));
                     }
@@ -241,14 +247,23 @@ impl std::ops::DerefMut for TypedWithResume {
 }
 const _: () = assert!(std::mem::size_of::<TypedWithResume>() <= 8);
 pub(crate) struct TypedWithResumeState {
+    replacement: JsValue,
     realm: ContextId,
     source: ObjectRef,
     element: TypedArrayElementKind,
     length: i64,
     phase: WithPhase,
 }
+impl Drop for TypedWithResumeState {
+    fn drop(&mut self) {
+        let _ = self
+            .source
+            .runtime()
+            .release_jsvalue(std::mem::replace(&mut self.replacement, JsValue::Undefined));
+    }
+}
 enum WithPhase {
-    Index(Value),
+    Index,
     Replacement(i64),
 }
 impl TypedWithStep {
@@ -263,7 +278,7 @@ impl TypedWithStep {
                 "TypedArray.prototype.with received a constructor invocation",
             ));
         };
-        let source = match runtime.require_typed_array(realm, runtime.root_value(this_value)?)? {
+        let source = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(Self::Complete(Completion::Throw(
@@ -281,21 +296,21 @@ impl TypedWithStep {
                 )?,
             )));
         }
-        let replacement = runtime.root_value(arguments.readable.get(1).ok_or(
+        let mut resume = TypedWithResume(Box::new(TypedWithResumeState {
+            realm,
+            source,
+            element: initial.snapshot.element,
+            length: i64::from(initial.length),
+            replacement: JsValue::Undefined,
+            phase: WithPhase::Index,
+        }));
+        resume.0.replacement = runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
             RuntimeError::Invariant("TypedArray.with replacement argv was not padded"),
         )?)?;
-        Ok(Self::Primitive {
-            value: runtime.dup_jsvalue(arguments.readable.first().ok_or(
-                RuntimeError::Invariant("TypedArray.with index argv was not padded"),
-            )?)?,
-            resume: TypedWithResume(Box::new(TypedWithResumeState {
-                realm,
-                source,
-                element: initial.snapshot.element,
-                length: i64::from(initial.length),
-                phase: WithPhase::Index(replacement),
-            })),
-        })
+        let value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("TypedArray.with index argv was not padded"),
+        )?)?;
+        Ok(Self::Primitive { value, resume })
     }
 }
 impl TypedWithResume {
@@ -305,15 +320,17 @@ impl TypedWithResume {
         result: Completion,
     ) -> Result<TypedWithStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(TypedWithStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
-            WithPhase::Index(replacement) => {
-                let index = match runtime.native_to_int64_sat(self.0.realm, &value)? {
-                    NativeConversion::Value(value) => value,
+            WithPhase::Index => {
+                let number = runtime.number_from_primitive_jsvalue(self.0.realm, &value);
+                runtime.release_jsvalue(value)?;
+                let index = match number? {
+                    NativeConversion::Value(number) => Runtime::int64_from_number(number),
                     NativeConversion::Throw(value) => {
                         return Ok(TypedWithStep::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
@@ -326,7 +343,7 @@ impl TypedWithResume {
                     index
                 };
                 Ok(TypedWithStep::Primitive {
-                    value: runtime.into_jsvalue(replacement)?,
+                    value: std::mem::replace(&mut self.0.replacement, JsValue::Undefined),
                     resume: {
                         let updated_0 = WithPhase::Replacement(index);
                         self.0.phase = updated_0;
@@ -335,13 +352,14 @@ impl TypedWithResume {
                 })
             }
             WithPhase::Replacement(index) => {
+                self.0.replacement = value;
                 Ok(TypedWithStep::Complete(runtime.finish_typed_with(
                     self.0.realm,
-                    self.0.source,
+                    self.0.source.clone(),
                     self.0.element,
                     self.0.length as u64,
                     index,
-                    value,
+                    &self.0.replacement,
                 )?))
             }
         }

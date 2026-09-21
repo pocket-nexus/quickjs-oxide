@@ -31,10 +31,12 @@ impl Runtime {
         &self,
         realm: ContextId,
         constructor: Option<ConstructorRef>,
-        on_finally: Value,
-    ) -> Result<[Value; 2], RuntimeError> {
-        let callable = match &on_finally {
-            Value::Object(object) => self.as_callable(object)?,
+        on_finally: &JsValue,
+    ) -> Result<[JsValue; 2], RuntimeError> {
+        let callable = match on_finally {
+            JsValue::Object(id) => {
+                self.as_callable(&ObjectRef::from_borrowed_handle(self.clone(), *id)?)?
+            }
             _ => None,
         };
 
@@ -61,17 +63,25 @@ impl Runtime {
                 capture(),
             )?;
             [
-                Value::Object(fulfill.as_object().clone()),
-                Value::Object(reject.as_object().clone()),
+                JsValue::Object(fulfill.as_object().clone().into_handle()),
+                JsValue::Object(reject.as_object().clone().into_handle()),
             ]
         } else {
-            [on_finally.clone(), on_finally.clone()]
+            {
+                let first = self.dup_jsvalue(on_finally)?;
+                match self.dup_jsvalue(on_finally) {
+                    Ok(second) => [first, second],
+                    Err(error) => {
+                        self.release_jsvalue(first)?;
+                        return Err(error);
+                    }
+                }
+            }
         };
 
         // The internal handlers (or argument copies) now own every edge needed
         // by the dynamic then call, matching QuickJS's pre-Invoke releases.
         drop(constructor);
-        drop(on_finally);
         Ok(handlers)
     }
 
@@ -121,8 +131,9 @@ impl Runtime {
                 "Promise finally thunk had the wrong internal capture",
             ));
         };
-        let value = self.root_raw_value(value.clone())?;
-        let value = self.into_jsvalue(value)?;
+        let value = self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
+            RuntimeError::Invariant("Promise finally capture contains an internal sentinel"),
+        )?)?;
         Ok(match kind {
             PromiseReactionKind::Fulfill => Completion::Return(value),
             PromiseReactionKind::Reject => Completion::Throw(value),

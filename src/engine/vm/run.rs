@@ -298,11 +298,9 @@ fn release_displaced(
     Ok(())
 }
 
-/// String, BigInt and scalar owners drop Rc/number storage directly. That drop
-/// cannot execute JavaScript, drain runtime roots or observe the active frame,
-/// so the overwrite/drop paths may release them inside the RunSlots borrow
-/// without materialization or active-PC publication. Symbols stay conservative
-/// because their atom release touches runtime tables.
+/// Only inline scalars can be discarded without touching runtime storage.
+/// String and BigInt now own arena edges, so their last release must follow
+/// the same readiness/publication discipline as objects and symbols.
 fn primitive_release_owner(value: &JsValue) -> bool {
     immediate(value)
 }

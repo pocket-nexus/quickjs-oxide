@@ -6,17 +6,12 @@ use super::{
 };
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
-use crate::engine::object::operations::{
-    descriptor_to_validation_record, validation_record_to_complete,
-};
 use crate::engine::object::property::validate_and_apply_property_descriptor;
-use crate::engine::object::{
-    CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-};
+use crate::engine::object::{ObjectRef, OwnedCompletePropertyDescriptor, PropertyKey};
 use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
-type Descriptor = Option<CompleteOrdinaryPropertyDescriptor>;
+type Descriptor = Option<OwnedCompletePropertyDescriptor>;
 
 pub(crate) enum ProxyOwnStep {
     Complete(NativeConversion<Descriptor>),
@@ -60,7 +55,7 @@ enum Phase {
     },
     Target {
         rooted: RootedProxy,
-        result: Value,
+        result: Option<ObjectRef>,
     },
     Extensible {
         rooted: RootedProxy,
@@ -171,6 +166,7 @@ impl ProxyOwnResume {
             ),
             Phase::Trap { rooted, key } => {
                 if !matches!(value, JsValue::Undefined | JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     return Ok(ProxyOwnStep::Complete(runtime.proxy_invariant_throw(
                         self.0.realm,
                         "getOwnPropertyDescriptor",
@@ -184,7 +180,13 @@ impl ProxyOwnResume {
                         realm: self.0.realm,
                         phase: Phase::Target {
                             rooted,
-                            result: runtime.root_and_release_jsvalue(value)?,
+                            result: match value {
+                                JsValue::Object(id) => {
+                                    Some(ObjectRef::from_owned_handle(runtime.clone(), id))
+                                }
+                                JsValue::Undefined => None,
+                                _ => unreachable!(),
+                            },
                         },
                     })),
                 ))
@@ -209,7 +211,7 @@ impl ProxyOwnResume {
         match self.0.phase {
             Phase::Forward { .. } => Ok(ProxyOwnStep::Complete(NativeConversion::Value(target))),
             Phase::Target { rooted, result } => {
-                if matches!(result, Value::Undefined) {
+                if result.is_none() {
                     if let Some(target) = target
                         && (!target.configurable()
                             || !runtime.raw_extensible_bit(&rooted.target)?)
@@ -224,7 +226,9 @@ impl ProxyOwnResume {
                 // QuickJS queries target extensibility before reading any
                 // fields from the descriptor returned by the trap.
                 let mut pending = ProxyOwnStepPending::new(runtime.clone());
-                pending.extensible_result = Some(runtime.into_jsvalue(result)?);
+                pending.extensible_result = Some(JsValue::Object(
+                    result.expect("object trap result").into_handle(),
+                ));
                 Ok(ProxyOwnStep::request_extensible(
                     rooted.target.clone(),
                     Self(Box::new(ProxyOwnResumeState {
@@ -280,7 +284,7 @@ impl ProxyOwnResume {
     pub(crate) fn converted(
         self,
         runtime: &Runtime,
-        result: NativeConversion<OrdinaryPropertyDescriptor>,
+        result: NativeConversion<crate::engine::object::OwnedPropertyDescriptor>,
     ) -> Result<ProxyOwnStep, RuntimeError> {
         let Phase::Converted {
             _rooted,
@@ -298,18 +302,24 @@ impl ProxyOwnResume {
             }
             NativeConversion::Value(result) => result,
         };
-        let result = descriptor_to_validation_record(&result);
+        let record = result.raw_record();
         let complete = validate_and_apply_property_descriptor(
             true,
-            &result,
+            &record,
             None,
-            &Value::Undefined,
-            Value::same_value,
+            &crate::engine::heap::RawValue::Undefined,
+            |a, b| {
+                crate::engine::value::collection_key::same_value(
+                    &runtime.0.state.borrow().heap,
+                    a,
+                    b,
+                )
+            },
         )
         .map_err(|_| {
             RuntimeError::Invariant("validated Proxy descriptor could not be completed")
         })?;
-        let result = validation_record_to_complete(complete)?;
+        let result = OwnedCompletePropertyDescriptor::from_raw(runtime, &complete)?;
         if !proxy_gopd_descriptor_is_compatible(target.as_ref(), &result, extensible) {
             return Ok(ProxyOwnStep::Complete(runtime.proxy_invariant_throw(
                 self.0.realm,

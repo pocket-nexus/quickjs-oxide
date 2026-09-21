@@ -29,7 +29,6 @@ pub(super) fn finish(
     }
     let mut frame = execution.frames.pop(id)?;
     let return_to = frame.cold.return_to;
-    let constructor_return = frame.cold.constructor_return.take();
     let guard = frame.cold.entry_guard.take();
     let completion = match forwarded {
         Some(completion) => completion,
@@ -46,18 +45,20 @@ pub(super) fn finish(
     if let Some(guard) = guard {
         guard.finish().map_err(runtime_error_to_vm_error)?;
     }
+    let constructor_return = frame.cold.constructor_return.take();
     execution.call_storage.recycle(frame.cold);
     let completion = match (completion, constructor_return) {
         (Completion::Return(value), Some(ConstructorReturn::Base(receiver))) => {
             Completion::Return(if matches!(value, JsValue::Object(_)) {
+                runtime
+                    .release_jsvalue(receiver)
+                    .map_err(runtime_error_to_vm_error)?;
                 value
             } else {
                 runtime
                     .release_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?;
-                runtime
-                    .into_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?
+                receiver
             })
         }
         (Completion::Return(value), Some(ConstructorReturn::Derived)) => {
@@ -70,6 +71,12 @@ pub(super) fn finish(
                 ));
             }
             Completion::Return(value)
+        }
+        (completion, Some(ConstructorReturn::Base(receiver))) => {
+            runtime
+                .release_jsvalue(receiver)
+                .map_err(runtime_error_to_vm_error)?;
+            completion
         }
         (completion, _) => completion,
     };

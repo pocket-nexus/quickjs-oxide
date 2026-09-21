@@ -12,7 +12,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomError;
 use crate::engine::heap::{ContextId, HeapError, ObjectPayload, PrimitiveObjectData};
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{JsString, JsStringBuilder, JsStringError, Value};
+use crate::engine::value::{JsString, JsStringBuilder, JsStringError, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::NativeArguments;
 
@@ -58,7 +58,7 @@ enum JsonWrapperKind {
     String,
     Number,
     Boolean(bool),
-    BigInt(crate::engine::value::bigint::JsBigInt),
+    BigInt,
     Other,
 }
 
@@ -74,12 +74,13 @@ pub(crate) struct JsonStringifier {
     stack: Vec<ObjectRef>,
     output: JsStringBuilder,
     tasks: Vec<JsonSerializeTask>,
-    root: Value,
-    space: Value,
+    root: JsValue,
+    space: JsValue,
+    current: JsValue,
 }
 enum JsonSerializeTask {
     Value {
-        value: Value,
+        value: JsValue,
         indent: JsString,
     },
     ArrayElement {
@@ -114,9 +115,7 @@ impl Runtime {
             ObjectPayload::Primitive(PrimitiveObjectData::Boolean(value)) => {
                 JsonWrapperKind::Boolean(*value)
             }
-            ObjectPayload::Primitive(PrimitiveObjectData::BigInt(value)) => {
-                JsonWrapperKind::BigInt(value.clone())
-            }
+            ObjectPayload::Primitive(PrimitiveObjectData::BigInt(_)) => JsonWrapperKind::BigInt,
             ObjectPayload::Ordinary
             | ObjectPayload::Proxy(_)
             | ObjectPayload::RawJson

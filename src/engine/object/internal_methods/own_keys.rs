@@ -7,7 +7,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     atom::Atom,
     heap::ContextId,
-    object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey},
+    object::{ObjectRef, PropertyKey},
     value::{JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::DirectCallTarget},
 };
@@ -383,7 +383,7 @@ impl KeysResume {
     pub(crate) fn descriptor(
         self,
         runtime: &Runtime,
-        result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+        result: NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
     ) -> Result<KeysStep, RuntimeError> {
         let Phase::Descriptor { mut state, key } = self.0.phase else {
             return Err(RuntimeError::Invariant(
@@ -466,7 +466,7 @@ pub(super) fn finish(
                 let key = resume.take_descriptor_key();
                 resume.descriptor(
                     runtime,
-                    runtime.internal_get_own_property(realm, &object, &key)?,
+                    runtime.internal_get_own_property_owned(realm, &object, &key)?,
                 )?
             }
         };

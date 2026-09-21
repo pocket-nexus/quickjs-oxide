@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{ConstructorRef, NativeArguments, NativeInvocation},
@@ -50,9 +50,36 @@ pub(crate) struct BufferSliceResumeState {
     length: i64,
     kind: BufferSliceKind,
     phase: Phase,
+    end: Option<JsValue>,
+}
+impl Drop for BufferSliceResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.end.take() {
+            let _ = self.source.runtime().release_jsvalue(value);
+        }
+    }
+}
+pub(super) fn primitive_clamp(
+    runtime: &Runtime,
+    realm: ContextId,
+    value: JsValue,
+    length: i64,
+) -> Result<NativeConversion<i64>, RuntimeError> {
+    let number = runtime.number_from_primitive_jsvalue(realm, &value);
+    runtime.release_jsvalue(value)?;
+    Ok(match number? {
+        NativeConversion::Value(number) => {
+            let mut value = Runtime::int64_from_number(number);
+            if value < 0 {
+                value += length;
+            }
+            NativeConversion::Value(value.clamp(0, length))
+        }
+        NativeConversion::Throw(value) => NativeConversion::Throw(value),
+    })
 }
 enum Phase {
-    Start(Option<Value>),
+    Start,
     End(i64),
     Constructor { start: i64, count: u32 },
     Species { start: i64, count: u32 },
@@ -71,7 +98,6 @@ impl BufferSliceStep {
                 "Buffer slice received a constructor invocation",
             ));
         };
-        let this_value = runtime.root_value(this_value)?;
         let source = match kind {
             BufferSliceKind::Array => runtime.array_buffer_slice_source(realm, this_value)?,
             BufferSliceKind::Shared => {
@@ -86,27 +112,25 @@ impl BufferSliceStep {
                 )));
             }
         };
-        let end = if (matches!(kind, BufferSliceKind::Array) && arguments.actual_arg_count < 2)
-            || matches!(arguments.readable.get(1), Some(JsValue::Undefined))
+        let mut resume = BufferSliceResume(Box::new(BufferSliceResumeState {
+            realm,
+            source,
+            length,
+            kind,
+            phase: Phase::Start,
+            end: None,
+        }));
+        if !((matches!(kind, BufferSliceKind::Array) && arguments.actual_arg_count < 2)
+            || matches!(arguments.readable.get(1), Some(JsValue::Undefined)))
         {
-            None
-        } else {
-            Some(runtime.root_value(arguments.readable.get(1).ok_or(
+            resume.0.end = Some(runtime.dup_jsvalue(arguments.readable.get(1).ok_or(
                 RuntimeError::Invariant("Buffer slice end argument was not padded"),
-            )?)?)
-        };
-        Ok(Self::Primitive {
-            value: runtime.dup_jsvalue(arguments.readable.first().ok_or(
-                RuntimeError::Invariant("Buffer slice start argument was not padded"),
-            )?)?,
-            resume: BufferSliceResume(Box::new(BufferSliceResumeState {
-                realm,
-                source,
-                length,
-                kind,
-                phase: Phase::Start(end),
-            })),
-        })
+            )?)?);
+        }
+        let value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("Buffer slice start argument was not padded"),
+        )?)?;
+        Ok(Self::Primitive { value, resume })
     }
 }
 impl BufferSliceResume {
@@ -161,14 +185,14 @@ impl BufferSliceResume {
         Ok(BufferSliceStep::Complete(match self.0.kind {
             BufferSliceKind::Array => runtime.finish_array_buffer_slice(
                 self.0.realm,
-                self.0.source,
+                self.0.source.clone(),
                 target,
                 start,
                 count,
             )?,
             BufferSliceKind::Shared => runtime.finish_shared_array_buffer_slice(
                 self.0.realm,
-                self.0.source,
+                self.0.source.clone(),
                 target,
                 start,
                 count,
@@ -181,20 +205,14 @@ impl BufferSliceResume {
         result: Completion,
     ) -> Result<BufferSliceStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
-            Phase::Start(ref end) => {
-                let start = match runtime.native_to_int64_clamp(
-                    self.0.realm,
-                    &value,
-                    0,
-                    self.0.length,
-                    self.0.length,
-                )? {
+            Phase::Start => {
+                let start = match primitive_clamp(runtime, self.0.realm, value, self.0.length)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(BufferSliceStep::Complete(Completion::Throw(
@@ -202,9 +220,9 @@ impl BufferSliceResume {
                         )));
                     }
                 };
-                if let Some(value) = end {
+                if let Some(value) = self.0.end.take() {
                     Ok(BufferSliceStep::Primitive {
-                        value: runtime.into_jsvalue(value.clone())?,
+                        value,
                         resume: {
                             let updated_0 = Phase::End(start);
                             self.0.phase = updated_0;
@@ -217,13 +235,7 @@ impl BufferSliceResume {
                 }
             }
             Phase::End(start) => {
-                let end = match runtime.native_to_int64_clamp(
-                    self.0.realm,
-                    &value,
-                    0,
-                    self.0.length,
-                    self.0.length,
-                )? {
+                let end = match primitive_clamp(runtime, self.0.realm, value, self.0.length)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(BufferSliceStep::Complete(Completion::Throw(
@@ -234,10 +246,11 @@ impl BufferSliceResume {
                 self.select(runtime, start, end)
             }
             Phase::Constructor { start, count } => {
-                if matches!(value, Value::Undefined) {
+                if matches!(value, JsValue::Undefined) {
                     return self.default(runtime, start, count);
                 }
-                let Value::Object(object) = value else {
+                let JsValue::Object(id) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
                             self.0.realm,
@@ -246,6 +259,7 @@ impl BufferSliceResume {
                         )?,
                     )));
                 };
+                let object = ObjectRef::from_owned_handle(runtime.clone(), id);
                 Ok(BufferSliceStep::Read {
                     object,
                     key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
@@ -257,17 +271,17 @@ impl BufferSliceResume {
                 })
             }
             Phase::Species { start, count } => {
-                if matches!(value, Value::Undefined | Value::Null) {
+                if matches!(value, JsValue::Undefined | JsValue::Null) {
                     return self.default(runtime, start, count);
                 }
-                if !matches!(value, Value::Object(_)) {
+                if !matches!(value, JsValue::Object(_)) {
+                    let error = runtime.new_not_constructor_error_jsvalue(self.0.realm, &value);
+                    runtime.release_jsvalue(value)?;
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(
-                            runtime.new_not_constructor_error(self.0.realm, &value)?,
-                        )?,
+                        runtime.into_jsvalue(error?)?,
                     )));
                 }
-                let constructor = match runtime.constructor_from_value(self.0.realm, value)? {
+                let constructor = match runtime.constructor_from_jsvalue(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(BufferSliceStep::Complete(Completion::Throw(
@@ -299,7 +313,8 @@ impl BufferSliceResume {
                 })
             }
             Phase::Construct { start, count } => {
-                let Value::Object(target) = value else {
+                let JsValue::Object(id) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Ok(BufferSliceStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
                             self.0.realm,
@@ -311,7 +326,12 @@ impl BufferSliceResume {
                         )?,
                     )));
                 };
-                self.copy(runtime, target, start, count)
+                self.copy(
+                    runtime,
+                    ObjectRef::from_owned_handle(runtime.clone(), id),
+                    start,
+                    count,
+                )
             }
         }
     }
@@ -338,27 +358,26 @@ pub(in crate::engine::builtins) fn finish(
                 resume,
             } => resume.resume(
                 runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
+                runtime.internal_get_jsvalue(
+                    realm,
+                    &object,
+                    &key,
+                    JsValue::Object(object.clone().into_handle()),
+                )?,
             )?,
             BufferSliceStep::Construct {
                 constructor,
                 arguments,
                 resume,
-            } => {
-                let arguments = arguments
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                resume.resume(
-                    runtime,
-                    runtime.construct_constructor_internal(
-                        realm,
-                        &constructor,
-                        &constructor,
-                        &arguments,
-                    )?,
-                )?
-            }
+            } => resume.resume(
+                runtime,
+                runtime.construct_internal_jsvalue(
+                    realm,
+                    &constructor,
+                    crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                    arguments,
+                )?,
+            )?,
         };
     }
 }

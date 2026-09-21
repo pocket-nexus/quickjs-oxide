@@ -59,9 +59,21 @@ impl std::ops::DerefMut for MathResume {
 const _: () = assert!(std::mem::size_of::<MathResume>() <= 8);
 pub(crate) struct MathResumeState {
     kind: MathKind,
-    arguments: std::vec::IntoIter<JsValue>,
+    arguments: std::collections::VecDeque<JsValue>,
+    owner: Option<Runtime>,
     result: Option<f64>,
     count: usize,
+}
+impl Drop for MathResumeState {
+    fn drop(&mut self) {
+        if let Some(runtime) = &self.owner {
+            for value in self.arguments.drain(..) {
+                let _ = runtime.release_jsvalue(value);
+            }
+        } else {
+            debug_assert!(self.arguments.is_empty());
+        }
+    }
 }
 impl MathStep {
     pub(crate) fn start(
@@ -87,7 +99,8 @@ impl MathStep {
         {
             let mut resume = MathResumeState {
                 kind,
-                arguments: Vec::new().into_iter(),
+                arguments: std::collections::VecDeque::new(),
+                owner: None,
                 result: None,
                 count,
             };
@@ -95,16 +108,18 @@ impl MathStep {
                 if matches!(value, JsValue::Object(_)) {
                     // The native activation owns original argv. A suspended
                     // continuation needs only the not-yet-converted suffix.
-                    let mut remaining = Vec::new();
-                    remaining
-                        .try_reserve_exact(values.len() - index)
+                    resume
+                        .arguments
+                        .try_reserve(values.len() - index)
                         .map_err(|_| {
                             RuntimeError::Invariant("Math remaining argv allocation failed")
                         })?;
+                    resume.owner = Some(runtime.clone());
                     for remaining_value in &values[index..] {
-                        remaining.push(runtime.dup_jsvalue(remaining_value)?);
+                        resume
+                            .arguments
+                            .push_back(runtime.dup_jsvalue(remaining_value)?);
                     }
-                    resume.arguments = remaining.into_iter();
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "math_remaining_arguments_owned",
@@ -114,8 +129,7 @@ impl MathStep {
                 // Object arguments above retain the shared waiting protocol.
                 // NativeActivation already owns this primitive: borrow it in
                 // the same conversion kernel used by NumberStep completion.
-                let owned = runtime.root_value(value)?;
-                let result = runtime.number_from_primitive(realm, &owned)?;
+                let result = runtime.number_from_primitive_jsvalue(realm, value)?;
                 if let Some(completion) = resume.accept_number(runtime, result)? {
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
@@ -134,7 +148,7 @@ impl MathStep {
 }
 impl MathResume {
     fn next(mut self) -> Result<MathStep, RuntimeError> {
-        if let Some(value) = self.0.arguments.next() {
+        if let Some(value) = self.0.arguments.pop_front() {
             return Ok(MathStep::Number {
                 value,
                 resume: self,
@@ -253,8 +267,7 @@ pub(crate) fn finish(
         step = match step {
             MathStep::Complete(result) => return Ok(result),
             MathStep::Number { value, resume } => {
-                let owned = runtime.root_and_release_jsvalue(value)?;
-                resume.number(runtime, runtime.native_to_number(realm, &owned)?)?
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
         };
     }

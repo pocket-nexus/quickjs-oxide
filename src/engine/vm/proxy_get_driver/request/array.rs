@@ -142,7 +142,7 @@ impl From<crate::engine::builtins::ArrayCallbackStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::ArrayCallback(resume)),
                 }
             }
@@ -532,7 +532,7 @@ impl From<crate::engine::builtins::ArrayBuildStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::ArrayBuild(resume)),
                 }
             }
@@ -651,7 +651,7 @@ impl From<crate::engine::builtins::ArrayConcatStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::ArrayConcat(resume)),
                 }
             }
@@ -716,7 +716,7 @@ impl From<crate::engine::builtins::ArrayFlattenStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::ArrayFlatten(resume)),
                 }
             }
@@ -827,7 +827,7 @@ impl From<crate::engine::builtins::ArraySliceStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::ArraySlice(resume)),
                 }
             }

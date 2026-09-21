@@ -216,15 +216,22 @@ pub(super) fn ready(
     request.receiver = runtime
         .dup_jsvalue(&receiver)
         .map_err(runtime_error_to_vm_error)?;
-    let mut entry = request.prepare(runtime, &mut execution.call_storage)?;
+    let mut entry = match request.prepare(runtime, &mut execution.call_storage) {
+        Ok(entry) => entry,
+        Err(error) => {
+            runtime
+                .release_jsvalue(receiver)
+                .map_err(runtime_error_to_vm_error)?;
+            return Err(error);
+        }
+    };
     entry.cold.constructor_return = Some(if derived {
+        runtime
+            .release_jsvalue(receiver)
+            .map_err(runtime_error_to_vm_error)?;
         crate::engine::vm::frame::ConstructorReturn::Derived
     } else {
-        crate::engine::vm::frame::ConstructorReturn::Base(
-            runtime
-                .root_and_release_jsvalue(receiver)
-                .map_err(runtime_error_to_vm_error)?,
-        )
+        crate::engine::vm::frame::ConstructorReturn::Base(receiver)
     });
     Ok(Ok(Next::Call {
         entry: Box::new(entry),

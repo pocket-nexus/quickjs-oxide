@@ -198,7 +198,7 @@ pub(crate) enum NativeStep {
     RegExpSplit(super::RegExpSplitStep),
     RegExpIterator(super::RegExpIteratorStep),
 
-    GlobalEval(crate::engine::value::Value),
+    GlobalEval(crate::engine::value::JsString),
     JsonRaw {
         value: crate::engine::value::JsValue,
         resume: super::JsonRawResume,
@@ -957,8 +957,8 @@ impl NativeOperation {
             ),
             Self::GlobalEval => {
                 let argument = &arguments.readable[0];
-                if matches!(argument, crate::engine::value::JsValue::String(_)) {
-                    NativeStep::GlobalEval(runtime.root_value(argument)?)
+                if let crate::engine::value::JsValue::String(id) = argument {
+                    NativeStep::GlobalEval(runtime.0.state.borrow().heap.string(*id)?.clone())
                 } else {
                     NativeStep::Complete(crate::engine::vm::Completion::Return(
                         runtime.dup_jsvalue(argument)?,

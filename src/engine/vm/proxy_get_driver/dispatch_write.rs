@@ -153,13 +153,7 @@ pub(super) fn keys(
                 let resume = resume.take().expect("selected Step field");
 
                 *step = match runtime
-                    .prepare_value_property_read_completion(
-                        realm,
-                        runtime
-                            .root_and_release_jsvalue(receiver)
-                            .map_err(runtime_error_to_vm_error)?,
-                        &key,
-                    )
+                    .prepare_value_property_read_completion(realm, receiver, &key)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     NativeConversion::Value(read) => Step::PreparedRead {
@@ -272,17 +266,12 @@ pub(super) fn set(
                 let receiver = receiver.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                let rooted_receiver = match runtime.root_and_release_jsvalue(receiver) {
-                    Ok(receiver) => receiver,
-                    Err(error) => {
-                        let _ = runtime.release_jsvalue(value);
-                        return Err(runtime_error_to_vm_error(error));
-                    }
-                };
-                let result =
-                    runtime.prepare_typed_array_set(&object, &key, &value, &rooted_receiver);
+                let result = runtime.prepare_typed_array_set(&object, &key, &value, &receiver);
                 runtime
                     .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
+                runtime
+                    .release_jsvalue(receiver)
                     .map_err(runtime_error_to_vm_error)?;
                 match result.map_err(runtime_error_to_vm_error)? {
                     None => {
@@ -311,11 +300,7 @@ pub(super) fn set(
 
                     *step = Step::Call {
                         target: Some(DirectCallTarget::Callable(setter)),
-                        receiver: Some(
-                            runtime
-                                .into_jsvalue(receiver)
-                                .map_err(runtime_error_to_vm_error)?,
-                        ),
+                        receiver: Some(receiver),
                         arguments: Some(vec![argument]),
                         resume: Some(Resume::Setter),
                     };
@@ -359,15 +344,15 @@ pub(super) fn set(
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                 {
-                    let Completion::Throw(error) = overflow(runtime, realm)? else {
-                        unreachable!()
-                    };
                     runtime
                         .release_jsvalue(value)
                         .map_err(runtime_error_to_vm_error)?;
                     runtime
                         .release_jsvalue(receiver)
                         .map_err(runtime_error_to_vm_error)?;
+                    let Completion::Throw(error) = overflow(runtime, realm)? else {
+                        unreachable!()
+                    };
                     *step = resume
                         .set(
                             runtime,
@@ -380,10 +365,11 @@ pub(super) fn set(
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                if query.parents.try_reserve(1).is_err() {
+                    let _ = runtime.release_jsvalue(value);
+                    let _ = runtime.release_jsvalue(receiver);
+                    return Err(Error::internal("property continuation allocation failed"));
+                }
                 query.parents.push(resume);
                 *step = crate::engine::object::SetStep::start(
                     runtime,
@@ -391,9 +377,7 @@ pub(super) fn set(
                     object,
                     key,
                     value,
-                    runtime
-                        .root_and_release_jsvalue(receiver)
-                        .map_err(runtime_error_to_vm_error)?,
+                    receiver,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 // The budget check and parent reservation above must precede
@@ -421,15 +405,15 @@ pub(super) fn set(
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                 {
-                    let Completion::Throw(error) = overflow(runtime, realm)? else {
-                        unreachable!()
-                    };
                     runtime
                         .release_jsvalue(value)
                         .map_err(runtime_error_to_vm_error)?;
                     runtime
                         .release_jsvalue(receiver)
                         .map_err(runtime_error_to_vm_error)?;
+                    let Completion::Throw(error) = overflow(runtime, realm)? else {
+                        unreachable!()
+                    };
                     *step = resume
                         .set(
                             runtime,
@@ -442,22 +426,14 @@ pub(super) fn set(
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                if query.parents.try_reserve(1).is_err() {
+                    let _ = runtime.release_jsvalue(value);
+                    let _ = runtime.release_jsvalue(receiver);
+                    return Err(Error::internal("property continuation allocation failed"));
+                }
                 query.parents.push(resume);
                 *step = crate::engine::object::ProxySetStep::start(
-                    runtime,
-                    realm,
-                    object,
-                    key,
-                    runtime
-                        .root_and_release_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?,
-                    runtime
-                        .root_and_release_jsvalue(receiver)
-                        .map_err(runtime_error_to_vm_error)?,
+                    runtime, realm, object, key, value, receiver,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -515,7 +491,28 @@ pub(super) fn define(
             } => {
                 let object = object.take().expect("selected Step field");
                 let key = key.take().expect("selected Step field");
-                let descriptor = descriptor.take().expect("selected Step field");
+                let descriptor = descriptor
+                    .take()
+                    .expect("selected Step field")
+                    .into_owned(runtime)
+                    .map_err(runtime_error_to_vm_error)?;
+                if let Some(accepted) = runtime
+                    .try_define_owned_property(&object, &key, &descriptor)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    let result = if accepted {
+                        crate::engine::object::operations::InternalDefineResult::Defined
+                    } else {
+                        crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
+                            object,
+                        )
+                    };
+                    let resume = resume.take().expect("selected Step field");
+                    *step = resume
+                        .defined(runtime, NativeConversion::Value(result))
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
                 let resume = resume.take().expect("selected Step field");
 
                 if runtime
@@ -556,7 +553,7 @@ pub(super) fn define(
                 *step = Step::DefineOrdinary {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(resume),
                 };
                 continue;
@@ -569,11 +566,32 @@ pub(super) fn define(
             } => {
                 let object = object.take().expect("selected Step field");
                 let key = key.take().expect("selected Step field");
-                let descriptor = descriptor.take().expect("selected Step field");
+                let descriptor = descriptor
+                    .take()
+                    .expect("selected Step field")
+                    .into_owned(runtime)
+                    .map_err(runtime_error_to_vm_error)?;
+                if let Some(accepted) = runtime
+                    .try_define_owned_property(&object, &key, &descriptor)
+                    .map_err(runtime_error_to_vm_error)?
+                {
+                    let result = if accepted {
+                        crate::engine::object::operations::InternalDefineResult::Defined
+                    } else {
+                        crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
+                            object,
+                        )
+                    };
+                    let resume = resume.take().expect("selected Step field");
+                    *step = resume
+                        .defined(runtime, NativeConversion::Value(result))
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
                 let resume = resume.take().expect("selected Step field");
 
                 if let Some(length) = runtime
-                    .prepare_array_length_definition(Some(realm), &object, &key, &descriptor)
+                    .prepare_array_length_definition_owned(Some(realm), &object, &key, &descriptor)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     query
@@ -592,7 +610,7 @@ pub(super) fn define(
                     continue;
                 }
                 if let Some(request) = runtime
-                    .prepare_typed_array_definition(&object, &key, &descriptor)
+                    .prepare_typed_array_definition_owned(&object, &key, &descriptor)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     query
@@ -610,7 +628,7 @@ pub(super) fn define(
                     continue;
                 }
                 let result = match runtime
-                        .define_own_property_in_realm(Some(realm), &object, &key, &descriptor)
+                        .define_owned_property_in_realm(Some(realm), &object, &key, &descriptor)
                         .map_err(runtime_error_to_vm_error)? {
                         crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => NativeConversion::Value(crate::engine::object::operations::InternalDefineResult::Defined),
                         crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => NativeConversion::Value(crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(object)),

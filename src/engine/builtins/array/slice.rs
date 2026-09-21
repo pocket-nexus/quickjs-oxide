@@ -6,7 +6,7 @@ use crate::engine::{
     builtins::native::ArraySliceKind,
     heap::ContextId,
     object::{
-        DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
+        ObjectRef, OwnedPropertyDescriptor, PropertyKey,
         operations::{InternalDefineResult, InternalSetResult, PropertyDefineOutcome},
     },
     value::{JsValue, Value, conversion::NativeConversion},
@@ -56,7 +56,7 @@ pub(crate) struct SlicePending {
     value: Option<JsValue>,
     source: Option<ObjectRef>,
     length: Option<u64>,
-    descriptor: Option<OrdinaryPropertyDescriptor>,
+    descriptor: Option<OwnedPropertyDescriptor>,
     to: Option<u64>,
     from: Option<u64>,
     count: Option<u64>,
@@ -342,13 +342,7 @@ impl SliceResume {
                 Ok(SliceStep::make_define(
                     self.result()?,
                     runtime.property_key_for_index(self.0.cursor)?,
-                    OrdinaryPropertyDescriptor {
-                        value: DescriptorField::Present(runtime.root_and_release_jsvalue(value)?),
-                        writable: DescriptorField::Present(true),
-                        enumerable: DescriptorField::Present(true),
-                        configurable: DescriptorField::Present(true),
-                        ..OrdinaryPropertyDescriptor::new()
-                    },
+                    OwnedPropertyDescriptor::data(runtime, value),
                     self,
                 ))
             }
@@ -582,13 +576,7 @@ impl SliceResume {
                     Ok(None) => {}
                 }
                 let key = runtime.property_key_for_index(self.0.cursor)?;
-                let descriptor = OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(runtime.root_and_release_jsvalue(value)?),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                };
+                let descriptor = OwnedPropertyDescriptor::data(runtime, value);
                 let object = self
                     .0
                     .result
@@ -602,7 +590,7 @@ impl SliceResume {
                         self,
                     ));
                 }
-                let result = local::define_local(runtime, self.0.realm, object, &key, &descriptor)?;
+                let result = local::define_local(runtime, self.0.realm, object, &key, descriptor)?;
                 if let Some(value) = runtime.finish_create_indexed_data_property(
                     self.0.realm,
                     self.0.cursor,
@@ -812,7 +800,7 @@ pub(crate) fn finish(
                 let (object, key, descriptor) = resume.take_define();
                 resume.defined(
                     runtime,
-                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
                 )?
             }
             SliceStep::Set { mut resume } => {
@@ -944,7 +932,7 @@ impl SliceStep {
     fn make_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
         mut resume: SliceResume,
     ) -> Self {
         resume.0.pending.object = Some(object);
@@ -1047,7 +1035,7 @@ impl SliceResume {
                 .expect("slice Species lost length"),
         )
     }
-    pub(crate) fn take_define(&mut self) -> (ObjectRef, PropertyKey, OrdinaryPropertyDescriptor) {
+    pub(crate) fn take_define(&mut self) -> (ObjectRef, PropertyKey, OwnedPropertyDescriptor) {
         (
             self.0
                 .pending

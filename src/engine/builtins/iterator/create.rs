@@ -7,7 +7,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, IteratorHelperKind},
     object::{ObjectRef, PropertyKey},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -95,16 +95,16 @@ impl CreateStep {
         if let NativeConversion::Throw(value) =
             runtime.iterator_callable_jsvalue(realm, &resume.callback)?
         {
-            return resume.close(runtime, value);
+            return resume.close(runtime, runtime.into_jsvalue(value)?);
         }
         resume.read(runtime)
     }
 }
 impl CreateResume {
-    fn close(self, runtime: &Runtime, value: Value) -> Result<CreateStep, RuntimeError> {
+    fn close(self, _runtime: &Runtime, value: JsValue) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Close {
             iterator: self.0.source.clone(),
-            completion: Completion::Throw(runtime.into_jsvalue(value)?),
+            completion: Completion::Throw(value),
         })
     }
     fn read(self, runtime: &Runtime) -> Result<CreateStep, RuntimeError> {
@@ -121,7 +121,9 @@ impl CreateResume {
     ) -> Result<CreateStep, RuntimeError> {
         let number = match reply {
             NativeConversion::Value(number) => number,
-            NativeConversion::Throw(value) => return self.close(runtime, value),
+            NativeConversion::Throw(value) => {
+                return self.close(runtime, runtime.into_jsvalue(value)?);
+            }
         };
         let count = if number == f64::INFINITY {
             (1_i64 << 53) - 1
@@ -158,9 +160,7 @@ impl CreateResume {
         reply: Completion,
     ) -> Result<CreateStep, RuntimeError> {
         match reply {
-            Completion::Throw(value) => {
-                self.close(runtime, runtime.root_and_release_jsvalue(value)?)
-            }
+            Completion::Throw(value) => self.close(runtime, value),
             Completion::Return(next) => {
                 let result = runtime.new_iterator_helper(
                     self.0.realm,
@@ -187,8 +187,7 @@ pub(crate) fn finish(
         step = match step {
             CreateStep::Complete(result) => return Ok(result),
             CreateStep::Number { value, resume } => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             CreateStep::Read {
                 object,
@@ -196,7 +195,12 @@ pub(crate) fn finish(
                 resume,
             } => resume.resume(
                 runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
+                runtime.internal_get_jsvalue(
+                    realm,
+                    &object,
+                    &key,
+                    JsValue::Object(object.clone().into_handle()),
+                )?,
             )?,
             CreateStep::CloseInvalidCount { iterator, resume } => {
                 let result = finish_close(

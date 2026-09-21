@@ -9,9 +9,7 @@ use crate::engine::heap::ContextId;
 use std::rc::Rc;
 
 use crate::engine::object::operations::{InternalDefineResult, PropertyDefineOutcome};
-use crate::engine::object::{
-    CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-};
+use crate::engine::object::{CallableRef, ObjectRef, OwnedPropertyDescriptor, PropertyKey};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
@@ -33,17 +31,11 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: Value,
+        value: JsValue,
     ) -> Result<PropertyDefineOutcome, RuntimeError> {
-        let descriptor = OrdinaryPropertyDescriptor {
-            value: DescriptorField::Present(value),
-            writable: DescriptorField::Present(true),
-            enumerable: DescriptorField::Present(true),
-            configurable: DescriptorField::Present(true),
-            ..OrdinaryPropertyDescriptor::new()
-        };
+        let descriptor = OwnedPropertyDescriptor::data(self, value);
         Ok(
-            match self.internal_define_own_property(realm, object, key, &descriptor)? {
+            match self.internal_define_owned_property(realm, object, key, descriptor)? {
                 NativeConversion::Value(InternalDefineResult::Defined) => {
                     PropertyDefineOutcome::Defined(true)
                 }
@@ -92,6 +84,12 @@ impl Drop for ParseResumeState {
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        if let Phase::Source(value) = std::mem::replace(&mut self.phase, Phase::Read) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for node in self.state.frames.drain(..) {
+            let _ = self.runtime.release_jsvalue(node.value);
+        }
         if let Some(value) = self.pending_effect.string_value.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -109,7 +107,7 @@ impl Drop for ParseResumeState {
     }
 }
 enum Phase {
-    Source(Value),
+    Source(JsValue),
     Read,
     Length,
     Number,
@@ -133,7 +131,7 @@ struct Node {
     holder: ObjectRef,
     key: PropertyKey,
     record: Option<Rc<JsonParseRecord>>,
-    value: Value,
+    value: JsValue,
     context: Option<ObjectRef>,
     children: Children,
 }
@@ -149,7 +147,7 @@ impl ParseStep {
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
         let source = runtime.dup_jsvalue(&arguments.readable[0])?;
-        let reviver = runtime.root_value(&arguments.readable[1])?;
+        let reviver = runtime.dup_jsvalue(&arguments.readable[1])?;
         Ok(Self::request_string(source, {
             let phase = Phase::Source(reviver);
             let mut owner = Box::new(ParseResumeState {
@@ -204,7 +202,7 @@ impl ParseResumeState {
             holder: holder.clone(),
             key: key.clone(),
             record,
-            value: Value::Undefined,
+            value: JsValue::Undefined,
             context: None,
             children: Children::None,
         });
@@ -239,12 +237,12 @@ impl ParseResumeState {
             }),
         };
         if let Some((key, record)) = child {
-            let Value::Object(object) = &node.value else {
+            let JsValue::Object(object) = &node.value else {
                 return Err(RuntimeError::Invariant(
                     "JSON reviver child holder is not an object",
                 ));
             };
-            let object = object.clone();
+            let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
             return self.enter(runtime, object, key, record);
         }
         let receiver = runtime.into_jsvalue(Value::Object(node.holder.clone()))?;
@@ -272,7 +270,7 @@ impl ParseResumeState {
             )));
         }
         arguments.push(name);
-        arguments.push(runtime.unroot_value(&node.value)?);
+        arguments.push(runtime.dup_jsvalue(&node.value)?);
         arguments.push(runtime.into_jsvalue(Value::Object(context))?);
         let callable = self
             .reviver
@@ -302,13 +300,13 @@ impl ParseResumeState {
             {
                 continue;
             }
-            let Value::Object(object) = &self.top()?.value else {
+            let JsValue::Object(object) = &self.top()?.value else {
                 return Err(RuntimeError::Invariant(
                     "JSON reviver key holder is not an object",
                 ));
             };
             return Ok(ParseStep::request_enumerable(
-                object.clone(),
+                ObjectRef::from_borrowed_handle(runtime.clone(), *object)?,
                 key.clone(),
                 {
                     let phase = Phase::Enumerable {
@@ -348,8 +346,13 @@ impl ParseResume {
         let mut state = self.0;
         state.source = source;
         state.reviver = match reviver {
-            Value::Object(object) => runtime.as_callable(&object)?,
-            _ => None,
+            JsValue::Object(object) => {
+                runtime.as_callable(&ObjectRef::from_owned_handle(runtime.clone(), object))?
+            }
+            value => {
+                runtime.release_jsvalue(value)?;
+                None
+            }
         };
         // Holder allocation precedes parsing, as in the pinned implementation.
         let root = state
@@ -367,9 +370,7 @@ impl ParseResume {
                 }
             };
         let Some(root) = root else {
-            return Ok(ParseStep::Complete(Completion::Return(
-                runtime.into_jsvalue(parsed)?,
-            )));
+            return Ok(ParseStep::Complete(Completion::Return(parsed)));
         };
         let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal0)?;
         match runtime.define_json_reviver_property(state.realm, &root, &key, parsed)? {
@@ -396,20 +397,51 @@ impl ParseResume {
         runtime: &Runtime,
         reply: Completion,
     ) -> Result<ParseStep, RuntimeError> {
+        if matches!(self.0.phase, Phase::Revived) {
+            let value = match reply {
+                Completion::Throw(value) => {
+                    return Ok(ParseStep::Complete(Completion::Throw(value)));
+                }
+                Completion::Return(value) => value,
+            };
+            let Some(node) = self.0.frames.pop() else {
+                runtime.release_jsvalue(value)?;
+                return Err(RuntimeError::Invariant("JSON reviver reply lost node"));
+            };
+            runtime.release_jsvalue(node.value)?;
+            if self.0.frames.is_empty() {
+                return Ok(ParseStep::Complete(Completion::Return(value)));
+            }
+            self.0.phase = Phase::Applied;
+            return if matches!(value, JsValue::Undefined) {
+                Ok(ParseStep::request_delete(node.holder, node.key, self))
+            } else {
+                Ok(ParseStep::request_define(
+                    node.holder,
+                    node.key,
+                    OwnedPropertyDescriptor::data(runtime, value),
+                    self,
+                ))
+            };
+        }
         let value = match reply {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(ParseStep::Complete(Completion::Throw(value))),
         };
         match std::mem::replace(&mut self.0.phase, Phase::Read) {
             Phase::Read => {
                 let realm = self.0.realm;
                 let node = self.0.top()?;
-                node.record = node.record.take().filter(|record| record.matches(&value));
-                node.value = value.clone();
+                node.value = value;
+                node.record = match node.record.take() {
+                    Some(record) if record.matches_jsvalue(runtime, &node.value)? => Some(record),
+                    _ => None,
+                };
                 node.context = Some(runtime.new_ordinary_object_in_realm(realm)?);
-                if let Value::Object(object) = value {
+                if let JsValue::Object(id) = node.value {
+                    let object = ObjectRef::from_borrowed_handle(runtime.clone(), id)?;
                     let array =
-                        match runtime.internal_is_array(realm, &Value::Object(object.clone()))? {
+                        match runtime.internal_is_array_jsvalue(realm, &JsValue::Object(id))? {
                             NativeConversion::Value(value) => value,
                             NativeConversion::Throw(value) => {
                                 return Ok(ParseStep::Complete(Completion::Throw(
@@ -445,7 +477,8 @@ impl ParseResume {
                         .and_then(|record| record.primitive_span())
                     {
                         let context = node.context.clone().unwrap();
-                        let source = Value::String(self.0.source.sub_string(start, end));
+                        let source = runtime
+                            .into_jsvalue(Value::String(self.0.source.sub_string(start, end)))?;
                         let key = runtime
                             .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Source)?;
                         match runtime.define_json_reviver_property(realm, &context, &key, source)? {
@@ -465,49 +498,18 @@ impl ParseResume {
                     self.0.next(runtime)
                 }
             }
-            Phase::Length => Ok(ParseStep::request_number(runtime.into_jsvalue(value)?, {
+            Phase::Length => Ok(ParseStep::request_number(value, {
                 let phase = Phase::Number;
                 let mut owner = self.0;
                 owner.phase = phase;
                 ParseResume(owner)
             })),
-            Phase::Revived => {
-                let node = self
-                    .0
-                    .frames
-                    .pop()
-                    .ok_or(RuntimeError::Invariant("JSON reviver reply lost node"))?;
-                if self.0.frames.is_empty() {
-                    return Ok(ParseStep::Complete(Completion::Return(
-                        runtime.into_jsvalue(value)?,
-                    )));
-                }
-                let resume = {
-                    let phase = Phase::Applied;
-                    let mut owner = self.0;
-                    owner.phase = phase;
-                    ParseResume(owner)
-                };
-                if matches!(value, Value::Undefined) {
-                    Ok(ParseStep::request_delete(node.holder, node.key, resume))
-                } else {
-                    Ok(ParseStep::request_define(
-                        node.holder,
-                        node.key,
-                        OrdinaryPropertyDescriptor {
-                            value: DescriptorField::Present(value),
-                            writable: DescriptorField::Present(true),
-                            enumerable: DescriptorField::Present(true),
-                            configurable: DescriptorField::Present(true),
-                            ..OrdinaryPropertyDescriptor::new()
-                        },
-                        resume,
-                    ))
-                }
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "JSON reviver unexpected value reply",
+                ))
             }
-            _ => Err(RuntimeError::Invariant(
-                "JSON reviver unexpected value reply",
-            )),
         }
     }
     pub(crate) fn number(
@@ -603,18 +605,11 @@ fn finish(
             ParseStep::Complete(result) => return Ok(result),
             ParseStep::String { mut resume } => {
                 let value = resume.take_string_value();
-                resume.string(
-                    runtime,
-                    runtime
-                        .native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
-                )?
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
             }
             ParseStep::Number { mut resume } => {
                 let value = resume.take_number_value();
-                resume.number(
-                    runtime,
-                    runtime.native_to_number(realm, &runtime.root_and_release_jsvalue(value)?)?,
-                )?
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             ParseStep::Read { mut resume } => {
                 let object = resume.take_read_object();
@@ -638,15 +633,11 @@ fn finish(
             }
             ParseStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
             ParseStep::Delete { mut resume } => {
@@ -663,7 +654,9 @@ fn finish(
                 let descriptor = resume.take_define_descriptor();
                 resume.boolean(
                     runtime,
-                    match runtime.internal_define_own_property(realm, &object, &key, &descriptor)? {
+                    match runtime
+                        .internal_define_owned_property(realm, &object, &key, descriptor)?
+                    {
                         NativeConversion::Value(result) => {
                             NativeConversion::Value(matches!(result, InternalDefineResult::Defined))
                         }
@@ -828,14 +821,18 @@ mod ownership_tests {
             .unwrap()
             .object_id();
         let holder_id = resume.state.frames[0].holder.object_id();
-        let Value::Object(root) = &resume.state.frames[0].value else {
+        let JsValue::Object(root) = &resume.state.frames[0].value else {
             panic!("expected parsed root");
         };
-        let root_id = root.object_id();
+        let root_id = *root;
         let key = runtime.intern_property_key("a").unwrap();
         assert!(matches!(
             runtime
-                .get_property_in_realm(context.realm, root, &key)
+                .get_property_in_realm(
+                    context.realm,
+                    &ObjectRef::from_borrowed_handle(runtime.clone(), *root).unwrap(),
+                    &key
+                )
                 .unwrap(),
             Completion::Return(JsValue::Undefined)
         ));
@@ -888,7 +885,7 @@ struct ParseStepPending {
     delete_key: Option<PropertyKey>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<OwnedPropertyDescriptor>,
 }
 impl ParseStep {
     pub(crate) fn request_string(value: JsValue, mut resume: ParseResume) -> Self {
@@ -944,7 +941,7 @@ impl ParseStep {
     pub(crate) fn request_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
         mut resume: ParseResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -1052,7 +1049,7 @@ impl ParseResume {
             .take()
             .expect("ParseStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(&mut self) -> OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor

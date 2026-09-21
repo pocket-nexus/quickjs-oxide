@@ -17,9 +17,11 @@ use crate::engine::heap::ContextId;
 use crate::engine::object::operations::PropertyDefineOutcome;
 
 use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
+    AccessorValue, DescriptorField, ObjectRef, OwnedPropertyDescriptor, PropertyKey,
 };
-use crate::engine::value::{JsString, Value};
+#[cfg(test)]
+use crate::engine::value::Value;
+use crate::engine::value::{JsString, JsValue};
 
 impl Runtime {
     #[cfg(test)]
@@ -32,9 +34,11 @@ impl Runtime {
         kind: DefineMethodKind,
         enumerable: bool,
     ) -> Result<PropertyDefineOutcome, RuntimeError> {
+        let function = self.into_jsvalue(function)?;
         let descriptor =
-            self.prepare_object_literal_method(object, key, function, kind, enumerable)?;
-        self.define_own_property_in_realm(Some(realm), object, key, &descriptor)
+            self.prepare_object_literal_method(object, key, &function, kind, enumerable);
+        self.release_jsvalue(function)?;
+        self.define_owned_property_in_realm(Some(realm), object, key, &descriptor?)
     }
 
     /// Naming and HomeObject publication use context-free own storage and do
@@ -44,42 +48,30 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        function: Value,
+        function: &JsValue,
         kind: DefineMethodKind,
         enumerable: bool,
-    ) -> Result<OrdinaryPropertyDescriptor, RuntimeError> {
-        let callable = self.callable_from_value(function)?;
+    ) -> Result<OwnedPropertyDescriptor, RuntimeError> {
+        let callable = self.callable_from_jsvalue(function)?;
         let name = self.object_literal_method_name(key, kind)?;
-        let function = Value::Object(callable.as_object().clone());
-        self.define_object_name(&function, &name)?;
+        self.define_object_name_for_object(callable.as_object(), &name)?;
         self.install_object_literal_home_object(&callable, object)?;
 
-        let descriptor = match kind {
-            DefineMethodKind::Method => OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(function),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(enumerable),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-            DefineMethodKind::Getter => OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(callable)),
-                // `Absent` is required here: a following setter with the same
-                // key must merge with this getter instead of erasing it.
-                set: DescriptorField::Absent,
-                enumerable: DescriptorField::Present(enumerable),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-            DefineMethodKind::Setter => OrdinaryPropertyDescriptor {
-                // Symmetric accessor merging for `{ set x(v) {}, get x() {} }`.
-                get: DescriptorField::Absent,
-                set: DescriptorField::Present(AccessorValue::Callable(callable)),
-                enumerable: DescriptorField::Present(enumerable),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        };
+        let mut descriptor = OwnedPropertyDescriptor::new(self);
+        descriptor.enumerable = DescriptorField::Present(enumerable);
+        descriptor.configurable = DescriptorField::Present(true);
+        match kind {
+            DefineMethodKind::Method => {
+                descriptor.value = DescriptorField::Present(self.dup_jsvalue(function)?);
+                descriptor.writable = DescriptorField::Present(true);
+            }
+            DefineMethodKind::Getter => {
+                descriptor.get = DescriptorField::Present(AccessorValue::Callable(callable));
+            }
+            DefineMethodKind::Setter => {
+                descriptor.set = DescriptorField::Present(AccessorValue::Callable(callable));
+            }
+        }
 
         Ok(descriptor)
     }

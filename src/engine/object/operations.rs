@@ -57,14 +57,14 @@ pub(crate) enum PropertySetAction {
 pub(crate) struct PropertySetterCall {
     runtime: crate::engine::api::runtime::Runtime,
     setter: Option<CallableRef>,
-    receiver: Option<Value>,
+    receiver: Option<crate::engine::value::JsValue>,
     argument: Option<crate::engine::value::JsValue>,
 }
 impl PropertySetterCall {
     pub(crate) fn new(
         runtime: &crate::engine::api::runtime::Runtime,
         setter: CallableRef,
-        receiver: Value,
+        receiver: crate::engine::value::JsValue,
         argument: crate::engine::value::JsValue,
     ) -> Self {
         Self {
@@ -74,7 +74,13 @@ impl PropertySetterCall {
             argument: Some(argument),
         }
     }
-    pub(crate) fn into_parts(mut self) -> (CallableRef, Value, crate::engine::value::JsValue) {
+    pub(crate) fn into_parts(
+        mut self,
+    ) -> (
+        CallableRef,
+        crate::engine::value::JsValue,
+        crate::engine::value::JsValue,
+    ) {
         (
             self.setter.take().expect("setter"),
             self.receiver.take().expect("setter receiver"),
@@ -84,6 +90,9 @@ impl PropertySetterCall {
 }
 impl Drop for PropertySetterCall {
     fn drop(&mut self) {
+        if let Some(receiver) = self.receiver.take() {
+            let _ = self.runtime.release_jsvalue(receiver);
+        }
         if let Some(value) = self.argument.take() {
             let _ = self.runtime.release_jsvalue(value);
         }

@@ -57,7 +57,9 @@ impl Runtime {
             return self.invalid_raw_json(realm);
         }
         match self.parse_json_text(realm, &source, false)? {
-            NativeConversion::Value(_) => {}
+            NativeConversion::Value((value, _)) => {
+                self.release_jsvalue(value)?;
+            }
             NativeConversion::Throw(_) => return self.invalid_raw_json(realm),
         }
 

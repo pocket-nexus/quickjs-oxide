@@ -179,8 +179,11 @@ impl Runtime {
             // (or a successful release) drains this work after the borrow ends.
             return;
         };
-        if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
-            if let Err(error) = &result {
+        // Successful releases are a VM hot path. Consult diagnostic settings
+        // only after an error; probing the process environment on every edge
+        // release adds a global environment-lock lookup to ordinary value flow.
+        if let Err(error) = &result {
+            if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
                 eprintln!("[release] invalid root release {operation:?}: {error:?}");
                 if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
                     eprintln!(
@@ -188,20 +191,17 @@ impl Runtime {
                         std::backtrace::Backtrace::force_capture()
                     );
                 }
+            } else {
+                debug_assert!(false, "invalid root release {operation:?}: {error:?}");
             }
-        } else {
-            debug_assert!(
-                result.is_ok(),
-                "invalid root release {operation:?}: {result:?}"
-            );
         }
         let drain = self.drain_deferred_references();
-        if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
-            if let Err(error) = &drain {
+        if let Err(error) = &drain {
+            if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
                 eprintln!("[release] deferred root release failed: {error:?}");
+            } else {
+                debug_assert!(false, "deferred root release failed: {error:?}");
             }
-        } else {
-            debug_assert!(drain.is_ok(), "deferred root release failed: {drain:?}");
         }
     }
 

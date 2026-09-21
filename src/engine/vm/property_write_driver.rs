@@ -6,19 +6,22 @@ use super::{
 use crate::engine::{
     api::{Error, ErrorKind, runtime::Runtime},
     object::PropertyKey,
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
 };
 
 pub(super) struct ConvertedWrite {
-    pub base: Value,
-    pub key: Value,
+    pub base: Option<JsValue>,
+    pub key: Option<JsValue>,
     pub value: Option<JsValue>,
     pub runtime: Runtime,
 }
 
 impl Drop for ConvertedWrite {
     fn drop(&mut self) {
-        if let Some(value) = self.value.take() {
+        for value in [self.base.take(), self.key.take(), self.value.take()]
+            .into_iter()
+            .flatten()
+        {
             let _ = self.runtime.release_jsvalue(value);
         }
     }
@@ -82,6 +85,7 @@ pub(super) fn write_progress(
         // Key conversion has completed; authenticate this no-callback owner
         // transfer once and end the borrow before entering object storage.
         let mut slots = execution.slots.run_window(&mut parent.window)?;
+        slots.peek(if static_key.is_none() { 2 } else { 1 })?;
         let value = slots.pop()?;
         let discarded_key = if static_key.is_none() {
             Some(slots.pop()?)
@@ -91,13 +95,12 @@ pub(super) fn write_progress(
         (slots.pop()?, value, discarded_key)
     };
     if let Some(discarded_key) = discarded_key {
-        runtime
-            .release_jsvalue(discarded_key)
-            .map_err(runtime_error_to_vm_error)?;
+        if let Err(error) = runtime.release_jsvalue(discarded_key) {
+            let _ = runtime.release_jsvalue(value);
+            let _ = runtime.release_jsvalue(base);
+            return Err(runtime_error_to_vm_error(error));
+        }
     }
-    let base = runtime
-        .root_and_release_jsvalue(base)
-        .map_err(runtime_error_to_vm_error)?;
     dispatch(runtime, execution, frame, base, key, value, depth)
 }
 
@@ -112,13 +115,15 @@ pub(super) fn converted(
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     let depth = execution.slots.depth(&parent.window) + 3;
-    let base = std::mem::replace(&mut input.base, Value::Undefined);
-    let key = std::mem::replace(&mut input.key, Value::Undefined);
-    if matches!(key, Value::Object(_)) {
+    let key = input.key.take().expect("converted write key");
+    if matches!(key, JsValue::Object(_)) {
+        runtime
+            .release_jsvalue(key)
+            .map_err(runtime_error_to_vm_error)?;
         return Err(Error::internal("write key conversion returned an object"));
     }
     let key = match runtime
-        .native_to_property_key(realm, key)
+        .native_to_property_key_jsvalue(realm, key)
         .map_err(runtime_error_to_vm_error)?
     {
         NativeConversion::Value(key) => key,
@@ -130,6 +135,7 @@ pub(super) fn converted(
             )));
         }
     };
+    let base = input.base.take().expect("converted write base");
     let value = input.value.take().expect("converted write owns its value");
     dispatch(runtime, execution, frame, base, key, value, depth)
         .map(PropertyProgress::into_call_step)
@@ -139,48 +145,63 @@ fn dispatch(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    base: Value,
+    base: JsValue,
     key: PropertyKey,
     value: JsValue,
     depth: usize,
 ) -> Result<PropertyProgress, Error> {
-    let parent = execution.frames.current_mut(frame)?;
+    let parent = match execution.frames.current_mut(frame) {
+        Ok(parent) => parent,
+        Err(error) => {
+            let _ = runtime.release_jsvalue(value);
+            let _ = runtime.release_jsvalue(base);
+            return Err(error);
+        }
+    };
     let realm = parent.executable.realm;
     let strict = parent.executable.metadata.strict;
     let object = match &base {
-        Value::Object(_) => {
+        JsValue::Object(_) => {
             return super::proxy_get_driver::start_receiver_write_progress(
                 runtime, execution, frame, key, value, base, strict, depth,
             );
         }
-        Value::Null | Value::Undefined => {
-            runtime
-                .release_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
-            let suffix = if matches!(base, Value::Null) {
+        JsValue::Null | JsValue::Undefined => {
+            let suffix = if matches!(base, JsValue::Null) {
                 "' of null"
             } else {
                 "' of undefined"
             };
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime
+                .release_jsvalue(base)
+                .map_err(runtime_error_to_vm_error)?;
             let error = runtime
                 .native_atom_error(ErrorKind::Type, "cannot set property '", &key, suffix)
                 .map_err(runtime_error_to_vm_error)?;
             return super::property_driver::throw_error(runtime, realm, error)
                 .map(PropertyProgress::Deferred);
         }
-        value => {
+        primitive => {
             use crate::engine::builtins::native::PrimitiveKind;
-            let kind = match value {
-                Value::Bool(_) => PrimitiveKind::Boolean,
-                Value::Int(_) | Value::Float(_) => PrimitiveKind::Number,
-                Value::String(_) => PrimitiveKind::String,
-                Value::BigInt(_) => PrimitiveKind::BigInt,
-                Value::Symbol(_) => PrimitiveKind::Symbol,
+            let kind = match primitive {
+                JsValue::Bool(_) => PrimitiveKind::Boolean,
+                JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
+                JsValue::String(_) => PrimitiveKind::String,
+                JsValue::BigInt(_) => PrimitiveKind::BigInt,
+                JsValue::Symbol(_) => PrimitiveKind::Symbol,
                 _ => unreachable!(),
             };
-            runtime
-                .primitive_prototype_for_realm(realm, kind)
-                .map_err(runtime_error_to_vm_error)?
+            match runtime.primitive_prototype_for_realm(realm, kind) {
+                Ok(object) => object,
+                Err(error) => {
+                    let _ = runtime.release_jsvalue(value);
+                    let _ = runtime.release_jsvalue(base);
+                    return Err(runtime_error_to_vm_error(error));
+                }
+            }
         }
     };
     super::proxy_get_driver::start_write_progress(
@@ -191,6 +212,7 @@ fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::value::Value;
 
     #[test]
     fn borrowed_set_vm_keeps_selected_callbacks_and_strict_rejection() {
