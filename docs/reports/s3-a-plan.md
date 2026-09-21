@@ -426,3 +426,18 @@ current-source receipt，不改 `current.conf`）→
 - 验证：默认 lib 2270 通过、`test262-host` 2326 通过，clippy
   `--workspace --all-targets -- -D warnings` 零警告，`cargo fmt --check` /
   source-layout / rust-only 全绿。
+
+### 7.4 实现状态与 A 阶段验收口径（2026-09-21）
+
+| 手段 | 状态 | 覆盖 | 缺口 |
+| --- | --- | --- | --- |
+| 7.1 边账本 | 完成并实战验证 | 全部 heap 节点 + 非 pinned atom | 创建栈采样需 `QJS_EDGE_LEDGER` 等环境变量；atom 报告截断 8 条 |
+| 7.2 边守卫 | 完成 | `raw_property_value` 全部 41 个调用点 + 源级规则 | 两个通用辅助保留为 `drop(ConvertedValue::new(...))`；`roots.rs` 一处非守卫释放（不调用转换函数，规则允许） |
+| 7.3 move 优先 | 部分完成 | `#[must_use]` 三类型 + 全仓零 allow；6 个采纳函数改 by-value | 约 106 个 `&Value`、28 个 `&RawValue` 签名仍为借用，属性写/dense array/typed array 待逐文件推进 |
+
+**A 阶段 §7 验收线（已达到）**：`raw_property_value` 调用点无手写释放、
+全仓 `unused_must_use` 零 allow、teardown 账本能对幸存节点给出创建栈。
+**A 阶段不阻塞**：7.3 剩余 `&Value` 采纳面（多数经手 RAII `Value`，泄漏
+风险画像不同），按「逐文件推进，编译器驱动」列入 B/D 阶段持续清理。
+**仍待完成**：oracle 套件 ~19 个既有 realm 级泄漏修复（7.1 已定位来源）、
+Test262 `--check`/`--focused`/`--full`、基准 receipts 与 W6 结果记录。
