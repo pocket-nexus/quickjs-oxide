@@ -73,6 +73,14 @@ impl CollectionRecords {
         self.key_index.find(heap, self, key)
     }
 
+    pub(super) fn find_entry<'a>(
+        &'a self,
+        heap: &Heap,
+        key: &RawValue,
+    ) -> Option<(usize, &'a MapRecord)> {
+        self.key_index.find_entry(heap, self, key)
+    }
+
     /// Must run before retaining a new record's heap edges.
     pub(super) fn preflight_insert(&self) -> Result<(), HeapError> {
         self.next_id.checked_add(1).ok_or(HeapError::Overflow {

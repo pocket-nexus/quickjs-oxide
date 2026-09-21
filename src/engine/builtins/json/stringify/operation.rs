@@ -344,7 +344,10 @@ impl StringifyResumeState {
         runtime: &Runtime,
         check: Check,
     ) -> JsonStringifyResult<StringifyStep> {
-        if matches!(self.current, JsValue::Object(_) | JsValue::BigInt(_)) {
+        if matches!(
+            self.current,
+            JsValue::Object(_) | JsValue::BigInt(_) | JsValue::ShortBigInt(_)
+        ) {
             Ok(StringifyStep::request_read(
                 runtime.dup_jsvalue(&self.current)?,
                 self.to_json_key
@@ -494,7 +497,7 @@ impl StringifyResumeState {
                             let text = if *value { "true" } else { "false" };
                             self.output.push_utf8(text)?;
                         }
-                        JsValue::BigInt(_) => {
+                        JsValue::BigInt(_) | JsValue::ShortBigInt(_) => {
                             return Err(JsonStringifyFailure::Throw(
                                 runtime.new_native_error_jsvalue(
                                     self.realm,

@@ -115,7 +115,9 @@ impl Runtime {
             ObjectPayload::Primitive(PrimitiveObjectData::Boolean(value)) => {
                 JsonWrapperKind::Boolean(*value)
             }
-            ObjectPayload::Primitive(PrimitiveObjectData::BigInt(_)) => JsonWrapperKind::BigInt,
+            ObjectPayload::Primitive(
+                PrimitiveObjectData::BigInt(_) | PrimitiveObjectData::ShortBigInt(_),
+            ) => JsonWrapperKind::BigInt,
             ObjectPayload::Ordinary
             | ObjectPayload::Proxy(_)
             | ObjectPayload::RawJson

@@ -190,6 +190,7 @@ impl Runtime {
             | crate::engine::value::JsValue::Int(_)
             | crate::engine::value::JsValue::Float(_)
             | crate::engine::value::JsValue::BigInt(_)
+            | crate::engine::value::JsValue::ShortBigInt(_)
             | crate::engine::value::JsValue::String(_)
             | crate::engine::value::JsValue::Symbol(_) => false,
         };

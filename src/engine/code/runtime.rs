@@ -86,15 +86,12 @@ impl Runtime {
                             ));
                         }
                         FlatConstant::AtomString(value) => {
-                            atom_string_constants.push(linked_constants.len());
-                            converted_constants
-                                .push(self.raw_property_value(&Value::String(value))?);
-                            linked_constants.push(BytecodeConstant::Value(
-                                converted_constants
-                                    .last()
-                                    .expect("converted constant present")
-                                    .raw(),
-                            ));
+                            // Keep the compiler-owned payload outside the arena
+                            // until atom canonicalization selects its final form.
+                            // This unpublished slot is filled before any constant
+                            // consumers or bytecode publication can observe it.
+                            atom_string_constants.push((linked_constants.len(), value));
+                            linked_constants.push(BytecodeConstant::Value(RawValue::Undefined));
                         }
                         FlatConstant::RegExp { pattern, program } => {
                             linked_constants.push(BytecodeConstant::RegExp { pattern, program });
@@ -139,36 +136,23 @@ impl Runtime {
             let id = {
                 let mut state = self.0.state.borrow_mut();
                 let linking = (|| -> Result<(), RuntimeError> {
-                    for index in atom_string_constants {
-                        let value = match linked_constants.get(index) {
-                            Some(BytecodeConstant::Value(RawValue::String(value))) => {
-                                state.heap.string(*value)?.clone()
-                            }
-                            Some(BytecodeConstant::Value(_))
-                            | Some(BytecodeConstant::RegExp { .. })
-                            | Some(BytecodeConstant::Function(_))
-                            | None => {
-                                return Err(RuntimeError::Invariant(
-                                    "atom-string constant lost its String payload",
-                                ));
-                            }
-                        };
+                    for (index, value) in atom_string_constants {
                         let atom = state.atoms.intern_property_key_js_string(&value)?;
                         // QuickJS falls back to an ordinary independent cpool
                         // String when JS_NewAtomStr produces a tagged integer.
-                        if atom.is_immediate_integer() {
-                            continue;
-                        }
-                        auxiliary_atoms.push(atom);
-                        let canonical = state.atoms.to_js_string(atom)?;
-                        let canonical = state.heap.allocate_string(canonical)?;
-                        // The replaced draft string's producer edge stays with
-                        // its guard; the canonical node's producer edge is
-                        // tracked until the bytecode node retains its own.
+                        let final_value = if atom.is_immediate_integer() {
+                            value
+                        } else {
+                            auxiliary_atoms.push(atom);
+                            state.atoms.to_js_string(atom)?
+                        };
+                        let string = state.heap.allocate_string(final_value)?;
+                        // Only the final node is published. Its producer edge
+                        // remains guarded until the bytecode retains its copy,
+                        // including every later linking/publication failure.
                         converted_constants
-                            .push(ConvertedValue::new(self, RawValue::String(canonical)));
-                        linked_constants[index] =
-                            BytecodeConstant::Value(RawValue::String(canonical));
+                            .push(ConvertedValue::new(self, RawValue::String(string)));
+                        linked_constants[index] = BytecodeConstant::Value(RawValue::String(string));
                     }
                     property_key_atoms = bytecode_publish::link_constant_property_keys(
                         &mut state,

@@ -358,6 +358,9 @@ impl Runtime {
                         let atom = state.atoms.brand(*index)?;
                         (PrimitiveObjectData::Symbol(atom), Some(atom))
                     }
+                    (PrimitiveKind::BigInt, JsValue::ShortBigInt(value)) => {
+                        (PrimitiveObjectData::ShortBigInt(*value), None)
+                    }
                     (PrimitiveKind::BigInt, JsValue::BigInt(id)) => {
                         (PrimitiveObjectData::BigInt(*id), None)
                     }

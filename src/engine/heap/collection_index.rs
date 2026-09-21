@@ -13,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 
-use super::{CollectionRecords, Heap, HeapError, RawValue, StringId};
+use super::{CollectionRecords, Heap, HeapError, MapRecord, RawValue, StringId};
 use crate::engine::value::collection_key;
 
 #[derive(Clone, Default)]
@@ -108,16 +108,22 @@ impl CollectionIndex {
         records: &CollectionRecords,
         key: &RawValue,
     ) -> Option<usize> {
+        self.find_entry(heap, records, key).map(|(index, _)| index)
+    }
+
+    /// Keep the matched record borrowed so callers need not hash its ID again.
+    pub(super) fn find_entry<'a>(
+        &self,
+        heap: &Heap,
+        records: &'a CollectionRecords,
+        key: &RawValue,
+    ) -> Option<(usize, &'a MapRecord)> {
         self.buckets
             .get(&self.hash(heap, key))?
             .iter()
-            .copied()
-            .find(|&index| {
-                collection_key::same_value_zero(
-                    heap,
-                    &records.get(index).expect("indexed record exists").key,
-                    key,
-                )
+            .find_map(|&index| {
+                let record = records.get(index).expect("indexed record exists");
+                collection_key::same_value_zero(heap, &record.key, key).then_some((index, record))
             })
     }
 

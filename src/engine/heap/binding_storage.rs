@@ -127,6 +127,7 @@ impl Heap {
                     | RawValue::Bool(_)
                     | RawValue::Int(_)
                     | RawValue::Float(_)
+                    | RawValue::ShortBigInt(_)
             )
         }
         if !self.zero_queue.is_empty() || !immediate(&replacement) {

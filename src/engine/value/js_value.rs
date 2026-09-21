@@ -1,7 +1,7 @@
 //! Crate-internal execution value and the public-API conversion boundary.
 //!
 //! [`JsValue`] is the engine-internal value representation mandated by the
-//! S3-A design: scalars inline, every heap-backed kind (string, BigInt,
+//! S3-A design: scalars (including ShortBigInt) inline, every heap-backed kind (string, BigInt,
 //! symbol, object) carried as a generational typed handle.  It deliberately
 //! implements neither `Copy` nor `Drop`: every storage position owns its
 //! handle edge explicitly, duplicated with [`Runtime::dup_jsvalue`] and
@@ -18,7 +18,8 @@
 //! - `root`: internal value -> public root (leaving the engine), duplicating
 //!   the edge and wrapping it in the public root types.
 //!
-//! String and BigInt conversion allocates one arena node per conversion:
+//! String and heap BigInt conversion allocates one arena node per conversion;
+//! ShortBigInt conversion copies the full signed 64-bit immediate.
 //! node allocation happens only at genuine creation points (here: API/host
 //! input conversion), never at value stores.
 
@@ -46,6 +47,7 @@ pub enum JsValue {
     Float(f64),
     String(StringId),
     BigInt(BigIntId),
+    ShortBigInt(i64),
     Symbol(AtomIdx),
     Object(ObjectId),
 }
@@ -67,6 +69,7 @@ impl PartialEq for JsValue {
             (Self::Float(left), Self::Float(right)) => left == right,
             (Self::String(left), Self::String(right)) => left == right,
             (Self::BigInt(left), Self::BigInt(right)) => left == right,
+            (Self::ShortBigInt(left), Self::ShortBigInt(right)) => left == right,
             (Self::Symbol(left), Self::Symbol(right)) => left == right,
             (Self::Object(left), Self::Object(right)) => left == right,
             _ => false,
@@ -75,6 +78,11 @@ impl PartialEq for JsValue {
 }
 
 impl JsValue {
+    #[inline]
+    pub(crate) const fn is_bigint(&self) -> bool {
+        matches!(self, Self::BigInt(_) | Self::ShortBigInt(_))
+    }
+
     /// Representation-only `typeof` tag, matching [`Value::type_of`].
     #[must_use]
     pub const fn type_of(&self) -> &'static str {
@@ -82,7 +90,7 @@ impl JsValue {
             Self::Null => "object",
             Self::Bool(_) => "boolean",
             Self::Int(_) | Self::Float(_) => "number",
-            Self::BigInt(_) => "bigint",
+            Self::BigInt(_) | Self::ShortBigInt(_) => "bigint",
             Self::String(_) => "string",
             Self::Symbol(_) => "symbol",
             Self::Object(_) => "object",
@@ -123,6 +131,7 @@ impl JsValue {
             Self::Bool(value) => *value,
             Self::Int(value) => *value != 0,
             Self::Float(value) => *value != 0.0 && !value.is_nan(),
+            Self::ShortBigInt(value) => *value != 0,
             Self::BigInt(_) | Self::String(_) => true,
             Self::Symbol(_) | Self::Object(_) => true,
             Self::Undefined | Self::Null => false,
@@ -139,6 +148,7 @@ impl JsValue {
             Self::Float(value) => RawValue::Float(*value),
             Self::String(id) => RawValue::String(*id),
             Self::BigInt(id) => RawValue::BigInt(*id),
+            Self::ShortBigInt(value) => RawValue::ShortBigInt(*value),
             Self::Symbol(index) => RawValue::Symbol(*index),
             Self::Object(id) => RawValue::Object(*id),
         }
@@ -167,6 +177,7 @@ impl JsValue {
             RawValue::Float(value) => Self::Float(value),
             RawValue::String(id) => Self::String(id),
             RawValue::BigInt(id) => Self::BigInt(id),
+            RawValue::ShortBigInt(value) => Self::ShortBigInt(value),
             RawValue::Symbol(index) => Self::Symbol(index),
             RawValue::Object(id) => Self::Object(id),
             RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => {
@@ -200,6 +211,10 @@ impl std::fmt::Debug for JsValue {
                 .finish(),
             Self::String(id) => formatter.debug_tuple("JsValue::String").field(id).finish(),
             Self::BigInt(id) => formatter.debug_tuple("JsValue::BigInt").field(id).finish(),
+            Self::ShortBigInt(value) => formatter
+                .debug_tuple("JsValue::ShortBigInt")
+                .field(value)
+                .finish(),
             Self::Symbol(index) => formatter
                 .debug_tuple("JsValue::Symbol")
                 .field(index)
@@ -254,6 +269,9 @@ impl Runtime {
                     .allocate_string(string.clone())?;
                 JsValue::String(id)
             }
+            Value::BigInt(bigint) if bigint.as_i64().is_some() => {
+                JsValue::ShortBigInt(bigint.as_i64().expect("short BigInt"))
+            }
             Value::BigInt(bigint) => {
                 let id = self
                     .0
@@ -279,7 +297,8 @@ impl Runtime {
     /// the root owned without a retain/release pair (entering-engine form).
     ///
     /// Object and symbol roots hand over their exactly-one owned reference;
-    /// string and BigInt payloads move into a freshly allocated arena node.
+    /// string and heap BigInt payloads move into a freshly allocated arena node;
+    /// short BigInts keep their immediate representation.
     ///
     /// # Errors
     ///
@@ -311,6 +330,9 @@ impl Runtime {
             Value::String(string) => {
                 let id = self.0.state.borrow_mut().heap.allocate_string(string)?;
                 JsValue::String(id)
+            }
+            Value::BigInt(bigint) if bigint.as_i64().is_some() => {
+                JsValue::ShortBigInt(bigint.as_i64().expect("short BigInt"))
             }
             Value::BigInt(bigint) => {
                 let id = self.0.state.borrow_mut().heap.allocate_bigint(bigint)?;
@@ -364,6 +386,9 @@ impl Runtime {
                 let string = self.0.state.borrow().heap.string(*id)?.clone();
                 Value::String(string)
             }
+            JsValue::ShortBigInt(value) => {
+                Value::BigInt(crate::engine::value::bigint::JsBigInt::from(*value))
+            }
             JsValue::BigInt(id) => {
                 let bigint = self.0.state.borrow().heap.bigint(*id)?.clone();
                 Value::BigInt(bigint)
@@ -388,6 +413,7 @@ impl Runtime {
             JsValue::Bool(value) => JsValue::Bool(*value),
             JsValue::Int(value) => JsValue::Int(*value),
             JsValue::Float(value) => JsValue::Float(*value),
+            JsValue::ShortBigInt(value) => JsValue::ShortBigInt(*value),
             JsValue::Object(id) => {
                 self.retain_object_handle(*id)?;
                 JsValue::Object(*id)
@@ -438,7 +464,8 @@ impl Runtime {
             | JsValue::Null
             | JsValue::Bool(_)
             | JsValue::Int(_)
-            | JsValue::Float(_) => Ok(()),
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_) => Ok(()),
             JsValue::Object(id) => {
                 self.release_object_handle(id);
                 Ok(())
@@ -475,6 +502,9 @@ mod tests {
             Value::Bool(true),
             Value::Int(-7),
             Value::Float(3.5),
+            Value::BigInt(crate::engine::value::bigint::JsBigInt::from(i64::MIN)),
+            Value::BigInt(crate::engine::value::bigint::JsBigInt::zero()),
+            Value::BigInt(crate::engine::value::bigint::JsBigInt::from(i64::MAX)),
         ] {
             let internal = runtime.unroot_value(&value).unwrap();
             assert_eq!(internal.type_of(), value.type_of());

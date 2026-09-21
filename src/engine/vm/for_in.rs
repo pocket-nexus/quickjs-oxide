@@ -165,7 +165,7 @@ impl Runtime {
             JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
             JsValue::String(_) => PrimitiveKind::String,
             JsValue::Symbol(_) => PrimitiveKind::Symbol,
-            JsValue::BigInt(_) => PrimitiveKind::BigInt,
+            JsValue::BigInt(_) | JsValue::ShortBigInt(_) => PrimitiveKind::BigInt,
         };
         let prototype = match self.primitive_prototype_for_realm(realm, kind) {
             Ok(prototype) => prototype,

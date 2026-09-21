@@ -72,6 +72,7 @@ pub(in crate::engine::vm) fn read_immediate_cell(
         RawValue::Bool(value) => Some(JsValue::Bool(*value)),
         RawValue::Int(value) => Some(JsValue::Int(*value)),
         RawValue::Float(value) => Some(JsValue::Float(*value)),
+        RawValue::ShortBigInt(value) => Some(JsValue::ShortBigInt(*value)),
         _ => None,
     }
 }
@@ -116,6 +117,7 @@ pub(in crate::engine::vm) fn try_write_immediate_cell(
         JsValue::Bool(value) => RawValue::Bool(*value),
         JsValue::Int(value) => RawValue::Int(*value),
         JsValue::Float(value) => RawValue::Float(*value),
+        JsValue::ShortBigInt(value) => RawValue::ShortBigInt(*value),
         _ => return false,
     };
     if !root.belongs_to(runtime) || runtime.0.deferred_references.has_pending() {

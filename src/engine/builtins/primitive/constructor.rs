@@ -179,7 +179,7 @@ impl PrimitiveConstructorResume {
             PrimitiveKind::BigInt => {
                 match runtime.bigint_constructor_from_primitive(self.0.realm, &self.0.value)? {
                     NativeConversion::Value(value) => {
-                        if matches!(self.0.value, JsValue::BigInt(_)) {
+                        if matches!(self.0.value, JsValue::BigInt(_) | JsValue::ShortBigInt(_)) {
                             runtime.dup_jsvalue(&self.0.value)?
                         } else {
                             runtime.into_jsvalue(Value::BigInt(value))?

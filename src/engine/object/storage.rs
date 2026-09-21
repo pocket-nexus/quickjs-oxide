@@ -143,6 +143,12 @@ impl Runtime {
                     state.heap.string(*left)? == state.heap.string(*right)?
                 }
             }
+            (JsValue::ShortBigInt(left), JsValue::ShortBigInt(right)) => left == right,
+            (JsValue::ShortBigInt(value), JsValue::BigInt(id))
+            | (JsValue::BigInt(id), JsValue::ShortBigInt(value)) => {
+                self.0.state.borrow().heap.bigint(*id)?
+                    == &crate::engine::value::bigint::JsBigInt::from(*value)
+            }
             (JsValue::BigInt(left), JsValue::BigInt(right)) => {
                 if left == right {
                     true
@@ -174,8 +180,9 @@ impl Runtime {
 
     /// Convert a public value into its heap-stored form at a boundary.
     ///
-    /// String and BigInt payloads allocate one arena node each (API input
-    /// conversion is a genuine creation point); the returned guard owns that
+    /// String and heap BigInt payloads allocate one arena node each (API input
+    /// conversion is a genuine creation point); short BigInts stay immediate.
+    /// The returned guard owns that
     /// one producer-owned node edge and releases it on `Drop` unless the
     /// caller adopts it: clone with [`ConvertedValue::raw`] for a store that
     /// retained its own copy edge, [`ConvertedValue::take`] for a sink that
@@ -197,6 +204,9 @@ impl Runtime {
             Value::Bool(value) => RawValue::Bool(*value),
             Value::Int(value) => RawValue::Int(*value),
             Value::Float(value) => RawValue::Float(*value),
+            Value::BigInt(value) if value.as_i64().is_some() => {
+                RawValue::ShortBigInt(value.as_i64().expect("short BigInt"))
+            }
             Value::BigInt(value) => {
                 let mut state = self.0.state.borrow_mut();
                 let id = state.heap.allocate_bigint(value.clone())?;

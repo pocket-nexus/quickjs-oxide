@@ -443,6 +443,7 @@ impl Runtime {
                 JsValue::Null
                 | JsValue::Bool(_)
                 | JsValue::BigInt(_)
+                | JsValue::ShortBigInt(_)
                 | JsValue::String(_)
                 | JsValue::Symbol(_)
                 | JsValue::Object(_) => false,

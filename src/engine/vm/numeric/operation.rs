@@ -1,6 +1,6 @@
 //! Numeric operators retain ordered conversion operands across JavaScript callbacks.
 use super::{
-    NumericValue, add_primitives, bigint_error, bigint_payload, compare_bigint_number,
+    NumericValue, add_primitives, bigint_error, bigint_value_payload, compare_bigint_number,
     jsvalue_number, mixed_numeric_type_error, number_to_int32, number_to_uint32, string_payload,
     string_to_bigint, to_number_jsvalue, to_numeric_primitive, unary_plus_primitive,
 };
@@ -377,7 +377,7 @@ fn unary_output(
             }));
         }
         let result = match &value {
-            JsValue::BigInt(id) => bigint_payload(runtime, *id)
+            bigint if bigint.is_bigint() => bigint_value_payload(runtime, bigint)
                 .and_then(|payload| payload.neg().map_err(bigint_error))
                 .and_then(|payload| super::allocate_bigint_jsvalue(runtime, payload)),
             other => to_number_jsvalue(runtime, other).map(|number| jsvalue_number(-number)),
@@ -420,8 +420,8 @@ fn unary_output(
         });
     }
     match value {
-        JsValue::BigInt(id) => {
-            let result = bigint_payload(runtime, id)
+        value if value.is_bigint() => {
+            let result = bigint_value_payload(runtime, &value)
                 .and_then(|payload| {
                     if increment {
                         payload.add(&crate::engine::value::bigint::JsBigInt::from(1_i32))
@@ -434,11 +434,11 @@ fn unary_output(
             let next = match result {
                 Ok(next) => next,
                 Err(error) => {
-                    super::release_primitive_operand(runtime, JsValue::BigInt(id))?;
+                    super::release_primitive_operand(runtime, value)?;
                     return Err(error);
                 }
             };
-            let old = JsValue::BigInt(id);
+            let old = value;
             let previous = if postfix {
                 Some(old)
             } else {
@@ -543,17 +543,17 @@ fn compare(
             let right = string_payload(runtime, *right)?;
             Some(left.utf16_units().cmp(right.utf16_units()))
         }
-        (JsValue::BigInt(left), JsValue::BigInt(right)) => {
-            Some(bigint_payload(runtime, *left)?.cmp(&bigint_payload(runtime, *right)?))
+        (left, right) if left.is_bigint() && right.is_bigint() => {
+            Some(bigint_value_payload(runtime, left)?.cmp(&bigint_value_payload(runtime, right)?))
         }
-        (JsValue::BigInt(left), JsValue::String(right)) => {
-            let left = bigint_payload(runtime, *left)?;
+        (left, JsValue::String(right)) if left.is_bigint() => {
+            let left = bigint_value_payload(runtime, left)?;
             let right = string_payload(runtime, *right)?;
             string_to_bigint(&right).map(|right| left.cmp(&right))
         }
-        (JsValue::String(left), JsValue::BigInt(right)) => {
+        (JsValue::String(left), right) if right.is_bigint() => {
             let left = string_payload(runtime, *left)?;
-            let right = bigint_payload(runtime, *right)?;
+            let right = bigint_value_payload(runtime, right)?;
             string_to_bigint(&left).map(|left| left.cmp(&right))
         }
         _ => match (
@@ -702,8 +702,8 @@ fn equality(
                     ));
                 }
             }
-            (JsValue::BigInt(a), JsValue::String(b)) => {
-                let payloads = bigint_payload(runtime, *a)
+            (a, JsValue::String(b)) if a.is_bigint() => {
+                let payloads = bigint_value_payload(runtime, a)
                     .and_then(|a| string_payload(runtime, *b).map(|b| (a, b)));
                 let (a, b) = match payloads {
                     Ok(payloads) => payloads,
@@ -712,9 +712,9 @@ fn equality(
                 let equal = string_to_bigint(&b).is_some_and(|b| b == a);
                 return equality_complete(runtime, kind, left, right, equal);
             }
-            (JsValue::String(a), JsValue::BigInt(b)) => {
+            (JsValue::String(a), b) if b.is_bigint() => {
                 let payloads = string_payload(runtime, *a)
-                    .and_then(|a| bigint_payload(runtime, *b).map(|b| (a, b)));
+                    .and_then(|a| bigint_value_payload(runtime, b).map(|b| (a, b)));
                 let (a, b) = match payloads {
                     Ok(payloads) => payloads,
                     Err(error) => return Err(equality_error(runtime, left, right, error)),
@@ -722,8 +722,8 @@ fn equality(
                 let equal = string_to_bigint(&a).is_some_and(|a| a == b);
                 return equality_complete(runtime, kind, left, right, equal);
             }
-            (JsValue::BigInt(a), JsValue::Int(_) | JsValue::Float(_)) => {
-                let converted = bigint_payload(runtime, *a)
+            (a, JsValue::Int(_) | JsValue::Float(_)) if a.is_bigint() => {
+                let converted = bigint_value_payload(runtime, a)
                     .and_then(|a| to_number_jsvalue(runtime, &right).map(|number| (a, number)));
                 let (a, number) = match converted {
                     Ok(converted) => converted,
@@ -732,8 +732,8 @@ fn equality(
                 let equal = compare_bigint_number(&a, number) == Some(std::cmp::Ordering::Equal);
                 return equality_complete(runtime, kind, left, right, equal);
             }
-            (JsValue::Int(_) | JsValue::Float(_), JsValue::BigInt(b)) => {
-                let converted = bigint_payload(runtime, *b)
+            (JsValue::Int(_) | JsValue::Float(_), b) if b.is_bigint() => {
+                let converted = bigint_value_payload(runtime, b)
                     .and_then(|b| to_number_jsvalue(runtime, &left).map(|number| (b, number)));
                 let (b, number) = match converted {
                     Ok(converted) => converted,
@@ -761,6 +761,7 @@ fn equality(
                 JsValue::Int(_)
                 | JsValue::Float(_)
                 | JsValue::BigInt(_)
+                | JsValue::ShortBigInt(_)
                 | JsValue::String(_)
                 | JsValue::Symbol(_),
             ) => {
@@ -779,6 +780,7 @@ fn equality(
                 JsValue::Int(_)
                 | JsValue::Float(_)
                 | JsValue::BigInt(_)
+                | JsValue::ShortBigInt(_)
                 | JsValue::String(_)
                 | JsValue::Symbol(_),
                 JsValue::Object(_),

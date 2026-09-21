@@ -188,7 +188,10 @@ impl Runtime {
                 | (JsValue::String(_), PrimitiveKind::String)
                 | (JsValue::Bool(_), PrimitiveKind::Boolean)
                 | (JsValue::Symbol(_), PrimitiveKind::Symbol)
-                | (JsValue::BigInt(_), PrimitiveKind::BigInt)
+                | (
+                    JsValue::BigInt(_) | JsValue::ShortBigInt(_),
+                    PrimitiveKind::BigInt
+                )
         ) {
             return self.dup_jsvalue(value).map(NativeConversion::Value);
         }
@@ -214,6 +217,11 @@ impl Runtime {
                         if kind == PrimitiveKind::Boolean =>
                     {
                         Some(JsValue::Bool(*v))
+                    }
+                    ObjectPayload::Primitive(PrimitiveObjectData::ShortBigInt(v))
+                        if kind == PrimitiveKind::BigInt =>
+                    {
+                        Some(JsValue::ShortBigInt(*v))
                     }
                     ObjectPayload::Primitive(PrimitiveObjectData::BigInt(v))
                         if kind == PrimitiveKind::BigInt =>
@@ -486,6 +494,14 @@ impl Runtime {
                         self.clone(),
                         atom,
                     )?)?
+                }
+                (PrimitiveKind::BigInt, JsValue::ShortBigInt(value)) => {
+                    let text = crate::engine::value::bigint::JsBigInt::from(*value)
+                        .to_string_radix(radix)
+                        .map_err(|_| {
+                            RuntimeError::Invariant("validated BigInt radix was rejected")
+                        })?;
+                    JsString::from_owned_latin1(text.into_bytes())
                 }
                 (PrimitiveKind::BigInt, JsValue::BigInt(id)) => {
                     let formatted = {

@@ -29,6 +29,25 @@ impl Runtime {
         Ok(PropertyKey::from_owned_atom(self.clone(), atom))
     }
 
+    /// Intern a live internal string without cloning its payload for transport.
+    /// The caller keeps its owning edge until this non-callback borrow ends.
+    pub(crate) fn intern_property_key_string_id(
+        &self,
+        id: crate::engine::heap::StringId,
+    ) -> Result<PropertyKey, RuntimeError> {
+        let _operation = self.operation();
+        let atom = {
+            let mut state = self.0.state.borrow_mut();
+            let state = &mut *state;
+            let text = state
+                .heap
+                .string(id)
+                .map_err(|error| RuntimeError::Engine(Error::internal(error.to_string())))?;
+            state.atoms.intern_property_key_js_string(text)?
+        };
+        Ok(PropertyKey::from_owned_atom(self.clone(), atom))
+    }
+
     /// Intern a UTF-8 property spelling without losing the exact UTF-16 path
     /// used by language-level keys.
     pub fn intern_property_key(&self, text: &str) -> Result<PropertyKey, AtomError> {

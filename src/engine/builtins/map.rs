@@ -420,16 +420,9 @@ impl Runtime {
         };
         let state = self.0.state.borrow();
         let heap = &state.heap;
-        let Some(index) = heap.map_find_record(map, &raw_key)? else {
-            return Ok(None);
-        };
-        let value = heap
-            .map_records(map)?
-            .get(index)
-            .expect("indexed Map record exists")
-            .value
-            .clone();
-        Ok(Some((index, value)))
+        Ok(heap
+            .map_find_entry(map, &raw_key)?
+            .map(|(index, record)| (index, record.value.clone())))
     }
 
     pub(in crate::engine::builtins) fn set_map_record(
@@ -492,10 +485,14 @@ impl Runtime {
         map: crate::engine::heap::ObjectId,
         key: &JsValue,
     ) -> Result<bool, RuntimeError> {
-        let Some((index, _)) = self.find_map_record_id(map, key)? else {
-            return Ok(false);
+        let raw_key = match key {
+            JsValue::Float(0.0) => RawValue::Int(0),
+            _ => key.as_raw(),
         };
         let mut state = self.0.state.borrow_mut();
+        let Some(index) = state.heap.map_find_record(map, &raw_key)? else {
+            return Ok(false);
+        };
         let cleanup = state.heap.map_delete_record(map, index)?;
         state.apply_cleanup(cleanup)?;
         Ok(true)
@@ -563,7 +560,17 @@ impl Runtime {
         let key = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "Map.prototype.has key argv was not padded",
         ))?;
-        let has = self.find_map_record_id(map, key)?.is_some();
+        let raw_key = match key {
+            JsValue::Float(0.0) => RawValue::Int(0),
+            _ => key.as_raw(),
+        };
+        let has = self
+            .0
+            .state
+            .borrow()
+            .heap
+            .map_find_record(map, &raw_key)?
+            .is_some();
         Ok(Completion::Return(JsValue::Bool(has)))
     }
 

@@ -88,8 +88,7 @@ String/BigInt，8B 无从谈起。
 7. BigInt：当前实现为 `RawValue::BigInt(BigIntId)` 全 arena，包含 `Short`。
    **该决定进入回退修复，不再把短整数内联推迟到 A4**：§8 的 R1 优先在
    16B `JsValue`/`RawValue` 内恢复完整 `ShortBigInt(i64)`，真正 Heap BigInt
-   保留句柄；公共 API 与算术内核保持不变。此项是待实施的设计修订，不能
-   当作已落地。将来 8B NaN-box 的短整数编码范围另行决策，不限制本轮 i64。
+   保留句柄；公共 API 与算术内核保持不变。表示修复已按 §8.7 实施，性能关闭仍须对应测量。将来 8B NaN-box 的短整数编码范围另行决策，不限制本轮 i64。
 8. 内存语义注意：字符串/BigInt 从「`Rc` 独立分配」变为「arena 节点 +
    free-list 复用 + generation」——teardown 的 `live == 0` 断言与
    `GcStats`/`HeapCounts` 公共诊断（`api/mod.rs:15` 导出）口径需同步
@@ -801,3 +800,25 @@ R1、R2、R3/R4 可分模块并行调查/实现；涉及共同表示、GC 和 co
 本轮遵守“不跑测试”，因此 R5 的语义证据明确待验收；该限制不会自动放行
 阶段 A。历史 d184986f 的全套通过不适用于后续源码。先把回退修复完整，再按
 统一最终快照完成已定义验收，之后才讨论 A4 或其他阶段。
+
+
+### 8.7 第一批确定成本的实现（待性能关闭）
+
+本批只修改已确认存在的成本，未改变 BigInt 算术内核、公共 API、oracle 期望或
+teardown 断言：
+
+- R1：JsValue/RawValue 的 ShortBigInt(i64) 在 16B 内恢复。numeric、API、
+  常量边界和 typed 创建绕过 arena；存储、GC、异常根、包装对象、比较/hash、
+  typeof/ToNumber/ToString 与闭包 scalar 读写均识别 Short。大整数保持 BigIntId。
+  旧内部表示断言相应调整，语言 oracle 期望不改。
+- R4：AtomString 编译草稿保留 JsString，完成 intern/canonical 决策后仅发布
+  最终 StringId；立即整数 atom fallback、atom 根、发布失败回滚保持原协议。
+- R2：Map 查找复用比较时已访问的 record，has/delete 不再取出无用 value；
+  Map/Set 删除及 Set 插入合并查询与修改的状态借用。未改 hash、安全检查或
+  容器数据结构；其中删除旧有重复工作属于补偿优化，不是声称它由 A 新引入。
+- R3：String ToPropertyKey 在一次状态借用内直接读取 payload 并 intern，
+  不再为了运输克隆 JsString；输入边仍由原统一出口释放，失效句柄错误分类保持。
+
+按用户要求不执行测试。现阶段只确认上述源码成本已移除；后续以该批不可变
+提交的同协议 benchmark/profile 判断各回退是否关闭。未完成的语义门禁和
+§8.1 逐项性能门禁仍有效，不能据本批补丁宣称阶段 A 完成。

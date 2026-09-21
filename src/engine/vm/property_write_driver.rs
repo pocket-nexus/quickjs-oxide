@@ -183,7 +183,7 @@ fn dispatch(
                 JsValue::Bool(_) => PrimitiveKind::Boolean,
                 JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
                 JsValue::String(_) => PrimitiveKind::String,
-                JsValue::BigInt(_) => PrimitiveKind::BigInt,
+                JsValue::BigInt(_) | JsValue::ShortBigInt(_) => PrimitiveKind::BigInt,
                 JsValue::Symbol(_) => PrimitiveKind::Symbol,
                 _ => unreachable!(),
             };
