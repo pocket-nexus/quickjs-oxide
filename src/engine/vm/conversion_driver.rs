@@ -59,10 +59,12 @@ impl Drop for ConversionState {
             Finish::AddLeft(value) | Finish::AddRight(value) => {
                 let _ = self.runtime.release_jsvalue(value);
             }
-            Finish::Predicate(_)
-            | Finish::SuperProperty(_)
-            | Finish::Plus
-            | Finish::PropertyKey => {}
+            Finish::SuperProperty(input) => {
+                if let Some(input) = input {
+                    input.release_edges(&self.runtime);
+                }
+            }
+            Finish::Predicate(_) | Finish::Plus | Finish::PropertyKey => {}
         }
     }
 }
@@ -605,7 +607,10 @@ impl ConversionTask {
                             }
                             Finish::SuperProperty(input) => {
                                 let mut input = input.take().expect("super conversion input");
-                                input.key = value;
+                                let previous = std::mem::replace(&mut input.key, value);
+                                runtime
+                                    .release_jsvalue(previous)
+                                    .map_err(runtime_error_to_vm_error)?;
                                 return Ok(Progress::SuperProperty(input));
                             }
                             Finish::PropertyWrite {

@@ -402,10 +402,10 @@ impl AsyncGeneratorResume {
                 .runtime
                 .root_front_async_generator_request(&generator)?;
             self.detach(previous)?;
-            let result = self.runtime.into_jsvalue(request.result)?;
             let input = match previous {
                 AsyncGeneratorState::SuspendedStart => VmActivationResume::Initial,
                 AsyncGeneratorState::SuspendedYield | AsyncGeneratorState::SuspendedYieldStar => {
+                    let result = self.runtime.into_jsvalue(request.result)?;
                     VmActivationResume::Generator(match request.completion {
                         GeneratorResumeKind::Next => VmResume::Next(result),
                         GeneratorResumeKind::Return => VmResume::Return(result),

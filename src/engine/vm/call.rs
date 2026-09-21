@@ -454,6 +454,7 @@ impl Runtime {
                 for argument in arguments.drain(..) {
                     self.release_jsvalue(argument)?;
                 }
+                new_target.release(self)?;
                 return Ok(NativeConversion::Throw(self.new_not_constructor_error(
                     caller_realm,
                     &Value::Object(constructor.as_object().clone()),
@@ -978,6 +979,18 @@ pub(crate) enum ConstructNewTarget {
 }
 
 impl ConstructNewTarget {
+    /// Drop this owner without consuming it, releasing the raw edge when the
+    /// new-target arrived through QuickJS's raw form.
+    pub(crate) fn release(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        match self {
+            Self::Validated(constructor) => {
+                drop(constructor);
+                Ok(())
+            }
+            Self::Raw(value) => runtime.release_jsvalue(value),
+        }
+    }
+
     /// Consume into the internal new-target value, transferring the validated
     /// constructor's edge or moving the raw owner.
     pub(crate) fn into_value(self) -> crate::engine::value::JsValue {

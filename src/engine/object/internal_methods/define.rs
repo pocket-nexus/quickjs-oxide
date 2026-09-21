@@ -179,7 +179,9 @@ impl ProxyDefineResume {
                 key,
                 descriptor,
             } => {
-                if !runtime.value_to_boolean_jsvalue(&value)? {
+                let accepted = runtime.value_to_boolean_jsvalue(&value)?;
+                runtime.release_jsvalue(value)?;
+                if !accepted {
                     return Ok(ProxyDefineStep::Complete(NativeConversion::Value(
                         InternalDefineResult::RejectedProxyTrap,
                     )));

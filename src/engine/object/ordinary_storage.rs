@@ -987,10 +987,18 @@ impl Runtime {
             let crate::engine::atom::AtomSpelling::Text(name) = info.spelling else {
                 return None;
             };
-            return (info.kind == crate::engine::atom::AtomKind::String
-                && name.len() == 6
-                && name.utf16_units().eq("length".encode_utf16()))
-            .then(|| JsValue::Float(state.heap.string_fast(*id).len() as f64));
+            if info.kind != crate::engine::atom::AtomKind::String
+                || name.len() != 6
+                || !name.utf16_units().eq("length".encode_utf16())
+            {
+                return None;
+            }
+            let length = state.heap.string_fast(*id).len();
+            return Some(if let Ok(length) = i32::try_from(length) {
+                JsValue::Int(length)
+            } else {
+                JsValue::Float(length as f64)
+            });
         }
         let JsValue::Object(object) = base else {
             return None;

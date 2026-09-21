@@ -176,7 +176,9 @@ impl ProxySetResume {
                 resume.resume(runtime, Completion::Return(result))?,
             ),
             Phase::Trap { rooted, key, value } => {
-                if !runtime.value_to_boolean_jsvalue(&result)? {
+                let accepted = runtime.value_to_boolean_jsvalue(&result)?;
+                runtime.release_jsvalue(result)?;
+                if !accepted {
                     return Ok(ProxySetStep::Complete(NativeConversion::Value(
                         InternalSetResult::RejectedProxyTrap,
                     )));

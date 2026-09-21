@@ -212,12 +212,17 @@ impl ProxyPrototypeResume {
                                 Some(ObjectRef::from_owned_handle(runtime.clone(), object))
                             }
                             JsValue::Null => None,
-                            _ => return inconsistent(runtime, self.0.realm),
+                            other => {
+                                runtime.release_jsvalue(other)?;
+                                return inconsistent(runtime, self.0.realm);
+                            }
                         },
                         false,
                     ),
                     ProxyPrototypeKind::Set(prototype) => {
-                        if !runtime.value_to_boolean_jsvalue(&value)? {
+                        let accepted = runtime.value_to_boolean_jsvalue(&value)?;
+                        runtime.release_jsvalue(value)?;
+                        if !accepted {
                             return Ok(ProxyPrototypeStep::Complete(Completion::Return(
                                 JsValue::Bool(false),
                             )));

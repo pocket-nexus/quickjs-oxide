@@ -31,6 +31,16 @@ impl Input {
     pub(super) fn operand_count(&self) -> usize {
         if self.kind == Kind::Write { 4 } else { 3 }
     }
+
+    /// Release the owned internal edges an abandoned conversion still holds.
+    pub(super) fn release_edges(self, runtime: &Runtime) {
+        let _ = runtime.release_jsvalue(self.receiver);
+        let _ = runtime.release_jsvalue(self.base);
+        let _ = runtime.release_jsvalue(self.key);
+        if let Some(value) = self.value {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
 }
 pub(super) fn start(
     runtime: &Runtime,
@@ -63,6 +73,20 @@ pub(super) fn start(
         None
     };
     if let Some(message) = error {
+        if let Some(value) = value {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        runtime
+            .release_jsvalue(key)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(receiver)
+            .map_err(runtime_error_to_vm_error)?;
         return super::property_driver::throw_error(
             runtime,
             realm,
@@ -84,6 +108,28 @@ pub(super) fn start(
         converted(runtime, execution, id, input).map(Progress::Call)
     }
 }
+/// Release the owned internal edges of a conversion that ends before the
+/// read/write handler takes them over.
+fn release_abandoned_operands(
+    runtime: &Runtime,
+    receiver: JsValue,
+    base: JsValue,
+    value: Option<JsValue>,
+) -> Result<(), Error> {
+    if let Some(assigned) = value {
+        runtime
+            .release_jsvalue(assigned)
+            .map_err(runtime_error_to_vm_error)?;
+    }
+    runtime
+        .release_jsvalue(receiver)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .release_jsvalue(base)
+        .map_err(runtime_error_to_vm_error)?;
+    Ok(())
+}
+
 // The pending super-property conversion transfers its existing box directly to this consuming handler.
 #[allow(clippy::boxed_local)]
 pub(super) fn converted(
@@ -106,17 +152,19 @@ pub(super) fn converted(
     if matches!(key, JsValue::Object(_)) {
         return Err(Error::internal("super key conversion returned an object"));
     }
-    let key = match runtime
-        .native_to_property_key_jsvalue(realm, key)
-        .map_err(runtime_error_to_vm_error)?
-    {
-        NativeConversion::Value(key) => key,
-        NativeConversion::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(
-                runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?,
-            )));
+    let conversion = runtime.native_to_property_key_jsvalue(realm, key);
+    let key = match conversion {
+        Ok(NativeConversion::Value(key)) => key,
+        Ok(NativeConversion::Throw(thrown)) => {
+            let thrown = runtime
+                .into_jsvalue(thrown)
+                .map_err(runtime_error_to_vm_error)?;
+            release_abandoned_operands(runtime, receiver, base, value)?;
+            return Ok(CallStep::Complete(Completion::Throw(thrown)));
+        }
+        Err(error) => {
+            release_abandoned_operands(runtime, receiver, base, value)?;
+            return Err(runtime_error_to_vm_error(error));
         }
     };
     if kind == Kind::Write {
@@ -163,6 +211,12 @@ pub(super) fn converted(
             JsValue::Null => "' of null",
             JsValue::Undefined => "' of undefined",
             _ => {
+                runtime
+                    .release_jsvalue(receiver)
+                    .map_err(runtime_error_to_vm_error)?;
+                runtime
+                    .release_jsvalue(base)
+                    .map_err(runtime_error_to_vm_error)?;
                 return super::property_driver::throw_error(
                     runtime,
                     realm,
@@ -172,6 +226,12 @@ pub(super) fn converted(
         };
         let error = runtime
             .native_atom_error(ErrorKind::Type, "cannot read property '", &key, suffix)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(receiver)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(base)
             .map_err(runtime_error_to_vm_error)?;
         return super::property_driver::throw_error(runtime, realm, error);
     }

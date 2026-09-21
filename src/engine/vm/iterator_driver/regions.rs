@@ -156,6 +156,10 @@ pub(in crate::engine::vm) fn unwind(
                         CallStep::Complete(Completion::Throw(original)) => value = original,
                         _ => return Err(Error::internal("iterator unwind lost its throw")),
                     }
+                } else {
+                    runtime
+                        .release_jsvalue(iterator)
+                        .map_err(super::runtime_error_to_vm_error)?;
                 }
             }
         }
