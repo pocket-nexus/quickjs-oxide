@@ -9,14 +9,16 @@ use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::heap::ContextId;
 
 use crate::engine::object::{ObjectRef, PropertyKey, WellKnownSymbol};
-use crate::engine::value::{JsString, JsValue, Value};
+#[cfg(any(test, feature = "test262-host"))]
+use crate::engine::value::Value;
+use crate::engine::value::{JsString, JsValue};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 impl Runtime {
     /// Completion-aware `ToPropertyKey` used by native Object APIs. Symbols
     /// retain identity; every other value uses string-hint ToPrimitive before
     /// exact UTF-16 key interning.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "profiling"))]
     pub(crate) fn native_to_property_key(
         &self,
         realm: ContextId,
@@ -106,7 +108,7 @@ impl Runtime {
     }
 
     /// Finish ToPropertyKey after the domain continuation has obtained a primitive.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "profiling"))]
     pub(crate) fn property_key_from_primitive(
         &self,
         realm: ContextId,
@@ -181,6 +183,7 @@ impl Runtime {
         }
     }
 
+    #[cfg(feature = "test262-host")]
     pub(crate) fn native_to_js_string(
         &self,
         realm: ContextId,
@@ -215,6 +218,7 @@ impl Runtime {
         result
     }
 
+    #[cfg(any(test, feature = "test262-host"))]
     pub(crate) fn native_to_number(
         &self,
         realm: ContextId,

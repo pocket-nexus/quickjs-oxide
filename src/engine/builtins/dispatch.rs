@@ -9,8 +9,10 @@ use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
 #[cfg(test)]
 use crate::engine::value::JsString;
+use crate::engine::value::JsValue;
+#[cfg(any(test, feature = "test262-host"))]
+use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{
@@ -72,6 +74,7 @@ impl Runtime {
         Ok(NativeConversion::Value(arguments))
     }
 
+    #[cfg(any(test, feature = "test262-host"))]
     pub(crate) fn call_internal(
         &self,
         caller_realm: ContextId,
