@@ -121,7 +121,6 @@ impl ArrayStringStep {
             };
         let to_string = matches!(kind, ArrayStringKind::ToString);
         Ok({
-            let __pending_field_receiver = JsValue::Object(object.clone().into_handle());
             let __pending_field_key =
                 runtime.intern_property_key(if to_string { "join" } else { "length" })?;
             let __pending_field_resume = ArrayStringResume(Box::new(ArrayStringResumeState {
@@ -146,11 +145,8 @@ impl ArrayStringStep {
                 index: 0,
                 element: JsValue::Undefined,
             }));
-            Self::request_read(
-                __pending_field_receiver,
-                __pending_field_key,
-                __pending_field_resume,
-            )
+            let receiver = JsValue::Object(__pending_field_resume.0.object.clone().into_handle());
+            Self::request_read(receiver, __pending_field_key, __pending_field_resume)
         })
     }
 }

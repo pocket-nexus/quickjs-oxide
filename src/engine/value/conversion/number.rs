@@ -33,15 +33,18 @@ impl NumberStep {
         realm: ContextId,
         value: Value,
     ) -> Result<Self, RuntimeError> {
+        Self::start_jsvalue(runtime, realm, runtime.into_jsvalue(value)?)
+    }
+
+    pub(crate) fn start_jsvalue(
+        runtime: &Runtime,
+        realm: ContextId,
+        value: JsValue,
+    ) -> Result<Self, RuntimeError> {
         from_primitive(
             runtime,
             realm,
-            PrimitiveResume::start(
-                runtime,
-                realm,
-                runtime.unroot_value(&value)?,
-                ToPrimitiveHint::Number,
-            ),
+            PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number),
         )
     }
 }
@@ -55,8 +58,9 @@ fn from_primitive(
             NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?),
         ),
         PrimitiveStep::Complete(Completion::Return(value)) => {
-            let value = runtime.root_and_release_jsvalue(value)?;
-            NumberStep::Complete(runtime.number_from_primitive(realm, &value)?)
+            let converted = runtime.number_from_primitive_jsvalue(realm, &value);
+            runtime.release_jsvalue(value)?;
+            NumberStep::Complete(converted?)
         }
         PrimitiveStep::Get { mut resume } => {
             let (object, key) = resume.take_get();

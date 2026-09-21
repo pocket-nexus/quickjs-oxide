@@ -12,7 +12,16 @@ use crate::engine::{
 pub(super) struct ConvertedWrite {
     pub base: Value,
     pub key: Value,
-    pub value: Value,
+    pub value: Option<JsValue>,
+    pub runtime: Runtime,
+}
+
+impl Drop for ConvertedWrite {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 
 pub(super) fn write(
@@ -49,6 +58,9 @@ pub(super) fn write_progress(
             .dup_jsvalue(execution.slots.peek(&parent.window, 1)?)
             .map_err(runtime_error_to_vm_error)?;
         if matches!(value, JsValue::Object(_)) {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
             return Err(Error::internal("object write key did not enter conversion"));
         }
         match runtime
@@ -86,9 +98,6 @@ pub(super) fn write_progress(
     let base = runtime
         .root_and_release_jsvalue(base)
         .map_err(runtime_error_to_vm_error)?;
-    let value = runtime
-        .root_and_release_jsvalue(value)
-        .map_err(runtime_error_to_vm_error)?;
     dispatch(runtime, execution, frame, base, key, value, depth)
 }
 
@@ -98,12 +107,13 @@ pub(super) fn converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    input: Box<ConvertedWrite>,
+    mut input: Box<ConvertedWrite>,
 ) -> Result<CallStep, Error> {
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     let depth = execution.slots.depth(&parent.window) + 3;
-    let ConvertedWrite { base, key, value } = *input;
+    let base = std::mem::replace(&mut input.base, Value::Undefined);
+    let key = std::mem::replace(&mut input.key, Value::Undefined);
     if matches!(key, Value::Object(_)) {
         return Err(Error::internal("write key conversion returned an object"));
     }
@@ -120,6 +130,7 @@ pub(super) fn converted(
             )));
         }
     };
+    let value = input.value.take().expect("converted write owns its value");
     dispatch(runtime, execution, frame, base, key, value, depth)
         .map(PropertyProgress::into_call_step)
 }
@@ -130,7 +141,7 @@ fn dispatch(
     frame: FrameId,
     base: Value,
     key: PropertyKey,
-    value: Value,
+    value: JsValue,
     depth: usize,
 ) -> Result<PropertyProgress, Error> {
     let parent = execution.frames.current_mut(frame)?;
@@ -143,6 +154,9 @@ fn dispatch(
             );
         }
         Value::Null | Value::Undefined => {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
             let suffix = if matches!(base, Value::Null) {
                 "' of null"
             } else {

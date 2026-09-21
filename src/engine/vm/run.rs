@@ -404,10 +404,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     .get()
                     .and_then(|rare| rare.normalized_this.as_ref())
                 {
-                    // The rare-cell cache is a public-root island; entering the
-                    // stack duplicates its edges at this boundary.
                     runtime
-                        .unroot_value(value)
+                        .dup_jsvalue(value)
                         .map_err(runtime_error_to_vm_error)?
                 } else if executable.metadata.strict
                     || matches!(cold.input.this_value, JsValue::Object(_))
@@ -1965,7 +1963,7 @@ mod tests {
         for holder in ["({x:{answer:42}})", "Object.create({x:{answer:42}})"] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval(&format!("var icHolder={holder}; function icRead(n){{var r;for(var i=0;i<n;i++)r=icHolder.x;return r;}} icRead(2)")).unwrap();
+            drop(context.eval(&format!("var icHolder={holder}; function icRead(n){{var r;for(var i=0;i<n;i++)r=icHolder.x;return r;}} icRead(2)")).unwrap());
             let expected = context.eval("icHolder.x").unwrap();
             let profile = CostProfile::start();
             assert_eq!(context.eval("icRead(20)").unwrap(), expected);
@@ -1985,7 +1983,7 @@ mod tests {
         }
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("var icMethodHolder={min:Math.min};function icMethod(n){var r;for(var i=0;i<n;i++)r=icMethodHolder.min(42,43);return r;}icMethod(2)").unwrap();
+        drop(context.eval("var icMethodHolder={min:Math.min};function icMethod(n){var r;for(var i=0;i<n;i++)r=icMethodHolder.min(42,43);return r;}icMethod(2)").unwrap());
         let profile = CostProfile::start();
         assert_eq!(context.eval("icMethod(20)").unwrap(), Value::Int(42));
         let costs = profile.snapshot();
@@ -2006,7 +2004,7 @@ mod tests {
             0
         );
         drop(profile);
-        context.eval("icMethodHolder.min=Math.max").unwrap();
+        drop(context.eval("icMethodHolder.min=Math.max").unwrap());
         assert_eq!(context.eval("icMethod(3)").unwrap(), Value::Int(43));
     }
 

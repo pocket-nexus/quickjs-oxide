@@ -409,12 +409,14 @@ impl Runtime {
             Completion::Return(value @ JsValue::Object(_)) => {
                 self.root_and_release_jsvalue(value)?
             }
-            Completion::Return(_) => {
+            Completion::Return(value) => {
+                self.release_jsvalue(value)?;
                 return Err(RuntimeError::Invariant(
                     "String canonical alias target was not callable",
                 ));
             }
-            Completion::Throw(_) => {
+            Completion::Throw(value) => {
+                self.release_jsvalue(value)?;
                 return Err(RuntimeError::Invariant(
                     "String canonical alias initialization threw during bootstrap",
                 ));

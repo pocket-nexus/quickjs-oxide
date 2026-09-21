@@ -1,14 +1,14 @@
 //! S06 coverage exercises complete callback chains, not only opcode execution.
 use crate::engine::{
     api::{profiling::CostProfile, runtime::Runtime},
-    value::Value,
+    value::{JsValue, Value},
 };
 
 fn assert_owned(source: &str, assertion: &str) {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let profile = CostProfile::start();
-    context.eval(source).unwrap();
+    drop(context.eval(source).unwrap());
     let mut jobs = 0;
     while runtime.is_job_pending() {
         runtime.run_gc().unwrap();
@@ -94,19 +94,21 @@ fn abandoned_async_generator_resume_completes_detached_activation_and_releases_r
     else {
         panic!("expected generator");
     };
+    let invocation = NativeInvocation::Call {
+        this_value: JsValue::Object(generator.clone().into_handle()),
+    };
     let step = AsyncGeneratorStep::start(
         &runtime,
         context.realm,
         NativeFunctionId::AsyncGeneratorPrototypeResume(GeneratorResumeKind::Next),
-        &NativeInvocation::Call {
-            this_value: Value::Object(generator.clone()),
-        },
+        &invocation,
         &NativeArguments {
-            readable: vec![Value::Undefined],
+            readable: vec![JsValue::Undefined],
             actual_arg_count: 0,
         },
     )
     .unwrap();
+    invocation.release(&runtime).unwrap();
     assert!(matches!(step, AsyncGeneratorStep::Run { .. }));
     assert_eq!(
         runtime
@@ -160,20 +162,22 @@ fn original_argument_roots_survive_parameter_replacement_and_repeated_suspension
     let RawValue::Object(original) = first.original_arguments[0] else {
         panic!("missing original argument")
     };
-    assert_eq!(
+    assert!(matches!(
         first.arguments[0],
         GeneratorFrameBinding::Direct(RawValue::Int(7))
-    );
+    ));
     runtime.run_gc().unwrap();
     assert!(runtime.0.state.borrow().heap.object(original).is_ok());
-    context.eval("saved.next()").unwrap();
+    drop(context.eval("saved.next()").unwrap());
     let second = snapshot();
-    assert_eq!(second.original_arguments, first.original_arguments);
-    assert_eq!(
+    assert_eq!(first.original_arguments.len(), 1);
+    assert_eq!(second.original_arguments.len(), 1);
+    assert!(matches!(second.original_arguments[0], RawValue::Object(id) if id == original));
+    assert!(matches!(
         second.arguments[0],
         GeneratorFrameBinding::Direct(RawValue::Int(8))
-    );
-    context.eval("saved.next();saved=null").unwrap();
+    ));
+    drop(context.eval("saved.next();saved=null").unwrap());
     runtime.run_gc().unwrap();
     assert!(runtime.0.state.borrow().heap.object(original).is_err());
 }
@@ -198,7 +202,7 @@ fn suspension_survives_a_remaining_module_opcode_handoff() {
         panic!("expected async function");
     };
     let callable = runtime.as_callable(&function).unwrap().unwrap();
-    context.call(&callable, Value::Undefined, &[]).unwrap();
+    drop(context.call(&callable, Value::Undefined, &[]).unwrap());
     while runtime.is_job_pending() {
         runtime.run_gc().unwrap();
         runtime.execute_pending_job().unwrap();

@@ -4,6 +4,8 @@ use crate::engine::atom::Atom;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectData, ObjectPayload, PropertySlot, RawValue};
 use crate::engine::object::{ObjectRef, ordinary_storage::prototypes_allow_dense_append};
+use crate::engine::value::JsValue;
+#[cfg(test)]
 use crate::engine::value::Value;
 
 fn writable_dense_length(
@@ -38,17 +40,14 @@ impl Runtime {
     pub(crate) fn try_dense_push(
         &self,
         object: &ObjectRef,
-        value: &Value,
-    ) -> Result<Option<Value>, RuntimeError> {
+        value: &JsValue,
+    ) -> Result<Option<JsValue>, RuntimeError> {
         let _operation = self.operation();
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
         }
-        self.validate_value_domain(value, "property value")?;
-        let converted = self.raw_property_value(value)?;
-        let raw = converted.raw();
-        // Clone duplicates only the handle; the guard keeps the
-        // producer edge accountable through every store-or-decline path.
+        let raw = value.as_raw();
+        // Borrow the existing edge; a decline neither materializes nor retains it.
         let mut state = self.0.state.borrow_mut();
         let id = object.object_id();
         let prepared = (|| -> Result<Option<u32>, RuntimeError> {
@@ -68,8 +67,7 @@ impl Runtime {
             }
             Ok(Some(length))
         })();
-        // Every decline leaves the dense storage untouched; the guard
-        // balances the value's producer edge on those exits.
+        // Every decline leaves the dense storage and borrowed producer untouched.
         let length = match prepared {
             Ok(Some(length)) => length,
             Ok(None) => return Ok(None),
@@ -89,12 +87,19 @@ impl Runtime {
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("array_mutation_dense_push");
-        Ok(Some(Self::array_length_value(length + 1)))
+        Ok(Some(
+            i32::try_from(length + 1)
+                .map(JsValue::Int)
+                .unwrap_or_else(|_| JsValue::Float(f64::from(length + 1))),
+        ))
     }
 
     /// Immediate dense tails need no root materialization before deletion.
     /// Reference tails, holes, fixed length and slow Arrays keep the protocol.
-    pub(crate) fn try_dense_pop(&self, object: &ObjectRef) -> Result<Option<Value>, RuntimeError> {
+    pub(crate) fn try_dense_pop(
+        &self,
+        object: &ObjectRef,
+    ) -> Result<Option<JsValue>, RuntimeError> {
         let _operation = self.operation();
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
@@ -109,11 +114,11 @@ impl Runtime {
             unreachable!()
         };
         let value = match dense.last() {
-            None | Some(RawValue::Undefined) => Value::Undefined,
-            Some(RawValue::Null) => Value::Null,
-            Some(RawValue::Bool(v)) => Value::Bool(*v),
-            Some(RawValue::Int(v)) => Value::Int(*v),
-            Some(RawValue::Float(v)) => Value::Float(*v),
+            None | Some(RawValue::Undefined) => JsValue::Undefined,
+            Some(RawValue::Null) => JsValue::Null,
+            Some(RawValue::Bool(v)) => JsValue::Bool(*v),
+            Some(RawValue::Int(v)) => JsValue::Int(*v),
+            Some(RawValue::Float(v)) => JsValue::Float(*v),
             _ => return Ok(None),
         };
         if length != 0 {
@@ -155,7 +160,7 @@ mod tests {
             };
             assert!(
                 runtime
-                    .try_dense_push(&object, &Value::Int(2))
+                    .try_dense_push(&object, &JsValue::Int(2))
                     .unwrap()
                     .is_none(),
                 "{source}"
@@ -180,6 +185,59 @@ mod tests {
                 .unwrap(),
             Value::Bool(true)
         );
+    }
+
+    #[test]
+    fn dense_push_decline_and_store_preserve_borrowed_payload() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        {
+            let mut context = runtime.new_context();
+            for source in ["'borrowed string'", "123456789012345678901234567890n"] {
+                let payload = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
+                let Value::Object(frozen) = context.eval("Object.freeze([])").unwrap() else {
+                    panic!("array")
+                };
+                assert!(runtime.try_dense_push(&frozen, &payload).unwrap().is_none());
+                let Value::Object(target) = context.eval("[]").unwrap() else {
+                    panic!("array")
+                };
+                assert!(matches!(
+                    runtime.try_dense_push(&target, &payload).unwrap(),
+                    Some(JsValue::Int(1))
+                ));
+                {
+                    let state = runtime.0.state.borrow();
+                    let ObjectPayload::Array { dense: Some(dense) } =
+                        &state.heap.object(target.object_id()).unwrap().payload
+                    else {
+                        panic!("dense array")
+                    };
+                    match (dense.first().unwrap(), &payload) {
+                        (RawValue::String(stored), JsValue::String(original)) => {
+                            assert_eq!(stored, original)
+                        }
+                        (RawValue::BigInt(stored), JsValue::BigInt(original)) => {
+                            assert_eq!(stored, original)
+                        }
+                        _ => panic!("payload kind changed"),
+                    }
+                }
+                runtime.release_jsvalue(payload).unwrap();
+                runtime.run_gc().unwrap();
+                assert!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .object(target.object_id())
+                        .is_ok()
+                );
+            }
+        }
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]
@@ -223,7 +281,7 @@ mod tests {
                 &runtime,
                 context.realm,
                 &key,
-                Value::Int(0),
+                runtime.into_jsvalue(Value::Int(0)).unwrap(),
                 Value::Object(object),
                 |_| panic!("standard own Set published a waiting state"),
             )

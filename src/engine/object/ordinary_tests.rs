@@ -284,7 +284,13 @@ fn prepared_read_owns_selected_getter_without_repeating_lookup() {
         panic!("expected getter")
     };
     assert_eq!(
-        context.call(&getter, receiver, &[]).unwrap(),
+        context
+            .call(
+                &getter,
+                runtime.root_and_release_jsvalue(receiver).unwrap(),
+                &[]
+            )
+            .unwrap(),
         Value::Int(42)
     );
     assert_eq!(context.eval("calls").unwrap(), Value::Int(1));

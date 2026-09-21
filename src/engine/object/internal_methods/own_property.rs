@@ -258,8 +258,9 @@ impl ProxyOwnResume {
         };
         let runtime = rooted.proxy.runtime().clone();
         match result {
-            NativeConversion::Throw(value) => {
-                Ok(ProxyOwnStep::Complete(NativeConversion::Throw(value)))
+            NativeConversion::Throw(thrown) => {
+                runtime.release_jsvalue(value)?;
+                Ok(ProxyOwnStep::Complete(NativeConversion::Throw(thrown)))
             }
             NativeConversion::Value(extensible) => Ok(ProxyOwnStep::request_convert(
                 value,

@@ -94,6 +94,14 @@ impl Drop for SetResumeState {
                 let _ = self.runtime.release_jsvalue(value);
             }
         }
+        if let Some(Completion::Return(value) | Completion::Throw(value)) =
+            self.pending_effect.parse_result.take()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Phase::Probe { value, .. } = std::mem::replace(&mut self.phase, Phase::Parse) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
         let target = std::mem::replace(&mut self.target, JsValue::Undefined);
         let _ = self.runtime.release_jsvalue(target);
         let iterator = std::mem::replace(&mut self.iterator, JsValue::Undefined);
@@ -326,6 +334,8 @@ impl SetResume {
         if matches!(self.0.phase, Phase::CloseCall)
             || matches!(self.0.phase, Phase::CloseMethod) && matches!(reply, Completion::Throw(_))
         {
+            let (Completion::Return(value) | Completion::Throw(value)) = reply;
+            runtime.release_jsvalue(value)?;
             return Ok(SetStep::Complete(Completion::Return(
                 self.0.runtime.into_jsvalue(Value::Bool(false))?,
             )));
@@ -412,7 +422,9 @@ impl SetResume {
                 self.next_step(runtime)
             }
             Phase::Probe { value: item, .. } => {
-                let present = runtime.value_to_boolean_jsvalue(&value)?;
+                let present = runtime.value_to_boolean_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                let present = present?;
                 let mut item = Some(item);
                 match self.0.kind {
                     SetOperation::Disjoint if present => {

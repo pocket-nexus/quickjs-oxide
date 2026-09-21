@@ -50,8 +50,14 @@ pub(crate) struct CreateResumeState {
     realm: ContextId,
     source: ObjectRef,
     kind: IteratorHelperKind,
-    callback: Value,
+    callback: JsValue,
     count: i64,
+}
+impl Drop for CreateResumeState {
+    fn drop(&mut self) {
+        let value = std::mem::replace(&mut self.callback, JsValue::Undefined);
+        let _ = self.source.runtime().release_jsvalue(value);
+    }
 }
 impl CreateStep {
     pub(crate) fn start(
@@ -76,7 +82,7 @@ impl CreateStep {
             realm,
             source,
             kind,
-            callback: Value::Undefined,
+            callback: JsValue::Undefined,
             count: 0,
         }));
         if matches!(kind, IteratorHelperKind::Drop | IteratorHelperKind::Take) {
@@ -85,20 +91,19 @@ impl CreateStep {
                 resume,
             });
         }
-        let argument_value = runtime.root_and_release_jsvalue(argument)?;
+        resume.callback = argument;
         if let NativeConversion::Throw(value) =
-            runtime.iterator_callable_value(realm, &argument_value)?
+            runtime.iterator_callable_jsvalue(realm, &resume.callback)?
         {
             return resume.close(runtime, value);
         }
-        resume.callback = argument_value;
         resume.read(runtime)
     }
 }
 impl CreateResume {
     fn close(self, runtime: &Runtime, value: Value) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Close {
-            iterator: self.0.source,
+            iterator: self.0.source.clone(),
             completion: Completion::Throw(runtime.into_jsvalue(value)?),
         })
     }
@@ -135,8 +140,10 @@ impl CreateResume {
     pub(crate) fn invalid_count(
         self,
         runtime: &Runtime,
-        _reply: Completion,
+        reply: Completion,
     ) -> Result<CreateStep, RuntimeError> {
+        let (Completion::Return(value) | Completion::Throw(value)) = reply;
+        runtime.release_jsvalue(value)?;
         Ok(CreateStep::Complete(Completion::Throw(
             runtime.new_native_error_jsvalue(
                 self.0.realm,
@@ -155,17 +162,18 @@ impl CreateResume {
                 self.close(runtime, runtime.root_and_release_jsvalue(value)?)
             }
             Completion::Return(next) => {
-                let next = runtime.root_and_release_jsvalue(next)?;
-                Ok(CreateStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(Value::Object(runtime.new_iterator_helper(
-                        self.0.realm,
-                        &self.0.source,
-                        &next,
-                        &self.0.callback,
-                        self.0.count,
-                        self.0.kind,
-                    )?))?,
-                )))
+                let result = runtime.new_iterator_helper(
+                    self.0.realm,
+                    &self.0.source,
+                    &next,
+                    &self.0.callback,
+                    self.0.count,
+                    self.0.kind,
+                );
+                runtime.release_jsvalue(next)?;
+                Ok(CreateStep::Complete(Completion::Return(JsValue::Object(
+                    result?.into_handle(),
+                ))))
             }
         }
     }

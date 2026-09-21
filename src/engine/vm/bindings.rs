@@ -764,9 +764,11 @@ mod immediate_cell_tests {
     fn owned_cell_reads_keep_global_and_captured_function_identity() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
-            .eval("let ownedCellGlobal = function() { return 7; };")
-            .unwrap();
+        drop(
+            context
+                .eval("let ownedCellGlobal = function() { return 7; };")
+                .unwrap(),
+        );
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context
@@ -952,11 +954,13 @@ mod immediate_cell_tests {
     fn immediate_cell_write_profiles_prove_both_run_paths() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("let profileWriteGlobal=1;").unwrap();
+        drop(context.eval("let profileWriteGlobal=1;").unwrap());
         let profile = crate::engine::api::profiling::CostProfile::start();
-        context
-            .eval("profileWriteGlobal=2;profileWriteGlobal=3;")
-            .unwrap();
+        drop(
+            context
+                .eval("profileWriteGlobal=2;profileWriteGlobal=3;")
+                .unwrap(),
+        );
         assert_eq!(
             context
                 .eval("(()=>{let x=1;function set(v){x=v;}set(2);set(3);return x;})()")
@@ -1076,7 +1080,7 @@ mod immediate_cell_tests {
     fn captured_immediate_reads_stay_in_the_authenticated_run() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("let immediateProfileGlobal=7;").unwrap();
+        drop(context.eval("let immediateProfileGlobal=7;").unwrap());
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context.eval("immediateProfileGlobal").unwrap(),

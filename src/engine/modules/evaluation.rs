@@ -138,10 +138,14 @@ impl EvaluationStep {
                     .push(runtime.enter_module_evaluation_dfs(module, &mut resume.dfs)?);
                 resume.advance()
             }
-            ModuleEvaluationState::Evaluated => resume.settle(true, Value::Undefined),
-            ModuleEvaluationState::Errored(reason) => {
-                resume.settle(false, runtime.root_raw_value(reason.clone())?)
-            }
+            ModuleEvaluationState::Evaluated => resume.settle(true, JsValue::Undefined),
+            ModuleEvaluationState::Errored(reason) => resume.settle(
+                false,
+                runtime.dup_jsvalue(
+                    &JsValue::from_raw(reason.clone())
+                        .ok_or(RuntimeError::Invariant("module exception is not a value"))?,
+                )?,
+            ),
             ModuleEvaluationState::EvaluatingAsync => Ok(Self::Complete(Completion::Return(
                 runtime.into_jsvalue(Value::Object(promise))?,
             ))),
@@ -185,7 +189,7 @@ impl EvaluationResume {
     fn settle(
         mut self: Box<Self>,
         success: bool,
-        value: Value,
+        value: JsValue,
     ) -> Result<EvaluationStep, RuntimeError> {
         self.armed = false;
         self.settling = true;
@@ -196,7 +200,7 @@ impl EvaluationResume {
         };
         Ok(EvaluationStep::Call {
             callable,
-            value: self.runtime.into_jsvalue(value)?,
+            value,
             resume: self,
         })
     }
@@ -241,18 +245,20 @@ impl EvaluationResume {
             let exception = self.dfs.exception.take().ok_or(RuntimeError::Invariant(
                 "module evaluation exception had no cached value",
             ))?;
-            self.runtime.cache_module_evaluation_exception(
+            let cached = self.runtime.cache_module_evaluation_exception(
                 self.root.raw.cache,
                 self.root.raw.module,
                 &self.dfs.stack,
                 &exception,
-            )?;
-            let reason = self
-                .runtime
-                .take_pending_exception()?
-                .ok_or(RuntimeError::Invariant(
-                    "module evaluation failed without a pending exception",
-                ))?;
+            );
+            self.runtime.release_jsvalue(exception)?;
+            cached?;
+            let reason =
+                self.runtime
+                    .take_pending_exception_jsvalue()?
+                    .ok_or(RuntimeError::Invariant(
+                        "module evaluation failed without a pending exception",
+                    ))?;
             return self.settle(false, reason);
         }
         Err(error)
@@ -278,9 +284,13 @@ impl EvaluationResume {
                                 .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
                         )))
                     }
-                    ModuleEvaluationState::Evaluated => self.settle(true, Value::Undefined),
+                    ModuleEvaluationState::Evaluated => self.settle(true, JsValue::Undefined),
                     ModuleEvaluationState::Errored(reason) => {
-                        let reason = self.runtime.root_raw_value(reason.clone())?;
+                        let reason =
+                            self.runtime
+                                .dup_jsvalue(&JsValue::from_raw(reason.clone()).ok_or(
+                                    RuntimeError::Invariant("module exception is not a value"),
+                                )?)?;
                         self.settle(false, reason)
                     }
                     ModuleEvaluationState::Unevaluated | ModuleEvaluationState::Evaluating => {
@@ -321,9 +331,11 @@ impl EvaluationResume {
                         }
                         ModuleEvaluationState::Evaluated => ModuleEvaluationVisit::Evaluated,
                         ModuleEvaluationState::Errored(exception) => {
-                            ModuleEvaluationVisit::Errored(
-                                runtime.root_raw_value(exception.clone())?,
-                            )
+                            ModuleEvaluationVisit::Errored(runtime.dup_jsvalue(
+                                &JsValue::from_raw(exception.clone()).ok_or(
+                                    RuntimeError::Invariant("module exception is not a value"),
+                                )?,
+                            )?)
                         }
                         ModuleEvaluationState::Poisoned => ModuleEvaluationVisit::Poisoned,
                     }
@@ -392,7 +404,8 @@ impl EvaluationResume {
                         continue;
                     }
                     ModuleEvaluationVisit::Errored(exception) => {
-                        if dfs.exception.replace(exception).is_some() {
+                        if let Some(previous) = dfs.exception.replace(exception) {
+                            runtime.release_jsvalue(previous)?;
                             return Err(RuntimeError::Invariant(
                                 "module evaluation recorded more than one exception",
                             ));
@@ -416,8 +429,12 @@ impl EvaluationResume {
                         else {
                             unreachable!();
                         };
-                        let exception = runtime.root_raw_value(exception.clone())?;
-                        if dfs.exception.replace(exception).is_some() {
+                        let exception =
+                            runtime.dup_jsvalue(&JsValue::from_raw(exception.clone()).ok_or(
+                                RuntimeError::Invariant("module exception is not a value"),
+                            )?)?;
+                        if let Some(previous) = dfs.exception.replace(exception) {
+                            runtime.release_jsvalue(previous)?;
                             return Err(RuntimeError::Invariant(
                                 "module evaluation recorded more than one exception",
                             ));
@@ -530,7 +547,8 @@ impl EvaluationResume {
                     }
                 }
             }
-            Completion::Return(_) => {
+            Completion::Return(value) => {
+                runtime.release_jsvalue(value)?;
                 runtime.transition_module_record(
                     frame.module,
                     RawModuleTransition::PoisonEvaluation,
@@ -540,8 +558,8 @@ impl EvaluationResume {
                 ));
             }
             Completion::Throw(exception) => {
-                let exception = runtime.root_and_release_jsvalue(exception)?;
-                if dfs.exception.replace(exception).is_some() {
+                if let Some(previous) = dfs.exception.replace(exception) {
+                    runtime.release_jsvalue(previous)?;
                     return Err(RuntimeError::Invariant(
                         "module evaluation recorded more than one exception",
                     ));
@@ -577,6 +595,9 @@ impl EvaluationResume {
 }
 impl Drop for EvaluationResume {
     fn drop(&mut self) {
+        if let Some(exception) = self.dfs.exception.take() {
+            let _ = self.runtime.release_jsvalue(exception);
+        }
         if self.armed {
             let _ = self
                 .runtime

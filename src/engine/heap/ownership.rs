@@ -1,7 +1,7 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::atom::{Atom, AtomError};
+use crate::engine::atom::{Atom, AtomError, AtomIdx};
 use crate::engine::heap::runtime::{DeferredRefOp, RuntimeOperation, RuntimeState};
 use crate::engine::heap::{
     BigIntId, ContextId, FunctionBytecodeId, HeapError, ObjectId, RawId, RawValue, StringId,
@@ -309,6 +309,24 @@ impl Runtime {
         self.release_or_defer(DeferredRefOp::VarRef(id));
     }
 
+    pub(crate) fn release_atom_index(&self, index: AtomIdx) {
+        // The producer owns this index until this release is applied, so the
+        // slot cannot be reused while its operation is queued. Branding under
+        // a mandatory borrow here would make suspension-owner Drop panic.
+        let atom = self
+            .0
+            .state
+            .try_borrow()
+            .ok()
+            .and_then(|state| state.atoms.brand(index).ok());
+        if let Some(atom) = atom {
+            // Preserve the Cell decrement fast path under shared borrows.
+            self.release_atom_handle(atom);
+        } else {
+            self.release_or_defer(DeferredRefOp::AtomIndexRelease(index));
+        }
+    }
+
     pub(crate) fn release_atom_handle(&self, atom: Atom) {
         // Shared-borrow release: the counter decrement runs immediately; when
         // the last reference drops, slot removal is deferred to the next
@@ -463,7 +481,7 @@ impl Runtime {
 /// path balances the conversion automatically once the transactional store
 /// retained its own copy edge (or rejected the value).  A caller that hands
 /// the value to a by-value owner instead adopts the edge explicitly with
-/// [`ConvertedValue::take`] or [`ConvertedValue::disarm`].
+/// [`ConvertedValue::disarm`].
 pub(crate) struct ConvertedValue<'a> {
     runtime: &'a Runtime,
     value: Option<RawValue>,
@@ -480,16 +498,6 @@ impl<'a> ConvertedValue<'a> {
     /// Clone the handle without duplicating the producer edge.
     pub(crate) fn raw(&self) -> RawValue {
         self.value.clone().expect("ConvertedValue raw after take")
-    }
-
-    /// Transfer the value and its producer edge to the caller.
-    pub(crate) fn take(&mut self) -> RawValue {
-        self.value.take().expect("ConvertedValue taken twice")
-    }
-
-    /// Stop tracking the edge because a by-value owner releases it later.
-    pub(crate) fn disarm(&mut self) {
-        self.value = None;
     }
 }
 
@@ -524,6 +532,11 @@ impl RuntimeState {
             DeferredRefOp::VarRef(var_ref) => self.release_heap_reference(RawId::VarRef(var_ref)),
             DeferredRefOp::String(id) => self.release_heap_reference(RawId::String(id)),
             DeferredRefOp::BigInt(id) => self.release_heap_reference(RawId::BigInt(id)),
+            DeferredRefOp::AtomIndexRelease(index) => self
+                .atoms
+                .release_index(index)
+                .map(drop)
+                .map_err(Into::into),
             DeferredRefOp::AtomRelease(atom) => {
                 if self.atoms.release_shared(atom)? {
                     self.atoms.remove_released(atom)?;

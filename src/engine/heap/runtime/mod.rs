@@ -72,6 +72,8 @@ pub(crate) enum DeferredRefOp {
     /// Shared-release pass deferred because the table was mutably borrowed:
     /// decrement the counter, then remove the slot if it reached zero.
     AtomRelease(Atom),
+    /// An owned internal symbol can be released without borrowing to brand it.
+    AtomIndexRelease(AtomIdx),
     /// Slot removal for an atom whose counter already reached zero under a
     /// shared borrow.
     AtomRemove(Atom),
@@ -624,6 +626,7 @@ impl Drop for RuntimeInner {
         {
             let live = state.heap.counts().live;
             let probe = std::env::var_os("QJS_TEARDOWN_PROBE").is_some();
+            let live_atoms = state.atoms.debug_live_unpinned_count();
             if live != 0 {
                 if probe {
                     let roots = state.heap.debug_external_roots();
@@ -643,12 +646,16 @@ impl Drop for RuntimeInner {
                     }
                 }
                 state.heap.debug_leak_report();
-                state.atoms.debug_leak_report();
                 if !probe {
+                    state.atoms.debug_leak_report();
                     debug_assert_eq!(live, 0, "runtime teardown left live heap nodes");
                 }
-            } else if probe {
+            }
+            if live_atoms != 0 {
                 state.atoms.debug_leak_report();
+                if !probe {
+                    debug_assert_eq!(live_atoms, 0, "runtime teardown left live unpinned atoms");
+                }
             }
         }
     }

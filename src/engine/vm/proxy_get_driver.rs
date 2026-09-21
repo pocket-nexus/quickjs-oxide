@@ -276,46 +276,48 @@ pub(super) fn start(
     frame: FrameId,
     object: ObjectRef,
     key: PropertyKey,
-    receiver: Value,
+    receiver: JsValue,
     depth: usize,
 ) -> Result<CallStep, Error> {
-    let parent = execution.frames.current_mut(frame)?;
-    let identity = parent
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.property_generation = identity;
-    let realm = parent.executable.realm;
+    let mut receiver = Some(receiver);
     let result = (|| {
-        let step = ProxyGetStep::start_buffered(
-            runtime,
-            realm,
-            object,
-            key,
-            receiver,
-            execution
-                .slots
-                .take_argument_buffer(3)?
-                .into_iter()
-                .map(|argument| runtime.root_and_release_jsvalue(argument))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(runtime_error_to_vm_error)?,
-        )
-        .map_err(runtime_error_to_vm_error)?;
-        advance(
-            runtime,
-            execution,
-            frame,
-            identity,
-            Vec::new(),
-            step.into(),
-            Finish::PropertyRead(depth),
-        )
+        let parent = execution.frames.current_mut(frame)?;
+        let identity = parent
+            .property_generation
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+        parent.property_generation = identity;
+        let realm = parent.executable.realm;
+        let result = (|| {
+            let arguments = execution.slots.take_argument_buffer(3)?;
+            let step = ProxyGetStep::start_buffered(
+                runtime,
+                realm,
+                object,
+                key,
+                receiver.take().expect("proxy read receiver"),
+                arguments,
+            )
+            .map_err(runtime_error_to_vm_error)?;
+            advance(
+                runtime,
+                execution,
+                frame,
+                identity,
+                Vec::new(),
+                step.into(),
+                Finish::PropertyRead(depth),
+            )
+        })();
+        match finish_error(runtime, realm, result)? {
+            Progress::Call(step) => Ok(step),
+            Progress::Conversion(_) => Err(Error::internal("property read returned a conversion")),
+        }
     })();
-    match finish_error(runtime, realm, result)? {
-        Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("property read returned a conversion")),
+    if let Some(receiver) = receiver {
+        let _ = runtime.release_jsvalue(receiver);
     }
+    result
 }
 
 /// A super lookup retains its frozen base independently of the getter receiver.
@@ -511,22 +513,10 @@ pub(super) fn start_conversion(
     parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
-        let receiver = Value::Object(object.clone());
-        let step = ProxyGetStep::start_buffered(
-            runtime,
-            realm,
-            object,
-            key,
-            receiver,
-            execution
-                .slots
-                .take_argument_buffer(3)?
-                .into_iter()
-                .map(|argument| runtime.root_and_release_jsvalue(argument))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(runtime_error_to_vm_error)?,
-        )
-        .map_err(runtime_error_to_vm_error)?;
+        let arguments = execution.slots.take_argument_buffer(3)?;
+        let receiver = JsValue::Object(object.clone().into_handle());
+        let step = ProxyGetStep::start_buffered(runtime, realm, object, key, receiver, arguments)
+            .map_err(runtime_error_to_vm_error)?;
         advance(
             runtime,
             execution,
@@ -601,8 +591,8 @@ pub(super) fn start_classified_native_call(
     target: crate::engine::builtins::native::NativeFunctionId,
     defining_realm: crate::engine::heap::ContextId,
     min_readable_args: u8,
-    receiver: Value,
-    arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
     tail: bool,
     depth: usize,
 ) -> Result<CallStep, Error> {
@@ -632,8 +622,8 @@ pub(super) fn start_native_with_classification(
     target: crate::engine::builtins::native::NativeFunctionId,
     defining_realm: crate::engine::heap::ContextId,
     min_readable_args: u8,
-    receiver: Value,
-    arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
     tail: bool,
     depth: usize,
     selected: Option<super::frames::NativeClassification>,
@@ -654,6 +644,7 @@ pub(super) fn start_native_with_classification(
             let completion = if !execution.frames.can_push_with_continuations(0)
                 || runtime.host_stack_would_overflow()
             {
+                release_call_operands(runtime, receiver, arguments);
                 overflow(runtime, realm)?
             } else {
                 native::begin_synchronous(
@@ -712,8 +703,8 @@ pub(super) fn start_waitable_native_call(
     target: crate::engine::builtins::native::NativeFunctionId,
     defining_realm: crate::engine::heap::ContextId,
     min_readable_args: u8,
-    receiver: Value,
-    arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
     tail: bool,
     depth: usize,
     selected: Option<super::frames::NativeClassification>,
@@ -726,6 +717,7 @@ pub(super) fn start_waitable_native_call(
             let _operation = runtime.operation();
         }
         if !execution.frames.can_push_with_continuations(0) || runtime.host_stack_would_overflow() {
+            release_call_operands(runtime, receiver, arguments);
             return finish_call_instruction_call(
                 execution,
                 owner,
@@ -1067,14 +1059,6 @@ fn start_proxy_call(
     parent.property_generation = identity;
     let realm = parent.executable.realm;
     let result = (|| {
-        let receiver = runtime
-            .root_and_release_jsvalue(receiver)
-            .map_err(runtime_error_to_vm_error)?;
-        let arguments = arguments
-            .into_iter()
-            .map(|argument| runtime.root_and_release_jsvalue(argument))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(runtime_error_to_vm_error)?;
         let step =
             crate::engine::object::ProxyCallStep::start(runtime, realm, proxy, receiver, arguments)
                 .map_err(runtime_error_to_vm_error)?;
@@ -1103,9 +1087,6 @@ pub(super) fn start_write(
     strict: bool,
     depth: usize,
 ) -> Result<CallStep, Error> {
-    let value = runtime
-        .root_and_release_jsvalue(value)
-        .map_err(runtime_error_to_vm_error)?;
     let receiver = runtime
         .root_and_release_jsvalue(receiver)
         .map_err(runtime_error_to_vm_error)?;
@@ -1122,7 +1103,7 @@ pub(super) fn start_write_progress(
     frame: FrameId,
     object: ObjectRef,
     key: PropertyKey,
-    value: Value,
+    value: JsValue,
     receiver: Value,
     strict: bool,
     depth: usize,
@@ -1146,7 +1127,7 @@ pub(super) fn start_receiver_write_progress(
     execution: &mut RunningExecution,
     frame: FrameId,
     key: PropertyKey,
-    value: Value,
+    value: JsValue,
     receiver: Value,
     strict: bool,
     depth: usize,
@@ -1163,7 +1144,7 @@ fn start_write_adapted(
     frame: FrameId,
     object: Option<ObjectRef>,
     key: PropertyKey,
-    value: Value,
+    value: JsValue,
     receiver: Value,
     strict: bool,
     depth: usize,
@@ -1863,17 +1844,7 @@ fn invoke(
                 .map_err(|_| Error::internal("property continuation allocation failed"))?;
             query.parents.push(resume);
             step = crate::engine::object::ProxyCallStep::start(
-                runtime,
-                realm,
-                proxy,
-                runtime
-                    .root_and_release_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?,
-                arguments
-                    .into_iter()
-                    .map(|argument| runtime.root_and_release_jsvalue(argument))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(runtime_error_to_vm_error)?,
+                runtime, realm, proxy, receiver, arguments,
             )
             .map_err(runtime_error_to_vm_error)?
             .into();
@@ -1923,26 +1894,12 @@ fn invoke(
             resume,
         });
     }
-    let normalized_receiver = runtime
-        .root_and_release_jsvalue(receiver)
-        .map_err(runtime_error_to_vm_error)?;
-    let normalized_arguments = arguments
-        .into_iter()
-        .map(|argument| runtime.root_and_release_jsvalue(argument))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(runtime_error_to_vm_error)?;
     let super::call::NormalizedCallback {
         callable,
         receiver,
         arguments,
         classification,
-    } = match super::call::normalize_callback(
-        runtime,
-        realm,
-        callable,
-        normalized_receiver,
-        normalized_arguments,
-    )? {
+    } = match super::call::normalize_callback(runtime, realm, callable, receiver, arguments)? {
         NativeConversion::Value(call) => call,
         NativeConversion::Throw(value) => {
             // The normalization boundary threw a public root; transfer it into
@@ -1974,16 +1931,6 @@ fn invoke(
             .try_reserve(1)
             .map_err(|_| Error::internal("property continuation allocation failed"))?;
         query.parents.push(resume);
-        // The proxy-call machine consumes public roots; the normalized
-        // internal owners are rooted at this sub-driver boundary.
-        let receiver = runtime
-            .root_and_release_jsvalue(receiver)
-            .map_err(runtime_error_to_vm_error)?;
-        let arguments = arguments
-            .into_iter()
-            .map(|argument| runtime.root_and_release_jsvalue(argument))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(runtime_error_to_vm_error)?;
         step = crate::engine::object::ProxyCallStep::start(
             runtime,
             realm,
@@ -2017,11 +1964,7 @@ fn invoke(
             super::call::NativeInvocation::Call {
                 this_value: receiver,
             },
-            arguments
-                .into_iter()
-                .map(|argument| runtime.root_and_release_jsvalue(argument))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(runtime_error_to_vm_error)?,
+            arguments,
             resume,
             next_step,
         )?;
@@ -2149,35 +2092,20 @@ fn invoke(
         } else {
             defining_realm
         };
-        // The native ABI consumes public roots; the normalized internal owners
-        // are rooted at this leaf boundary and released after the call.
-        let rooted_receiver = runtime
-            .root_value(&receiver)
-            .map_err(runtime_error_to_vm_error)?;
-        let rooted_arguments = arguments
-            .iter()
-            .map(|argument| runtime.root_value(argument))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(runtime_error_to_vm_error)?;
-        let completion = runtime
-            .call_native_function(
+        let outcome = runtime
+            .invoke_native_function_jsvalue(
                 &callable,
                 execution_realm,
                 target,
                 min_readable_args,
-                rooted_receiver,
-                &rooted_arguments,
+                super::call::NativeInvocation::Call {
+                    this_value: receiver,
+                },
+                arguments,
+                super::call::NativeInvokeMode::Ordinary,
             )
-            .map_err(runtime_error_to_vm_error);
-        runtime
-            .release_jsvalue(receiver)
             .map_err(runtime_error_to_vm_error)?;
-        for argument in arguments {
-            runtime
-                .release_jsvalue(argument)
-                .map_err(runtime_error_to_vm_error)?;
-        }
-        completion?
+        Runtime::ordinary_native_completion(outcome).map_err(runtime_error_to_vm_error)?
     };
     step = resume
         .resume(runtime, completion)
@@ -2348,8 +2276,8 @@ mod native_scope_tests {
                 target,
                 realm,
                 min_readable_args,
-                Value::Undefined,
-                vec![argument],
+                JsValue::Undefined,
+                vec![runtime.into_jsvalue(argument).unwrap()],
                 false,
                 0,
             )
@@ -2478,8 +2406,11 @@ mod native_scope_tests {
                 target,
                 realm,
                 min_readable_args,
-                receiver,
-                arguments,
+                runtime.into_jsvalue(receiver).unwrap(),
+                arguments
+                    .into_iter()
+                    .map(|value| runtime.into_jsvalue(value).unwrap())
+                    .collect(),
                 true,
                 0,
             )
@@ -2760,9 +2691,7 @@ pub(super) fn start_array_next_without_pending(
                 callable,
                 defining_realm,
                 min_readable_args,
-                runtime
-                    .root_and_release_jsvalue(iterator)
-                    .map_err(runtime_error_to_vm_error)?,
+                iterator,
                 &mut waiting,
                 &mut waiting_call,
             )?;
@@ -3155,18 +3084,10 @@ pub(super) fn start_vm_call(
     execution: &mut RunningExecution,
     frame: FrameId,
     callable: crate::engine::object::CallableRef,
-    receiver: Value,
-    arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
     value_use: ReturnValue,
 ) -> Result<CallStep, Error> {
-    let receiver = runtime
-        .into_jsvalue(receiver)
-        .map_err(runtime_error_to_vm_error)?;
-    let arguments = arguments
-        .into_iter()
-        .map(|argument| runtime.into_jsvalue(argument))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(runtime_error_to_vm_error)?;
     match start_owned_callback(
         runtime,
         execution,

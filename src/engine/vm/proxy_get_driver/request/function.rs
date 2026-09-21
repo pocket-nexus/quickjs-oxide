@@ -16,8 +16,8 @@ impl From<crate::engine::builtins::ArgumentsStep> for Step {
                 key: Some(key),
                 resume: Some(Resume::Arguments(resume)),
             },
-            ArgumentsStep::Number { value, resume } => Self::Number {
-                value: Some(value),
+            ArgumentsStep::Number { mut resume } => Self::Number {
+                value: Some(resume.take_number_value()),
                 resume: Some(Resume::Arguments(resume)),
             },
         }

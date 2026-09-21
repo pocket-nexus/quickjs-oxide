@@ -818,9 +818,7 @@ fn read_pending(
     if let Some((call, receiver)) = ordinary_callback {
         let entry = call.prepare_callback(
             &mut execution.call_storage,
-            runtime
-                .into_jsvalue(receiver)
-                .map_err(runtime_error_to_vm_error)?,
+            receiver,
             Vec::new(),
             realm,
             ReturnTarget {

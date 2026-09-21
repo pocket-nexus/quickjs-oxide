@@ -551,7 +551,12 @@ fn deep_standard_bound_has_instance_delegation_is_host_stack_safe() {
     // consuming the host stack.
     for _ in 0..512 {
         target = runtime
-            .new_bound_function(context.realm, &target, &Value::Undefined, &[])
+            .new_bound_function(
+                context.realm,
+                &target,
+                &crate::engine::value::JsValue::Undefined,
+                &[],
+            )
             .unwrap();
     }
     assert_eq!(

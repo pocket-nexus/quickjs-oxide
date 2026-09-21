@@ -57,6 +57,10 @@ impl Runtime {
         value: Value,
         receiver: Value,
     ) -> Result<PropertySetAction, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        self.validate_value_domain(&value, "property value")?;
+        self.validate_value_domain(&receiver, "property receiver")?;
+        let value = self.into_jsvalue(value)?;
         let mut step = SetStep::start(self, realm, object.clone(), key.clone(), value, receiver)?;
         loop {
             match step {
@@ -115,21 +119,24 @@ impl Runtime {
                 };
                 Ok(NativeConversion::Value(value))
             }
-            OrdinaryRead::Call { getter, receiver } => {
-                Ok(match self.call_internal(realm, &getter, receiver, &[])? {
+            OrdinaryRead::Call { getter, receiver } => Ok(
+                match self.call_internal_jsvalue(realm, &getter, receiver, Vec::new())? {
                     Completion::Return(value) => {
                         NativeConversion::Value(Some(self.root_and_release_jsvalue(value)?))
                     }
                     Completion::Throw(value) => {
                         NativeConversion::Throw(self.root_and_release_jsvalue(value)?)
                     }
-                })
-            }
+                },
+            ),
             OrdinaryRead::Special {
                 kind,
                 object,
                 receiver,
-            } => self.get_special_or_missing(kind, realm, &object, key, receiver),
+            } => {
+                let receiver = self.root_and_release_jsvalue(receiver)?;
+                self.get_special_or_missing(kind, realm, &object, key, receiver)
+            }
         }
     }
 
@@ -153,25 +160,26 @@ impl Runtime {
         key: &PropertyKey,
         receiver: &Value,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        self.prepare_ordinary_read_selected(object, key, receiver, None)
+        let receiver = self.unroot_value(receiver)?;
+        let result = self.prepare_ordinary_read_selected(object, key, &receiver, None);
+        self.release_jsvalue(receiver)?;
+        result
     }
     pub(crate) fn prepare_ordinary_read_selected(
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        receiver: &Value,
+        receiver: &JsValue,
         mut native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
         let _operation = self.operation();
         self.validate_object_and_key(object, key)?;
-        self.validate_value_domain(receiver, "property receiver")?;
         use crate::engine::object::ordinary_storage::ReadProbe;
         let mut prototype = None;
         loop {
             let current = prototype.as_ref().unwrap_or(object);
             match self.ordinary_read_probe_selected(current, key, native.as_deref_mut())? {
                 ReadProbe::Value(value) => {
-                    let value = self.unroot_value(&value)?;
                     return Ok(OrdinaryRead::Complete(Some(value)));
                 }
                 ReadProbe::Getter(None) => {
@@ -180,7 +188,7 @@ impl Runtime {
                 ReadProbe::Getter(Some(getter)) => {
                     return Ok(OrdinaryRead::Call {
                         getter,
-                        receiver: receiver.clone(),
+                        receiver: self.dup_jsvalue(receiver)?,
                     });
                 }
                 ReadProbe::Missing(Some(next)) => prototype = Some(next),
@@ -189,7 +197,7 @@ impl Runtime {
                     return Ok(OrdinaryRead::Special {
                         kind,
                         object: current.clone(),
-                        receiver: receiver.clone(),
+                        receiver: self.dup_jsvalue(receiver)?,
                     });
                 }
                 ReadProbe::Special(kind) => {
@@ -221,7 +229,7 @@ impl Runtime {
                                 ..
                             } => OrdinaryRead::Call {
                                 getter,
-                                receiver: receiver.clone(),
+                                receiver: self.dup_jsvalue(receiver)?,
                             },
                             CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. } => {
                                 OrdinaryRead::Complete(Some(JsValue::Undefined))
@@ -242,17 +250,29 @@ impl Runtime {
 }
 
 /// A rooted ordinary lookup result, ready for an explicit caller to consume.
-/// The completed data value travels as an internal value; accessor receivers
-/// stay public roots because host callbacks consume them.
+/// Data values and selected receivers each carry one internal owned edge.
 pub(crate) enum OrdinaryRead {
     Complete(Option<crate::engine::value::JsValue>),
     Call {
         getter: crate::engine::object::CallableRef,
-        receiver: Value,
+        receiver: JsValue,
     },
     Special {
         kind: SpecialKind,
         object: ObjectRef,
-        receiver: Value,
+        receiver: JsValue,
     },
+}
+
+impl OrdinaryRead {
+    /// Release an abandoned lookup reply without invoking the selected getter.
+    pub(crate) fn release(self, runtime: &Runtime) {
+        let value = match self {
+            Self::Complete(value) => value,
+            Self::Call { receiver, .. } | Self::Special { receiver, .. } => Some(receiver),
+        };
+        if let Some(value) = value {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
 }

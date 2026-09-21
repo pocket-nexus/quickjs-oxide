@@ -382,13 +382,11 @@ impl Runtime {
         &self,
         map: &ObjectRef,
         key: WeakCollectionKey,
-        value: Value,
+        value: &JsValue,
     ) -> Result<(), RuntimeError> {
-        self.validate_value_domain(&value, "WeakMap value")?;
-        let converted = self.raw_property_value(&value)?;
-        let raw_value = converted.raw();
-        // The record retains its own copy edge inside the heap transaction,
-        // so the guard balances the conversion's producer edge on every exit.
+        // Native arguments or the computed-result owner keep the input edge
+        // alive until the transaction retains the same handle into the map.
+        let raw_value = value.as_raw();
         let mut state = self.0.state.borrow_mut();
         let retained = state.retain_raw_value_atoms([&raw_value])?;
         let result = state.heap.weak_map_set(map.object_id(), key, raw_value);
@@ -400,7 +398,6 @@ impl Runtime {
             }
         };
         state.apply_cleanup(cleanup)?;
-        drop(value);
         Ok(())
     }
 
@@ -507,42 +504,42 @@ impl Runtime {
                 let Some(key) = key else {
                     return self.invalid_weak_key(realm, WeakCollectionKind::Map);
                 };
-                let value = self.root_value(
-                    arguments
-                        .readable
-                        .get(1)
-                        .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?,
-                )?;
+                let value = arguments
+                    .readable
+                    .get(1)
+                    .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?;
                 self.set_weak_map_record(&map, key, value)?;
                 Ok(Completion::Return(self.into_jsvalue(Value::Object(map))?))
             }
             WeakMapNativeKind::Get => {
                 let value = match key {
                     Some(key) => match self.find_weak_map_record(&map, key)? {
-                        Some(value) => self.root_raw_value(value.clone())?,
-                        None => Value::Undefined,
+                        Some(raw) => self.dup_jsvalue(&JsValue::from_raw(raw).ok_or(
+                            RuntimeError::Invariant("WeakMap value has an internal sentinel"),
+                        )?)?,
+                        None => JsValue::Undefined,
                     },
-                    None => Value::Undefined,
+                    None => JsValue::Undefined,
                 };
-                Ok(Completion::Return(self.into_jsvalue(value)?))
+                Ok(Completion::Return(value))
             }
             WeakMapNativeKind::GetOrInsert => {
                 let Some(key) = key else {
                     return self.invalid_weak_key(realm, WeakCollectionKind::Map);
                 };
                 if let Some(value) = self.find_weak_map_record(&map, key)? {
-                    return Ok(Completion::Return(
-                        self.into_jsvalue(self.root_raw_value(value.clone())?)?,
-                    ));
+                    return Ok(Completion::Return(self.dup_jsvalue(
+                        &JsValue::from_raw(value).ok_or(RuntimeError::Invariant(
+                            "WeakMap value has an internal sentinel",
+                        ))?,
+                    )?));
                 }
-                let value = self.root_value(
-                    arguments
-                        .readable
-                        .get(1)
-                        .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?,
-                )?;
-                self.set_weak_map_record(&map, key, value.clone())?;
-                Ok(Completion::Return(self.into_jsvalue(value)?))
+                let value = arguments
+                    .readable
+                    .get(1)
+                    .ok_or(RuntimeError::Invariant("WeakMap value argv was not padded"))?;
+                self.set_weak_map_record(&map, key, value)?;
+                Ok(Completion::Return(self.dup_jsvalue(value)?))
             }
             WeakMapNativeKind::Has => {
                 let present = match key {

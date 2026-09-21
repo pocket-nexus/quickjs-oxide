@@ -55,8 +55,9 @@ struct Elements {
     remaining: Rc<Cell<i32>>,
     index: u32,
 }
-fn continuation(realm: ContextId, phase: Phase) -> Box<PromiseResume> {
+fn continuation(runtime: &Runtime, realm: ContextId, phase: Phase) -> Box<PromiseResume> {
     Box::new(PromiseResume {
+        runtime: runtime.clone(),
         pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: super::Phase::Aggregate(phase),
@@ -111,6 +112,7 @@ impl PromiseStep {
             RuntimeError::Invariant("Promise aggregate iterable argv was not padded"),
         )?)?;
         Box::new(PromiseResume {
+            runtime: runtime.clone(),
             pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: super::Phase::AggregateCapability {
@@ -135,6 +137,7 @@ pub(super) fn ready(
         let __pending_field_key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Resolve)?;
         let __pending_field_resume = continuation(
+            runtime,
             realm,
             Phase::Resolve(Acquire {
                 constructor,
@@ -193,7 +196,7 @@ pub(super) fn resume(
                     let __pending_field_key =
                         PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
                     let __pending_field_resume =
-                        continuation(realm, Phase::Method { state, resolve });
+                        continuation(runtime, realm, Phase::Method { state, resolve });
                     PromiseStep::request_read(
                         __pending_field_receiver,
                         __pending_field_key,
@@ -224,7 +227,7 @@ pub(super) fn resume(
                     let __pending_field_receiver = runtime.into_jsvalue(state.iterable.clone())?;
                     let __pending_field_arguments = Vec::new();
                     let __pending_field_resume =
-                        continuation(realm, Phase::Iterator { state, resolve });
+                        continuation(runtime, realm, Phase::Iterator { state, resolve });
                     PromiseStep::request_call(
                         __pending_field_callable,
                         __pending_field_receiver,
@@ -243,6 +246,7 @@ pub(super) fn resume(
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
                     let __pending_field_resume = continuation(
+                        runtime,
                         realm,
                         Phase::NextMethod {
                             state,
@@ -324,7 +328,7 @@ pub(super) fn resume(
             Ok({
                 let __pending_field_step =
                     Box::new(PromiseStep::invoke_then(runtime, realm, value, arguments)?);
-                let __pending_field_resume = continuation(realm, Phase::Then(state));
+                let __pending_field_resume = continuation(runtime, realm, Phase::Then(state));
                 PromiseStep::request_nested(__pending_field_step, __pending_field_resume)
             })
         }
@@ -355,6 +359,7 @@ pub(super) fn resume(
 }
 impl Loop {
     fn advance(self: Box<Self>, realm: ContextId) -> PromiseStep {
+        let runtime = self.constructor.runtime().clone();
         {
             let __pending_field_iterator = self.iterator.clone();
             let __pending_field_method = self
@@ -362,7 +367,7 @@ impl Loop {
                 .runtime()
                 .into_jsvalue(self.method.clone())
                 .expect("aggregate next method must be a live edge");
-            let __pending_field_resume = continuation(realm, Phase::Next(self));
+            let __pending_field_resume = continuation(&runtime, realm, Phase::Next(self));
             PromiseStep::request_next(
                 __pending_field_iterator,
                 __pending_field_method,
@@ -377,10 +382,12 @@ impl Loop {
         realm: ContextId,
         reason: JsValue,
     ) -> Result<PromiseStep, RuntimeError> {
+        let runtime = self.constructor.runtime().clone();
         Ok({
             let __pending_field_iterator = self.iterator;
             let __pending_field_completion = Completion::Throw(reason);
-            let __pending_field_resume = continuation(realm, Phase::Closed(self.capability));
+            let __pending_field_resume =
+                continuation(&runtime, realm, Phase::Closed(self.capability));
             PromiseStep::request_close(
                 __pending_field_iterator,
                 __pending_field_completion,
@@ -413,7 +420,7 @@ impl Loop {
                 let __pending_field_receiver =
                     JsValue::Object(self.constructor.clone().into_handle());
                 let __pending_field_arguments = vec![value];
-                let __pending_field_resume = continuation(realm, Phase::Resolved(self));
+                let __pending_field_resume = continuation(runtime, realm, Phase::Resolved(self));
                 PromiseStep::request_call(
                     __pending_field_callable,
                     __pending_field_receiver,
@@ -456,7 +463,7 @@ impl Loop {
                             let __pending_field_receiver = JsValue::Undefined;
                             let __pending_field_arguments = vec![value];
                             let __pending_field_resume =
-                                continuation(realm, Phase::Terminal(self.capability));
+                                continuation(runtime, realm, Phase::Terminal(self.capability));
                             PromiseStep::request_call(
                                 __pending_field_callable,
                                 __pending_field_receiver,

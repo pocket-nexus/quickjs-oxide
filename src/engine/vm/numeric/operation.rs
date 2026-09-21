@@ -829,10 +829,14 @@ mod tests {
                 .call_internal(context.realm, &callable, Value::Undefined, &[])
                 .unwrap();
             let _costs = profile.snapshot();
+            let Completion::Return(value) = completion else {
+                panic!("{source}: {completion:?}");
+            };
+            let value = runtime.root_and_release_jsvalue(value).unwrap();
             assert!(
-                matches!(completion, Completion::Return(Value::Int(42)))
-                    || matches!(&completion,Completion::Return(Value::BigInt(value)) if value == &crate::engine::value::bigint::JsBigInt::from(42_i32)),
-                "{source}: {completion:?}"
+                matches!(value, Value::Int(42))
+                    || matches!(&value, Value::BigInt(value) if value == &crate::engine::value::bigint::JsBigInt::from(42_i32)),
+                "{source}: {value:?}"
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }

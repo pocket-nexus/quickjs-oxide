@@ -66,14 +66,14 @@ pub(crate) struct HelperResumeState {
     realm: ContextId,
     guard: RunningHelper,
     source: ObjectRef,
-    next: Value,
-    callback: Value,
+    next: JsValue,
+    callback: JsValue,
     inner: Option<ObjectRef>,
     kind: IteratorHelperKind,
     mode: IteratorResumeKind,
     count: i64,
     original_count: i64,
-    method: Value,
+    method: JsValue,
     phase: Phase,
 }
 impl Drop for HelperResumeState {
@@ -81,6 +81,11 @@ impl Drop for HelperResumeState {
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        for value in [&mut self.next, &mut self.callback, &mut self.method] {
+            let _ = self
+                .runtime
+                .release_jsvalue(std::mem::replace(value, JsValue::Undefined));
+        }
         if let Some(value) = self.pending_effect.next_method.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -168,28 +173,28 @@ impl HelperResumeStep {
             active: true,
         };
         let source = ObjectRef::from_borrowed_handle(runtime.clone(), state.source)?;
-        let next = runtime.root_raw_value(state.next.clone())?;
-        let callback = runtime.root_raw_value(state.callback.clone())?;
         let inner = state
             .inner
             .map(|inner| ObjectRef::from_borrowed_handle(runtime.clone(), inner))
             .transpose()?;
-        let resume = HelperResume(Box::new(HelperResumeState {
+        let mut resume = HelperResume(Box::new(HelperResumeState {
             runtime: runtime.clone(),
             pending_effect: HelperResumeStepPending::default(),
             realm,
             guard,
             source,
-            next,
-            callback,
+            next: JsValue::Undefined,
+            callback: JsValue::Undefined,
             inner,
             kind: state.kind,
             mode,
             count: state.count,
             original_count: state.count,
-            method: Value::Undefined,
+            method: JsValue::Undefined,
             phase: Phase::Method,
         }));
+        resume.next = runtime.dup_iterator_raw(&state.next)?;
+        resume.callback = runtime.dup_iterator_raw(&state.callback)?;
         resume.begin(runtime)
     }
 }
@@ -256,7 +261,7 @@ impl HelperResume {
         }
         self.0.phase = Phase::Method;
         if self.0.mode == IteratorResumeKind::Next {
-            let method = self.0.next.clone();
+            let method = runtime.dup_jsvalue(&self.0.next)?;
             self.method(runtime, method)
         } else {
             Ok({
@@ -275,9 +280,9 @@ impl HelperResume {
     fn method(
         mut self,
         runtime: &Runtime,
-        method: Value,
+        method: JsValue,
     ) -> Result<HelperResumeStep, RuntimeError> {
-        self.0.method = method;
+        runtime.release_jsvalue(std::mem::replace(&mut self.0.method, method))?;
         if self.0.kind == IteratorHelperKind::Take {
             self.0.count -= 1;
             runtime.set_helper_count(&self.0.guard.helper, self.0.count)?;
@@ -293,7 +298,7 @@ impl HelperResume {
         self.0.phase = Phase::OuterNext { dropping };
         Ok({
             let __pending_field_iterator = self.0.source.clone();
-            let __pending_field_method = runtime.into_jsvalue(self.0.method.clone())?;
+            let __pending_field_method = runtime.dup_jsvalue(&self.0.method)?;
             let __pending_field_resume = self;
             HelperResumeStep::request_next(
                 __pending_field_iterator,
@@ -388,7 +393,7 @@ impl HelperResume {
         {
             return self.done(runtime, value, false);
         }
-        let callable = match runtime.iterator_callable_value(self.0.realm, &self.0.callback)? {
+        let callable = match runtime.iterator_callable_jsvalue(self.0.realm, &self.0.callback)? {
             NativeConversion::Value(callback) => callback,
             NativeConversion::Throw(_) => {
                 return Err(RuntimeError::Invariant(
@@ -425,11 +430,16 @@ impl HelperResume {
             self.0.inner = None;
             return if let Some(original) = original {
                 let value = match reply {
-                    Completion::Return(_) => original,
+                    Completion::Return(value) => {
+                        runtime.release_jsvalue(value)?;
+                        original
+                    }
                     Completion::Throw(value) => runtime.root_and_release_jsvalue(value)?,
                 };
                 self.fail(runtime, value, true)
             } else {
+                let (Completion::Return(value) | Completion::Throw(value)) = reply;
+                runtime.release_jsvalue(value)?;
                 self.begin(runtime)
             };
         }
@@ -442,6 +452,11 @@ impl HelperResume {
         reply: Completion,
         phase: Phase,
     ) -> Result<HelperResumeStep, RuntimeError> {
+        if matches!(phase, Phase::Method)
+            && let Completion::Return(value) = reply
+        {
+            return self.method(runtime, value);
+        }
         let value = match reply {
             Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
@@ -454,7 +469,7 @@ impl HelperResume {
             }
         };
         match phase {
-            Phase::Method => self.method(runtime, value),
+            Phase::Method => self.method(runtime, runtime.into_jsvalue(value)?),
             Phase::Callback(item) => match self.0.kind {
                 IteratorHelperKind::Map => self.done(runtime, value, false),
                 IteratorHelperKind::Filter => {
@@ -641,7 +656,7 @@ mod tests {
         else {
             panic!("next expected")
         };
-        let next = runtime.root_and_release_jsvalue(next).unwrap();
+        let callback = runtime.into_jsvalue(callback).unwrap();
         let helper = runtime
             .new_iterator_helper(
                 context.realm,
@@ -652,6 +667,8 @@ mod tests {
                 IteratorHelperKind::Map,
             )
             .unwrap();
+        runtime.release_jsvalue(next).unwrap();
+        runtime.release_jsvalue(callback).unwrap();
         let source_id = source.object_id();
         let helper_id = helper.object_id();
         let invocation = NativeInvocation::Call {
@@ -675,8 +692,6 @@ mod tests {
                 .executing
         );
         drop(source);
-        drop(next);
-        drop(callback);
         {
             let NativeInvocation::Call { this_value } = invocation else {
                 unreachable!()

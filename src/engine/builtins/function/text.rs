@@ -26,10 +26,18 @@ impl std::ops::DerefMut for FunctionTextResume {
 }
 const _: () = assert!(std::mem::size_of::<FunctionTextResume>() <= 8);
 pub(crate) struct FunctionTextResumeState {
+    runtime: Runtime,
     pending_effect: FunctionTextStepPending,
-    function: ObjectRef,
+    _function: ObjectRef,
     kind: FunctionKind,
     converted: bool,
+}
+impl Drop for FunctionTextResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.string_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl FunctionTextStep {
     pub(crate) fn start(
@@ -119,8 +127,9 @@ impl FunctionTextStep {
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
             let __pending_field_resume = FunctionTextResume(Box::new(FunctionTextResumeState {
+                runtime: runtime.clone(),
                 pending_effect: FunctionTextStepPending::default(),
-                function,
+                _function: function,
                 kind: function_kind,
                 converted: false,
             }));
@@ -183,7 +192,7 @@ impl FunctionTextResume {
         let value = JsString::from_static(prefix)
             .try_concat(&name)?
             .try_concat(&JsString::from_static("() {\n    [native code]\n}"))?;
-        drop(self.0.function);
+
         Ok(FunctionTextStep::Complete(Completion::Return(
             runtime.unroot_value(&Value::String(value))?,
         )))

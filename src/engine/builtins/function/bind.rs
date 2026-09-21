@@ -67,17 +67,12 @@ impl BindStep {
             )));
         };
         let count = arguments.actual_arg_count.saturating_sub(1);
-        let mut forwarded = Vec::new();
-        if arguments.actual_arg_count > 1 {
-            forwarded
-                .try_reserve_exact(count)
-                .map_err(|_| RuntimeError::Invariant("bind argv allocation failed"))?;
-            for value in &arguments.readable[1..arguments.actual_arg_count] {
-                forwarded.push(runtime.root_value(value)?);
-            }
-        }
-        let this_argument = runtime.root_value(&arguments.readable[0])?;
-        let bound = runtime.new_bound_function(realm, &target, &this_argument, &forwarded)?;
+        let forwarded = arguments
+            .readable
+            .get(1..arguments.actual_arg_count)
+            .unwrap_or(&[]);
+        let bound =
+            runtime.new_bound_function(realm, &target, &arguments.readable[0], forwarded)?;
         Ok(Self::Own {
             object: target.as_object().clone(),
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,

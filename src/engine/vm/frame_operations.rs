@@ -19,8 +19,8 @@ use super::frame::FrameId;
 use super::run::RunExit;
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
+use crate::engine::value::JsValue;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsValue, Value};
 
 #[inline(never)]
 pub(super) fn pure(
@@ -640,14 +640,15 @@ pub(super) fn normalize_this(
     // This conversion only allocates a primitive wrapper; it cannot
     // call JavaScript. Keep its identity across every later handoff.
     let this_value = runtime
-        .root_value(&frame.cold.input.this_value)
+        .dup_jsvalue(&frame.cold.input.this_value)
         .map_err(runtime_error_to_vm_error)?;
     let value = runtime
-        .native_to_object(frame.executable.realm, this_value)
+        .native_to_object_jsvalue(frame.executable.realm, this_value)
         .map_err(runtime_error_to_vm_error)?;
     let NativeConversion::Value(object) = value else {
         return Err(Error::internal("non-null primitive this boxing threw"));
     };
-    frame.cold.normalized_this = Some(Value::Object(object));
+    frame.cold.release_normalized_this();
+    frame.cold.normalized_this = Some(JsValue::Object(object.into_handle()));
     Ok(CallStep::Entered)
 }

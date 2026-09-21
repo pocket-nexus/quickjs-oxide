@@ -285,11 +285,12 @@ impl Runtime {
         &self,
         realm: ContextId,
         promise: ObjectRef,
-        reason: Value,
+        reason: &RawValue,
         handled: bool,
     ) -> Result<(), RuntimeError> {
         let tracker = self.0.promise_rejection_tracker.borrow().clone();
         if let Some(tracker) = tracker {
+            let reason = self.root_raw_value(reason.clone())?;
             self.with_host_callback(|| {
                 tracker(PromiseRejectionEvent {
                     context: realm,
@@ -449,9 +450,14 @@ impl Runtime {
         realm: ContextId,
         reason: JsValue,
     ) -> Result<ObjectRef, RuntimeError> {
-        let capability = self.new_default_promise_capability(realm)?;
+        let capability = match self.new_default_promise_capability(realm) {
+            Ok(capability) => capability,
+            Err(error) => {
+                self.release_jsvalue(reason)?;
+                return Err(error);
+            }
+        };
         let promise = capability.promise.clone();
-        let reason = self.root_and_release_jsvalue(reason)?;
         self.settle_promise(realm, &promise, PromiseState::Rejected, reason)?;
         Ok(promise)
     }
@@ -648,26 +654,28 @@ impl Runtime {
         };
         invocation.release(self)?;
         let active = self.active_function()?;
-        let resolve = self.root_value(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Promise capability resolve argv was not padded"),
-        )?)?;
-        let reject = self.root_value(arguments.readable.get(1).ok_or(
-            RuntimeError::Invariant("Promise capability reject argv was not padded"),
-        )?)?;
-        let converted_resolve = self.raw_property_value(&resolve)?;
-        let converted_reject = self.raw_property_value(&reject)?;
+        let resolve = arguments
+            .readable
+            .first()
+            .ok_or(RuntimeError::Invariant(
+                "Promise capability resolve argv was not padded",
+            ))?
+            .as_raw();
+        let reject = arguments
+            .readable
+            .get(1)
+            .ok_or(RuntimeError::Invariant(
+                "Promise capability reject argv was not padded",
+            ))?
+            .as_raw();
         let mut state = self.0.state.borrow_mut();
-        let retained =
-            state.retain_raw_value_atoms([&converted_resolve.raw(), &converted_reject.raw()])?;
-        match state.heap.set_promise_capability_capture(
-            active.object_id(),
-            converted_resolve.raw(),
-            converted_reject.raw(),
-        ) {
+        let retained = state.retain_raw_value_atoms([&resolve, &reject])?;
+        match state
+            .heap
+            .set_promise_capability_capture(active.object_id(), resolve, reject)
+        {
             Ok(true) => {
                 drop(state);
-                drop(resolve);
-                drop(reject);
                 Ok(Completion::Return(JsValue::Undefined))
             }
             Ok(false) => {
@@ -691,84 +699,85 @@ impl Runtime {
         realm: ContextId,
         promise: &ObjectRef,
         state: PromiseState,
-        result: Value,
+        result: JsValue,
     ) -> Result<(), RuntimeError> {
-        let snapshot = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .promise_snapshot(promise.object_id())?;
-        if snapshot.state != PromiseState::Pending {
-            return Ok(());
-        }
-        let was_handled = snapshot.is_handled;
-        let reactions = match state {
-            PromiseState::Fulfilled => snapshot.fulfill_reactions,
-            PromiseState::Rejected => snapshot.reject_reactions,
-            PromiseState::Pending => {
-                return Err(RuntimeError::Invariant(
-                    "Promise settlement requested the pending state",
-                ));
-            }
-        };
-        let converted = self.raw_property_value(&result)?;
-        let raw = converted.raw();
-
-        // Prepare job-owned roots before detaching the Promise's reactions,
-        // but do not publish the jobs yet. QuickJS exposes the settled state to
-        // its rejection tracker before the selected reactions enter the FIFO;
-        // a reentrant tracker can therefore enqueue work ahead of them.
-        let mut prepared_jobs = Vec::with_capacity(reactions.len());
-        for reaction in reactions {
-            let job = match self.prepare_promise_reaction_job(realm, reaction, raw.clone()) {
-                Ok(job) => job,
-                Err(error) => {
-                    self.discard_prepared_jobs(prepared_jobs)?;
-                    return Err(error);
-                }
-            };
-            prepared_jobs.push(job);
-        }
-
-        let prepared_jobs = crate::engine::jobs::PreparedJobs::new(self, prepared_jobs);
-        let settlement = (|| -> Result<(), RuntimeError> {
-            let mut state_ref = self.0.state.borrow_mut();
-            let retained_atom = if let RawValue::Symbol(index) = &raw {
-                state_ref.atoms.retain_index(*index)?;
-                Some(*index)
-            } else {
-                None
-            };
-            let cleanup = match state_ref
+        let settlement_result = (|| {
+            let snapshot = self
+                .0
+                .state
+                .borrow()
                 .heap
-                .promise_settle(promise.object_id(), state, raw)
-            {
-                Ok(cleanup) => cleanup,
-                Err(error) => {
-                    if let Some(index) = retained_atom {
-                        state_ref.atoms.release_index(index)?;
-                    }
-                    return Err(error.into());
+                .promise_snapshot(promise.object_id())?;
+            if snapshot.state != PromiseState::Pending {
+                return Ok(());
+            }
+            let was_handled = snapshot.is_handled;
+            let reactions = match state {
+                PromiseState::Fulfilled => snapshot.fulfill_reactions,
+                PromiseState::Rejected => snapshot.reject_reactions,
+                PromiseState::Pending => {
+                    return Err(RuntimeError::Invariant(
+                        "Promise settlement requested the pending state",
+                    ));
                 }
             };
-            state_ref.apply_cleanup(cleanup)
+            let raw = result.as_raw();
+
+            // Prepare job-owned roots before detaching the Promise's reactions,
+            // but do not publish the jobs yet. QuickJS exposes the settled state to
+            // its rejection tracker before the selected reactions enter the FIFO;
+            // a reentrant tracker can therefore enqueue work ahead of them.
+            let mut prepared_jobs = Vec::with_capacity(reactions.len());
+            for reaction in reactions {
+                let job = match self.prepare_promise_reaction_job(realm, reaction, raw.clone()) {
+                    Ok(job) => job,
+                    Err(error) => {
+                        self.discard_prepared_jobs(prepared_jobs)?;
+                        return Err(error);
+                    }
+                };
+                prepared_jobs.push(job);
+            }
+
+            let prepared_jobs = crate::engine::jobs::PreparedJobs::new(self, prepared_jobs);
+            let settlement = (|| -> Result<(), RuntimeError> {
+                let mut state_ref = self.0.state.borrow_mut();
+                let retained_atom = if let RawValue::Symbol(index) = &raw {
+                    state_ref.atoms.retain_index(*index)?;
+                    Some(*index)
+                } else {
+                    None
+                };
+                let cleanup = match state_ref
+                    .heap
+                    .promise_settle(promise.object_id(), state, raw)
+                {
+                    Ok(cleanup) => cleanup,
+                    Err(error) => {
+                        if let Some(index) = retained_atom {
+                            state_ref.atoms.release_index(index)?;
+                        }
+                        return Err(error.into());
+                    }
+                };
+                state_ref.apply_cleanup(cleanup)
+            })();
+            // The transaction retains the stored handle; the input edge is
+            // released after all selected jobs and host notifications complete.
+            settlement?;
+            if state == PromiseState::Rejected && !was_handled {
+                self.notify_host_promise_rejection_tracker(
+                    realm,
+                    promise.clone(),
+                    &result.as_raw(),
+                    false,
+                )?;
+            }
+            prepared_jobs.publish();
+            Ok(())
         })();
-        // The settle transaction retained its own copy edge for a stored
-        // string/BigInt; on failure nothing was stored. The guard balances
-        // the conversion's producer edge on both outcomes.
-        settlement?;
-        if state == PromiseState::Rejected && !was_handled {
-            self.notify_host_promise_rejection_tracker(
-                realm,
-                promise.clone(),
-                result.clone(),
-                false,
-            )?;
-        }
-        prepared_jobs.publish();
-        drop(result);
-        Ok(())
+        self.release_jsvalue(result)?;
+        settlement_result
     }
 
     pub(crate) fn execute_promise_resolve_thenable_job(
@@ -849,11 +858,10 @@ impl Runtime {
             }
             PromiseState::Rejected => {
                 if !snapshot.is_handled {
-                    let reason = self.root_raw_value(snapshot.result.clone())?;
                     self.notify_host_promise_rejection_tracker(
                         realm,
                         promise.clone(),
-                        reason,
+                        &snapshot.result,
                         true,
                     )?;
                 }
@@ -989,7 +997,10 @@ impl Runtime {
         )?
         .finish(self, realm)?
         {
-            Completion::Return(_) => Ok(NativeConversion::Value(())),
+            Completion::Return(value) => {
+                self.release_jsvalue(value)?;
+                Ok(NativeConversion::Value(()))
+            }
             Completion::Throw(value) => Ok(NativeConversion::Throw(
                 self.root_and_release_jsvalue(value)?,
             )),
@@ -1044,11 +1055,10 @@ impl Runtime {
             }
             PromiseState::Rejected => {
                 if !snapshot.is_handled {
-                    let reason = self.root_raw_value(snapshot.result.clone())?;
                     self.notify_host_promise_rejection_tracker(
                         realm,
                         promise.clone(),
-                        reason,
+                        &snapshot.result,
                         true,
                     )?;
                 }
@@ -1067,6 +1077,38 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settlement_retains_original_string_node_without_materialization() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(promise) = context.eval("new Promise(() => {})").unwrap() else {
+            panic!("expected promise");
+        };
+        let value = runtime
+            .into_jsvalue(Value::String(JsString::from_static("settled")))
+            .unwrap();
+        let JsValue::String(id) = &value else {
+            unreachable!()
+        };
+        runtime
+            .settle_promise(
+                context.realm,
+                &promise,
+                PromiseState::Fulfilled,
+                runtime.dup_jsvalue(&value).unwrap(),
+            )
+            .unwrap();
+        let snapshot = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .promise_snapshot(promise.object_id())
+            .unwrap();
+        assert!(matches!(snapshot.result, RawValue::String(stored) if stored == *id));
+        runtime.release_jsvalue(value).unwrap();
+    }
 
     #[test]
     fn promise_snapshot_rejects_a_promise_from_another_runtime() {

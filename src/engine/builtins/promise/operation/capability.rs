@@ -21,6 +21,7 @@ impl PromiseResume {
             let __pending_field_arguments =
                 vec![JsValue::Object(executor.as_object().clone().into_handle())];
             let __pending_field_resume = Box::new(Self {
+                runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
                 realm: self.realm,
                 phase: Phase::Capability {
@@ -37,7 +38,7 @@ impl PromiseResume {
     }
 
     pub(super) fn capability_ready(
-        self: Box<Self>,
+        mut self: Box<Self>,
         runtime: &Runtime,
         result: NativeConversion<RootedPromiseCapability>,
     ) -> Result<PromiseStep, RuntimeError> {
@@ -49,7 +50,7 @@ impl PromiseResume {
             }
             NativeConversion::Value(capability) => capability,
         };
-        match self.phase {
+        match std::mem::replace(&mut self.phase, Phase::Identity) {
             Phase::AggregateCapability {
                 constructor,
                 iterable,
@@ -76,6 +77,7 @@ impl PromiseResume {
                     let __pending_field_receiver = JsValue::Undefined;
                     let __pending_field_arguments = vec![runtime.into_jsvalue(argument)?];
                     let __pending_field_resume = Box::new(Self {
+                        runtime: runtime.clone(),
                         pending_effect: super::PromiseStepPending::default(),
                         realm: self.realm,
                         phase: Phase::ReturnPromise(capability.promise),

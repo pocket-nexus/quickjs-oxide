@@ -58,6 +58,7 @@ impl std::ops::DerefMut for ErrorResume {
 }
 const _: () = assert!(std::mem::size_of::<ErrorResume>() <= 8);
 pub(crate) struct ErrorResumeState {
+    runtime: Runtime,
     pending_effect: ErrorStepPending,
     realm: ContextId,
     kind: ErrorKind,
@@ -67,6 +68,20 @@ pub(crate) struct ErrorResumeState {
     arguments: Vec<Value>,
     actual: usize,
     name: JsString,
+}
+impl Drop for ErrorResumeState {
+    fn drop(&mut self) {
+        for value in [
+            self.pending_effect.read_receiver.take(),
+            self.pending_effect.string_value.take(),
+            self.pending_effect.aggregate_iterable.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ErrorStep {
     pub(crate) fn start(
@@ -84,6 +99,7 @@ impl ErrorStep {
             owned_arguments.push(runtime.root_value(argument)?);
         }
         let mut resume = ErrorResume(Box::new(ErrorResumeState {
+            runtime: runtime.clone(),
             pending_effect: ErrorStepPending::default(),
             realm,
             kind,
@@ -310,7 +326,7 @@ impl ErrorResume {
                 let value = if self.0.name.is_empty() {
                     value
                 } else if value.is_empty() {
-                    self.0.name
+                    std::mem::replace(&mut self.0.name, JsString::from_static(""))
                 } else {
                     self.0
                         .name

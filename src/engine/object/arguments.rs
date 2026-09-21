@@ -22,7 +22,7 @@ use crate::engine::object::{
     CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
     WellKnownSymbol,
 };
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 /// Keys remain rooted until the complete layout has retained its atoms.
 /// This concrete builder keeps metadata and slots parallel in one operation.
@@ -57,33 +57,28 @@ impl Runtime {
     pub(crate) fn new_unmapped_arguments_object(
         &self,
         realm: ContextId,
-        values: Vec<Value>,
+        values: Vec<JsValue>,
     ) -> Result<ObjectRef, RuntimeError> {
-        for value in &values {
-            self.validate_value_domain(value, "unmapped arguments element")?;
+        let result = (|| {
+            let length = u32::try_from(values.len()).map_err(|_| {
+                RuntimeError::Invariant("actual argument count exceeded QuickJS Uint32 storage")
+            })?;
+            let mut layout = ArgumentsLayout::new(values.len());
+            for (index, value) in values.iter().enumerate() {
+                let key = self.property_key_for_index(index as u64)?;
+                layout.push(
+                    key,
+                    PropertyFlags::data(true, true, true),
+                    PropertySlot::Data(value.as_raw()),
+                );
+            }
+            self.prepare_arguments_common_properties(realm, length, None, &mut layout)?;
+            self.new_arguments_object_base(realm, false, length, layout)
+        })();
+        for value in values {
+            self.release_jsvalue(value)?;
         }
-        let length = u32::try_from(values.len()).map_err(|_| {
-            RuntimeError::Invariant("actual argument count exceeded QuickJS Uint32 storage")
-        })?;
-        let mut layout = ArgumentsLayout::new(values.len());
-        // Convert up front: node allocation needs the state borrow, while the
-        // layout commit happens inside `new_arguments_object_base`.  Each
-        // guard owns one producer edge and balances it on every exit path.
-        let mut converted = Vec::with_capacity(values.len());
-        for value in &values {
-            converted.push(self.raw_property_value(value)?);
-        }
-        for (index, raw) in converted.iter().enumerate() {
-            let key = self.property_key_for_index(index as u64)?;
-            layout.push(
-                key,
-                PropertyFlags::data(true, true, true),
-                PropertySlot::Data(raw.raw()),
-            );
-        }
-        self.prepare_arguments_common_properties(realm, length, None, &mut layout)?;
-        let object = self.new_arguments_object_base(realm, false, length, layout)?;
-        Ok(object)
+        result
     }
 
     /// Build QuickJS `JS_CLASS_MAPPED_ARGUMENTS`. Each supplied root is one
@@ -344,7 +339,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: &Value,
+        value: &JsValue,
     ) -> Result<bool, RuntimeError> {
         if self.arguments_index_state(object, key)?.is_none() {
             return Ok(false);
@@ -369,17 +364,14 @@ impl Runtime {
         match slot {
             PropertySlot::VarRef(id) => {
                 let root = VarRefRoot::from_borrowed_handle(self.clone(), id)?;
-                self.write_var_ref(&root, self.unroot_value(value)?)?;
+                self.write_var_ref(&root, self.dup_jsvalue(value)?)?;
             }
             PropertySlot::Data(_) => {
-                let converted = self.raw_property_value(value)?;
-                // Clone duplicates only the handle; the guard keeps the
-                // producer edge accountable through the store below.
                 let stored = self.store_property_slot(
                     object,
                     key,
                     flags,
-                    PropertySlot::Data(converted.raw()),
+                    PropertySlot::Data(value.as_raw()),
                 );
                 stored?;
             }
@@ -393,7 +385,6 @@ impl Runtime {
 mod tests {
     use crate::engine::code::function::metadata::ClosureVariableKind;
     use crate::engine::object::DescriptorField;
-    use crate::engine::value::JsValue;
 
     use super::*;
 
@@ -426,7 +417,7 @@ mod tests {
         );
 
         let arguments = runtime
-            .new_unmapped_arguments_object(context.realm, vec![Value::Int(10), Value::Int(20)])
+            .new_unmapped_arguments_object(context.realm, vec![JsValue::Int(10), JsValue::Int(20)])
             .unwrap();
         assert_eq!(
             runtime

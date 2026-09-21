@@ -32,6 +32,14 @@ pub(in crate::engine::vm) struct EnvironmentResumeState {
     realm: ContextId,
     phase: Phase,
 }
+impl Drop for EnvironmentResumeState {
+    fn drop(&mut self) {
+        if let Phase::Put { object, value, .. } = std::mem::replace(&mut self.phase, Phase::Boolean)
+        {
+            let _ = object.runtime().release_jsvalue(value);
+        }
+    }
+}
 enum Phase {
     Binding {
         object: ObjectRef,
@@ -214,7 +222,7 @@ impl EnvironmentStep {
 }
 impl EnvironmentResume {
     pub(in crate::engine::vm) fn boolean(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: NativeConversion<bool>,
     ) -> Result<EnvironmentStep, RuntimeError> {
@@ -227,7 +235,7 @@ impl EnvironmentResume {
             }
         };
         let realm = self.0.realm;
-        match self.0.phase {
+        match std::mem::replace(&mut self.0.phase, Phase::Boolean) {
             Phase::Binding { object, key, with } => {
                 if !present || !with {
                     return Ok(EnvironmentStep::Complete(Completion::Return(
@@ -288,36 +296,49 @@ impl EnvironmentResume {
                 strict,
                 reference,
             } => {
-                if !present && strict {
-                    return Err(runtime
-                        .native_atom_error(ErrorKind::Reference, "'", &key, "' is not defined")?
-                        .into());
+                let mut value = Some(value);
+                let result = (|| {
+                    if !present && strict {
+                        return Err(runtime
+                            .native_atom_error(ErrorKind::Reference, "'", &key, "' is not defined")?
+                            .into());
+                    }
+                    if reference && let Some(root) = runtime.own_var_ref_root(&object, &key)? {
+                        let cell = runtime.0.state.borrow().heap.var_ref(root.id())?.clone();
+                        if matches!(cell.value, crate::engine::heap::RawValue::Uninitialized) {
+                            return Err(super::super::bindings::lexical_uninitialized_error(
+                                runtime,
+                                Some(key.atom()),
+                                true,
+                            )?
+                            .into());
+                        }
+                        if cell.is_const && strict {
+                            return Err(super::super::bindings::lexical_read_only_error(
+                                runtime,
+                                Some(key.atom()),
+                            )?
+                            .into());
+                        }
+                        if !cell.is_const {
+                            runtime.write_var_ref(&root, value.take().expect("environment RHS"))?;
+                        }
+                        return Ok(EnvironmentStep::Complete(Completion::Return(
+                            JsValue::Undefined,
+                        )));
+                    }
+                    Ok(EnvironmentStep::set(
+                        realm,
+                        object,
+                        key,
+                        value.take().expect("environment RHS"),
+                        strict,
+                    ))
+                })();
+                if let Some(value) = value {
+                    let _ = runtime.release_jsvalue(value);
                 }
-                if reference && let Some(root) = runtime.own_var_ref_root(&object, &key)? {
-                    let cell = runtime.0.state.borrow().heap.var_ref(root.id())?.clone();
-                    if matches!(cell.value, crate::engine::heap::RawValue::Uninitialized) {
-                        return Err(super::super::bindings::lexical_uninitialized_error(
-                            runtime,
-                            Some(key.atom()),
-                            true,
-                        )?
-                        .into());
-                    }
-                    if cell.is_const && strict {
-                        return Err(super::super::bindings::lexical_read_only_error(
-                            runtime,
-                            Some(key.atom()),
-                        )?
-                        .into());
-                    }
-                    if !cell.is_const {
-                        runtime.write_var_ref(&root, value)?;
-                    }
-                    return Ok(EnvironmentStep::Complete(Completion::Return(
-                        JsValue::Undefined,
-                    )));
-                }
-                Ok(EnvironmentStep::set(realm, object, key, value, strict))
+                result
             }
             Phase::Reference { object } => {
                 if !present {
@@ -345,7 +366,7 @@ impl EnvironmentResume {
         }
     }
     pub(in crate::engine::vm) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: Completion,
     ) -> Result<EnvironmentStep, RuntimeError> {
@@ -355,7 +376,7 @@ impl EnvironmentResume {
                 return Ok(EnvironmentStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.0.phase {
+        match std::mem::replace(&mut self.0.phase, Phase::Boolean) {
             Phase::Unscopables { key } => Ok(match value {
                 JsValue::Object(object) => EnvironmentStep::request_read(
                     runtime,
@@ -368,11 +389,18 @@ impl EnvironmentResume {
                         phase: Phase::Excluded,
                     })),
                 ),
-                _ => EnvironmentStep::Complete(Completion::Return(JsValue::Bool(true))),
+                value => {
+                    runtime.release_jsvalue(value)?;
+                    EnvironmentStep::Complete(Completion::Return(JsValue::Bool(true)))
+                }
             }),
-            Phase::Excluded => Ok(EnvironmentStep::Complete(Completion::Return(
-                JsValue::Bool(!runtime.value_to_boolean_jsvalue(&value)?),
-            ))),
+            Phase::Excluded => {
+                let excluded = runtime.value_to_boolean_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                Ok(EnvironmentStep::Complete(Completion::Return(
+                    JsValue::Bool(!excluded?),
+                )))
+            }
             Phase::Value => Ok(EnvironmentStep::Complete(Completion::Return(value))),
             _ => Err(RuntimeError::Invariant(
                 "environment value reply has wrong phase",
@@ -380,11 +408,12 @@ impl EnvironmentResume {
         }
     }
     pub(in crate::engine::vm) fn set(
-        self,
+        mut self,
         runtime: &Runtime,
         reply: NativeConversion<InternalSetResult>,
     ) -> Result<EnvironmentStep, RuntimeError> {
-        let Phase::Set { key, strict } = self.0.phase else {
+        let Phase::Set { key, strict } = std::mem::replace(&mut self.0.phase, Phase::Boolean)
+        else {
             return Err(RuntimeError::Invariant(
                 "environment Set reply has wrong phase",
             ));
@@ -397,6 +426,7 @@ impl EnvironmentResume {
 
 #[derive(Default)]
 struct EnvironmentStepPending {
+    runtime: Option<Runtime>,
     has_object: Option<ObjectRef>,
     has_key: Option<PropertyKey>,
     read_object: Option<ObjectRef>,
@@ -407,6 +437,18 @@ struct EnvironmentStepPending {
     set_value: Option<JsValue>,
     delete_object: Option<ObjectRef>,
     delete_key: Option<PropertyKey>,
+}
+impl Drop for EnvironmentStepPending {
+    fn drop(&mut self) {
+        if let Some(runtime) = &self.runtime {
+            if let Some(value) = self.read_receiver.take() {
+                let _ = runtime.release_jsvalue(value);
+            }
+            if let Some(value) = self.set_value.take() {
+                let _ = runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl EnvironmentStep {
     pub(crate) fn request_has(
@@ -427,6 +469,7 @@ impl EnvironmentStep {
     ) -> Self {
         // The receiver carries an owned edge: either the caller retained it
         // above, or the completion value already owned its edge.
+        resume.0.pending_effect.runtime = Some(object.runtime().clone());
         resume.0.pending_effect.read_object = Some(object);
         resume.0.pending_effect.read_key = Some(key);
         resume.0.pending_effect.read_receiver = Some(receiver);
@@ -438,6 +481,7 @@ impl EnvironmentStep {
         value: JsValue,
         mut resume: EnvironmentResume,
     ) -> Self {
+        resume.0.pending_effect.runtime = Some(object.runtime().clone());
         resume.0.pending_effect.set_object = Some(object);
         resume.0.pending_effect.set_key = Some(key);
         resume.0.pending_effect.set_value = Some(value);

@@ -35,7 +35,7 @@ fn is_html_dda_semantics_match_pinned_quickjs_transcript() {
     let html_dda = eval(&mut context, "$262.IsHTMLDDA");
     assert!(!html_dda.to_boolean());
 
-    eval(&mut context, FIXTURE);
+    drop(eval(&mut context, FIXTURE));
     let transcript = text(eval(&mut context, "isHtmlDdaTranscript.join('\\n')"));
     assert_eq!(format!("{transcript}\n"), QUICKJS_2026_06_04);
 }

@@ -267,6 +267,13 @@ pub(crate) struct CloseResumeState {
     completion: Completion,
     called: bool,
 }
+impl Drop for CloseResumeState {
+    fn drop(&mut self) {
+        let (Completion::Return(value) | Completion::Throw(value)) =
+            std::mem::replace(&mut self.completion, Completion::Return(JsValue::Undefined));
+        let _ = self.iterator.runtime().release_jsvalue(value);
+    }
+}
 impl CloseStep {
     /// A pending Throw suppresses every JavaScript failure in close; a Return
     /// requires a callable return method and an object result.
@@ -276,19 +283,27 @@ impl CloseStep {
         iterator: ObjectRef,
         completion: Completion,
     ) -> Result<Self, RuntimeError> {
+        let resume = CloseResume(Box::new(CloseResumeState {
+            realm,
+            iterator,
+            completion,
+            called: false,
+        }));
         Ok(Self::Read {
-            object: iterator.clone(),
+            object: resume.0.iterator.clone(),
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?,
-            resume: CloseResume(Box::new(CloseResumeState {
-                realm,
-                iterator,
-                completion,
-                called: false,
-            })),
+            resume,
         })
     }
 }
 impl CloseResume {
+    fn take_completion(&mut self) -> Completion {
+        std::mem::replace(
+            &mut self.0.completion,
+            Completion::Return(JsValue::Undefined),
+        )
+    }
+
     pub(crate) fn resume(
         mut self,
         runtime: &Runtime,
@@ -300,7 +315,7 @@ impl CloseResume {
             Completion::Throw(value) => {
                 if preserving {
                     runtime.release_jsvalue(value)?;
-                    return Ok(CloseStep::Complete(self.0.completion));
+                    return Ok(CloseStep::Complete(self.take_completion()));
                 }
                 return Ok(CloseStep::Complete(Completion::Throw(value)));
             }
@@ -309,7 +324,7 @@ impl CloseResume {
             let valid = preserving || matches!(value, JsValue::Object(_));
             runtime.release_jsvalue(value)?;
             return Ok(CloseStep::Complete(if valid {
-                self.0.completion
+                self.take_completion()
             } else {
                 Completion::Throw(runtime.new_native_error_jsvalue(
                     self.0.realm,
@@ -319,7 +334,7 @@ impl CloseResume {
             }));
         }
         if matches!(value, JsValue::Undefined | JsValue::Null) {
-            return Ok(CloseStep::Complete(self.0.completion));
+            return Ok(CloseStep::Complete(self.take_completion()));
         }
         let callable = match &value {
             JsValue::Object(id) => {
@@ -331,7 +346,7 @@ impl CloseResume {
         runtime.release_jsvalue(value)?;
         let Some(callable) = callable else {
             return Ok(CloseStep::Complete(if preserving {
-                self.0.completion
+                self.take_completion()
             } else {
                 Completion::Throw(runtime.new_native_error_jsvalue(
                     self.0.realm,

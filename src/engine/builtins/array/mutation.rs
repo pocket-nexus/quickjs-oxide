@@ -61,12 +61,13 @@ impl std::ops::DerefMut for MutationResume {
 }
 const _: () = assert!(std::mem::size_of::<MutationResume>() <= 8);
 pub(crate) struct MutationResumeState {
+    runtime: Runtime,
     pending_effect: MutationStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
     kind: MutationKind,
     object: ObjectRef,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
     // Push never uses the Pop result slot. A single immediate argument lives
     // there until completion, avoiding a Vec allocation without moving roots.
     inline_argument: bool,
@@ -74,14 +75,14 @@ pub(crate) struct MutationResumeState {
     length: u64,
     new_length: u64,
     cursor: u64,
-    result: Value,
+    result: JsValue,
 }
 // This enum carries only the selected effect. The source, arguments and result
 // remain in one MutationResume until a real callback requires owned transport.
 enum MutationAction {
     Complete(Completion),
     Read(PropertyKey),
-    Number(Value),
+    Number(JsValue),
     Copy {
         to: u64,
         from: u64,
@@ -90,11 +91,29 @@ enum MutationAction {
     },
     Set {
         key: PropertyKey,
-        value: Value,
+        value: JsValue,
     },
     Delete(PropertyKey),
 }
 
+impl Drop for MutationResumeState {
+    fn drop(&mut self) {
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        let result = std::mem::replace(&mut self.result, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(result);
+        if let Some(read) = self.pending_effect.prepared_read_read.take() {
+            read.release(&self.runtime);
+        }
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
 impl MutationStep {
     pub(crate) fn start(
         runtime: &Runtime,
@@ -108,105 +127,107 @@ impl MutationStep {
                 "Array mutation requires generic invocation",
             ));
         };
+        let object =
+            match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
+                NativeConversion::Value(object) => object,
+                NativeConversion::Throw(value) => {
+                    return Ok(Self::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
         let values = &arguments.readable[..arguments.actual_arg_count];
-        let inline = match (kind, values) {
+        let inline = matches!(
+            (kind, values),
             (
                 MutationKind::Push(_),
-                [
-                    value @ (JsValue::Undefined
+                [JsValue::Undefined
                     | JsValue::Null
                     | JsValue::Bool(_)
                     | JsValue::Int(_)
-                    | JsValue::Float(_)),
-                ],
-            ) => Some(runtime.root_value(value)?),
-            _ => None,
-        };
-        let values = if inline.is_some() {
-            #[cfg(feature = "profiling")]
+                    | JsValue::Float(_)]
+            )
+        );
+        #[cfg(feature = "profiling")]
+        if inline {
             crate::engine::api::profiling::record_owned_execution_event(
                 "array_mutation_inline_argument",
             );
-            Vec::new()
-        } else {
-            values
-                .iter()
-                .map(|value| runtime.root_value(value))
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        Self::start_arguments(
-            runtime,
-            realm,
-            kind,
-            runtime.root_value(this_value)?,
-            values,
-            inline,
-        )
-    }
-    pub(crate) fn start_values(
-        runtime: &Runtime,
-        realm: ContextId,
-        kind: MutationKind,
-        receiver: Value,
-        arguments: Vec<Value>,
-    ) -> Result<Self, RuntimeError> {
-        Self::start_arguments(runtime, realm, kind, receiver, arguments, None)
-    }
-    fn start_arguments(
-        runtime: &Runtime,
-        realm: ContextId,
-        kind: MutationKind,
-        receiver: Value,
-        arguments: Vec<Value>,
-        inline: Option<Value>,
-    ) -> Result<Self, RuntimeError> {
-        let object = match runtime.native_to_object(realm, receiver)? {
-            NativeConversion::Value(object) => object,
-            NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+        }
+        let completed = match (kind, values) {
+            (MutationKind::Push(ArrayPushKind::Push), [value]) => {
+                runtime.try_dense_push(&object, value)?
             }
+            (MutationKind::Pop(ArrayPopKind::Pop), _) => runtime.try_dense_pop(&object)?,
+            _ => None,
         };
-
-        {
-            let completed = match kind {
-                MutationKind::Push(ArrayPushKind::Push) => {
-                    let value = inline
-                        .as_ref()
-                        .or_else(|| (arguments.len() == 1).then(|| &arguments[0]));
-                    match value {
-                        Some(value) => runtime.try_dense_push(&object, value)?,
-                        None => None,
-                    }
-                }
-                MutationKind::Pop(ArrayPopKind::Pop) => runtime.try_dense_pop(&object)?,
-                _ => None,
-            };
-            if let Some(value) = completed {
-                return Ok(Self::Complete(Completion::Return(
-                    runtime.into_jsvalue(value)?,
-                )));
+        if let Some(value) = completed {
+            return Ok(Self::Complete(Completion::Return(value)));
+        }
+        let mut resume = Self::owner(runtime, realm, kind, object);
+        if inline {
+            resume.0.inline_argument = true;
+            resume.0.result = runtime.dup_jsvalue(&values[0])?;
+        } else {
+            resume
+                .0
+                .arguments
+                .try_reserve_exact(values.len())
+                .map_err(|_| RuntimeError::Invariant("Array mutation argv allocation failed"))?;
+            for value in values {
+                resume.0.arguments.push(runtime.dup_jsvalue(value)?);
             }
         }
         let action = MutationAction::Read(
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
         );
+        resume.drive(runtime, action)
+    }
+    pub(crate) fn start_values(
+        runtime: &Runtime,
+        realm: ContextId,
+        kind: MutationKind,
+        object: ObjectRef,
+        arguments: Vec<JsValue>,
+    ) -> Result<Self, RuntimeError> {
+        let mut resume = Self::owner(runtime, realm, kind, object);
+        resume.0.arguments = arguments;
+        let completed = match kind {
+            MutationKind::Push(ArrayPushKind::Push) if resume.0.arguments.len() == 1 => {
+                runtime.try_dense_push(&resume.0.object, &resume.0.arguments[0])?
+            }
+            MutationKind::Pop(ArrayPopKind::Pop) => runtime.try_dense_pop(&resume.0.object)?,
+            _ => None,
+        };
+        if let Some(value) = completed {
+            return Ok(Self::Complete(Completion::Return(value)));
+        }
+        let action = MutationAction::Read(
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+        );
+        resume.drive(runtime, action)
+    }
+    fn owner(
+        runtime: &Runtime,
+        realm: ContextId,
+        kind: MutationKind,
+        object: ObjectRef,
+    ) -> MutationResume {
         MutationResume(Box::new(MutationResumeState {
+            runtime: runtime.clone(),
             pending_effect: MutationStepPending::default(),
             scheduler_set_key: None,
             realm,
             kind,
             object,
-            arguments,
-            inline_argument: inline.is_some(),
+            arguments: Vec::new(),
+            inline_argument: false,
             phase: Phase::Length,
             length: 0,
             new_length: 0,
             cursor: 0,
-            result: inline.unwrap_or(Value::Undefined),
+            result: JsValue::Undefined,
         }))
-        .drive(runtime, action)
     }
 }
 impl MutationResume {
@@ -225,7 +246,7 @@ impl MutationResume {
             self.0.arguments.len()
         }
     }
-    fn argument(&self, index: usize) -> Option<&Value> {
+    fn argument(&self, index: usize) -> Option<&JsValue> {
         if self.0.inline_argument {
             (index == 0).then_some(&self.0.result)
         } else {
@@ -238,7 +259,7 @@ impl MutationResume {
         result: Completion,
     ) -> Result<MutationAction, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
@@ -249,10 +270,14 @@ impl MutationResume {
                 Ok(MutationAction::Number(value))
             }
             Phase::Result => {
-                self.0.result = value;
+                let previous = std::mem::replace(&mut self.0.result, value);
+                runtime.release_jsvalue(previous)?;
                 self.copy_next(runtime)
             }
-            Phase::Copy => self.copied(runtime),
+            Phase::Copy => {
+                runtime.release_jsvalue(value)?;
+                self.copied(runtime)
+            }
             _ => Err(RuntimeError::Invariant(
                 "Array mutation received unexpected value reply",
             )),
@@ -334,7 +359,8 @@ impl MutationResume {
         }
     }
     fn write_next(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
-        if let Some(value) = self.argument(self.0.cursor as usize).cloned() {
+        if let Some(value) = self.argument(self.0.cursor as usize) {
+            let value = runtime.dup_jsvalue(value)?;
             let from = match self.0.kind {
                 MutationKind::Push(ArrayPushKind::Unshift) if self.argument_count() != 0 => 0,
                 _ => self.0.length,
@@ -358,17 +384,21 @@ impl MutationResume {
         self.0.phase = Phase::LengthWrite;
         Ok(MutationAction::Set {
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            value: Value::number(self.0.new_length as f64),
+            value: crate::engine::value::number::operations::Number::compact(
+                self.0.new_length as f64,
+            )
+            .into(),
         })
     }
-    fn complete(&mut self, runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
+    fn complete(&mut self, _runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
         let value = match self.0.kind {
-            MutationKind::Push(_) => Value::number(self.0.new_length as f64),
-            MutationKind::Pop(_) => std::mem::replace(&mut self.0.result, Value::Undefined),
+            MutationKind::Push(_) => {
+                crate::engine::value::number::operations::Number::compact(self.0.new_length as f64)
+                    .into()
+            }
+            MutationKind::Pop(_) => std::mem::replace(&mut self.0.result, JsValue::Undefined),
         };
-        Ok(MutationAction::Complete(Completion::Return(
-            runtime.into_jsvalue(value)?,
-        )))
+        Ok(MutationAction::Complete(Completion::Return(value)))
     }
     fn boolean_once(
         &mut self,
@@ -482,9 +512,9 @@ impl MutationResume {
                             }
                         }
                     }
-                    MutationAction::Number(value) if !matches!(value, Value::Object(_)) => {
+                    MutationAction::Number(value) if !matches!(value, JsValue::Object(_)) => {
                         let NumberStep::Complete(reply) =
-                            NumberStep::start(runtime, self.0.realm, value)?
+                            NumberStep::start_jsvalue(runtime, self.0.realm, value)?
                         else {
                             return Err(RuntimeError::Invariant(
                                 "primitive mutation number suspended",
@@ -542,15 +572,17 @@ impl MutationResume {
             }
         }
     }
-    fn wait(self, runtime: &Runtime, action: MutationAction) -> Result<MutationStep, RuntimeError> {
+    fn wait(
+        self,
+        _runtime: &Runtime,
+        action: MutationAction,
+    ) -> Result<MutationStep, RuntimeError> {
         Ok(match action {
             MutationAction::Complete(result) => MutationStep::Complete(result),
             MutationAction::Read(key) => {
                 MutationStep::request_read(self.0.object.clone(), key, self)
             }
-            MutationAction::Number(value) => {
-                MutationStep::request_number(runtime.into_jsvalue(value)?, self)
-            }
+            MutationAction::Number(value) => MutationStep::request_number(value, self),
             MutationAction::Copy {
                 to,
                 from,
@@ -559,12 +591,9 @@ impl MutationResume {
             } => {
                 MutationStep::request_copy(self.0.object.clone(), to, from, count, backwards, self)
             }
-            MutationAction::Set { key, value } => MutationStep::request_set(
-                self.0.object.clone(),
-                key,
-                runtime.into_jsvalue(value)?,
-                self,
-            ),
+            MutationAction::Set { key, value } => {
+                MutationStep::request_set(self.0.object.clone(), key, value, self)
+            }
             MutationAction::Delete(key) => {
                 MutationStep::request_delete(self.0.object.clone(), key, self)
             }
@@ -626,19 +655,16 @@ pub(crate) fn finish(
                     let result = loop {
                         match step {
                             SetStep::Complete(PropertySetAction::Call { payload }) => {
-                                let crate::engine::object::operations::PropertySetterCall {
-                                    setter,
-                                    receiver,
-                                    argument,
-                                } = *payload;
+                                let (setter, receiver, argument) = payload.into_parts();
 
-                                break match runtime.call_internal(
+                                break match runtime.call_internal_jsvalue(
                                     realm,
                                     &setter,
-                                    receiver,
-                                    &[argument],
+                                    runtime.into_jsvalue(receiver)?,
+                                    vec![argument],
                                 )? {
-                                    Completion::Return(_) => {
+                                    Completion::Return(value) => {
+                                        runtime.release_jsvalue(value)?;
                                         NativeConversion::Value(InternalSetResult::Accepted)
                                     }
                                     Completion::Throw(value) => NativeConversion::Throw(

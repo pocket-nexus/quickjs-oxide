@@ -427,10 +427,18 @@ impl Runtime {
                 else {
                     return self.invalid_weak_target(realm, "invalid target");
                 };
-                let held_value = self.root_value(arguments.readable.get(1).ok_or(
-                    RuntimeError::Invariant("FinalizationRegistry held value argv was not padded"),
-                )?)?;
-                if first.same_value(&held_value) {
+                let held_value = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
+                    "FinalizationRegistry held value argv was not padded",
+                ))?;
+                let same_target = {
+                    let state = self.0.state.borrow();
+                    crate::engine::value::collection_key::same_value(
+                        &state.heap,
+                        &arguments.readable[0].as_raw(),
+                        &held_value.as_raw(),
+                    )
+                };
+                if same_target {
                     return self.invalid_weak_target(realm, "held value cannot be the target");
                 }
                 let token_value =
@@ -448,13 +456,7 @@ impl Runtime {
                     Some(token)
                 };
 
-                self.validate_value_domain(&held_value, "FinalizationRegistry held value")?;
-                let converted = self.raw_property_value(&held_value)?;
-                let raw_held_value = converted.raw();
-                // The conversion allocated a string/BigInt node with one
-                // producer edge; the registry entry retains its own copy edge
-                // inside `finalization_registry_register`, so the guard
-                // balances the producer edge on every exit.
+                let raw_held_value = held_value.as_raw();
                 let mut state = self.0.state.borrow_mut();
                 let retained_atoms = state.retain_raw_value_atoms([&raw_held_value])?;
                 if let Err(error) = state.heap.finalization_registry_register(

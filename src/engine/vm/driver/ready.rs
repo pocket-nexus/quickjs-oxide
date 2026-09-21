@@ -81,7 +81,9 @@ pub(super) fn run(
             },
             #[cfg(all(test, feature = "profiling"))]
             RunExit::ReleaseOperand { .. } => {
-                if !crate::engine::vm::frame_operations::complete_owned_slot(execution, id, exit)? {
+                if !crate::engine::vm::frame_operations::complete_owned_slot(
+                    runtime, execution, id, exit,
+                )? {
                     return Err(invariant(
                         "direct slot completion changed its frame protocol",
                     ));

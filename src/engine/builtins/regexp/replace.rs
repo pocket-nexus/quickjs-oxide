@@ -406,6 +406,9 @@ impl Drop for RegExpReplaceResumeState {
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        if let Some(read) = self.step_pending.read.take() {
+            read.release(&self.runtime);
+        }
         if let Some(value) = self.step_pending.value.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -719,7 +722,7 @@ impl RegExpReplaceResume {
                         runtime,
                         self.0.realm,
                         &key,
-                        value,
+                        runtime.into_jsvalue(value)?,
                         Value::Object(self.0.state.regexp.clone()),
                         |step| pending = Some(step),
                     )?;
@@ -1462,17 +1465,13 @@ fn finish_replace(
                     let result = loop {
                         match step {
                             SetStep::Complete(PropertySetAction::Call { payload }) => {
-                                let crate::engine::object::operations::PropertySetterCall {
-                                    setter,
-                                    receiver,
-                                    argument,
-                                } = *payload;
+                                let (setter, receiver, argument) = payload.into_parts();
 
-                                break match runtime.call_internal(
+                                break match runtime.call_internal_jsvalue(
                                     realm,
                                     &setter,
-                                    receiver,
-                                    &[argument],
+                                    runtime.into_jsvalue(receiver)?,
+                                    vec![argument],
                                 )? {
                                     Completion::Return(value) => {
                                         // The setter result is discarded, but it
@@ -1556,14 +1555,20 @@ mod tests {
     fn standard_string_replace_completes_before_resident_allocation() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("RegExp.prototype.exec").unwrap();
+        drop(context.eval("RegExp.prototype.exec").unwrap());
         let regexp = context.eval("/a/g").unwrap();
-        let invocation = NativeInvocation::Call { this_value: regexp };
+        let invocation = NativeInvocation::Call {
+            this_value: runtime.into_jsvalue(regexp).unwrap(),
+        };
         let arguments = NativeArguments {
             actual_arg_count: 2,
             readable: vec![
-                Value::String(JsString::from_static("aba")),
-                Value::String(JsString::from_static("x")),
+                runtime
+                    .into_jsvalue(Value::String(JsString::from_static("aba")))
+                    .unwrap(),
+                runtime
+                    .into_jsvalue(Value::String(JsString::from_static("x")))
+                    .unwrap(),
             ],
         };
         let profile = crate::engine::api::profiling::CostProfile::start();
@@ -1572,7 +1577,14 @@ mod tests {
         else {
             panic!("standard replace must complete locally")
         };
-        assert_eq!(value, Value::String(JsString::from_static("xbx")));
+        assert_eq!(
+            runtime.root_and_release_jsvalue(value).unwrap(),
+            Value::String(JsString::from_static("xbx"))
+        );
+        invocation.release(&runtime).unwrap();
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
         assert_eq!(
             profile
                 .snapshot()
@@ -1695,7 +1707,7 @@ mod tests {
         else {
             panic!("expected selected result length getter")
         };
-        drop(resume.take_preparedread_read());
+        resume.take_preparedread_read().release(&runtime);
         drop(resume.take_preparedread_key());
         assert_eq!(
             &*resume.0 as *const RegExpReplaceResumeState,

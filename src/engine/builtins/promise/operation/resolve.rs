@@ -33,6 +33,7 @@ impl PromiseStep {
                 let __pending_field_key = runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
                 let __pending_field_resume = Box::new(PromiseResume {
+                    runtime: runtime.clone(),
                     pending_effect: super::PromiseStepPending::default(),
                     realm,
                     phase: Phase::StaticConstructor {
@@ -89,6 +90,7 @@ fn create(
         NativeConversion::Value(constructor) => constructor,
     };
     Box::new(PromiseResume {
+        runtime: runtime.clone(),
         pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: Phase::StaticCapability { argument, kind },

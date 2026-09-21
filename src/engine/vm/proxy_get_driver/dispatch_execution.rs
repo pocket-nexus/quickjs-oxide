@@ -73,6 +73,10 @@ pub(super) fn finish(
                                 if matches!(value_use, ReturnValue::Push) {
                                     let parent = execution.frames.current_mut(owner.frame()?)?;
                                     execution.slots.push(&mut parent.window, value)?;
+                                } else {
+                                    runtime
+                                        .release_jsvalue(value)
+                                        .map_err(runtime_error_to_vm_error)?;
                                 }
                                 Ok(Next::Done(Progress::Call(CallStep::Entered)))
                             }
@@ -269,11 +273,7 @@ pub(super) fn activation(
                     min_readable_args,
                     mode,
                     invocation,
-                    arguments
-                        .into_iter()
-                        .map(|argument| runtime.root_and_release_jsvalue(argument))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(runtime_error_to_vm_error)?,
+                    arguments,
                     resume,
                     step,
                 )?;
@@ -477,15 +477,7 @@ pub(super) fn prepare(
                     .map_err(|_| Error::internal("constructor continuation allocation failed"))?;
                 query.parents.push(resume);
                 *step = crate::engine::object::ProxyConstructStep::start(
-                    runtime,
-                    realm,
-                    target,
-                    new_target,
-                    arguments
-                        .into_iter()
-                        .map(|argument| runtime.root_and_release_jsvalue(argument))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(runtime_error_to_vm_error)?,
+                    runtime, realm, target, new_target, arguments,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();

@@ -7,38 +7,54 @@ use crate::engine::{
     code::runtime::PublishedFunctionSnapshot,
     heap::ContextId,
     heap::{BytecodeConstant, ObjectPayload},
-    value::{JsString, JsValue, Value},
+    value::{JsString, JsValue},
     vm::{Completion, exception::runtime_error_to_vm_error},
 };
 
 fn allocate_string_node(runtime: &Runtime, string: JsString) -> Result<JsValue, Error> {
     runtime
-        .unroot_value(&Value::String(string))
-        .map_err(runtime_error_to_vm_error)
+        .0
+        .state
+        .borrow_mut()
+        .heap
+        .allocate_string(string)
+        .map(JsValue::String)
+        .map_err(|error| Error::internal(error.to_string()))
 }
 
 fn value_is_html_dda(runtime: &Runtime, value: &JsValue) -> Result<bool, Error> {
-    if !matches!(value, JsValue::Object(_)) {
+    let JsValue::Object(id) = value else {
         return Ok(false);
-    }
-    let rooted = runtime
-        .root_value(value)
-        .map_err(runtime_error_to_vm_error)?;
-    runtime
-        .value_is_html_dda(&rooted)
-        .map_err(runtime_error_to_vm_error)
+    };
+    Ok(runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .object(*id)
+        .map_err(|error| Error::internal(error.to_string()))?
+        .is_html_dda)
 }
 
 fn value_is_callable(runtime: &Runtime, value: &JsValue) -> Result<bool, Error> {
-    if !matches!(value, JsValue::Object(_)) {
+    let JsValue::Object(id) = value else {
         return Ok(false);
-    }
-    let rooted = runtime
-        .root_value(value)
-        .map_err(runtime_error_to_vm_error)?;
-    runtime
-        .value_is_callable(&rooted)
-        .map_err(runtime_error_to_vm_error)
+    };
+    let state = runtime.0.state.borrow();
+    let object = state
+        .heap
+        .object(*id)
+        .map_err(|error| Error::internal(error.to_string()))?;
+    Ok(matches!(
+        &object.payload,
+        ObjectPayload::NativeFunction { .. }
+            | ObjectPayload::BoundFunction { .. }
+            | ObjectPayload::BytecodeFunction { .. }
+            | ObjectPayload::Proxy(crate::engine::heap::ProxyData {
+                is_callable: true,
+                ..
+            })
+    ))
 }
 
 /// Load a published value constant while its executable owns the raw edge.
@@ -295,10 +311,12 @@ fn perform(
         }
         P::IteratorCheckObject => {
             let value = slots.peek(&frame.window, 0)?;
-            let rooted = runtime
-                .root_value(value)
-                .map_err(runtime_error_to_vm_error)?;
-            super::iterator_support::check_result_object(&rooted)?;
+            if !matches!(value, JsValue::Object(_)) {
+                return Err(Error::new(
+                    ErrorKind::Type,
+                    "iterator must return an object",
+                ));
+            }
             return Ok(None);
         }
         P::IteratorMissingThrow => return Err(super::iterator_support::missing_throw()),
@@ -308,7 +326,10 @@ fn perform(
         P::RegExp(index) => {
             match create_regexp(runtime, frame.executable.realm, &frame.executable, index)? {
                 Completion::Return(value) => value,
-                Completion::Throw(_) => {
+                Completion::Throw(value) => {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
                     return Err(Error::internal(
                         "pure RegExp literal unexpectedly returned a completion throw",
                     ));
@@ -382,8 +403,19 @@ fn perform(
                 .dup_jsvalue(&object)
                 .map_err(runtime_error_to_vm_error)?;
             match set_object_prototype(runtime, object, prototype)? {
-                Completion::Return(_) => retained,
-                Completion::Throw(_) => {
+                Completion::Return(value) => {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                    retained
+                }
+                Completion::Throw(value) => {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                    runtime
+                        .release_jsvalue(retained)
+                        .map_err(runtime_error_to_vm_error)?;
                     return Err(Error::internal(
                         "pure literal prototype unexpectedly returned a completion throw",
                     ));

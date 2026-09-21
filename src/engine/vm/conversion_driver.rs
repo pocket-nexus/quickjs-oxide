@@ -627,9 +627,8 @@ impl ConversionTask {
                                         key: runtime
                                             .root_and_release_jsvalue(value)
                                             .map_err(runtime_error_to_vm_error)?,
-                                        value: runtime
-                                            .root_and_release_jsvalue(assigned)
-                                            .map_err(runtime_error_to_vm_error)?,
+                                        value: Some(assigned),
+                                        runtime: runtime.clone(),
                                     },
                                 )));
                             }
@@ -698,7 +697,10 @@ impl ConversionTask {
                                 .map_err(runtime_error_to_vm_error)?,
                         ),
                     )),
-                    OrdinaryRead::Special { .. } => {
+                    OrdinaryRead::Special { receiver, .. } => {
+                        runtime
+                            .release_jsvalue(receiver)
+                            .map_err(runtime_error_to_vm_error)?;
                         match super::proxy_get_driver::start_conversion(
                             runtime,
                             execution,
@@ -727,18 +729,8 @@ impl ConversionTask {
             }
             PrimitiveStep::Call { mut resume } => {
                 let callable = resume.take_callable();
-                // `normalize_callback` still crosses on public roots; the
-                // conversion domain stores internal values, so hand the
-                // callback boundary owned roots and let it re-enter.
-                let receiver = runtime
-                    .root_and_release_jsvalue(resume.take_receiver())
-                    .map_err(runtime_error_to_vm_error)?;
-                let arguments = resume
-                    .take_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(runtime_error_to_vm_error)?;
+                let receiver = resume.take_receiver();
+                let arguments = resume.take_arguments();
                 invoke(
                     runtime, execution, self, callable, receiver, arguments, resume,
                 )
@@ -753,8 +745,8 @@ fn invoke(
     execution: &mut RunningExecution,
     task: ConversionTask,
     callable: CallableRef,
-    receiver: Value,
-    arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
     resume: PrimitiveResume,
 ) -> Result<Progress, Error> {
     let frame = task.frame;
@@ -896,9 +888,11 @@ mod primitive_store_tests {
     fn conversion_task_resides_across_both_operands_and_skips_primitive_property_keys() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
-            .eval("var residentLeft={valueOf(){return 1}},residentRight={valueOf(){return 2}}")
-            .unwrap();
+        drop(
+            context
+                .eval("var residentLeft={valueOf(){return 1}},residentRight={valueOf(){return 2}}")
+                .unwrap(),
+        );
         let profile = CostProfile::start();
         assert_eq!(
             context.eval("residentLeft+residentRight").unwrap(),

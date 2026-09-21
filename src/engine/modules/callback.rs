@@ -4,7 +4,6 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::builtins::native::{
     DynamicImportHandlerKind, ModuleEvaluationKind, NativeFunctionId,
 };
-use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::{
     ContextId, InternalCallableData, ModuleId, RawModuleRef, RawModuleTransition, RawValue,
 };
@@ -46,21 +45,13 @@ enum Mode {
         phase: FulfillPhase,
     },
     Reject {
-        reason: Value,
-        raw: RawValue,
+        reason: JsValue,
         pending: Vec<ModuleId>,
         parents: Vec<ModuleId>,
     },
     DynamicSettled,
 }
 
-/// Balance the pending request's producer edge exactly once. `None` after the
-/// first call marks the edge as already transferred or released.
-fn release_conversion_probe(runtime: &Runtime, probe: &mut Option<RawValue>) {
-    if let Some(probe) = probe.take() {
-        drop(ConvertedValue::new(runtime, probe));
-    }
-}
 pub(crate) struct CallbackResume {
     runtime: Runtime,
     realm: ContextId,
@@ -100,7 +91,7 @@ impl CallbackStep {
         };
         invocation.release(runtime)?;
         let argument = match arguments.readable.first() {
-            Some(value) => runtime.root_value(value)?,
+            Some(value) => value,
             None => {
                 return Err(RuntimeError::Invariant(
                     "module evaluation callback argv was not padded",
@@ -129,7 +120,9 @@ impl CallbackStep {
         }
         match target_kind {
             ModuleEvaluationKind::Fulfill => Self::fulfill(runtime, realm, module),
-            ModuleEvaluationKind::Reject => Self::reject(runtime, realm, module, argument),
+            ModuleEvaluationKind::Reject => {
+                Self::reject(runtime, realm, module, runtime.dup_jsvalue(argument)?)
+            }
         }
     }
     fn dynamic(
@@ -243,26 +236,25 @@ impl CallbackStep {
         runtime: &Runtime,
         realm: ContextId,
         module: RawModuleRef,
-        reason: Value,
+        reason: JsValue,
     ) -> Result<Self, RuntimeError> {
-        runtime.validate_value_domain(&reason, "async module rejection")?;
-        let mut converted = runtime.raw_property_value(&reason)?;
-        // Clone duplicates only the handle; the pending request adopts the
-        // producer edge and `advance` balances it on every exit.
-        let raw = converted.raw();
-        let root = runtime.root_module(module)?;
+        let root = match runtime.root_module(module) {
+            Ok(root) => root,
+            Err(error) => {
+                runtime.release_jsvalue(reason)?;
+                return Err(error);
+            }
+        };
         let resume = Box::new(CallbackResume {
             runtime: runtime.clone(),
             realm,
             root,
             mode: Mode::Reject {
                 reason,
-                raw,
                 pending: vec![module.module],
                 parents: Vec::new(),
             },
         });
-        converted.disarm();
         resume.advance()
     }
     pub(super) fn finish(
@@ -304,21 +296,32 @@ impl CallbackResume {
             }
             Mode::Reject {
                 pending, parents, ..
-            } => pending.extend(std::mem::take(parents).into_iter().rev()),
+            } => {
+                let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                self.runtime.release_jsvalue(value)?;
+                pending.extend(std::mem::take(parents).into_iter().rev());
+            }
             Mode::Fulfill { ready, phase } => match std::mem::replace(phase, FulfillPhase::Iterate)
             {
                 FulfillPhase::RootSettled => {
+                    let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                    self.runtime.release_jsvalue(value)?;
                     *ready = self
                         .runtime
                         .gather_available_module_ancestors(self.root.raw)?
                         .into()
                 }
-                FulfillPhase::Iterate => {} // selected settlement calls deliberately ignore their completion
+                FulfillPhase::Iterate => {
+                    let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                    self.runtime.release_jsvalue(value)?;
+                }
                 FulfillPhase::Body {
                     module,
                     asynchronous,
                 } => {
                     if asynchronous {
+                        let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                        self.runtime.release_jsvalue(value)?;
                         return self.advance();
                     }
                     match completion {
@@ -339,7 +342,6 @@ impl CallbackResume {
                             }
                         }
                         Completion::Throw(reason) => {
-                            let reason = self.runtime.root_and_release_jsvalue(reason)?;
                             let step =
                                 CallbackStep::reject(&self.runtime, self.realm, module, reason)?;
                             return Ok(CallbackStep::Nested {
@@ -347,7 +349,8 @@ impl CallbackResume {
                                 resume: self,
                             });
                         }
-                        Completion::Return(_) => {
+                        Completion::Return(value) => {
+                            self.runtime.release_jsvalue(value)?;
                             return Err(RuntimeError::Invariant(
                                 "module evaluation returned a non-undefined value",
                             ));
@@ -386,15 +389,10 @@ impl CallbackResume {
             }
             Mode::Reject {
                 reason,
-                raw,
                 pending,
                 parents,
             } => {
-                // The conversion minted at `CallbackStep::reject` carries one
-                // producer edge. The first published record retains its own
-                // copy edge, after which the producer edge is released once;
-                // every exit before that publication releases it immediately.
-                let mut conversion_probe = Some(raw.clone());
+                let raw = reason.as_raw();
                 while let Some(id) = pending.pop() {
                     let current = RawModuleRef {
                         cache: self.root.raw.cache,
@@ -403,7 +401,6 @@ impl CallbackResume {
                     let record = match self.runtime.module_record(current) {
                         Ok(record) => record,
                         Err(error) => {
-                            release_conversion_probe(&self.runtime, &mut conversion_probe);
                             return Err(error);
                         }
                     };
@@ -411,7 +408,6 @@ impl CallbackResume {
                         ModuleEvaluationState::Errored(_) => continue,
                         ModuleEvaluationState::EvaluatingAsync => {}
                         _ => {
-                            release_conversion_probe(&self.runtime, &mut conversion_probe);
                             return Err(RuntimeError::Invariant(
                                 "async module rejection reached an inactive ancestor",
                             ));
@@ -419,13 +415,12 @@ impl CallbackResume {
                     }
                     let next_parents = record.async_parent_modules;
                     let mut state = self.runtime.0.state.borrow_mut();
-                    let retained_atoms = match raw {
+                    let retained_atoms = match &raw {
                         RawValue::Symbol(atom) => {
                             match Runtime::retain_module_atoms(&mut state, vec![*atom]) {
                                 Ok(atoms) => atoms,
                                 Err(error) => {
                                     drop(state);
-                                    release_conversion_probe(&self.runtime, &mut conversion_probe);
                                     return Err(error);
                                 }
                             }
@@ -438,14 +433,10 @@ impl CallbackResume {
                     {
                         let release_result = state.release_atom_indices(retained_atoms);
                         drop(state);
-                        release_conversion_probe(&self.runtime, &mut conversion_probe);
                         release_result?;
                         return Err(error.into());
                     }
                     drop(state);
-                    // The record retained its own copy edge; the producer
-                    // edge is no longer needed.
-                    release_conversion_probe(&self.runtime, &mut conversion_probe);
                     // Publish this node, settle it, then visit parents in reference order.
                     if let Some(callable) = self
                         .runtime
@@ -454,19 +445,26 @@ impl CallbackResume {
                         *parents = next_parents;
                         return Ok(CallbackStep::Call {
                             callable,
-                            value: self.runtime.unroot_value(reason)?,
+                            value: self.runtime.dup_jsvalue(reason)?,
                             resume: self,
                         });
                     }
                     pending.extend(next_parents.into_iter().rev());
                 }
-                // Every ancestor was already errored: no record consumed the
-                // value, so its producer edge dies with this walk.
-                release_conversion_probe(&self.runtime, &mut conversion_probe);
                 Ok(CallbackStep::Complete(Completion::Return(
                     JsValue::Undefined,
                 )))
             }
+        }
+    }
+}
+
+impl Drop for CallbackResume {
+    fn drop(&mut self) {
+        if let Mode::Reject { reason, .. } = &mut self.mode {
+            let _ = self
+                .runtime
+                .release_jsvalue(std::mem::replace(reason, JsValue::Undefined));
         }
     }
 }

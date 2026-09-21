@@ -56,7 +56,6 @@ struct Search {
     depth: usize,
     guard: ProxyMethodStackGuard,
     new_target: NewTargetOwner,
-    arguments: Vec<Value>,
 }
 
 /// Owns the pending `newTarget` across Proxy construct dispatch.
@@ -67,12 +66,14 @@ struct Search {
 struct NewTargetOwner {
     runtime: Runtime,
     target: Option<ConstructNewTarget>,
+    arguments: Vec<JsValue>,
 }
 impl NewTargetOwner {
-    fn new(runtime: &Runtime, target: ConstructNewTarget) -> Self {
+    fn new(runtime: &Runtime, target: ConstructNewTarget, arguments: Vec<JsValue>) -> Self {
         Self {
             runtime: runtime.clone(),
             target: Some(target),
+            arguments,
         }
     }
     fn value(&self) -> JsValue {
@@ -87,6 +88,9 @@ impl NewTargetOwner {
 }
 impl Drop for NewTargetOwner {
     fn drop(&mut self) {
+        for argument in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
         if let Some(target) = self.target.take() {
             let _ = target.release(&self.runtime);
         }
@@ -103,9 +107,9 @@ impl ProxyConstructStep {
         realm: ContextId,
         proxy: ConstructorRef,
         new_target: ConstructNewTarget,
-        arguments: Vec<Value>,
+        arguments: Vec<JsValue>,
     ) -> Result<Self, RuntimeError> {
-        let new_target = NewTargetOwner::new(runtime, new_target);
+        let new_target = NewTargetOwner::new(runtime, new_target, arguments);
         if runtime.proxy_method_stack_would_overflow() {
             return overflow(runtime, realm);
         }
@@ -116,7 +120,6 @@ impl ProxyConstructStep {
             depth: 0,
             guard: ProxyMethodStackGuard::enter(runtime),
             new_target,
-            arguments,
         }
         .read(runtime, proxy)
     }
@@ -171,6 +174,7 @@ impl ProxyConstructResume {
             Phase::Result { realm, trap, .. } => {
                 return Ok(ProxyConstructStep::Complete(match completion {
                     Completion::Return(value) if trap && !matches!(value, JsValue::Object(_)) => {
+                        runtime.release_jsvalue(value)?;
                         Completion::Throw(runtime.new_native_error_jsvalue(
                             realm,
                             NativeErrorKind::Type,
@@ -187,10 +191,15 @@ impl ProxyConstructResume {
         };
         // Validate the immediate target after Get(trap), even for missing traps.
         let target = match runtime
-            .constructor_from_value(search.realm, Value::Object(rooted.target.clone()))?
+            .constructor_from_value(search.realm, Value::Object(rooted.target.clone()))
         {
-            NativeConversion::Value(target) => target,
-            NativeConversion::Throw(value) => {
+            Ok(NativeConversion::Value(target)) => target,
+            Err(error) => {
+                let _ = runtime.release_jsvalue(method);
+                return Err(error);
+            }
+            Ok(NativeConversion::Throw(value)) => {
+                runtime.release_jsvalue(method)?;
                 return Ok(ProxyConstructStep::Complete(Completion::Throw(
                     runtime.unroot_value(&value)?,
                 )));
@@ -204,11 +213,7 @@ impl ProxyConstructResume {
             return Ok(ProxyConstructStep::request_construct(
                 target,
                 search.new_target.take(),
-                search
-                    .arguments
-                    .into_iter()
-                    .map(|value| runtime.into_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?,
+                std::mem::take(&mut search.new_target.arguments),
                 Self(Box::new(ProxyConstructResumeState {
                     pending_effect: ProxyConstructStepPending::new(runtime.clone()),
                     phase: Phase::Result {
@@ -220,7 +225,16 @@ impl ProxyConstructResume {
                 })),
             ));
         }
-        let array = runtime.new_array_from_values(search.realm, search.arguments)?;
+        let array = match runtime.new_array_from_values_jsvalue(
+            search.realm,
+            std::mem::take(&mut search.new_target.arguments),
+        ) {
+            Ok(array) => array,
+            Err(error) => {
+                let _ = runtime.release_jsvalue(method);
+                return Err(error);
+            }
+        };
         let method = match runtime.direct_call_target_from_jsvalue(method) {
             Ok(method) => method,
             Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
@@ -239,8 +253,8 @@ impl ProxyConstructResume {
             runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
             [
                 runtime.into_jsvalue(Value::Object(rooted.target.clone()))?,
-                runtime.into_jsvalue(Value::Object(array))?,
-                runtime.into_jsvalue(runtime.root_value(&search.new_target.value())?)?,
+                JsValue::Object(array.into_handle()),
+                runtime.dup_jsvalue(&search.new_target.value())?,
             ]
             .into_iter()
             .collect::<Vec<_>>(),
@@ -274,19 +288,15 @@ pub(super) fn finish(
             }
             ProxyConstructStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 {
                     let result = match target {
                         DirectCallTarget::Callable(target) => {
-                            runtime.call_internal(realm, &target, receiver, &arguments)?
+                            runtime.call_internal_jsvalue(realm, &target, receiver, arguments)?
                         }
                         DirectCallTarget::NonCallableProxy(proxy) => {
-                            runtime.call_proxy(realm, &proxy, receiver, &arguments)?
+                            runtime.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
                         }
                     };
                     resume.resume(runtime, result)?
@@ -295,16 +305,10 @@ pub(super) fn finish(
             ProxyConstructStep::Construct { mut resume } => {
                 let target = resume.take_construct_target();
                 let new_target = resume.take_construct_new_target();
-                let arguments = resume
-                    .take_construct_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let arguments = resume.take_construct_arguments();
                 resume.resume(
                     runtime,
-                    runtime.construct_internal_with_new_target(
-                        realm, &target, new_target, &arguments,
-                    )?,
+                    runtime.construct_internal_jsvalue(realm, &target, new_target, arguments)?,
                 )?
             }
         };

@@ -42,7 +42,7 @@ pub(crate) mod species;
 pub(crate) mod string;
 
 struct ArraySortSlot {
-    value: Value,
+    value: JsValue,
     cached_string: Option<JsString>,
     original_position: u64,
 }
@@ -423,7 +423,8 @@ impl Runtime {
         let values = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, array_prototype, &values)? {
             Completion::Return(value) => self.root_and_release_jsvalue(value)?,
-            Completion::Throw(_) => {
+            Completion::Throw(value) => {
+                self.release_jsvalue(value)?;
                 return Err(RuntimeError::Invariant(
                     "Array.prototype.values initialization threw during bootstrap",
                 ));
@@ -816,11 +817,12 @@ impl Runtime {
         })
     }
 
-    fn native_allocate_fast_array_values(
+    fn native_allocate_fast_array_values<T>(
         &self,
         realm: ContextId,
         length: u64,
-    ) -> Result<NativeConversion<Vec<Value>>, RuntimeError> {
+        empty: impl FnMut() -> T,
+    ) -> Result<NativeConversion<Vec<T>>, RuntimeError> {
         const MAX_FAST_ARRAY_LENGTH: u64 = 2_147_483_647;
 
         if length > MAX_FAST_ARRAY_LENGTH {
@@ -836,7 +838,7 @@ impl Runtime {
         values.try_reserve_exact(length).map_err(|_| {
             RuntimeError::Engine(Error::new(ErrorKind::JsInternal, "out of memory"))
         })?;
-        values.resize(length, Value::Undefined);
+        values.resize_with(length, empty);
         Ok(NativeConversion::Value(values))
     }
 
@@ -1261,33 +1263,6 @@ impl Runtime {
         Ok(())
     }
 
-    fn collect_dense_array_sort_slots(
-        values: &[Value],
-    ) -> Result<(Vec<ArraySortSlot>, u64), RuntimeError> {
-        let mut slots = Vec::new();
-        let mut logical_capacity = 0_usize;
-        let mut undefined_count = 0_u64;
-        for (position, value) in values.iter().cloned().enumerate() {
-            Self::reserve_array_sort_slot_capacity(&mut slots, &mut logical_capacity)?;
-            if matches!(value, Value::Undefined) {
-                undefined_count = undefined_count
-                    .checked_add(1)
-                    .ok_or(RuntimeError::Invariant(
-                        "Array sort undefined count overflowed Uint64",
-                    ))?;
-                continue;
-            }
-            slots.push(ArraySortSlot {
-                value,
-                cached_string: None,
-                original_position: u64::try_from(position).map_err(|_| {
-                    RuntimeError::Invariant("dense Array sort position exceeded Uint64")
-                })?,
-            });
-        }
-        Ok((slots, undefined_count))
-    }
-
     pub(crate) fn call_array_prototype_sort(
         &self,
         realm: ContextId,
@@ -1406,9 +1381,8 @@ impl Runtime {
         match self.call_array_iterator_next_raw(realm, invocation)? {
             NativeInvokeOutcome::Completion(completion) => Ok(completion),
             NativeInvokeOutcome::IteratorNextRaw { value, done } => {
-                let value = self.root_and_release_jsvalue(value)?;
                 Ok(Completion::Return(self.into_jsvalue(Value::Object(
-                    self.new_iterator_result(realm, value, done)?,
+                    self.new_iterator_result_jsvalue(realm, value, done)?,
                 ))?))
             }
         }

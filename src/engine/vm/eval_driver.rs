@@ -36,7 +36,11 @@ pub(super) fn step(
     }
     let result = prepare_and_enter(runtime, execution, id, arguments, environment);
     if !matches!(result, Ok(CallStep::Entered)) {
-        execution.frames.current_mut(id)?.cold.eval_arguments = None;
+        execution
+            .frames
+            .current_mut(id)?
+            .cold
+            .release_eval_arguments();
     }
     let Err(error) = result else { return result };
     let Some(kind) =
@@ -62,10 +66,15 @@ fn prepare_and_enter(
     let can_push = execution.frames.can_push();
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
-    // `input` stays a public root: the direct-eval preparation consumes the
-    // public invocation form, and the rare-cell cache is a public-root island.
+    // Direct-eval preparation receives one public boundary input. The resident
+    // argument snapshot remains internal and preserves its payload handles.
     let input = if let Some(values) = &frame.cold.eval_arguments {
-        values.first().cloned().unwrap_or(Value::Undefined)
+        values
+            .first()
+            .map(|value| runtime.root_value(value))
+            .transpose()
+            .map_err(runtime_error_to_vm_error)?
+            .unwrap_or(Value::Undefined)
     } else if arguments == 0 {
         Value::Undefined
     } else {
@@ -89,7 +98,7 @@ fn prepare_and_enter(
         .and_then(|rare| rare.normalized_this.as_ref())
     {
         runtime
-            .unroot_value(value)
+            .dup_jsvalue(value)
             .map_err(runtime_error_to_vm_error)?
     } else if frame.executable.metadata.strict
         || matches!(frame.cold.input.this_value, JsValue::Object(_))
@@ -132,7 +141,7 @@ fn prepare_and_enter(
         };
         frame.cold.normalized_this = Some(
             runtime
-                .root_value(&value)
+                .dup_jsvalue(&value)
                 .map_err(runtime_error_to_vm_error)?,
         );
         value
@@ -193,7 +202,7 @@ fn prepare_and_enter(
     let depth = execution.slots.depth(&frame.window);
     let request = match prepared {
         DirectEvalPreparation::Complete(completion) => {
-            frame.cold.eval_arguments = None;
+            frame.cold.release_eval_arguments();
             for _ in 0..=arguments {
                 let discarded = execution.slots.pop(&mut frame.window)?;
                 runtime
@@ -284,15 +293,12 @@ pub(super) fn apply(
         )));
     };
     let Some(values) = runtime
-        .prepare_fast_array_arguments(realm, &array)
+        .prepare_fast_array_arguments_jsvalue(realm, &array)
         .map_err(runtime_error_to_vm_error)?
     else {
         return Ok(CallStep::Bridge);
     };
-    // The fast-array snapshot stays public-rooted: the eval-arguments rare
-    // cell is a public-root island, and the apply request re-enters the
-    // internal convention at its boundary below.
-    let mut values = match values {
+    let values = match values {
         NativeConversion::Value(values) => values,
         NativeConversion::Throw(value) => {
             return Ok(CallStep::Complete(Completion::Throw(
@@ -302,6 +308,11 @@ pub(super) fn apply(
             )));
         }
     };
+    let mut owners = ApplyArgumentsOwner {
+        runtime: runtime.clone(),
+        values,
+        receiver: JsValue::Undefined,
+    };
     let function = execution.slots.peek(&frame.window, 1)?;
     if runtime
         .is_original_eval_jsvalue(realm, function)
@@ -310,7 +321,7 @@ pub(super) fn apply(
         if frame.cold.eval_arguments.is_some() {
             return Err(Error::internal("eval argument snapshot was already active"));
         }
-        frame.cold.eval_arguments = Some(values);
+        frame.cold.eval_arguments = Some(std::mem::take(&mut owners.values));
         return step(runtime, execution, id, 1, environment);
     }
     let JsValue::Object(function) = function else {
@@ -322,7 +333,6 @@ pub(super) fn apply(
     else {
         return Ok(CallStep::Bridge);
     };
-    let mut receiver = Value::Undefined;
     let (bytecode, closure_slots) = loop {
         match runtime
             .bytecode_for_callable(&callable)
@@ -337,13 +347,16 @@ pub(super) fn apply(
                 this_value,
                 arguments,
             } => {
-                let bound = arguments
-                    .into_iter()
-                    .map(|argument| runtime.root_and_release_jsvalue(argument))
-                    .collect::<Result<Vec<_>, _>>()
+                let previous = std::mem::replace(&mut owners.receiver, this_value);
+                runtime
+                    .release_jsvalue(previous)
                     .map_err(runtime_error_to_vm_error)?;
-                values = match runtime
-                    .concatenate_bound_arguments(realm, &bound, &values)
+                owners.values = match runtime
+                    .concatenate_bound_arguments_jsvalue(
+                        realm,
+                        arguments,
+                        std::mem::take(&mut owners.values),
+                    )
                     .map_err(runtime_error_to_vm_error)?
                 {
                     NativeConversion::Value(values) => values,
@@ -356,9 +369,6 @@ pub(super) fn apply(
                     }
                 };
                 callable = target;
-                receiver = runtime
-                    .root_and_release_jsvalue(this_value)
-                    .map_err(runtime_error_to_vm_error)?;
             }
             _ => return Ok(CallStep::Bridge),
         }
@@ -382,17 +392,15 @@ pub(super) fn apply(
             .map(CallStep::Complete)
             .map_err(runtime_error_to_vm_error);
     }
+    frame.resume_pc = frame
+        .fault_pc
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("apply eval resume PC overflow"))?;
     let request = BytecodeCallRequest {
         callable,
-        receiver: runtime
-            .unroot_value(&receiver)
-            .map_err(runtime_error_to_vm_error)?,
+        receiver: std::mem::replace(&mut owners.receiver, JsValue::Undefined),
         new_target: JsValue::Undefined,
-        arguments: values
-            .iter()
-            .map(|value| runtime.unroot_value(value))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(runtime_error_to_vm_error)?,
+        arguments: std::mem::take(&mut owners.values),
         bytecode,
         closure_slots,
         caller_realm: realm,
@@ -405,15 +413,28 @@ pub(super) fn apply(
     };
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("apply eval resume PC overflow"))?;
     let entry = request.prepare(runtime, &mut execution.call_storage)?;
     push_frame(execution, entry)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
+}
+
+// Own the speculative apply snapshot until it enters the frame or falls back.
+struct ApplyArgumentsOwner {
+    runtime: Runtime,
+    values: Vec<JsValue>,
+    receiver: JsValue,
+}
+impl Drop for ApplyArgumentsOwner {
+    fn drop(&mut self) {
+        for value in self.values.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.receiver, JsValue::Undefined));
+    }
 }
 
 #[cfg(test)]
@@ -636,7 +657,7 @@ mod capture_tests {
                 .current_mut(id)
                 .unwrap()
                 .cold
-                .eval_arguments = Some(vec![input]);
+                .eval_arguments = Some(vec![runtime.into_jsvalue(input).unwrap()]);
             let outcome = prepare_and_enter(&runtime, &mut execution, id, 0, environment).unwrap();
             let threw = match outcome {
                 CallStep::Complete(Completion::Throw(value)) => {

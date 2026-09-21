@@ -21,18 +21,29 @@ pub(super) enum Phase {
         receiver: ObjectRef,
         callback: Value,
     },
-    Callback {
-        constructor: Value,
-        settlement: Value,
-        kind: PromiseReactionKind,
-    },
-    Resolved {
-        settlement: Value,
-        kind: PromiseReactionKind,
-    },
+    Callback(FinallyCapture),
+    Resolved(FinallyCapture),
 }
-fn continuation(realm: ContextId, phase: Phase) -> Box<PromiseResume> {
+/// Owns the settlement across the callback and PromiseResolve suspensions.
+/// The thunk copies its original handle before this suspension owner releases it.
+pub(super) struct FinallyCapture {
+    runtime: Runtime,
+    constructor: Value,
+    settlement: JsValue,
+    kind: PromiseReactionKind,
+}
+impl Drop for FinallyCapture {
+    fn drop(&mut self) {
+        let settlement = std::mem::replace(&mut self.settlement, JsValue::Undefined);
+        self.runtime
+            .release_jsvalue(settlement)
+            .expect("finally settlement release failed");
+    }
+}
+
+fn continuation(runtime: &Runtime, realm: ContextId, phase: Phase) -> Box<PromiseResume> {
     Box::new(PromiseResume {
+        runtime: runtime.clone(),
         pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: super::Phase::Finally(phase),
@@ -50,6 +61,7 @@ impl PromiseStep {
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
             let __pending_field_resume = Box::new(PromiseResume {
+                runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: super::Phase::InvokeThen {
@@ -77,9 +89,9 @@ pub(super) fn start(
             "Promise finally received constructor invocation",
         ));
     };
-    let argument = runtime.root_value(arguments.readable.first().ok_or(
-        RuntimeError::Invariant("Promise finally argv was not padded"),
-    )?)?;
+    let argument = arguments.readable.first().ok_or(RuntimeError::Invariant(
+        "Promise finally argv was not padded",
+    ))?;
     if target == NativeFunctionId::Promise(PromiseNativeKind::Finally) {
         let JsValue::Object(receiver_id) = this_value else {
             return capability::error(runtime, realm, "not an object");
@@ -90,10 +102,11 @@ pub(super) fn start(
             let __pending_field_key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
             let __pending_field_resume = continuation(
+                runtime,
                 realm,
                 Phase::Constructor {
                     receiver: receiver.clone(),
-                    callback: argument,
+                    callback: runtime.root_value(argument)?,
                 },
             );
             PromiseStep::request_read(
@@ -141,12 +154,14 @@ pub(super) fn start(
         let __pending_field_receiver = JsValue::Undefined;
         let __pending_field_arguments = Vec::new();
         let __pending_field_resume = continuation(
+            runtime,
             realm,
-            Phase::Callback {
+            Phase::Callback(FinallyCapture {
+                runtime: runtime.clone(),
                 constructor,
-                settlement: argument,
+                settlement: runtime.dup_jsvalue(argument)?,
                 kind,
-            },
+            }),
         );
         PromiseStep::request_call(
             __pending_field_callable,
@@ -176,7 +191,7 @@ pub(super) fn resume(
                 let __pending_field_key =
                     PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
                 let __pending_field_resume =
-                    continuation(realm, Phase::Species { receiver, callback });
+                    continuation(runtime, realm, Phase::Species { receiver, callback });
                 PromiseStep::request_read(
                     __pending_field_receiver,
                     __pending_field_key,
@@ -204,35 +219,37 @@ pub(super) fn resume(
             };
             handlers(runtime, realm, receiver, callback, constructor)
         }
-        Phase::Callback {
-            constructor,
-            settlement,
-            kind,
-        } => Ok({
-            let __pending_field_step = Box::new(PromiseStep::static_resolve(
+        Phase::Callback(mut capture) => {
+            let constructor = std::mem::replace(&mut capture.constructor, Value::Undefined);
+            let step = Box::new(PromiseStep::static_resolve(
                 runtime,
                 realm,
                 PromiseNativeKind::Resolve,
                 constructor,
                 runtime.root_and_release_jsvalue(value)?,
             )?);
-            let __pending_field_resume = continuation(realm, Phase::Resolved { settlement, kind });
-            PromiseStep::request_nested(__pending_field_step, __pending_field_resume)
-        }),
-        Phase::Resolved { settlement, kind } => {
-            let converted = runtime.raw_property_value(&settlement)?;
-            // The internal callable retains its own copy edge inside the
-            // allocation; the guard balances the producer edge on every exit.
+            let resume = continuation(runtime, realm, Phase::Resolved(capture));
+            Ok(PromiseStep::request_nested(step, resume))
+        }
+        Phase::Resolved(capture) => {
             let thunk = runtime.new_internal_promise_function(
                 realm,
-                NativeFunctionId::PromiseFinallyThunk(kind),
+                NativeFunctionId::PromiseFinallyThunk(capture.kind),
                 0,
                 0,
                 InternalCallableData::PromiseFinallyThunk {
-                    value: converted.raw(),
+                    value: capture.settlement.as_raw(),
                 },
-            )?;
-            drop(settlement);
+            );
+            // The callable allocation retains the capture before its owner drops.
+            drop(capture);
+            let thunk = match thunk {
+                Ok(thunk) => thunk,
+                Err(error) => {
+                    runtime.release_jsvalue(value)?;
+                    return Err(error);
+                }
+            };
             PromiseStep::invoke_then(
                 runtime,
                 realm,

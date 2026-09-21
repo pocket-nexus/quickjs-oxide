@@ -25,7 +25,7 @@ mod tests {
     fn ordinary_number_calls_do_not_materialize_and_authenticate_once() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("function lazyLeaf(x) { return x; }").unwrap();
+        drop(context.eval("function lazyLeaf(x) { return x; }").unwrap());
         let profile = CostProfile::start();
         // S13 enters the evaluated script through the same authenticated
         // callback path. Its one root publication/authentication is startup;

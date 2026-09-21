@@ -31,7 +31,7 @@ use crate::engine::object::{
     OrdinaryPropertyDescriptor, PropertyKey,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 
 /// Empty layouts stay canonical. After the first property, exclusively owned
 /// layouts append in place; shared layouts converge through weak transitions.
@@ -558,9 +558,9 @@ impl Runtime {
         realm: Option<ContextId>,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: Value,
+        value: JsValue,
     ) -> Result<PropertySetAction, RuntimeError> {
-        let new_length = match self.to_array_length(realm, &value)? {
+        let new_length = match self.to_array_length_jsvalue(realm, value)? {
             ArrayLengthConversion::Length(length) => length,
             ArrayLengthConversion::Throw(value) => return Ok(PropertySetAction::Throw(value)),
         };
@@ -731,6 +731,45 @@ impl Runtime {
             // including an empty descriptor or `writable: false`.
             self.materialize_auto_init_property(object, key)?;
         }
+        // Keep existing values in raw storage even for attribute-only defines.
+        // Only supplied public values cross the boundary, once.
+        if self.can_define_raw_property(object, key)? {
+            use crate::engine::object::property::PropertyDescriptor;
+            let converted = match &descriptor.value {
+                DescriptorField::Present(value) => Some(self.raw_property_value(value)?),
+                DescriptorField::Absent => None,
+            };
+            let record = PropertyDescriptor {
+                value: converted.as_ref().map(|value| value.raw()),
+                writable: match descriptor.writable {
+                    DescriptorField::Present(v) => Some(v),
+                    DescriptorField::Absent => None,
+                },
+                enumerable: match descriptor.enumerable {
+                    DescriptorField::Present(v) => Some(v),
+                    DescriptorField::Absent => None,
+                },
+                configurable: match descriptor.configurable {
+                    DescriptorField::Present(v) => Some(v),
+                    DescriptorField::Absent => None,
+                },
+                get: match &descriptor.get {
+                    DescriptorField::Present(v) => Some(
+                        v.as_callable()
+                            .map(|v| RawValue::Object(v.as_object().object_id())),
+                    ),
+                    DescriptorField::Absent => None,
+                },
+                set: match &descriptor.set {
+                    DescriptorField::Present(v) => Some(
+                        v.as_callable()
+                            .map(|v| RawValue::Object(v.as_object().object_id())),
+                    ),
+                    DescriptorField::Absent => None,
+                },
+            };
+            return self.define_raw_property(object, key, &record);
+        }
         let current = self.get_own_property(object, key)?;
         let descriptor = descriptor_to_validation_record(descriptor);
         let current_record = current.as_ref().map(complete_to_validation_record);
@@ -749,6 +788,119 @@ impl Runtime {
         };
         let complete = validation_record_to_complete(complete)?;
         self.store_complete_property(object, key, complete)?;
+        Ok(true)
+    }
+
+    fn can_define_raw_property(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<bool, RuntimeError> {
+        let state = self.0.state.borrow();
+        let data = state.heap.object(object.object_id())?;
+        if matches!(
+            data.payload,
+            ObjectPayload::GlobalObject { .. } | ObjectPayload::Array { dense: Some(_) }
+        ) {
+            return Ok(false);
+        }
+        let shape = state.heap.shape(data.shape)?;
+        Ok(shape
+            .find(AtomIdx::from_raw(key.atom().raw()))
+            .is_none_or(|index| {
+                matches!(
+                    data.slots[index as usize],
+                    PropertySlot::Data(_) | PropertySlot::Accessor { .. }
+                )
+            }))
+    }
+
+    /// Descriptor edges borrow from the caller and receiver until the storage
+    /// transaction retains the accepted complete record. No value is materialized.
+    pub(crate) fn define_raw_property(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<bool, RuntimeError> {
+        use crate::engine::object::property::CompletePropertyDescriptor;
+        let complete = {
+            let state = self.0.state.borrow();
+            let data = state.heap.object(object.object_id())?;
+            let shape = state.heap.shape(data.shape)?;
+            let current = shape
+                .find(AtomIdx::from_raw(key.atom().raw()))
+                .map(|index| {
+                    let flags = shape.entries()[index as usize].flags;
+                    match &data.slots[index as usize] {
+                        PropertySlot::Data(value) => Ok(CompletePropertyDescriptor::Data {
+                            value: value.clone(),
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        }),
+                        PropertySlot::Accessor { get, set } => {
+                            Ok(CompletePropertyDescriptor::Accessor {
+                                get: get.map(RawValue::Object),
+                                set: set.map(RawValue::Object),
+                                enumerable: flags.enumerable,
+                                configurable: flags.configurable,
+                            })
+                        }
+                        _ => Err(RuntimeError::Invariant(
+                            "raw descriptor reached noncanonical slot",
+                        )),
+                    }
+                })
+                .transpose()?;
+            validate_and_apply_property_descriptor(
+                data.extensible,
+                descriptor,
+                current.as_ref(),
+                &RawValue::Undefined,
+                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+            )
+        };
+        let complete = match complete {
+            Ok(value) => value,
+            Err(PropertyDefinitionError::InvalidDescriptor) => {
+                return Err(PropertyDefinitionError::InvalidDescriptor.into());
+            }
+            Err(_) => return Ok(false),
+        };
+        let (flags, slot) = match complete {
+            CompletePropertyDescriptor::Data {
+                value,
+                writable,
+                enumerable,
+                configurable,
+            } => (
+                PropertyFlags::data(writable, enumerable, configurable),
+                PropertySlot::Data(value),
+            ),
+            CompletePropertyDescriptor::Accessor {
+                get,
+                set,
+                enumerable,
+                configurable,
+            } => {
+                let object_id = |value| match value {
+                    None => Ok(None),
+                    Some(RawValue::Object(id)) => Ok(Some(id)),
+                    _ => Err(RuntimeError::Invariant(
+                        "raw descriptor accessor was not an object",
+                    )),
+                };
+                (
+                    PropertyFlags::accessor(enumerable, configurable),
+                    PropertySlot::Accessor {
+                        get: object_id(get)?,
+                        set: object_id(set)?,
+                    },
+                )
+            }
+        };
+        self.store_property_slot(object, key, flags, slot)?;
         Ok(true)
     }
 
@@ -841,15 +993,11 @@ impl Runtime {
             .materialize_array_layout(object.object_id(), prototype, &entries)
     }
 
-    fn append_dense_array_value(
+    fn append_dense_array_raw(
         &self,
         object: &ObjectRef,
-        value: &Value,
+        raw: RawValue,
     ) -> Result<(), RuntimeError> {
-        let converted = self.raw_property_value(value)?;
-        let raw = converted.raw();
-        // Clone duplicates only the handle; the guard keeps the
-        // producer edge accountable through every store-or-decline path.
         let mut state = self.0.state.borrow_mut();
         let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
             Ok(atoms) => atoms,
@@ -868,16 +1016,21 @@ impl Runtime {
         }
     }
 
-    pub(super) fn replace_dense_array_value(
+    pub(super) fn replace_dense_array_value_jsvalue(
         &self,
         object: &ObjectRef,
         index: u32,
-        value: &Value,
+        value: &JsValue,
     ) -> Result<(), RuntimeError> {
-        let converted = self.raw_property_value(value)?;
-        let raw = converted.raw();
-        // Clone duplicates only the handle; the guard keeps the
-        // producer edge accountable through every store-or-decline path.
+        self.replace_dense_array_raw(object, index, value.as_raw())
+    }
+
+    fn replace_dense_array_raw(
+        &self,
+        object: &ObjectRef,
+        index: u32,
+        raw: RawValue,
+    ) -> Result<(), RuntimeError> {
         let mut state = self.0.state.borrow_mut();
         let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
             Ok(atoms) => atoms,
@@ -992,7 +1145,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         index: u32,
-        value: &Value,
+        value: &JsValue,
     ) -> Result<Option<PropertySetRejection>, RuntimeError> {
         let (old_length, length_writable) = self.array_length_state(object)?;
         let extensible = self.is_extensible(object)?;
@@ -1003,25 +1156,11 @@ impl Runtime {
                 PropertySetRejection::ArrayLengthReadOnly
             }));
         }
-        let descriptor = crate::engine::object::property::PropertyDescriptor {
-            value: Some(value),
-            writable: Some(true),
-            enumerable: Some(true),
-            configurable: Some(true),
-            ..crate::engine::object::property::PropertyDescriptor::new()
-        };
-        if validate_and_apply_property_descriptor(
-            extensible,
-            &descriptor,
-            None,
-            &&Value::Undefined,
-            |a, b| Value::same_value(a, b),
-        )
-        .is_err()
-        {
+        if !extensible {
             return Ok(Some(PropertySetRejection::NotExtensible));
         }
-        self.commit_dense_array_index_append(object, index, old_length, value)?;
+        self.append_dense_array_raw(object, value.as_raw())?;
+        self.grow_dense_array_length(object, index, old_length)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "set_dense_append_from_selection",
@@ -1029,17 +1168,12 @@ impl Runtime {
         Ok(None)
     }
 
-    // The authoritative append/length-growth tail shared by descriptor Define
-    // and an immediately selected Set. Keep append before length-key creation
-    // and growth publication, including the original partial-failure behavior.
-    fn commit_dense_array_index_append(
+    fn grow_dense_array_length(
         &self,
         object: &ObjectRef,
         index: u32,
         old_length: u32,
-        value: &Value,
     ) -> Result<(), RuntimeError> {
-        self.append_dense_array_value(object, value)?;
         if index < old_length {
             return Ok(());
         }
@@ -1063,6 +1197,124 @@ impl Runtime {
         Ok(())
     }
 
+    /// Apply a Set-selected data definition without converting its stored
+    /// value through public roots. The caller selected either a genuine Array
+    /// index or a canonical ordinary own property without intervening callbacks.
+    pub(crate) fn define_selected_set_data(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        value: &JsValue,
+        existing: bool,
+    ) -> Result<PropertyDefineOutcome, RuntimeError> {
+        use crate::engine::object::property::{CompletePropertyDescriptor, PropertyDescriptor};
+        let array = match self.array_own_key(object, key)? {
+            ArrayOwnKey::Index(index) => {
+                let (length, writable) = self.array_length_state(object)?;
+                if index >= length && !writable {
+                    return Ok(PropertyDefineOutcome::Defined(false));
+                }
+                if let Some(dense_len) = self.array_fast_len(object)? {
+                    if index < dense_len {
+                        self.replace_dense_array_value_jsvalue(object, index, value)?;
+                        return Ok(PropertyDefineOutcome::Defined(true));
+                    }
+                    if !self.is_extensible(object)? {
+                        return Ok(PropertyDefineOutcome::Defined(false));
+                    }
+                    if index == dense_len {
+                        self.append_dense_array_raw(object, value.as_raw())?;
+                        self.grow_dense_array_length(object, index, length)?;
+                        return Ok(PropertyDefineOutcome::Defined(true));
+                    }
+                    self.materialize_dense_array(object)?;
+                }
+                Some((index, length))
+            }
+            ArrayOwnKey::Other => None,
+            ArrayOwnKey::Length => {
+                return Err(RuntimeError::Invariant(
+                    "selected data define reached Array length",
+                ));
+            }
+        };
+        // These raw records borrow their edges from the input and the rooted
+        // receiver. Validation only clones handles; the storage transaction
+        // below retains the accepted result exactly once.
+        let descriptor = PropertyDescriptor {
+            value: Some(value.as_raw()),
+            writable: (!existing).then_some(true),
+            enumerable: (!existing).then_some(true),
+            configurable: (!existing).then_some(true),
+            ..PropertyDescriptor::new()
+        };
+        let complete = {
+            let state = self.0.state.borrow();
+            let data = state.heap.object(object.object_id())?;
+            let shape = state.heap.shape(data.shape)?;
+            let current = shape
+                .find(AtomIdx::from_raw(key.atom().raw()))
+                .map(|index| {
+                    let flags = shape.entries()[index as usize].flags;
+                    match &data.slots[index as usize] {
+                        PropertySlot::Data(raw) => Ok(CompletePropertyDescriptor::Data {
+                            value: raw.clone(),
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        }),
+                        PropertySlot::Accessor { get, set } => {
+                            Ok(CompletePropertyDescriptor::Accessor {
+                                get: get.map(RawValue::Object),
+                                set: set.map(RawValue::Object),
+                                enumerable: flags.enumerable,
+                                configurable: flags.configurable,
+                            })
+                        }
+                        _ => Err(RuntimeError::Invariant(
+                            "selected data define reached lazy storage",
+                        )),
+                    }
+                })
+                .transpose()?;
+            validate_and_apply_property_descriptor(
+                data.extensible,
+                &descriptor,
+                current.as_ref(),
+                &RawValue::Undefined,
+                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+            )
+        };
+        let complete = match complete {
+            Ok(complete) => complete,
+            Err(PropertyDefinitionError::InvalidDescriptor) => {
+                return Err(PropertyDefinitionError::InvalidDescriptor.into());
+            }
+            Err(_) => return Ok(PropertyDefineOutcome::Defined(false)),
+        };
+        let CompletePropertyDescriptor::Data {
+            value,
+            writable,
+            enumerable,
+            configurable,
+        } = complete
+        else {
+            return Err(RuntimeError::Invariant(
+                "selected data definition became accessor",
+            ));
+        };
+        self.store_property_slot(
+            object,
+            key,
+            PropertyFlags::data(writable, enumerable, configurable),
+            PropertySlot::Data(value),
+        )?;
+        if let Some((index, old_length)) = array {
+            self.grow_dense_array_length(object, index, old_length)?;
+        }
+        Ok(PropertyDefineOutcome::Defined(true))
+    }
+
     fn define_array_index(
         &self,
         object: &ObjectRef,
@@ -1075,66 +1327,95 @@ impl Runtime {
             return Ok(PropertyDefineOutcome::Defined(false));
         }
 
+        use crate::engine::object::property::{CompletePropertyDescriptor, PropertyDescriptor};
+        let converted = match &descriptor.value {
+            DescriptorField::Present(value) => Some(self.raw_property_value(value)?),
+            DescriptorField::Absent => None,
+        };
+        let record = PropertyDescriptor {
+            value: converted.as_ref().map(|value| value.raw()),
+            writable: match descriptor.writable {
+                DescriptorField::Present(v) => Some(v),
+                DescriptorField::Absent => None,
+            },
+            enumerable: match descriptor.enumerable {
+                DescriptorField::Present(v) => Some(v),
+                DescriptorField::Absent => None,
+            },
+            configurable: match descriptor.configurable {
+                DescriptorField::Present(v) => Some(v),
+                DescriptorField::Absent => None,
+            },
+            get: match &descriptor.get {
+                DescriptorField::Present(v) => Some(
+                    v.as_callable()
+                        .map(|v| RawValue::Object(v.as_object().object_id())),
+                ),
+                DescriptorField::Absent => None,
+            },
+            set: match &descriptor.set {
+                DescriptorField::Present(v) => Some(
+                    v.as_callable()
+                        .map(|v| RawValue::Object(v.as_object().object_id())),
+                ),
+                DescriptorField::Absent => None,
+            },
+        };
         if let Some(dense_len) = self.array_fast_len(object)? {
-            let current =
-                if index < dense_len {
-                    let value = self.dense_array_index_value(object, key)?.ok_or(
+            let current = if index < dense_len {
+                Some(CompletePropertyDescriptor::Data {
+                    value: self.dense_array_index_value(object, key)?.ok_or(
                         RuntimeError::Invariant("validated dense Array index disappeared"),
-                    )?;
-                    Some(CompleteOrdinaryPropertyDescriptor::Data {
-                        value: self.root_raw_value(value.clone())?,
-                        writable: true,
-                        enumerable: true,
-                        configurable: true,
-                    })
-                } else {
-                    None
-                };
-            let descriptor_record = descriptor_to_validation_record(descriptor);
-            let current_record = current.as_ref().map(complete_to_validation_record);
-            let complete = match validate_and_apply_property_descriptor(
-                self.is_extensible(object)?,
-                &descriptor_record,
-                current_record.as_ref(),
-                &Value::Undefined,
-                Value::same_value,
-            ) {
-                Ok(complete) => validation_record_to_complete(complete)?,
+                    )?,
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                })
+            } else {
+                None
+            };
+            let complete = {
+                let state = self.0.state.borrow();
+                validate_and_apply_property_descriptor(
+                    state.heap.object(object.object_id())?.extensible,
+                    &record,
+                    current.as_ref(),
+                    &RawValue::Undefined,
+                    |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+                )
+            };
+            let complete = match complete {
+                Ok(value) => value,
                 Err(PropertyDefinitionError::InvalidDescriptor) => {
                     return Err(PropertyDefinitionError::InvalidDescriptor.into());
                 }
                 Err(_) => return Ok(PropertyDefineOutcome::Defined(false)),
             };
-            let compatible_value = match &complete {
-                CompleteOrdinaryPropertyDescriptor::Data {
-                    value,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                } => Some(value),
-                CompleteOrdinaryPropertyDescriptor::Data { .. }
-                | CompleteOrdinaryPropertyDescriptor::Accessor { .. } => None,
-            };
-            if index < dense_len
-                && let Some(value) = compatible_value
+            if let CompletePropertyDescriptor::Data {
+                value,
+                writable: true,
+                enumerable: true,
+                configurable: true,
+            } = &complete
             {
-                if matches!(descriptor.value, DescriptorField::Present(_)) {
-                    self.replace_dense_array_value(object, index, value)?;
+                if index < dense_len {
+                    if record.value.is_some() {
+                        self.replace_dense_array_raw(object, index, value.clone())?;
+                    }
+                    return Ok(PropertyDefineOutcome::Defined(true));
                 }
-                return Ok(PropertyDefineOutcome::Defined(true));
-            }
-            if index == dense_len
-                && let Some(value) = compatible_value
-            {
-                self.commit_dense_array_index_append(object, index, old_length, value)?;
-                return Ok(PropertyDefineOutcome::Defined(true));
+                if index == dense_len {
+                    self.append_dense_array_raw(object, value.clone())?;
+                    self.grow_dense_array_length(object, index, old_length)?;
+                    return Ok(PropertyDefineOutcome::Defined(true));
+                }
             }
             self.materialize_dense_array(object)?;
         }
-
-        if !self.define_ordinary_own_property(object, key, descriptor)? {
+        if !self.define_raw_property(object, key, &record)? {
             return Ok(PropertyDefineOutcome::Defined(false));
         }
+
         if index < old_length {
             return Ok(PropertyDefineOutcome::Defined(true));
         }
@@ -1205,7 +1486,7 @@ impl Runtime {
         let DescriptorField::Present(value) = &descriptor.value else {
             return Ok(None);
         };
-        super::ArrayLengthStep::start(self, realm, value.clone()).map(Some)
+        super::ArrayLengthStep::start(self, realm, self.unroot_value(value)?).map(Some)
     }
 
     fn define_array_length(
@@ -1344,30 +1625,35 @@ impl Runtime {
         realm: Option<ContextId>,
         value: &Value,
     ) -> Result<ArrayLengthConversion, RuntimeError> {
-        let mut step = crate::engine::object::ArrayLengthStep::start(self, realm, value.clone())?;
+        self.to_array_length_jsvalue(realm, self.unroot_value(value)?)
+    }
+
+    pub(crate) fn to_array_length_jsvalue(
+        &self,
+        realm: Option<ContextId>,
+        value: JsValue,
+    ) -> Result<ArrayLengthConversion, RuntimeError> {
+        let mut step = crate::engine::object::ArrayLengthStep::start(self, realm, value)?;
         loop {
             step = match step {
                 crate::engine::object::ArrayLengthStep::Complete(result) => return Ok(result),
                 crate::engine::object::ArrayLengthStep::Number { value, resume } => {
-                    let value = self.root_and_release_jsvalue(value)?;
-                    resume.number(self, self.array_length_to_number(realm, &value)?)?
+                    let result = if let Some(realm) = realm {
+                        self.native_to_number_jsvalue(realm, value)?
+                    } else {
+                        let result = if matches!(value, JsValue::Object(_)) {
+                            Err(Error::internal(
+                                "object ToPrimitive requires an execution context",
+                            ))
+                        } else {
+                            crate::engine::vm::to_number_jsvalue(self, &value)
+                        };
+                        self.release_jsvalue(value)?;
+                        NativeConversion::Value(result.map_err(RuntimeError::Engine)?)
+                    };
+                    resume.number(self, result)?
                 }
             };
-        }
-    }
-
-    fn array_length_to_number(
-        &self,
-        realm: Option<ContextId>,
-        value: &Value,
-    ) -> Result<NativeConversion<f64>, RuntimeError> {
-        if let Some(realm) = realm {
-            self.native_to_number(realm, value)
-        } else {
-            value
-                .to_number()
-                .map(NativeConversion::Value)
-                .map_err(RuntimeError::Engine)
         }
     }
 

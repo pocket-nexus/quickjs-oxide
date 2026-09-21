@@ -18,7 +18,7 @@ use crate::engine::heap::{
 };
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol};
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
@@ -241,31 +241,31 @@ impl Runtime {
         &self,
         generator: &ObjectRef,
         completion: GeneratorResumeKind,
-        result: Value,
+        result: JsValue,
         capability: &RootedPromiseCapability,
     ) -> Result<(), RuntimeError> {
-        self.validate_value_domain(&result, "AsyncGenerator request")?;
-        let converted = self.raw_property_value(&result)?;
-        let raw = converted.raw();
-        let request = AsyncGeneratorRequestData {
-            completion,
-            result: raw.clone(),
-            promise: capability.promise.object_id(),
-            resolve: capability.resolve.as_object().object_id(),
-            reject: capability.reject.as_object().object_id(),
-        };
-        let mut state = self.0.state.borrow_mut();
-        let retained_atoms = state.retain_raw_value_atoms([&raw])?;
-        if let Err(error) = state
-            .heap
-            .async_generator_enqueue(generator.object_id(), request)
-        {
-            state.release_atoms(retained_atoms)?;
-            return Err(error.into());
-        }
-        // The queued request retained its own copy of the value edge; the
-        // guard balances the conversion's producer edge.
-        Ok(())
+        let outcome = (|| {
+            let raw = result.as_raw();
+            let request = AsyncGeneratorRequestData {
+                completion,
+                result: raw.clone(),
+                promise: capability.promise.object_id(),
+                resolve: capability.resolve.as_object().object_id(),
+                reject: capability.reject.as_object().object_id(),
+            };
+            let mut state = self.0.state.borrow_mut();
+            let retained_atoms = state.retain_raw_value_atoms([&raw])?;
+            if let Err(error) = state
+                .heap
+                .async_generator_enqueue(generator.object_id(), request)
+            {
+                state.release_atoms(retained_atoms)?;
+                return Err(error.into());
+            }
+            Ok(())
+        })();
+        self.release_jsvalue(result)?;
+        outcome
     }
 
     fn store_async_generator_suspension(

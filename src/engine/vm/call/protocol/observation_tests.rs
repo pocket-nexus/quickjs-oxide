@@ -55,10 +55,10 @@ fn proxy_callback_observes_ordinary_ancestors_once_and_restores_after_throw() {
 fn suspension_resume_reports_new_fault_pc_and_retires_detached_registration() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval_with_filename(
+    drop(context.eval_with_filename(
         "function* gen(){\n yield 1;\n return fail();\n}\nfunction fail(){return Symbol()-1}\nvar iterator=gen(); iterator.next().value",
         "lazy-resume.js",
-    ).unwrap();
+    ).unwrap());
     clean(&runtime);
     let profile = CostProfile::start();
     assert_eq!(context.eval("var valid=false; try{iterator.next()}catch(e){valid=e instanceof TypeError && e.stack.includes('at gen (lazy-resume.js:3:') && e.stack.includes('at fail (lazy-resume.js:5:')} valid").unwrap(),Value::Bool(true));
@@ -91,7 +91,7 @@ fn host_reentry_and_rust_panic_retire_materialized_lazy_frames() {
     use std::{cell::RefCell, rc::Rc};
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval_with_filename("function hostOuter(){return hostInner()}\nfunction hostInner(){return Promise.reject(23)}", "lazy-host.js").unwrap();
+    drop(context.eval_with_filename("function hostOuter(){return hostInner()}\nfunction hostInner(){return Promise.reject(23)}", "lazy-host.js").unwrap());
     let host_context = RefCell::new(context.clone());
     let observed = Rc::new(std::cell::Cell::new(false));
     let seen = observed.clone();

@@ -10,6 +10,7 @@ use crate::engine::vm::run::RunExit;
 
 #[cfg(feature = "profiling")]
 pub(in crate::engine::vm) fn complete(
+    runtime: &crate::engine::api::runtime::Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
     exit: RunExit,
@@ -17,7 +18,7 @@ pub(in crate::engine::vm) fn complete(
     if let RunExit::ReleaseOperand { keep_top } = exit {
         let frame = execution.frames.current_mut(id)?;
         // Hot preflight has not changed an owner. Validate both operands before
-        // moving either, then let the ordinary Drop path drain deferred work.
+        // moving either, then release the removed internal edge.
         #[cfg(feature = "profiling")]
         let depth = execution.slots.depth(&frame.window);
         let released = {
@@ -31,7 +32,9 @@ pub(in crate::engine::vm) fn complete(
             released
         };
         // Publish the surviving stack before dropping the last temporary root.
-        let _ = released;
+        runtime
+            .release_jsvalue(released)
+            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
         frame.resume_pc = frame
             .fault_pc
             .checked_add(1)

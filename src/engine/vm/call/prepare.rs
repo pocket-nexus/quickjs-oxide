@@ -125,6 +125,7 @@ impl Runtime {
         new_target: JsValue,
         bytecode: FunctionBytecodeRef,
     ) -> Result<PreparedBytecodeHeader, RuntimeError> {
+        let mut input = CallInput::new(self, this_value, new_target, None);
         let executable = self.snapshot_function_bytecode(&bytecode)?;
         let PublishedFunctionData {
             local_definitions,
@@ -152,7 +153,10 @@ impl Runtime {
         Ok(PreparedBytecodeHeader {
             executable,
             active_frame,
-            input: CallInput::new(self, this_value, new_target, Some(callee_global)),
+            input: {
+                input.callee_global = Some(callee_global);
+                input
+            },
         })
     }
 }

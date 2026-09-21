@@ -78,7 +78,7 @@ impl Drop for ScalarTextResumeState {
     /// Release argument edges still owned when conversion abandons the call.
     /// Consumption drains the iterator; releases are defer-safe and nothrow.
     fn drop(&mut self) {
-        while let Some(value) = self.arguments.next() {
+        for value in self.arguments.by_ref() {
             let _ = self.runtime.release_jsvalue(value);
         }
     }
@@ -112,7 +112,15 @@ impl ScalarTextStep {
                     .try_reserve_exact(arguments.actual_arg_count)
                     .map_err(|_| RuntimeError::Invariant("String concat argv allocation failed"))?;
                 for value in &arguments.readable[..arguments.actual_arg_count] {
-                    values.push(runtime.dup_jsvalue(value)?);
+                    match runtime.dup_jsvalue(value) {
+                        Ok(value) => values.push(value),
+                        Err(error) => {
+                            for value in values {
+                                let _ = runtime.release_jsvalue(value);
+                            }
+                            return Err(error);
+                        }
+                    }
                 }
                 values
             }
@@ -121,7 +129,15 @@ impl ScalarTextStep {
                 None => JsValue::Undefined,
             }],
         };
-        let this_value = runtime.dup_jsvalue(this_value)?;
+        let this_value = match runtime.dup_jsvalue(this_value) {
+            Ok(value) => value,
+            Err(error) => {
+                for value in arguments {
+                    let _ = runtime.release_jsvalue(value);
+                }
+                return Err(error);
+            }
+        };
         Ok(Self::String {
             value: this_value,
             resume: ScalarTextResume(Box::new(ScalarTextResumeState {

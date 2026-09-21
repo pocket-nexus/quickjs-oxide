@@ -239,12 +239,14 @@ fn prepared_setter_action_roots_callable_receiver_and_argument() {
         panic!("expected a rooted setter action");
     };
 
-    let crate::engine::object::operations::PropertySetterCall {
-        setter,
-        receiver,
-        argument,
-    } = *payload;
-    let returned = context.call(&setter, receiver, &[argument]).unwrap();
+    let (setter, receiver, argument) = payload.into_parts();
+    let returned = context
+        .call(
+            &setter,
+            receiver,
+            &[runtime.root_and_release_jsvalue(argument).unwrap()],
+        )
+        .unwrap();
     assert!(matches!(returned, Value::Object(_)));
     assert_eq!(
         context.get_property(&object, &key).unwrap(),

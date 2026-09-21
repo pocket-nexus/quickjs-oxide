@@ -615,7 +615,10 @@ mod tests {
                 .unwrap();
             let costs = profile.snapshot();
             assert!(
-                matches!(result, Completion::Return(Value::Int(42))),
+                matches!(
+                    result,
+                    Completion::Return(crate::engine::value::JsValue::Int(42))
+                ),
                 "{source}: {result:?}"
             );
             assert!(
@@ -685,7 +688,10 @@ mod tests {
                 .unwrap();
             let _costs = profile.snapshot();
             assert!(
-                matches!(result, Completion::Return(Value::Int(42))),
+                matches!(
+                    result,
+                    Completion::Return(crate::engine::value::JsValue::Int(42))
+                ),
                 "{source}: {result:?}"
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());

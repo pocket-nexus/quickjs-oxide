@@ -55,9 +55,39 @@ pub(crate) enum PropertySetAction {
 
 // Allocated only after selecting a real setter invocation.
 pub(crate) struct PropertySetterCall {
-    pub(crate) setter: CallableRef,
-    pub(crate) receiver: Value,
-    pub(crate) argument: Value,
+    runtime: crate::engine::api::runtime::Runtime,
+    setter: Option<CallableRef>,
+    receiver: Option<Value>,
+    argument: Option<crate::engine::value::JsValue>,
+}
+impl PropertySetterCall {
+    pub(crate) fn new(
+        runtime: &crate::engine::api::runtime::Runtime,
+        setter: CallableRef,
+        receiver: Value,
+        argument: crate::engine::value::JsValue,
+    ) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            setter: Some(setter),
+            receiver: Some(receiver),
+            argument: Some(argument),
+        }
+    }
+    pub(crate) fn into_parts(mut self) -> (CallableRef, Value, crate::engine::value::JsValue) {
+        (
+            self.setter.take().expect("setter"),
+            self.receiver.take().expect("setter receiver"),
+            self.argument.take().expect("setter argument"),
+        )
+    }
+}
+impl Drop for PropertySetterCall {
+    fn drop(&mut self) {
+        if let Some(value) = self.argument.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 const _: () = assert!(std::mem::size_of::<PropertySetAction>() <= 64);
 

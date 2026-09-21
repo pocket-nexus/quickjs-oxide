@@ -144,6 +144,12 @@ impl JsValue {
         }
     }
 
+    /// Transfer this owned edge into heap storage without retaining it.
+    /// The receiving transaction must adopt it or return/release it on error.
+    pub(crate) fn into_raw(self) -> RawValue {
+        self.as_raw()
+    }
+
     /// Convert a heap storage payload into an internal value.
     ///
     /// This is a plain same-id copy of every edge the payload carries; no
@@ -407,9 +413,9 @@ impl Runtime {
     /// entry points whose callees consume public roots: the net edge count is
     /// unchanged and both sides' ownership is explicit.
     pub(crate) fn root_and_release_jsvalue(&self, value: JsValue) -> Result<Value, RuntimeError> {
-        let rooted = self.root_value(&value)?;
+        let rooted = self.root_value(&value);
         self.release_jsvalue(value)?;
-        Ok(rooted)
+        rooted
     }
 
     /// Release every heap edge carried by an internal value.
@@ -443,8 +449,7 @@ impl Runtime {
                 Ok(())
             }
             JsValue::Symbol(index) => {
-                let atom = self.0.state.borrow().atoms.brand(index)?;
-                self.release_atom_handle(atom);
+                self.release_atom_index(index);
                 Ok(())
             }
         }
@@ -702,6 +707,21 @@ mod tests {
             .ref_count;
         assert_eq!(retained, Some(1));
         drop(root);
+    }
+
+    #[test]
+    fn symbol_release_defers_while_runtime_state_is_mutably_borrowed() {
+        let runtime = Runtime::new();
+        let symbol = runtime.new_symbol(None).unwrap();
+        let atom = symbol.atom();
+        let internal = runtime.into_jsvalue(Value::Symbol(symbol)).unwrap();
+        let state = runtime.0.state.borrow_mut();
+        runtime.release_jsvalue(internal).unwrap();
+        assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(1));
+        assert!(runtime.0.deferred_references.has_pending());
+        drop(state);
+        runtime.drain_deferred_references().unwrap();
+        assert!(runtime.0.state.borrow().atoms.resolve(atom).is_err());
     }
 
     #[test]

@@ -49,8 +49,24 @@ struct Search {
     limit: Option<usize>,
     depth: usize,
     guard: ProxyMethodStackGuard,
-    receiver: Value,
-    arguments: Vec<Value>,
+    inputs: CallInputs,
+}
+
+// One owner per suspended call; values transfer through take/drain.
+struct CallInputs {
+    runtime: Runtime,
+    receiver: Option<JsValue>,
+    arguments: Vec<JsValue>,
+}
+impl Drop for CallInputs {
+    fn drop(&mut self) {
+        if let Some(receiver) = self.receiver.take() {
+            let _ = self.runtime.release_jsvalue(receiver);
+        }
+        for argument in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
 }
 
 fn overflow(runtime: &Runtime, realm: ContextId) -> Result<ProxyCallStep, RuntimeError> {
@@ -64,9 +80,14 @@ impl ProxyCallStep {
         runtime: &Runtime,
         realm: ContextId,
         proxy: ObjectRef,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
     ) -> Result<Self, RuntimeError> {
+        let inputs = CallInputs {
+            runtime: runtime.clone(),
+            receiver: Some(receiver),
+            arguments,
+        };
         if runtime.proxy_method_stack_would_overflow() {
             return overflow(runtime, realm);
         }
@@ -77,8 +98,7 @@ impl ProxyCallStep {
             limit: runtime.proxy_method_chain_limit("apply"),
             depth: 0,
             guard,
-            receiver,
-            arguments,
+            inputs,
         }
         .read(runtime, proxy)
     }
@@ -155,12 +175,21 @@ impl ProxyCallResume {
             }
             (
                 runtime.direct_call_target_from_value(Value::Object(rooted.target.clone()))?,
-                search.receiver,
-                search.arguments,
+                search.inputs.receiver.take().expect("proxy receiver"),
+                std::mem::take(&mut search.inputs.arguments),
             )
         } else {
             // Allocate the argument array before validating the trap, as in C.
-            let array = runtime.new_array_from_values(search.realm, search.arguments)?;
+            let array = match runtime.new_array_from_values_jsvalue(
+                search.realm,
+                std::mem::take(&mut search.inputs.arguments),
+            ) {
+                Ok(array) => array,
+                Err(error) => {
+                    let _ = runtime.release_jsvalue(method);
+                    return Err(error);
+                }
+            };
             let method = match runtime.direct_call_target_from_jsvalue(method) {
                 Ok(method) => method,
                 Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
@@ -176,19 +205,14 @@ impl ProxyCallResume {
             };
             (
                 method,
-                Value::Object(rooted.handler.clone()),
+                JsValue::Object(rooted.handler.clone().into_handle()),
                 vec![
-                    Value::Object(rooted.target.clone()),
-                    search.receiver,
-                    Value::Object(array),
+                    JsValue::Object(rooted.target.clone().into_handle()),
+                    search.inputs.receiver.take().expect("proxy receiver"),
+                    JsValue::Object(array.into_handle()),
                 ],
             )
         };
-        let receiver = runtime.into_jsvalue(receiver)?;
-        let arguments = arguments
-            .into_iter()
-            .map(|value| runtime.into_jsvalue(value))
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(ProxyCallStep::request_call(
             target,
             receiver,
@@ -351,8 +375,8 @@ mod tests {
                 &runtime,
                 context.realm,
                 proxy,
-                Value::Object(receiver),
-                vec![Value::Object(argument)],
+                runtime.into_jsvalue(Value::Object(receiver)).unwrap(),
+                vec![runtime.into_jsvalue(Value::Object(argument)).unwrap()],
             )
             .unwrap();
             if after_lookup {

@@ -2,7 +2,9 @@
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::operations::ArrayLengthConversion;
-use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
+#[cfg(test)]
+use crate::engine::value::Value;
+use crate::engine::value::{JsValue, conversion::NativeConversion};
 
 pub(crate) enum ArrayLengthStep {
     Complete(ArrayLengthConversion),
@@ -25,42 +27,51 @@ impl std::ops::DerefMut for ArrayLengthResume {
 }
 const _: () = assert!(std::mem::size_of::<ArrayLengthResume>() <= 8);
 pub(crate) struct ArrayLengthResumeState {
+    runtime: Runtime,
     realm: Option<ContextId>,
-    phase: Phase,
+    original: Option<JsValue>,
+    uint32: Option<u32>,
 }
-enum Phase {
-    First(Value),
-    Second { _original: Value, uint32: u32 },
+impl Drop for ArrayLengthResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.original.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ArrayLengthStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: Option<ContextId>,
-        value: Value,
+        value: JsValue,
     ) -> Result<Self, RuntimeError> {
         Ok(match value {
-            Value::Int(value) if value >= 0 => {
+            JsValue::Int(value) if value >= 0 => {
                 Self::Complete(ArrayLengthConversion::Length(value as u32))
             }
-            Value::Bool(value) => Self::Complete(ArrayLengthConversion::Length(u32::from(value))),
-            Value::Null => Self::Complete(ArrayLengthConversion::Length(0)),
-            Value::Float(value) => {
+            JsValue::Bool(value) => Self::Complete(ArrayLengthConversion::Length(u32::from(value))),
+            JsValue::Null => Self::Complete(ArrayLengthConversion::Length(0)),
+            JsValue::Float(value) => {
                 Self::Complete(runtime.validate_array_length_number(realm, value, None)?)
             }
-            Value::Int(_) => Self::Complete(runtime.invalid_array_length(realm)?),
-            value => Self::Number {
-                value: runtime.unroot_value(&value)?,
-                resume: ArrayLengthResume(Box::new(ArrayLengthResumeState {
+            JsValue::Int(_) => Self::Complete(runtime.invalid_array_length(realm)?),
+            value => {
+                let resume = ArrayLengthResume(Box::new(ArrayLengthResumeState {
+                    runtime: runtime.clone(),
                     realm,
-                    phase: Phase::First(value),
-                })),
-            },
+                    original: Some(value),
+                    uint32: None,
+                }));
+                let value = runtime
+                    .dup_jsvalue(resume.original.as_ref().expect("Array length original"))?;
+                Self::Number { value, resume }
+            }
         })
     }
 }
 impl ArrayLengthResume {
     pub(crate) fn number(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<ArrayLengthStep, RuntimeError> {
@@ -72,20 +83,16 @@ impl ArrayLengthResume {
                 )));
             }
         };
-        Ok(match self.0.phase {
-            Phase::First(original) => ArrayLengthStep::Number {
-                value: runtime.unroot_value(&original)?,
-                resume: Self(Box::new(ArrayLengthResumeState {
-                    realm: self.0.realm,
-                    phase: Phase::Second {
-                        _original: original,
-                        uint32: Runtime::to_uint32_number(number),
-                    },
-                })),
-            },
-            Phase::Second { _original, uint32 } => ArrayLengthStep::Complete(
-                runtime.validate_array_length_number(self.0.realm, number, Some(uint32))?,
-            ),
+        if let Some(uint32) = self.uint32 {
+            return Ok(ArrayLengthStep::Complete(
+                runtime.validate_array_length_number(self.realm, number, Some(uint32))?,
+            ));
+        }
+        self.uint32 = Some(Runtime::to_uint32_number(number));
+        let value = runtime.dup_jsvalue(self.original.as_ref().expect("Array length original"))?;
+        Ok(ArrayLengthStep::Number {
+            value,
+            resume: self,
         })
     }
 }
@@ -115,8 +122,12 @@ mod tests {
             let id = original.object_id();
             let mut resume = take_number(
                 &runtime,
-                ArrayLengthStep::start(&runtime, Some(context.realm), Value::Object(original))
-                    .unwrap(),
+                ArrayLengthStep::start(
+                    &runtime,
+                    Some(context.realm),
+                    runtime.into_jsvalue(Value::Object(original)).unwrap(),
+                )
+                .unwrap(),
             );
             if second {
                 resume = take_number(

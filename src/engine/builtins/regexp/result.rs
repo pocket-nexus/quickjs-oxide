@@ -8,7 +8,7 @@ use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use std::collections::HashMap;
 
 use crate::engine::object::{ObjectRef, PropertyKey};
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::regexp::{CompiledRegExp, RegExpFlags, RegExpMatch};
 use std::rc::Rc;
 
@@ -17,20 +17,43 @@ use std::rc::Rc;
 #[derive(Default)]
 struct NamedCaptures {
     positions: HashMap<Atom, usize>,
-    values: Vec<(PropertyKey, Value, Value)>,
+    values: Vec<(PropertyKey, usize)>,
 }
-
 impl NamedCaptures {
-    fn record(&mut self, key: PropertyKey, capture: Value, indices: Value) {
+    fn record(&mut self, key: PropertyKey, capture_index: usize, participates: bool) {
         if let Some(&position) = self.positions.get(&key.atom()) {
-            if !matches!(capture, Value::Undefined) {
-                self.values[position].1 = capture;
-                self.values[position].2 = indices;
+            if participates {
+                self.values[position].1 = capture_index;
             }
         } else {
             self.positions.insert(key.atom(), self.values.len());
-            self.values.push((key, capture, indices));
+            self.values.push((key, capture_index));
         }
+    }
+}
+// A construction transaction owns all producer edges until the result objects
+// retain them. Named groups refer to capture positions, never duplicate nodes.
+struct RegExpResultOwner {
+    runtime: Runtime,
+    captures: Vec<JsValue>,
+    indices: Vec<JsValue>,
+    properties: Vec<JsValue>,
+    indices_groups: JsValue,
+}
+impl Drop for RegExpResultOwner {
+    fn drop(&mut self) {
+        for value in self
+            .captures
+            .drain(..)
+            .chain(self.indices.drain(..))
+            .chain(self.properties.drain(..))
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        let _ = self.runtime.release_jsvalue(std::mem::replace(
+            &mut self.indices_groups,
+            JsValue::Undefined,
+        ));
     }
 }
 
@@ -61,18 +84,23 @@ impl Runtime {
 
         let has_indices = program.flags().contains(RegExpFlags::HAS_INDICES);
         let mut named = NamedCaptures::default();
-        let mut captures = Vec::with_capacity(capture_count);
-        let mut indices_values = has_indices.then(|| Vec::with_capacity(capture_count));
-
+        let mut owner = RegExpResultOwner {
+            runtime: self.clone(),
+            captures: Vec::with_capacity(capture_count),
+            indices: Vec::with_capacity(if has_indices { capture_count } else { 0 }),
+            properties: Vec::with_capacity(4),
+            indices_groups: JsValue::Undefined,
+        };
         for (capture_index, range) in matched.captures().iter().enumerate() {
             let capture = match range {
-                Some(range) => Value::String(input.sub_string(range.start, range.end)),
-                None => Value::Undefined,
+                Some(range) => {
+                    self.into_jsvalue(Value::String(input.sub_string(range.start, range.end)))?
+                }
+                None => JsValue::Undefined,
             };
-            captures.push(capture.clone());
-
-            let index_value = if has_indices {
-                Some(match range {
+            owner.captures.push(capture);
+            if has_indices {
+                let indices = match range {
                     Some(range) => {
                         let start = i32::try_from(range.start).map_err(|_| {
                             RuntimeError::Invariant(
@@ -84,66 +112,70 @@ impl Runtime {
                                 "RegExp capture end exceeded signed String range",
                             )
                         })?;
-                        Value::Object(self.new_array_from_values(
-                            realm,
-                            vec![Value::Int(start), Value::Int(end)],
-                        )?)
+                        JsValue::Object(
+                            self.new_array_from_values_jsvalue(
+                                realm,
+                                vec![JsValue::Int(start), JsValue::Int(end)],
+                            )?
+                            .into_handle(),
+                        )
                     }
-                    None => Value::Undefined,
-                })
-            } else {
-                None
-            };
-
+                    None => JsValue::Undefined,
+                };
+                owner.indices.push(indices);
+            }
             if capture_index > 0
                 && let Some(Some(group_name)) =
                     group_names.and_then(|names| names.get(capture_index - 1))
             {
-                let key = self.intern_property_key_js_string(group_name)?;
                 named.record(
-                    key,
-                    capture,
-                    index_value.clone().unwrap_or(Value::Undefined),
+                    self.intern_property_key_js_string(group_name)?,
+                    capture_index,
+                    range.is_some(),
                 );
             }
-
-            if let (Some(values), Some(value)) = (&mut indices_values, index_value) {
-                values.push(value);
-            }
         }
-
-        let groups = if group_names.is_some() {
-            Value::Object(self.new_regexp_groups(realm, &named, false)?)
-        } else {
-            Value::Undefined
-        };
-        let indices_groups = if has_indices && group_names.is_some() {
-            Value::Object(self.new_regexp_groups(realm, &named, true)?)
-        } else {
-            Value::Undefined
-        };
-
         let complete = matched.capture(0).ok_or(RuntimeError::Invariant(
             "successful RegExp result omitted capture zero",
         ))?;
-        let mut properties = vec![
-            (
-                "index",
-                Value::Int(i32::try_from(complete.start).map_err(|_| {
-                    RuntimeError::Invariant("RegExp match start exceeded signed String range")
-                })?),
-            ),
-            ("input", Value::String(input)),
-            ("groups", groups),
-        ];
-        if let Some(values) = indices_values {
-            let indices = self.new_regexp_result_array(realm, values, vec![indices_groups], 2)?;
-            properties.push(("indices", Value::Object(indices)));
+        owner
+            .properties
+            .push(JsValue::Int(i32::try_from(complete.start).map_err(
+                |_| RuntimeError::Invariant("RegExp match start exceeded signed String range"),
+            )?));
+        owner
+            .properties
+            .push(self.into_jsvalue(Value::String(input))?);
+        let groups = if group_names.is_some() {
+            JsValue::Object(
+                self.new_regexp_groups(realm, &named, &owner.captures)?
+                    .into_handle(),
+            )
+        } else {
+            JsValue::Undefined
+        };
+        owner.properties.push(groups);
+        if has_indices {
+            if group_names.is_some() {
+                owner.indices_groups = JsValue::Object(
+                    self.new_regexp_groups(realm, &named, &owner.indices)?
+                        .into_handle(),
+                );
+            }
+            let indices = self.new_regexp_result_array(
+                realm,
+                &owner.indices,
+                std::slice::from_ref(&owner.indices_groups),
+                2,
+            )?;
+            owner
+                .properties
+                .push(JsValue::Object(indices.into_handle()));
         }
         let result = self.new_regexp_result_array(
             realm,
-            captures,
-            properties.into_iter().map(|(_, value)| value).collect(),
+            &owner.captures,
+            &owner.properties,
             usize::from(has_indices),
         )?;
         Ok(Value::Object(result))
@@ -153,14 +185,14 @@ impl Runtime {
         &self,
         realm: ContextId,
         named: &NamedCaptures,
-        indices: bool,
+        captures: &[JsValue],
     ) -> Result<ObjectRef, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("regexp_result.groups_layout");
         let names = named
             .values
             .iter()
-            .map(|(key, _, _)| key.atom())
+            .map(|(key, _)| key.atom())
             .collect::<Vec<_>>();
         let shape = {
             let mut state = self.0.state.borrow_mut();
@@ -185,19 +217,12 @@ impl Runtime {
                 shape
             }
         };
-        let conversions = named
+        let slots = named
             .values
             .iter()
-            .map(|(_, capture, range)| {
-                self.raw_property_value(if indices { range } else { capture })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let slots = conversions
-            .iter()
-            .map(|converted| PropertySlot::Data(converted.raw()))
+            .map(|(_, index)| PropertySlot::Data(captures[*index].as_raw()))
             .collect::<Vec<_>>();
-        // The object retains its own copy edges inside the allocation, so the
-        // guards balance the conversions' producer edges on every exit below.
+        // Allocation retains storage edges while the construction owner remains live.
         let id = {
             let mut state = self.0.state.borrow_mut();
             let atoms = state.retain_slot_atoms(&slots)?;
@@ -220,25 +245,22 @@ impl Runtime {
     fn new_regexp_result_array(
         &self,
         realm: ContextId,
-        captures: Vec<Value>,
-        properties: Vec<Value>,
+        captures: &[JsValue],
+        properties: &[JsValue],
         layout: usize,
     ) -> Result<ObjectRef, RuntimeError> {
         let shape = self
             .regexp_realm_data(realm)?
             .result_shapes
             .ok_or(RuntimeError::Invariant("RegExp result layouts missing"))?[layout];
-        let mut conversions = Vec::with_capacity(properties.len());
-        for value in &properties {
-            conversions.push(self.raw_property_value(value)?);
-        }
         let mut slots = Vec::with_capacity(properties.len() + 1);
         slots.push(PropertySlot::Data(crate::engine::heap::RawValue::Int(0)));
-        for converted in &conversions {
-            slots.push(PropertySlot::Data(converted.raw()));
-        }
-        // The object retains its own copy edges inside the allocation, so the
-        // guards balance the conversions' producer edges on every exit below.
+        slots.extend(
+            properties
+                .iter()
+                .map(|value| PropertySlot::Data(value.as_raw())),
+        );
+        // Allocation retains existing payload handles, without arena conversion.
         let id = {
             let mut state = self.0.state.borrow_mut();
             let atoms = state.retain_slot_atoms(&slots)?;
@@ -252,7 +274,7 @@ impl Runtime {
         };
         let result = ObjectRef::from_owned_handle(self.clone(), id);
         for value in captures {
-            self.append_fresh_array_value(&result, value)?;
+            self.append_fresh_array_value_jsvalue(&result, self.dup_jsvalue(value)?)?;
         }
         Ok(result)
     }
@@ -269,6 +291,48 @@ mod tests {
             context.eval(source).expect("RegExp result probe threw"),
             Value::Bool(true),
         );
+    }
+
+    #[test]
+    fn named_capture_publication_reuses_the_numbered_capture_node() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        {
+            let mut context = runtime.new_context();
+            let Value::Object(result) = context.eval("/(?<name>abc)/d.exec('abc')").unwrap() else {
+                panic!("match result")
+            };
+            let groups_key = runtime.intern_property_key("groups").unwrap();
+            let name_key = runtime.intern_property_key("name").unwrap();
+            let Value::Object(groups) = context.get_property(&result, &groups_key).unwrap() else {
+                panic!("groups")
+            };
+            let state = runtime.0.state.borrow();
+            let crate::engine::heap::ObjectPayload::Array {
+                dense: Some(captures),
+            } = &state.heap.object(result.object_id()).unwrap().payload
+            else {
+                panic!("captures")
+            };
+            let crate::engine::heap::RawValue::String(numbered) = &captures[1] else {
+                panic!("capture string")
+            };
+            let groups = state.heap.object(groups.object_id()).unwrap();
+            let slot = state
+                .heap
+                .shape(groups.shape)
+                .unwrap()
+                .find(AtomIdx::from_raw(name_key.atom().raw()))
+                .unwrap();
+            let PropertySlot::Data(crate::engine::heap::RawValue::String(named)) =
+                &groups.slots[slot as usize]
+            else {
+                panic!("named string")
+            };
+            assert_eq!(numbered, named);
+        }
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]

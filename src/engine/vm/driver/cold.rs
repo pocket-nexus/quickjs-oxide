@@ -334,7 +334,12 @@ pub(super) fn dispatch(
 #[inline(never)]
 #[cfg(all(test, feature = "profiling"))]
 fn direct(context: &mut Context<'_>, exit: RunExit) -> Result<Disposition, Error> {
-    if super::super::frame_operations::complete_owned_slot(context.execution, context.id, exit)? {
+    if super::super::frame_operations::complete_owned_slot(
+        context.runtime,
+        context.execution,
+        context.id,
+        exit,
+    )? {
         Ok(Disposition::Entered)
     } else {
         Err(Error::internal("direct cold operation was not completed"))

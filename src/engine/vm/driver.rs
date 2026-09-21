@@ -226,17 +226,23 @@ pub(super) fn enter_call(
                 defining_realm,
                 min_readable_args,
                 match bound_receiver {
-                    Some(bound) => runtime
-                        .root_and_release_jsvalue(bound)
-                        .map_err(runtime_error_to_vm_error)?,
+                    Some(bound) => {
+                        runtime
+                            .release_jsvalue(receiver)
+                            .map_err(runtime_error_to_vm_error)?;
+                        bound
+                    }
                     None => receiver,
                 },
                 match bound_arguments {
-                    Some(bound) => bound
-                        .into_iter()
-                        .map(|argument| runtime.root_and_release_jsvalue(argument))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(runtime_error_to_vm_error)?,
+                    Some(bound) => {
+                        for value in arguments {
+                            runtime
+                                .release_jsvalue(value)
+                                .map_err(runtime_error_to_vm_error)?;
+                        }
+                        bound
+                    }
                     None => arguments,
                 },
                 tail,
@@ -350,17 +356,23 @@ pub(super) fn enter_call(
                     defining_realm,
                     min_readable_args,
                     match bound_receiver {
-                        Some(bound) => runtime
-                            .root_and_release_jsvalue(bound)
-                            .map_err(runtime_error_to_vm_error)?,
+                        Some(bound) => {
+                            runtime
+                                .release_jsvalue(receiver)
+                                .map_err(runtime_error_to_vm_error)?;
+                            bound
+                        }
                         None => receiver,
                     },
                     match bound_arguments {
-                        Some(bound) => bound
-                            .into_iter()
-                            .map(|argument| runtime.root_and_release_jsvalue(argument))
-                            .collect::<Result<Vec<_>, _>>()
-                            .map_err(runtime_error_to_vm_error)?,
+                        Some(bound) => {
+                            for value in arguments {
+                                runtime
+                                    .release_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?;
+                            }
+                            bound
+                        }
                         None => arguments,
                     },
                     tail,
@@ -375,27 +387,30 @@ pub(super) fn enter_call(
                 let (arguments, receiver) = execution
                     .slots
                     .take_native_call_operands(runtime, window, count, method)?;
-                // The rooted native argv crosses back into the internal call
-                // convention: its edges are duplicated and the public roots
-                // release through their own Drop path.
                 return super::proxy_get_driver::start_callback_call(
                     runtime,
                     execution,
                     id,
                     callable,
                     match bound_receiver {
-                        Some(bound) => bound,
-                        None => runtime
-                            .unroot_value(&receiver)
-                            .map_err(runtime_error_to_vm_error)?,
+                        Some(bound) => {
+                            runtime
+                                .release_jsvalue(receiver)
+                                .map_err(runtime_error_to_vm_error)?;
+                            bound
+                        }
+                        None => receiver,
                     },
                     match bound_arguments {
-                        Some(bound) => bound,
-                        None => arguments
-                            .iter()
-                            .map(|argument| runtime.unroot_value(argument))
-                            .collect::<Result<Vec<_>, _>>()
-                            .map_err(runtime_error_to_vm_error)?,
+                        Some(bound) => {
+                            for value in arguments {
+                                runtime
+                                    .release_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?;
+                            }
+                            bound
+                        }
+                        None => arguments,
                     },
                     tail,
                     depth,
@@ -937,7 +952,7 @@ fn run_frames_with_state(
         }
         if let Some(super::frame::OperationTarget::Eval(arguments)) = target.operation {
             let parent = execution.frames.current_mut(target.frame()?)?;
-            parent.cold.eval_arguments = None;
+            parent.cold.release_eval_arguments();
             for _ in 0..=arguments {
                 let discarded = execution.slots.pop(&mut parent.window)?;
                 runtime
@@ -964,6 +979,10 @@ fn run_frames_with_state(
                 let parent = execution.frames.current_mut(target.frame()?)?;
                 if matches!(target.value_use, super::frame::ReturnValue::Push) {
                     execution.slots.push(&mut parent.window, value)?;
+                } else {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
                 }
             }
             completion => forwarded = Some(completion),
@@ -973,9 +992,30 @@ fn run_frames_with_state(
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
+    use super::Completion as InternalCompletion;
     use super::*;
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::vm::frame::FrameCold;
+    use crate::engine::vm::stack::FrameStorage;
+
+    // Test observation boundary: consume the internal edge exactly once before
+    // applying the existing public-value semantic assertions.
+    #[derive(Debug, PartialEq)]
+    enum Completion {
+        Return(Value),
+        Throw(Value),
+    }
+
+    fn observe(runtime: &Runtime, completion: InternalCompletion) -> Completion {
+        match completion {
+            InternalCompletion::Return(value) => {
+                Completion::Return(runtime.root_and_release_jsvalue(value).unwrap())
+            }
+            InternalCompletion::Throw(value) => {
+                Completion::Throw(runtime.root_and_release_jsvalue(value).unwrap())
+            }
+        }
+    }
 
     #[test]
     fn same_frame_property_completion_keeps_getters_proxy_traps_and_error_order() {
@@ -1082,7 +1122,10 @@ mod tests {
         ));
         assert_eq!(identity, u64::MAX);
         assert_eq!(
-            execution.pending,
+            execution
+                .pending
+                .as_ref()
+                .map(|value| runtime.root_value(value).unwrap()),
             Some(Value::String(crate::engine::value::JsString::from_static(
                 "ab"
             )))
@@ -1096,11 +1139,17 @@ mod tests {
         entry: FrameEntry,
         limits: ExecutionLimits,
     ) -> Result<Completion, Error> {
-        super::execute(runtime.clone(), entry, limits)?.finish(runtime)
+        Ok(observe(
+            &runtime,
+            super::execute(runtime.clone(), entry, limits)?.finish(runtime.clone())?,
+        ))
     }
 
     fn execute_running(runtime: Runtime, execution: RunningExecution) -> Result<Completion, Error> {
-        super::run_frames(&runtime, execution)?.finish(runtime)
+        Ok(observe(
+            &runtime,
+            super::run_frames(&runtime, execution)?.finish(runtime.clone())?,
+        ))
     }
 
     fn entry(
@@ -1157,7 +1206,10 @@ mod tests {
                 input: (prepared.input).into(),
             }),
             storage: FrameStorage {
-                original_arguments: arguments,
+                original_arguments: arguments
+                    .into_iter()
+                    .map(|value| runtime.into_jsvalue(value).unwrap())
+                    .collect(),
                 parameters: prepared.arguments,
                 locals: prepared.locals,
                 operands: Vec::new(),
@@ -1265,7 +1317,7 @@ mod tests {
 
     #[test]
     fn catch_and_finally_resume_owned_frames() {
-        for (source, bridge) in [
+        for (source, _bridge) in [
             ("(function(){try{throw 40}catch(e){return e+2}})", false),
             ("(function(f){try{return f()}catch(e){return e+2}})", false),
             ("(function(){try{return 1}finally{return 42}})", false),
@@ -1297,7 +1349,7 @@ mod tests {
             };
             assert_eq!(value, Value::Int(42), "{source}");
             let _costs = profile.snapshot();
-            if !bridge {}
+
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
@@ -2145,7 +2197,10 @@ mod tests {
         ));
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(frame.resume_pc, before + 1);
-        let Value::Object(environment) = execution.slots.peek(&frame.window, 0).unwrap() else {
+        let Value::Object(environment) = &runtime
+            .root_value(execution.slots.peek(&frame.window, 0).unwrap())
+            .unwrap()
+        else {
             panic!("expected variable environment")
         };
         assert!(runtime.get_prototype_of(environment).unwrap().is_none());
@@ -2359,7 +2414,7 @@ mod tests {
     fn named_array_prototype_reads_reach_owned_methods() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("Object.defineProperty(Array.prototype,'owned',{value:function(){return 42},configurable:true})").unwrap();
+        drop(context.eval("Object.defineProperty(Array.prototype,'owned',{value:function(){return 42},configurable:true})").unwrap());
         let array = context.eval("[]").unwrap();
         let entry = entry(
             &runtime,
@@ -2473,7 +2528,7 @@ mod tests {
             } else {
                 "globalThis"
             };
-            context.eval(&format!("(function(){{let stored=0;globalThis.readStored=function(){{return stored}};Object.defineProperty({target},'x',{{get(){{throw 99}},set(value){{if(this!==globalThis)throw 99;stored=stored+value}},configurable:true}})}})()" )).unwrap();
+            drop(context.eval(&format!("(function(){{let stored=0;globalThis.readStored=function(){{return stored}};Object.defineProperty({target},'x',{{get(){{throw 99}},set(value){{if(this!==globalThis)throw 99;stored=stored+value}},configurable:true}})}})()" )).unwrap());
             let entry = entry(
                 &runtime,
                 &mut context,
@@ -2652,7 +2707,10 @@ mod tests {
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = pc;
             for value in [constructor, new_target, Value::Object(carrier.clone())] {
-                execution.slots.push(&mut frame.window, value).unwrap();
+                execution
+                    .slots
+                    .push(&mut frame.window, runtime.into_jsvalue(value).unwrap())
+                    .unwrap();
             }
             let profile = CostProfile::start();
             assert!(matches!(
@@ -2776,7 +2834,10 @@ mod tests {
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = pc;
             for value in [function, Value::Undefined, array] {
-                execution.slots.push(&mut frame.window, value).unwrap();
+                execution
+                    .slots
+                    .push(&mut frame.window, runtime.into_jsvalue(value).unwrap())
+                    .unwrap();
             }
             let profile = CostProfile::start();
             let completion = execute_running(runtime.clone(), execution).unwrap();
@@ -3281,12 +3342,23 @@ mod tests {
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = pc;
-            execution.slots.push(&mut frame.window, target).unwrap();
             execution
                 .slots
-                .push(&mut frame.window, Value::Int(if fail { 0 } else { -1 }))
+                .push(&mut frame.window, runtime.into_jsvalue(target).unwrap())
                 .unwrap();
-            execution.slots.push(&mut frame.window, iterable).unwrap();
+            execution
+                .slots
+                .push(
+                    &mut frame.window,
+                    runtime
+                        .into_jsvalue(Value::Int(if fail { 0 } else { -1 }))
+                        .unwrap(),
+                )
+                .unwrap();
+            execution
+                .slots
+                .push(&mut frame.window, runtime.into_jsvalue(iterable).unwrap())
+                .unwrap();
             let profile = CostProfile::start();
             let completion = execute_running(runtime.clone(), execution).unwrap();
             let _costs = profile.snapshot();
@@ -3335,9 +3407,9 @@ mod tests {
     fn array_element_checkpoint_defines_own_properties_without_setters() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
+        drop(context
             .eval("Object.defineProperty(Array.prototype,'1',{set(){throw 99},configurable:true})")
-            .unwrap();
+            .unwrap());
         let array = context.eval("[]").unwrap();
         let entry = entry(
             &runtime,
@@ -3363,15 +3435,24 @@ mod tests {
         frame.resume_pc = pc;
         execution
             .slots
-            .push(&mut frame.window, array.clone())
+            .push(
+                &mut frame.window,
+                runtime.into_jsvalue(array.clone()).unwrap(),
+            )
             .unwrap();
         execution
             .slots
-            .push(&mut frame.window, Value::Int(1))
+            .push(
+                &mut frame.window,
+                runtime.into_jsvalue(Value::Int(1)).unwrap(),
+            )
             .unwrap();
         execution
             .slots
-            .push(&mut frame.window, Value::Int(40))
+            .push(
+                &mut frame.window,
+                runtime.into_jsvalue(Value::Int(40)).unwrap(),
+            )
             .unwrap();
         let profile = CostProfile::start();
         assert!(matches!(
@@ -3392,10 +3473,17 @@ mod tests {
         assert_eq!(frame.resume_pc, pc + 1);
         assert_eq!(execution.slots.depth(&frame.window), 2);
         assert_eq!(
-            execution.slots.peek(&frame.window, 0).unwrap(),
+            &runtime
+                .root_value(execution.slots.peek(&frame.window, 0).unwrap())
+                .unwrap(),
             &Value::Int(1)
         );
-        assert_eq!(execution.slots.peek(&frame.window, 1).unwrap(), &array);
+        assert_eq!(
+            &runtime
+                .root_value(execution.slots.peek(&frame.window, 1).unwrap())
+                .unwrap(),
+            &array
+        );
         let Completion::Return(Value::Object(array)) =
             execute_running(runtime.clone(), execution).unwrap()
         else {
@@ -3450,9 +3538,9 @@ mod tests {
         let runtime = Runtime::new();
         let mut caller = runtime.new_context();
         let mut callee = runtime.new_context();
-        callee
+        drop(callee
             .eval("Object.defineProperty(Array.prototype,'0',{set(){throw 99},configurable:true})")
-            .unwrap();
+            .unwrap());
         let prototype = callee.eval("Array.prototype").unwrap();
         for (source, expected) in [
             ("(function(){return []})", vec![]),
@@ -3551,10 +3639,16 @@ mod tests {
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = pc;
-            execution.slots.push(&mut frame.window, callee).unwrap();
             execution
                 .slots
-                .push(&mut frame.window, array.clone())
+                .push(&mut frame.window, runtime.into_jsvalue(callee).unwrap())
+                .unwrap();
+            execution
+                .slots
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(array.clone()).unwrap(),
+                )
                 .unwrap();
             let profile = CostProfile::start();
             if let Some(extra) = retained {
@@ -3771,7 +3865,7 @@ mod tests {
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval(setup).unwrap();
+            drop(context.eval(setup).unwrap());
             let object = context.eval("({})").unwrap();
             let entry = entry(&runtime, &mut context, source, vec![object]);
             let profile = CostProfile::start();
@@ -3834,7 +3928,7 @@ mod tests {
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval(setup).unwrap();
+            drop(context.eval(setup).unwrap());
             let entry = entry(
                 &runtime,
                 &mut context,
@@ -3874,7 +3968,12 @@ mod tests {
             } else {
                 Value::Undefined
             };
-            assert_eq!(execution.slots.peek(&frame.window, 0).unwrap(), &expected);
+            assert_eq!(
+                &runtime
+                    .root_value(execution.slots.peek(&frame.window, 0).unwrap())
+                    .unwrap(),
+                &expected
+            );
             drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -3890,7 +3989,7 @@ mod tests {
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval("globalThis.x=1").unwrap();
+            drop(context.eval("globalThis.x=1").unwrap());
             let object = context.eval("({})").unwrap();
             let source = if expected_error.is_some() {
                 "(function(o){try{with(o){return x=(function(){throw 99})()}}catch(e){return e}})"
@@ -3942,7 +4041,12 @@ mod tests {
                         .own_var_ref_root(&context.global_var_object().unwrap(), &key)
                         .unwrap()
                         .unwrap();
-                    assert_eq!(runtime.read_var_ref(&root).unwrap(), Value::Int(42));
+                    assert_eq!(
+                        runtime
+                            .root_and_release_jsvalue(runtime.read_var_ref(&root).unwrap())
+                            .unwrap(),
+                        Value::Int(42)
+                    );
                 }
             }
             let global = runtime.global_object_for_realm(context.realm).unwrap();
@@ -4002,7 +4106,10 @@ mod tests {
             };
             execution
                 .slots
-                .push(&mut frame.window, base.clone())
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(base.clone()).unwrap(),
+                )
                 .unwrap();
             let RunExit::Environment(op @ Operation::ReadReference { .. }) =
                 run(&mut execution, id).unwrap()
@@ -4014,8 +4121,11 @@ mod tests {
                 super::super::environment_driver::step(&runtime, &mut execution, id, op).unwrap();
             let _costs = profile.snapshot();
             if let Some(message) = expected_error {
-                let CallStep::Complete(Completion::Throw(Value::Object(error))) = result else {
+                let CallStep::Complete(InternalCompletion::Throw(error)) = result else {
                     panic!("expected reference error")
+                };
+                let Value::Object(error) = runtime.root_and_release_jsvalue(error).unwrap() else {
+                    panic!("expected error object")
                 };
                 drop(execution);
                 assert_eq!(
@@ -4037,10 +4147,17 @@ mod tests {
                 assert_eq!(frame.resume_pc, pc + 1);
                 assert_eq!(execution.slots.depth(&frame.window), 2);
                 assert_eq!(
-                    execution.slots.peek(&frame.window, 0).unwrap(),
+                    &runtime
+                        .root_value(execution.slots.peek(&frame.window, 0).unwrap())
+                        .unwrap(),
                     &Value::Int(42)
                 );
-                assert_eq!(execution.slots.peek(&frame.window, 1).unwrap(), &base);
+                assert_eq!(
+                    &runtime
+                        .root_value(execution.slots.peek(&frame.window, 1).unwrap())
+                        .unwrap(),
+                    &base
+                );
                 drop(execution);
             }
             assert_eq!(
@@ -4104,11 +4221,17 @@ mod tests {
             frame.resume_pc = pc;
             execution
                 .slots
-                .push(&mut frame.window, Value::Object(object.clone()))
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(Value::Object(object.clone())).unwrap(),
+                )
                 .unwrap();
             execution
                 .slots
-                .push(&mut frame.window, Value::Int(42))
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(Value::Int(42)).unwrap(),
+                )
                 .unwrap();
             let op = Operation::Put {
                 source: WriteTarget::Reference,
@@ -4130,8 +4253,11 @@ mod tests {
             )
             .unwrap();
             if let Some(message) = expected_error {
-                let CallStep::Complete(Completion::Throw(Value::Object(error))) = result else {
+                let CallStep::Complete(InternalCompletion::Throw(error)) = result else {
                     panic!("expected lexical rejection")
+                };
+                let Value::Object(error) = runtime.root_and_release_jsvalue(error).unwrap() else {
+                    panic!("expected error object")
                 };
                 drop(execution);
                 assert_eq!(
@@ -4153,7 +4279,9 @@ mod tests {
                 assert_eq!(frame.resume_pc, pc + 1);
                 assert_eq!(execution.slots.depth(&frame.window), 0);
                 assert_eq!(
-                    runtime.read_var_ref(&root).unwrap(),
+                    runtime
+                        .root_and_release_jsvalue(runtime.read_var_ref(&root).unwrap())
+                        .unwrap(),
                     if is_const {
                         Value::Int(1)
                     } else {
@@ -4348,7 +4476,7 @@ mod tests {
             };
             let root = runtime
                 .new_var_ref(
-                    Value::Object(object),
+                    runtime.into_jsvalue(Value::Object(object)).unwrap(),
                     false,
                     false,
                     ClosureVariableKind::EvalVariableObject,
@@ -4589,15 +4717,21 @@ mod tests {
         frame.resume_pc = install_pc;
         execution
             .slots
-            .push(&mut frame.window, constructor.clone())
+            .push(
+                &mut frame.window,
+                runtime.dup_jsvalue(&constructor).unwrap(),
+            )
             .unwrap();
         execution
             .slots
-            .push(&mut frame.window, prototype.clone())
+            .push(&mut frame.window, runtime.dup_jsvalue(&prototype).unwrap())
             .unwrap();
         execution
             .slots
-            .push(&mut frame.window, instance_initializer.unwrap())
+            .push(
+                &mut frame.window,
+                runtime.into_jsvalue(instance_initializer.unwrap()).unwrap(),
+            )
             .unwrap();
         let profile = CostProfile::start();
         assert_eq!(
@@ -4613,14 +4747,24 @@ mod tests {
         assert_eq!(frame.resume_pc, install_pc + 1);
         assert_eq!(execution.slots.depth(&frame.window), 2);
         assert_eq!(
-            execution.slots.peek(&frame.window, 1).unwrap(),
-            &constructor
+            &runtime
+                .root_value(execution.slots.peek(&frame.window, 1).unwrap())
+                .unwrap(),
+            &runtime.root_value(&constructor).unwrap()
         );
-        assert_eq!(execution.slots.pop(&mut frame.window).unwrap(), prototype);
+        assert_eq!(
+            runtime
+                .root_and_release_jsvalue(execution.slots.pop(&mut frame.window).unwrap())
+                .unwrap(),
+            runtime.root_value(&prototype).unwrap()
+        );
         frame.resume_pc = pc;
         execution
             .slots
-            .push(&mut frame.window, static_initializer.clone())
+            .push(
+                &mut frame.window,
+                runtime.into_jsvalue(static_initializer.clone()).unwrap(),
+            )
             .unwrap();
         assert_eq!(
             run(&mut execution, parent).unwrap(),
@@ -4649,15 +4793,22 @@ mod tests {
         assert_eq!(run(&mut execution, block).unwrap(), RunExit::Throw);
         let frame = execution.frames.current_mut(block).unwrap();
         assert_eq!(
-            execution.slots.pop(&mut frame.window).unwrap(),
+            runtime
+                .root_and_release_jsvalue(execution.slots.pop(&mut frame.window).unwrap())
+                .unwrap(),
             Value::Int(42)
         );
         // Preparation is irreversible even when the body throws.
         assert!(
             runtime
-                .begin_class_static_initializer(context.realm, constructor, static_initializer)
+                .begin_class_static_initializer(
+                    context.realm,
+                    runtime.root_and_release_jsvalue(constructor).unwrap(),
+                    static_initializer
+                )
                 .is_err()
         );
+        runtime.release_jsvalue(prototype).unwrap();
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3);
         drop(execution);
@@ -4791,17 +4942,26 @@ mod tests {
             let frame = execution.frames.current_mut(id).unwrap();
             execution
                 .slots
-                .push(&mut frame.window, Value::Int(1))
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(Value::Int(1)).unwrap(),
+                )
                 .unwrap();
             if computed {
                 execution
                     .slots
-                    .push(&mut frame.window, Value::Int(0))
+                    .push(
+                        &mut frame.window,
+                        runtime.into_jsvalue(Value::Int(0)).unwrap(),
+                    )
                     .unwrap();
             }
             execution
                 .slots
-                .push(&mut frame.window, Value::Int(2))
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(Value::Int(2)).unwrap(),
+                )
                 .unwrap();
             let profile = CostProfile::start();
             let result = super::super::construct_driver::define_property(
@@ -4819,8 +4979,11 @@ mod tests {
                 assert_eq!(error.kind(), crate::engine::api::ErrorKind::Internal);
                 assert!(error.to_string().contains(message));
             } else {
-                let Ok(CallStep::Complete(Completion::Throw(Value::Object(error)))) = result else {
+                let Ok(CallStep::Complete(InternalCompletion::Throw(error))) = result else {
                     panic!("expected field TypeError")
+                };
+                let Value::Object(error) = runtime.root_and_release_jsvalue(error).unwrap() else {
+                    panic!("expected error object")
                 };
                 assert_eq!(
                     context
@@ -4869,7 +5032,7 @@ mod tests {
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval("var hits=0").unwrap();
+            drop(context.eval("var hits=0").unwrap());
             let target = context.eval(target_source).unwrap();
             let function = context.eval(function_source).unwrap();
             let Value::Object(old_target) = context.eval(target_source).unwrap() else {
@@ -4889,7 +5052,7 @@ mod tests {
                 matches!(old, crate::engine::object::operations::PropertyDefineOutcome::Defined(defined) if defined == (key != "length"))
             );
             assert_eq!(context.eval("hits").unwrap(), Value::Int(hits));
-            context.eval("hits=0").unwrap();
+            drop(context.eval("hits=0").unwrap());
             let entry = entry(
                 &runtime,
                 &mut context,
@@ -4909,18 +5072,28 @@ mod tests {
             frame.resume_pc = pc;
             execution
                 .slots
-                .push(&mut frame.window, target.clone())
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(target.clone()).unwrap(),
+                )
                 .unwrap();
             execution
                 .slots
                 .push(
                     &mut frame.window,
-                    Value::String(crate::engine::value::JsString::from_static(key)),
+                    runtime
+                        .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
+                            key,
+                        )))
+                        .unwrap(),
                 )
                 .unwrap();
             execution
                 .slots
-                .push(&mut frame.window, function.clone())
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(function.clone()).unwrap(),
+                )
                 .unwrap();
             let profile = CostProfile::start();
             let completion = execute_running(runtime.clone(), execution).unwrap();
@@ -5200,7 +5373,7 @@ mod tests {
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval(setup).unwrap();
+            drop(context.eval(setup).unwrap());
             let target = context.eval("target").unwrap();
             let key = context.eval("key").unwrap();
             let entry = entry(
@@ -5724,7 +5897,7 @@ mod tests {
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval(setup).unwrap();
+            drop(context.eval(setup).unwrap());
             let entry = entry(&runtime, &mut context, source, vec![input]);
             let _profile = CostProfile::start();
             let Completion::Return(value) =
@@ -5756,7 +5929,7 @@ mod tests {
         for selected in ["0", "Symbol.iterator"] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context.eval(&format!("var keys=0,getters=0,written=0;var selected={selected};var target={{}};Object.defineProperty(target,selected,{{get:function(){{getters++;return 41}},set:function(v){{written=v}}}});var key={{toString(){{keys++;return selected}}}};")).unwrap();
+            drop(context.eval(&format!("var keys=0,getters=0,written=0;var selected={selected};var target={{}};Object.defineProperty(target,selected,{{get:function(){{getters++;return 41}},set:function(v){{written=v}}}});var key={{toString(){{keys++;return selected}}}};")).unwrap());
             let target = context.eval("target").unwrap();
             let key = context.eval("key").unwrap();
             let entry = entry(
@@ -5993,11 +6166,14 @@ mod tests {
             )
             .unwrap()
             {
-                CallStep::Entered => super::run_frames(&runtime, execution)
-                    .unwrap()
-                    .finish(runtime.clone())
-                    .unwrap(),
-                CallStep::Complete(result) => result,
+                CallStep::Entered => observe(
+                    &runtime,
+                    super::run_frames(&runtime, execution)
+                        .unwrap()
+                        .finish(runtime.clone())
+                        .unwrap(),
+                ),
+                CallStep::Complete(result) => observe(&runtime, result),
                 CallStep::Bridge => panic!("preventExtensions attempted handoff"),
             };
             match expected {
@@ -6577,8 +6753,11 @@ mod tests {
                 &mut execution,
                 id,
                 callable,
-                Value::Undefined,
-                vec![object, Value::Object(extra)],
+                JsValue::Undefined,
+                vec![
+                    runtime.into_jsvalue(object).unwrap(),
+                    runtime.into_jsvalue(Value::Object(extra)).unwrap()
+                ],
                 false,
                 0
             )
@@ -6712,13 +6891,16 @@ mod tests {
             )
             .unwrap()
             {
-                CallStep::Entered => super::run_frames(&runtime, execution)
-                    .unwrap()
-                    .finish(runtime.clone())
-                    .unwrap(),
+                CallStep::Entered => observe(
+                    &runtime,
+                    super::run_frames(&runtime, execution)
+                        .unwrap()
+                        .finish(runtime.clone())
+                        .unwrap(),
+                ),
                 CallStep::Complete(result) => {
                     drop(execution);
-                    result
+                    observe(&runtime, result)
                 }
                 CallStep::Bridge => panic!("prototype query attempted handoff"),
             };
@@ -6805,13 +6987,16 @@ mod tests {
                 )
                 .unwrap()
                 {
-                    CallStep::Entered => super::run_frames(&runtime, execution)
-                        .unwrap()
-                        .finish(runtime.clone())
-                        .unwrap(),
+                    CallStep::Entered => observe(
+                        &runtime,
+                        super::run_frames(&runtime, execution)
+                            .unwrap()
+                            .finish(runtime.clone())
+                            .unwrap(),
+                    ),
                     CallStep::Complete(result) => {
                         drop(execution);
-                        result
+                        observe(&runtime, result)
                     }
                     CallStep::Bridge => panic!("prototype query attempted handoff"),
                 };
@@ -7006,14 +7191,20 @@ mod tests {
             let frame = execution.frames.current_mut(id).unwrap();
             execution
                 .slots
-                .push(&mut frame.window, Value::Object(released))
+                .push(
+                    &mut frame.window,
+                    runtime.into_jsvalue(Value::Object(released)).unwrap(),
+                )
                 .unwrap();
             let kept_id = if keep_top {
                 let kept = runtime.new_object(None).unwrap();
                 let kept_id = kept.object_id();
                 execution
                     .slots
-                    .push(&mut frame.window, Value::Object(kept))
+                    .push(
+                        &mut frame.window,
+                        runtime.into_jsvalue(Value::Object(kept)).unwrap(),
+                    )
                     .unwrap();
                 Some(kept_id)
             } else {
@@ -7031,6 +7222,7 @@ mod tests {
             );
             assert!(
                 super::super::frame_operations::complete_owned_slot(
+                    &runtime,
                     &mut execution,
                     id,
                     RunExit::ReleaseOperand { keep_top }
@@ -7866,9 +8058,11 @@ mod tests {
         assert_eq!(value, marker);
         assert_eq!(profile.snapshot().owned_storage.maximum_frame_depth, 3);
         drop(profile);
-        context
-            .eval("Object.setPrototypeOf(D,function Replacement(){return new.target})")
-            .unwrap();
+        drop(
+            context
+                .eval("Object.setPrototypeOf(D,function Replacement(){return new.target})")
+                .unwrap(),
+        );
         let call_entry = entry(
             &runtime,
             &mut context,
@@ -7956,18 +8150,36 @@ mod tests {
             panic!("native")
         };
         let object_id = function.object_id();
+        if foreign_argument {
+            let callable = runtime.callable_from_value(callee).unwrap();
+            let argument = Value::Object(foreign.new_object(None).unwrap());
+            let old_realm = runtime
+                .0
+                .state
+                .borrow_mut()
+                .heap
+                .replace_native_realm_for_test(object_id, None)
+                .unwrap();
+            // Foreign roots are rejected at the public call boundary, before
+            // internal handles or native metadata may be used.
+            let result = context.call(&callable, Value::Undefined, &[argument]);
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .heap
+                .replace_native_realm_for_test(object_id, old_realm)
+                .unwrap();
+            let error = result.expect_err("foreign argument rejection");
+            assert!(error.to_string().contains("call argument"), "{error}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            return;
+        }
         let entry = entry(
             &runtime,
             &mut context,
             "(function root(f,x){return f(x)})",
-            vec![
-                callee,
-                if foreign_argument {
-                    Value::Object(foreign.new_object(None).unwrap())
-                } else {
-                    Value::Int(42)
-                },
-            ],
+            vec![callee, Value::Int(42)],
         );
         let old_realm = runtime
             .0
@@ -8019,13 +8231,12 @@ mod tests {
         let mut context = runtime.new_context();
         let callee = context.eval("(function ignore(x){return 1})").unwrap();
         let object = foreign.new_object(None).unwrap();
-        let entry = entry(
-            &runtime,
-            &mut context,
-            "(function root(f,x){return f(x)})",
-            vec![callee, Value::Object(object.clone())],
+        let callable = runtime.callable_from_value(callee).unwrap();
+        let result = context.call(
+            &callable,
+            Value::Undefined,
+            &[Value::Object(object.clone())],
         );
-        let result = execute(runtime.clone(), entry, ExecutionLimits::default());
         let Err(error) = result else {
             panic!("expected domain rejection, got {result:?}");
         };
@@ -8065,9 +8276,11 @@ mod tests {
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
-            context
-                .eval("var trace='',traps=0,marker={};var target={};")
-                .unwrap();
+            drop(
+                context
+                    .eval("var trace='',traps=0,marker={};var target={};")
+                    .unwrap(),
+            );
             let object = context
                 .eval(if proxy {
                     "new Proxy(target,{defineProperty(){traps++;throw 99}})"
@@ -8098,7 +8311,10 @@ mod tests {
             // consume the retained key, then Return must receive the base.
             frame.resume_pc = pc;
             for value in [object.clone(), key, Value::Int(40)] {
-                execution.slots.push(&mut frame.window, value).unwrap();
+                execution
+                    .slots
+                    .push(&mut frame.window, runtime.into_jsvalue(value).unwrap())
+                    .unwrap();
             }
             let profile = CostProfile::start();
             let result = execute_running(runtime.clone(), execution).unwrap();

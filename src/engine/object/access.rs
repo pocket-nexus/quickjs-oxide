@@ -78,7 +78,7 @@ impl Runtime {
         realm: ContextId,
         string: &JsString,
         key: &PropertyKey,
-        receiver: &Value,
+        receiver: &JsValue,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
         let index = self.0.state.borrow().atoms.array_index(key.atom())?;
@@ -126,21 +126,11 @@ impl Runtime {
         receiver: &Value,
         key: &PropertyKey,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        self.prepare_value_property_read_selected(realm, receiver, key, None)
+        let receiver = self.unroot_value(receiver)?;
+        let result = self.prepare_value_property_read_selected_jsvalue(realm, &receiver, key, None);
+        self.release_jsvalue(receiver)?;
+        result
     }
-    /// Internal-value receiver form: the slow-path read roots the receiver
-    /// once for accessor/prototype Call selection.
-    pub(crate) fn prepare_value_property_read_selected_jsvalue(
-        &self,
-        realm: ContextId,
-        receiver: &crate::engine::value::JsValue,
-        key: &PropertyKey,
-        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
-    ) -> Result<OrdinaryRead, RuntimeError> {
-        let receiver_root = self.root_value(receiver)?;
-        self.prepare_value_property_read_selected(realm, &receiver_root, key, native)
-    }
-
     pub(crate) fn prepare_value_property_read_borrowed_jsvalue(
         &self,
         realm: ContextId,
@@ -150,38 +140,39 @@ impl Runtime {
         self.prepare_value_property_read_selected_jsvalue(realm, receiver, key, None)
     }
 
-    pub(crate) fn prepare_value_property_read_selected(
+    pub(crate) fn prepare_value_property_read_selected_jsvalue(
         &self,
         realm: ContextId,
-        receiver: &Value,
+        receiver: &JsValue,
         key: &PropertyKey,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        self.validate_value_domain(receiver, "property receiver")?;
         match receiver {
-            Value::Object(object) => {
-                self.prepare_ordinary_read_selected(object, key, receiver, native)
+            JsValue::Object(object) => {
+                let object = ObjectRef::from_borrowed_handle(self.clone(), *object)?;
+                self.prepare_ordinary_read_selected(&object, key, receiver, native)
             }
-            Value::String(string) => {
-                self.prepare_string_property_read(realm, string, key, receiver, native)
+            JsValue::String(id) => {
+                let string = self.0.state.borrow().heap.string(*id)?.clone();
+                self.prepare_string_property_read(realm, &string, key, receiver, native)
             }
-            Value::Bool(_)
-            | Value::Int(_)
-            | Value::Float(_)
-            | Value::BigInt(_)
-            | Value::Symbol(_) => {
+            JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::BigInt(_)
+            | JsValue::Symbol(_) => {
                 let kind = match &receiver {
-                    Value::Bool(_) => PrimitiveKind::Boolean,
-                    Value::Int(_) | Value::Float(_) => PrimitiveKind::Number,
-                    Value::BigInt(_) => PrimitiveKind::BigInt,
-                    Value::Symbol(_) => PrimitiveKind::Symbol,
+                    JsValue::Bool(_) => PrimitiveKind::Boolean,
+                    JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
+                    JsValue::BigInt(_) => PrimitiveKind::BigInt,
+                    JsValue::Symbol(_) => PrimitiveKind::Symbol,
                     _ => unreachable!(),
                 };
                 let prototype = self.primitive_prototype_for_realm(realm, kind)?;
                 self.prepare_ordinary_read_selected(&prototype, key, receiver, native)
             }
-            Value::Undefined | Value::Null => {
-                let suffix = if matches!(receiver, Value::Null) {
+            JsValue::Undefined | JsValue::Null => {
+                let suffix = if matches!(receiver, JsValue::Null) {
                     "' of null"
                 } else {
                     "' of undefined"

@@ -184,42 +184,23 @@ pub(super) fn prototypes_allow_dense_append(
 /// ordinary state machine then performs its original observable protocol.
 ///
 /// A `Define` result means the define is validated and still missing: the
-/// caller ends the borrow, converts the value (which may allocate a
-/// string/BigInt node and needs the state borrow), and commits through
+/// caller ends the borrow and commits the existing value handle through
 /// [`Runtime::store_property_slot`]. No callback or mutation can run between
 /// this selection and that commit, so splitting the borrow is unobservable.
 fn set_missing_local(
     state: &mut RuntimeState,
     receiver: ObjectId,
     atom: Atom,
-    value: &Value,
+    _value: &JsValue,
     prototype: Option<ObjectId>,
 ) -> Result<MissingSelection, RuntimeError> {
     match select_missing_prototypes(state, atom, prototype)? {
         MissingSelection::Define => {}
         selected => return Ok(selected),
     }
-    use crate::engine::object::property::{
-        PropertyDescriptor, validate_and_apply_property_descriptor,
-    };
-    let descriptor = PropertyDescriptor {
-        value: Some(value),
-        writable: Some(true),
-        enumerable: Some(true),
-        configurable: Some(true),
-        ..PropertyDescriptor::new()
-    };
-    // Use the same descriptor permissions as DefineOwnProperty. Rejection stays
-    // on the existing rejection path, which preserves its precise error reason.
-    if validate_and_apply_property_descriptor(
-        state.heap.object(receiver)?.extensible,
-        &descriptor,
-        None,
-        &&Value::Undefined,
-        |a, b| Value::same_value(a, b),
-    )
-    .is_err()
-    {
+    // A complete new data descriptor has no compatibility comparison; the
+    // shared descriptor algorithm rejects it exactly when not extensible.
+    if !state.heap.object(receiver)?.extensible {
         return Ok(MissingSelection::Complete(SetProbe::Rejected(
             crate::engine::object::operations::PropertySetRejection::NotExtensible,
         )));
@@ -265,7 +246,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: &Value,
+        value: &JsValue,
         receiver_is_target: bool,
     ) -> Result<SetProbe, RuntimeError> {
         self.ordinary_set_probe_inner(object, key, value, receiver_is_target, true)
@@ -278,7 +259,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: &Value,
+        value: &JsValue,
     ) -> Result<SetProbe, RuntimeError> {
         self.ordinary_set_probe_inner(object, key, value, true, false)
     }
@@ -287,7 +268,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: &Value,
+        value: &JsValue,
         receiver_is_target: bool,
         _walk_missing: bool,
     ) -> Result<SetProbe, RuntimeError> {
@@ -382,7 +363,7 @@ impl Runtime {
             Selected::Dense(index) => {
                 // No callback or owner release occurs between selection and
                 // this authoritative transaction, which rechecks dense bounds.
-                self.replace_dense_array_value(object, index, value)?;
+                self.replace_dense_array_value_jsvalue(object, index, value)?;
                 SetProbe::Stored(true)
             }
 
@@ -399,16 +380,13 @@ impl Runtime {
                 }
             }
             Selected::Define => {
-                // The define was validated under the selection borrow; convert
-                // outside it (node allocation needs the borrow) and commit.
-                let converted = self.raw_property_value(value)?;
-                // Clone duplicates only the handle; the guard keeps the
-                // producer edge accountable through every store-or-decline path.
+                // Retain the existing handle into storage; the borrowed input
+                // owns its producer edge throughout this transaction.
                 let stored = self.store_property_slot(
                     object,
                     key,
                     PropertyFlags::data(true, true, true),
-                    PropertySlot::Data(converted.raw()),
+                    PropertySlot::Data(value.as_raw()),
                 );
                 stored?;
                 #[cfg(feature = "profiling")]
@@ -418,10 +396,7 @@ impl Runtime {
                 SetProbe::Stored(true)
             }
             Selected::DataReplace(slot) => {
-                let converted = self.raw_property_value(value)?;
-                let raw = converted.raw();
-                // Clone duplicates only the handle; the guard keeps the
-                // producer edge accountable through every store-or-decline path.
+                let raw = value.as_raw();
                 let mut state = self.0.state.borrow_mut();
                 let replaced = replace_data(
                     &mut state,
@@ -453,7 +428,7 @@ fn replace_data(
 }
 
 pub(super) enum ReadProbe {
-    Value(Value),
+    Value(JsValue),
     Getter(Option<crate::engine::object::CallableRef>),
     Missing(Option<ObjectRef>),
     Special(SpecialKind),
@@ -611,24 +586,21 @@ impl Runtime {
         };
         Ok(match selected {
             Selected::Value(value) => {
-                let value = self.root_raw_value(value.clone())?;
-                if let (Some(output), Some(data), Value::Object(function)) =
+                // The slot owns the borrowed handle until this retain completes.
+                // No callback or mutation occurs between selection and duplication.
+                let borrowed = JsValue::from_raw(value).ok_or(RuntimeError::Invariant(
+                    "internal sentinel in ordinary data property",
+                ))?;
+                let value = self.dup_jsvalue(&borrowed)?;
+                if let (Some(output), Some(data), JsValue::Object(function)) =
                     (native.as_mut(), native_data, &value)
                 {
                     **output = Some(LinkedNativeSelection {
                         runtime: self.clone(),
-                        function: function.object_id(),
+                        function: *function,
                         data,
                     });
                 }
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(match &value {
-                    Value::Object(_) => "property_read_root_materialized.Object",
-                    Value::Symbol(_) => "property_read_root_materialized.Symbol",
-                    Value::String(_) => "property_read_root_materialized.String",
-                    Value::BigInt(_) => "property_read_root_materialized.BigInt",
-                    _ => "property_read_root_materialized.Immediate",
-                });
                 ReadProbe::Value(value)
             }
             Selected::Getter(get) => ReadProbe::Getter(
@@ -666,35 +638,28 @@ impl Runtime {
         {
             return Ok(None);
         }
-        // Convert before taking the state borrow: node allocation needs it.
+        // Select before conversion: declined fast paths must not allocate nodes.
+        let id = object.object_id();
+        let slot = {
+            let state = self.0.state.borrow();
+            if !is_ordinary(state.heap.object(id)?) {
+                return Ok(None);
+            }
+            let Some(slot) = locate(&state, id, key.atom())? else {
+                return Ok(None);
+            };
+            if !matches!(
+                state.heap.object(id)?.slots[slot.index],
+                PropertySlot::Data(_)
+            ) {
+                return Ok(None);
+            }
+            slot
+        };
+        // Conversion can allocate, but cannot execute JS or mutate this layout.
         let converted = self.raw_property_value(value)?;
         let raw = converted.raw();
-        // Clone duplicates only the handle; the guard keeps the
-        // producer edge accountable through every store-or-decline path.
         let mut state = self.0.state.borrow_mut();
-        let id = object.object_id();
-        let ordinary = match state.heap.object(id) {
-            Ok(data) => is_ordinary(data),
-            Err(error) => {
-                drop(state);
-                return Err(error.into());
-            }
-        };
-        if !ordinary {
-            drop(state);
-            return Ok(None);
-        }
-        let slot = match locate(&state, id, key.atom()) {
-            Ok(slot) => slot,
-            Err(error) => {
-                drop(state);
-                return Err(error);
-            }
-        };
-        let Some(slot) = slot else {
-            drop(state);
-            return Ok(None);
-        };
         let old = match state.heap.object(id) {
             Ok(data) => match &data.slots[slot.index] {
                 PropertySlot::Data(old) => old,
@@ -733,6 +698,26 @@ impl Runtime {
 mod tests {
     use super::*;
     use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
+
+    #[test]
+    fn ordinary_read_duplicates_existing_string_node_without_materialization() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context.eval("({value:'payload'})").unwrap() else {
+            unreachable!()
+        };
+        let key = runtime.intern_property_key("value").unwrap();
+        let before = runtime.heap_counts().string_nodes;
+        let first = runtime.ordinary_read_probe(&object, &key).unwrap();
+        let second = runtime.ordinary_read_probe(&object, &key).unwrap();
+        let (ReadProbe::Value(first), ReadProbe::Value(second)) = (first, second) else {
+            unreachable!()
+        };
+        assert!(matches!((&first, &second), (JsValue::String(a), JsValue::String(b)) if a == b));
+        assert_eq!(runtime.heap_counts().string_nodes, before);
+        runtime.release_jsvalue(first).unwrap();
+        runtime.release_jsvalue(second).unwrap();
+    }
 
     #[test]
     fn ordinary_property_replacement_preserves_roots_and_rejects_foreign_values() {
@@ -853,13 +838,13 @@ mod dense_set_tests {
         };
         let array_id = array.object_id();
         let key = runtime.intern_property_key("0").unwrap();
-        let ReadProbe::Value(Value::Object(old)) =
+        let ReadProbe::Value(JsValue::Object(old)) =
             runtime.ordinary_read_probe(&array, &key).unwrap()
         else {
             panic!("expected old value")
         };
-        let old_id = old.object_id();
-        drop(old);
+        let old_id = old;
+        runtime.release_jsvalue(JsValue::Object(old)).unwrap();
         let replacement = runtime.new_object(None).unwrap();
         let replacement_id = replacement.object_id();
         let released = runtime.new_object(None).unwrap();
@@ -875,7 +860,7 @@ mod dense_set_tests {
             Some(context.realm),
             array.clone(),
             key.clone(),
-            Value::Object(replacement),
+            runtime.into_jsvalue(Value::Object(replacement)).unwrap(),
             Value::Object(array.clone()),
             |_| panic!("dense overwrite suspended"),
         )
@@ -891,24 +876,22 @@ mod dense_set_tests {
         let other = Runtime::new();
         let foreign = other.new_object(None).unwrap();
         assert!(matches!(
-            SetStep::start_into(
-                &runtime,
+            runtime.prepare_set_property_with_receiver_in_realm(
                 Some(context.realm),
-                array.clone(),
-                key.clone(),
+                &array,
+                &key,
                 Value::Object(foreign),
                 Value::Object(array.clone()),
-                |_| panic!("foreign write suspended")
             ),
             Err(RuntimeError::WrongRuntime(_))
         ));
-        let ReadProbe::Value(Value::Object(current)) =
+        let ReadProbe::Value(JsValue::Object(current)) =
             runtime.ordinary_read_probe(&array, &key).unwrap()
         else {
             panic!("replacement disappeared")
         };
-        assert_eq!(current.object_id(), replacement_id);
-        drop(current);
+        assert_eq!(current, replacement_id);
+        runtime.release_jsvalue(JsValue::Object(current)).unwrap();
         drop(array);
         drop(key);
         runtime.run_gc().unwrap();
@@ -1063,17 +1046,13 @@ impl Runtime {
         Ok(
             match self.ordinary_read_probe_atom(&object, atom, true, native)? {
                 ReadProbe::Value(value) => {
-                    // Transfer the probed root into the internal value without
-                    // a retain/release pair.
-                    Some(crate::engine::object::OrdinaryRead::Complete(Some(
-                        self.into_jsvalue(value)?,
-                    )))
+                    Some(crate::engine::object::OrdinaryRead::Complete(Some(value)))
                 }
                 ReadProbe::Getter(None) => Some(crate::engine::object::OrdinaryRead::Complete(
                     Some(JsValue::Undefined),
                 )),
                 ReadProbe::Getter(Some(getter)) => {
-                    let receiver = self.root_value(base)?;
+                    let receiver = self.dup_jsvalue(base)?;
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "linked_read_owner_clone.ReceiverObject",

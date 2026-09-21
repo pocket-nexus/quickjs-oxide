@@ -89,10 +89,7 @@ pub(in crate::engine::vm) fn allocate_bigint_jsvalue(
 
 /// Representation-only `ToNumber` for internal values. Object conversion must
 /// be routed through a context; Symbol and BigInt conversion throw here.
-pub(in crate::engine::vm) fn to_number_jsvalue(
-    runtime: &Runtime,
-    value: &JsValue,
-) -> Result<f64, Error> {
+pub(crate) fn to_number_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<f64, Error> {
     Ok(match value {
         JsValue::Undefined => f64::NAN,
         JsValue::Null => 0.0,

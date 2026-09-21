@@ -345,11 +345,14 @@ impl From<crate::engine::builtins::ObjectCopyStep> for Step {
         match step {
             T::Complete(result) => Self::Complete(Some(result)),
 
-            T::PreparedRead(prepared) => Self::PreparedRead {
-                read: Some(prepared.read),
-                key: Some(prepared.key),
-                resume: Some(Resume::ObjectCopy(prepared.resume)),
-            },
+            T::PreparedRead(prepared) => {
+                let (read, key, resume) = prepared.into_parts();
+                Self::PreparedRead {
+                    read: Some(read),
+                    key: Some(key),
+                    resume: Some(Resume::ObjectCopy(resume)),
+                }
+            }
             T::Read {
                 object,
                 key,

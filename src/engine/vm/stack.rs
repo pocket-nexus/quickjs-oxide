@@ -9,7 +9,7 @@ use crate::engine::api::error::Error;
 use crate::engine::api::profiling::{OwnedStorageEvent as Cost, record_owned_storage};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::code::function::layout::FrameLayout;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 use crate::engine::vm::bindings::{FrameBinding, release_frame_binding as release_binding};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use std::ops::Range;
@@ -331,7 +331,7 @@ impl SlotStore {
             "call.native_pool",
             _before,
             self.native_argument_buffers.capacity(),
-            size_of::<Vec<Value>>(),
+            size_of::<Vec<JsValue>>(),
         );
         Ok(())
     }
@@ -352,7 +352,7 @@ impl SlotStore {
             "call.native_argv",
             _before,
             arguments.capacity(),
-            size_of::<Value>(),
+            size_of::<JsValue>(),
         );
         Ok(arguments)
     }
@@ -367,7 +367,7 @@ impl SlotStore {
         window: &mut FrameWindow,
         count: usize,
         method: bool,
-    ) -> Result<(Vec<Value>, Value), Error> {
+    ) -> Result<(Vec<JsValue>, JsValue), Error> {
         self.check_current(window)?;
         self.take_native_call_operands_current(runtime, window, count, method)
     }
@@ -378,8 +378,8 @@ impl SlotStore {
         window: &mut FrameWindow,
         count: usize,
         method: bool,
-    ) -> Result<(Vec<Value>, Value), Error> {
-        let mut arguments: Vec<Value> = Vec::new();
+    ) -> Result<(Vec<JsValue>, JsValue), Error> {
+        let mut arguments: Vec<JsValue> = Vec::new();
         arguments
             .try_reserve_exact(count)
             .map_err(|_| Error::internal("native call arguments allocation failed"))?;
@@ -391,16 +391,7 @@ impl SlotStore {
             let Some(FrameBinding::Direct(value)) = self.slots[index].take() else {
                 unreachable!("native operand transaction authenticated each slot")
             };
-            // Native dispatch consumes public roots; root the moved owner at
-            // this boundary and release its internal edge.
-            arguments.push(
-                runtime
-                    .root_value(&value)
-                    .map_err(runtime_error_to_vm_error)?,
-            );
-            runtime
-                .release_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
+            arguments.push(value);
         }
         window.depth -= count;
         #[cfg(feature = "profiling")]
@@ -419,16 +410,9 @@ impl SlotStore {
             .release_jsvalue(callee)
             .map_err(runtime_error_to_vm_error)?;
         let receiver = if method {
-            let receiver = self.pop_current(window)?;
-            let rooted = runtime
-                .root_value(&receiver)
-                .map_err(runtime_error_to_vm_error)?;
-            runtime
-                .release_jsvalue(receiver)
-                .map_err(runtime_error_to_vm_error)?;
-            rooted
+            self.pop_current(window)?
         } else {
-            Value::Undefined
+            JsValue::Undefined
         };
         Ok((arguments, receiver))
     }
@@ -1926,6 +1910,11 @@ mod tests {
         let (arguments, moved_receiver) = slots
             .take_native_call_operands(&runtime, &mut window, 3, true)
             .unwrap();
+        let arguments = arguments
+            .into_iter()
+            .map(|value| take_public(&runtime, value))
+            .collect::<Vec<_>>();
+        let moved_receiver = take_public(&runtime, moved_receiver);
         assert_eq!(arguments, [Value::Int(1), argument, Value::Int(3)]);
         assert_eq!(moved_receiver, receiver);
         assert_eq!(slots.depth(&window), 1);
@@ -3030,17 +3019,26 @@ mod tests {
 
     #[test]
     #[cfg(feature = "profiling")]
-    fn copy_cost_distinguishes_short_bigints_from_shared_heap_bigints() {
-        let short = Value::BigInt("1".parse().unwrap());
-        let heap = Value::BigInt("18446744073709551616".parse().unwrap());
+    fn copy_cost_preserves_small_and_large_bigint_node_handles() {
+        let runtime = Runtime::new();
+        let short = runtime
+            .into_jsvalue(Value::BigInt("1".parse().unwrap()))
+            .unwrap();
+        let heap = runtime
+            .into_jsvalue(Value::BigInt("18446744073709551616".parse().unwrap()))
+            .unwrap();
         let profile = crate::engine::api::profiling::CostProfile::start();
-        assert_eq!(super::copy_value(&short).unwrap(), short);
-        assert_eq!(super::copy_value(&heap).unwrap(), heap);
+        let short_copy = super::copy_value(&runtime, &short).unwrap();
+        let heap_copy = super::copy_value(&runtime, &heap).unwrap();
+        assert_eq!(short_copy, short);
+        assert_eq!(heap_copy, heap);
         let cost = profile.snapshot();
         assert_eq!(cost.owned_storage.value_copies, 2);
         assert_eq!(cost.owned_storage.copied_heap_roots, 0);
-        assert_eq!(cost.owned_execution_events["slot_copy.BigIntImmediate"], 1);
-        assert_eq!(cost.owned_execution_events["slot_copy.BigIntRc"], 1);
+        assert_eq!(cost.owned_execution_events["slot_copy.BigIntNode"], 2);
+        for value in [short_copy, heap_copy, short, heap] {
+            runtime.release_jsvalue(value).unwrap();
+        }
     }
 
     #[test]

@@ -364,13 +364,13 @@ pub struct AtomTable {
     entries: Vec<Option<Entry>>,
     generations: Vec<u32>,
     free: Vec<u32>,
-    strings: HashMap<JsString, Atom>,
+    strings: HashMap<JsString, Atom, crate::engine::hash::FxBuildHasher>,
     /// Released String atoms retain only weak identities. If an atom-derived
     /// JavaScript String is still live, a later interning operation must reuse
     /// that exact cell just as QuickJS's unified JSString/atom refcount does.
-    released_strings: HashMap<u32, Vec<WeakJsString>>,
+    released_strings: HashMap<u32, Vec<WeakJsString>, crate::engine::hash::FxBuildHasher>,
     released_string_cleanup_budget: u16,
-    global_symbols: HashMap<JsString, Atom>,
+    global_symbols: HashMap<JsString, Atom, crate::engine::hash::FxBuildHasher>,
     live_table_atoms: usize,
     /// Debug-only edge ledger: creation-site provenance for non-pinned atom
     /// slots.  See [`AtomTable::debug_leak_report`].
@@ -405,10 +405,10 @@ impl AtomTable {
             entries: vec![None],
             generations: vec![0],
             free: Vec::new(),
-            strings: HashMap::new(),
-            released_strings: HashMap::new(),
+            strings: HashMap::default(),
+            released_strings: HashMap::default(),
             released_string_cleanup_budget: 256,
-            global_symbols: HashMap::new(),
+            global_symbols: HashMap::default(),
             live_table_atoms: 0,
             #[cfg(debug_assertions)]
             alloc_sites: Vec::new(),
@@ -1275,6 +1275,16 @@ impl AtomTable {
             summary,
             backtrace,
         });
+    }
+
+    /// Count retained non-permanent atoms independently of heap-node liveness.
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_live_unpinned_count(&self) -> usize {
+        self.entries
+            .iter()
+            .flatten()
+            .filter(|entry| !entry.pinned && entry.ref_count.get() != 0)
+            .count()
     }
 
     /// Print the debug edge ledger for every atom that still holds a reference.

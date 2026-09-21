@@ -426,7 +426,7 @@ fn normal_calls_keep_import_views_readonly_in_the_owned_driver() {
             "pkg/importer.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     // Module startup remains a separate S07 entry. Measure only the ordinary
     // functions and their nested eval entries after the shared cells exist.
     for (name, expected) in [

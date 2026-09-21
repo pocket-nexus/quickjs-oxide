@@ -220,11 +220,11 @@ impl WrapResume {
             ObjectIteratorStep::Throw(value) => {
                 return Ok(WrapStep::Complete(Completion::Throw(value)));
             }
-            ObjectIteratorStep::Yield(value) => (runtime.root_and_release_jsvalue(value)?, false),
-            ObjectIteratorStep::Done => (Value::Undefined, true),
+            ObjectIteratorStep::Yield(value) => (value, false),
+            ObjectIteratorStep::Done => (JsValue::Undefined, true),
         };
         Ok(WrapStep::Complete(Completion::Return(
-            runtime.into_jsvalue(Value::Object(runtime.new_iterator_result(
+            runtime.into_jsvalue(Value::Object(runtime.new_iterator_result_jsvalue(
                 self.0.realm,
                 value,
                 done,

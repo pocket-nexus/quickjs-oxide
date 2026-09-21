@@ -1,6 +1,5 @@
 //! Number conversion parity across compact ASCII and the UTF-16 fallback.
-use super::{JsString, StringRepr, string_to_number, string_to_number_utf16};
-use std::rc::Rc;
+use super::{JsString, StringData, StringRepr, string_to_number, string_to_number_utf16};
 
 fn assert_number(actual: f64, expected: f64, label: &str) {
     if expected.is_nan() {
@@ -13,8 +12,8 @@ fn assert_number(actual: f64, expected: f64, label: &str) {
 fn assert_ascii_number(text: &str, expected: f64) {
     assert!(text.is_ascii());
     let compact = JsString::try_from_utf8(text).unwrap();
-    assert!(matches!(&*compact.0, StringRepr::Latin1(_)));
-    let wide = JsString(Rc::new(StringRepr::Utf16(
+    assert!(matches!(compact.0.data(), StringData::Latin1(_)));
+    let wide = JsString(StringRepr::allocate(StringData::Utf16(
         text.encode_utf16().collect::<Vec<_>>(),
     )));
     assert_number(string_to_number(&compact), expected, text);
@@ -132,9 +131,9 @@ fn long_ascii_and_rope_numbers_preserve_fallback_results_without_linearization()
             .unwrap()
             .try_concat(&JsString::try_from_utf8(&text[middle..]).unwrap())
             .unwrap();
-        assert!(matches!(&*rope.0, StringRepr::Rope(_)));
+        assert!(matches!(rope.0.data(), StringData::Rope(_)));
         assert_number(string_to_number(&rope), expected, "rope");
-        let StringRepr::Rope(repr) = &*rope.0 else {
+        let StringData::Rope(repr) = rope.0.data() else {
             unreachable!()
         };
         assert!(matches!(

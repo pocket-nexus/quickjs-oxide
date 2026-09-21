@@ -1578,7 +1578,9 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
         runtime.typed_array_read_index(&view, 0).unwrap(),
         Some(Value::Int(41))
     );
-    let symbol = second.eval("Symbol()").unwrap();
+    let symbol = runtime
+        .into_jsvalue(second.eval("Symbol()").unwrap())
+        .unwrap();
     let NativeConversion::Throw(Value::Object(error)) =
         write::TypedWriteStep::set_primitive_result(
             &runtime,
@@ -1605,7 +1607,7 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
         Err(RuntimeError::WrongRuntime(_))
     ));
     drop(error);
-    drop(symbol);
+    runtime.release_jsvalue(symbol).unwrap();
     drop(view);
     runtime.run_gc().unwrap();
     for id in [view_id, buffer_id] {

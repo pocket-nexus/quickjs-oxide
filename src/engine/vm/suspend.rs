@@ -208,19 +208,13 @@ impl EncodedVmActivation {
         Ok(atoms)
     }
 
-    /// Release the caller-owned string/BigInt producer edge carried by every
-    /// boundary-converted raw value, once the heap owner has retained its own
-    /// copies (or immediately when the activation is never stored).
+    /// Balance direct storage string/BigInt edges after publication. The
+    /// matching storage cleanup skips these values. CallInput and FrameCold
+    /// independently own this/newTarget/normalized-this, so their raw aliases
+    /// must never be released here.
     pub(crate) fn release_conversion_edges(&mut self, runtime: &Runtime) {
         let vm = &self.data.vm;
-        for value in vm
-            .stack
-            .iter()
-            .chain(self.data.original_arguments.iter())
-            .chain(std::iter::once(&vm.this_value))
-            .chain(vm.normalized_this.iter())
-            .chain(std::iter::once(&vm.new_target))
-        {
+        for value in vm.stack.iter().chain(self.data.original_arguments.iter()) {
             drop(ConvertedValue::new(runtime, value.clone()));
         }
         for binding in self.data.arguments.iter().chain(self.data.locals.iter()) {
@@ -402,13 +396,7 @@ pub(super) fn freeze_entry(
         .iter()
         .map(|binding| encode_generator_frame_binding(runtime, binding))
         .collect::<Result<Vec<_>, _>>()?;
-    let normalized_this = match entry.cold.normalized_this.as_ref() {
-        Some(value) => {
-            let mut converted = runtime.raw_property_value(value)?;
-            Some(converted.take())
-        }
-        None => None,
-    };
+    let normalized_this = entry.cold.normalized_this.as_ref().map(JsValue::as_raw);
     let vm = GeneratorVmActivation {
         stack: storage
             .operands
@@ -570,7 +558,7 @@ pub(crate) fn thaw(
         .vm
         .normalized_this
         .as_ref()
-        .map(|value| runtime.root_raw_value(value.clone()))
+        .map(|value| decode_raw_jsvalue(&runtime, value.clone()))
         .transpose()?;
     let storage = roots.take();
     let mut entry = super::frame::FrameEntry {
@@ -623,6 +611,24 @@ mod tests {
             .generator_snapshot(generator.object_id())
             .unwrap();
         (generator, data.unwrap())
+    }
+
+    #[test]
+    fn suspended_generator_preserves_primitive_call_input_across_yields() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context.eval(r#"(()=>{
+                function* values() { yield 1; yield 2; }
+                for (const receiver of ['held string', 12345678901234567890n]) {
+                    const iterator = values.call(receiver);
+                    if (iterator.next().value !== 1 || iterator.next().value !== 2 || !iterator.next().done) return false;
+                }
+                String.prototype[Symbol.iterator] = values;
+                return Uint32Array.from('anything').join(',') === '1,2';
+            })()"#).unwrap(),
+            crate::engine::value::Value::Bool(true),
+        );
     }
 
     #[test]

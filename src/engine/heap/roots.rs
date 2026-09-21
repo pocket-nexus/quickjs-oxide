@@ -10,8 +10,7 @@ use crate::engine::vm::bindings::closure_view_matches_cell;
 
 impl Runtime {
     /// Store an internal value into a fresh captured cell, consuming the
-    /// value's edges. The cell retains its own copy edge transactionally;
-    /// the passed value's edges are released before returning.
+    /// value's edges directly. A rejected allocation releases the input.
     pub(crate) fn new_var_ref(
         &self,
         value: JsValue,
@@ -20,31 +19,17 @@ impl Runtime {
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
         let _operation = self.operation();
-        let raw = value.as_raw();
-        let mut state = self.0.state.borrow_mut();
-        let retained_atom = if let RawValue::Symbol(index) = &raw {
-            state.atoms.retain_index(*index)?;
-            Some(*index)
-        } else {
-            None
-        };
-        let data = VarRefData::captured(raw, is_lexical, is_const, kind);
-        let id = match state.heap.allocate_var_ref(data) {
-            Ok(id) => id,
-            Err(error) => {
-                if let Some(index) = retained_atom {
-                    state.atoms.release_index(index)?;
-                }
-                drop(state);
-                self.release_jsvalue(value)?;
-                return Err(error.into());
+        let data = VarRefData::captured(value.into_raw(), is_lexical, is_const, kind);
+        let allocation = self.0.state.borrow_mut().heap.allocate_var_ref_owned(data);
+        match allocation {
+            Ok(id) => Ok(VarRefRoot::from_owned_handle(self.clone(), id)),
+            Err((error, data)) => {
+                self.release_jsvalue(
+                    JsValue::from_raw(data.value).expect("captured internal value"),
+                )?;
+                Err(error.into())
             }
-        };
-        drop(state);
-        // The cell retained its own copy edge; the consumed value's edge
-        // is no longer needed.
-        self.release_jsvalue(value)?;
-        Ok(VarRefRoot::from_owned_handle(self.clone(), id))
+        }
     }
 
     /// Public-root boundary form of [`Runtime::new_var_ref`]: converts the
@@ -58,7 +43,7 @@ impl Runtime {
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
         self.validate_value_domain(&value, "captured variable")?;
-        let value = self.unroot_value(&value)?;
+        let value = self.into_jsvalue(value)?;
         self.new_var_ref(value, is_lexical, is_const, kind)
     }
 
@@ -388,57 +373,55 @@ impl Runtime {
         Ok(())
     }
 
-    /// Replace a captured cell's value, consuming the passed value's edges.
-    /// The cell retains its own copy edge transactionally and the previous
-    /// value's edges are released by the replacement; the passed value's
-    /// edges are released before returning.
+    /// Replace a captured value by moving its edge into the cell. Validation
+    /// failure releases the input; success releases the previous cell edge.
     pub(crate) fn write_var_ref(
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
         value: JsValue,
     ) -> Result<(), RuntimeError> {
         let _operation = self.operation();
-        if !root.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("closure variable"));
+        let validation = (|| {
+            if !root.belongs_to(self) {
+                return Err(RuntimeError::WrongRuntime("closure variable"));
+            }
+            if self
+                .0
+                .state
+                .borrow()
+                .heap
+                .var_ref(root.id())?
+                .kind
+                .is_private()
+            {
+                return Err(RuntimeError::Invariant(
+                    "ordinary VarRef write reached a private-element binding",
+                ));
+            }
+            Ok(())
+        })();
+        if let Err(error) = validation {
+            self.release_jsvalue(value)?;
+            return Err(error);
         }
-        if self
+        let result = self
             .0
             .state
-            .borrow()
+            .borrow_mut()
             .heap
-            .var_ref(root.id())?
-            .kind
-            .is_private()
-        {
-            return Err(RuntimeError::Invariant(
-                "ordinary VarRef write reached a private-element binding",
-            ));
-        }
-        let raw = value.as_raw();
-        let mut state = self.0.state.borrow_mut();
-        let retained_atom = if let RawValue::Symbol(index) = &raw {
-            state.atoms.retain_index(*index)?;
-            Some(*index)
-        } else {
-            None
-        };
-        let cleanup = match state.heap.replace_var_ref_value(root.id(), raw) {
-            Ok(cleanup) => cleanup,
-            Err(error) => {
-                if let Some(index) = retained_atom {
-                    state.atoms.release_index(index)?;
+            .replace_var_ref_value_owned(root.id(), value.into_raw());
+        match result {
+            Ok(previous) => {
+                if let Some(previous) = JsValue::from_raw(previous) {
+                    self.release_jsvalue(previous)?;
                 }
-                drop(state);
-                self.release_jsvalue(value)?;
-                return Err(error.into());
+                Ok(())
             }
-        };
-        state.apply_cleanup(cleanup)?;
-        drop(state);
-        // The cell retained its own copy edge; the consumed value's edge
-        // is no longer needed.
-        self.release_jsvalue(value)?;
-        Ok(())
+            Err((error, rejected)) => {
+                self.release_jsvalue(JsValue::from_raw(rejected).expect("internal replacement"))?;
+                Err(error.into())
+            }
+        }
     }
 
     /// Public-root boundary form of [`Runtime::write_var_ref`].
@@ -449,7 +432,7 @@ impl Runtime {
         value: Value,
     ) -> Result<(), RuntimeError> {
         self.validate_value_domain(&value, "captured variable")?;
-        let value = self.unroot_value(&value)?;
+        let value = self.into_jsvalue(value)?;
         self.write_var_ref(root, value)
     }
 
