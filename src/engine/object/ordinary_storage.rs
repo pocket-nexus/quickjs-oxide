@@ -1214,7 +1214,7 @@ mod dense_array_read_tests {
     fn dense_array_read_leaf_reads_scalars_without_changing_owners() {
         let runtime = Runtime::new();
         let base = runtime
-            .into_jsvalue(receiver(&runtime, "[undefined,null,true,17,-0,NaN]"))
+            .into_jsvalue(receiver(&runtime, "[undefined,null,true,17,-0,1n,NaN]"))
             .unwrap();
         let keep = runtime.dup_jsvalue(&base).unwrap();
         let JsValue::Object(object) = &base else {
@@ -1228,6 +1228,7 @@ mod dense_array_read_tests {
             Value::Bool(true),
             Value::Int(17),
             Value::Float(-0.0),
+            Value::BigInt(crate::engine::value::bigint::JsBigInt::one()),
         ]
         .iter()
         .enumerate()
@@ -1243,7 +1244,7 @@ mod dense_array_read_tests {
             );
         }
         assert!(
-            matches!(runtime.try_dense_array_immediate_read(&base, 5), Some(JsValue::Float(v)) if v.is_nan())
+            matches!(runtime.try_dense_array_immediate_read(&base, 6), Some(JsValue::Float(v)) if v.is_nan())
         );
         assert_eq!(
             runtime.0.state.borrow().heap.object_strong_count(object),
@@ -1263,7 +1264,8 @@ mod dense_array_read_tests {
             "Object.defineProperty([1], '0', {writable:false})",
             "[{}]",
             "['x']",
-            "[1n]",
+            // Short BigInts are edge-free; this case must retain a heap payload.
+            "[9223372036854775808n]",
             "[Symbol()]",
             "new Proxy([1], {get(){throw 72}})",
             "new Uint8Array([1])",
@@ -1279,17 +1281,18 @@ mod dense_array_read_tests {
             };
             let object = *object;
             let count = runtime.0.state.borrow().heap.object_strong_count(object);
-            assert!(
-                runtime.try_dense_array_immediate_read(&base, 0).is_none(),
-                "{expression}"
-            );
-            assert_eq!(
-                runtime.0.state.borrow().heap.object_strong_count(object),
-                count
-            );
-            assert!(runtime.0.state.borrow().heap.object(object).is_ok());
+            let result = runtime.try_dense_array_immediate_read(&base, 0);
+            let declined = result.is_none();
+            if let Some(value) = result {
+                runtime.release_jsvalue(value).unwrap();
+            }
+            let count_after = runtime.0.state.borrow().heap.object_strong_count(object);
+            let still_live = runtime.0.state.borrow().heap.object(object).is_ok();
             runtime.release_jsvalue(keep).unwrap();
             runtime.release_jsvalue(base).unwrap();
+            assert!(declined, "{expression}");
+            assert_eq!(count_after, count);
+            assert!(still_live);
         }
         let runtime = Runtime::new();
         let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
@@ -1407,6 +1410,7 @@ mod ordinary_field_leaf_tests {
             "({x:42})",
             "({x:1.5})",
             "({x:-0})",
+            "({x:42n})",
         ] {
             let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
             let retained = runtime.dup_jsvalue(&base).unwrap();
@@ -1434,7 +1438,8 @@ mod ordinary_field_leaf_tests {
             "new Proxy({x:42},{get(){throw 42},set(){throw 42}})",
             "({x:{}})",
             "({x:'text'})",
-            "({x:42n})",
+            // Heap BigInts still decline; Short BigInts are covered above.
+            "({x:9223372036854775808n})",
             "({x:Symbol()})",
             "([])",
             "new Uint8Array(1)",
@@ -1442,23 +1447,21 @@ mod ordinary_field_leaf_tests {
         ] {
             let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
             let retained = runtime.dup_jsvalue(&base).unwrap();
-            assert!(
-                runtime
-                    .try_ordinary_field_immediate_read(&base, &executable, index)
-                    .is_none(),
-                "{source}"
-            );
-            assert!(
-                !runtime.try_ordinary_field_immediate_write(
-                    &base,
-                    &executable,
-                    index,
-                    &JsValue::Int(17)
-                ),
-                "{source}"
+            let result = runtime.try_ordinary_field_immediate_read(&base, &executable, index);
+            let read_declined = result.is_none();
+            if let Some(value) = result {
+                runtime.release_jsvalue(value).unwrap();
+            }
+            let write_declined = !runtime.try_ordinary_field_immediate_write(
+                &base,
+                &executable,
+                index,
+                &JsValue::Int(17),
             );
             runtime.release_jsvalue(retained).unwrap();
             runtime.release_jsvalue(base).unwrap();
+            assert!(read_declined, "{source}");
+            assert!(write_declined, "{source}");
         }
         for source in [
             "Object.freeze({x:42})",

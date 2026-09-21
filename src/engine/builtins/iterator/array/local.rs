@@ -230,7 +230,8 @@ mod dense_immediate_tests {
     #[test]
     fn dense_immediate_next_keeps_source_owned_by_iterator_through_gc() {
         let runtime = Runtime::new();
-        let (iterator, source, kind) = iterator(&runtime, "[undefined,null,true,7,1.5].values()");
+        let (iterator, source, kind) =
+            iterator(&runtime, "[undefined,null,true,7,1.5,1n].values()");
         runtime.run_gc().unwrap();
         let owners = runtime
             .0
@@ -245,6 +246,7 @@ mod dense_immediate_tests {
             Value::Bool(true),
             Value::Int(7),
             Value::Float(1.5),
+            Value::BigInt(crate::engine::value::bigint::JsBigInt::one()),
         ]
         .into_iter()
         .enumerate()
@@ -285,7 +287,7 @@ mod dense_immediate_tests {
             runtime.run_gc().unwrap();
         }
         assert!(
-            ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 5, kind)
+            ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 6, kind)
                 .unwrap()
                 .map(|value| runtime.root_and_release_jsvalue(value).unwrap())
                 .is_none()
@@ -313,7 +315,8 @@ mod dense_immediate_tests {
             "[{}].values()",
             "[Symbol('x')].values()",
             "['x'].values()",
-            "[1n].values()",
+            // Short BigInts are now immediates; exercise an owning heap BigInt.
+            "[9223372036854775808n].values()",
             "[,1].values()",
             "[1].entries()",
             "new Uint8Array([1]).values()",
