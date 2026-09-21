@@ -419,6 +419,7 @@ impl Runtime {
                 | JsValue::Bool(_)
                 | JsValue::Int(_)
                 | JsValue::Float(_)
+                | JsValue::ShortBigInt(_)
         ) || self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready
         {
             return Ok(false);
@@ -483,6 +484,7 @@ impl Runtime {
                 | JsValue::Bool(_)
                 | JsValue::Int(_)
                 | JsValue::Float(_)
+                | JsValue::ShortBigInt(_)
         ) || self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready
         {
             return Ok(false);

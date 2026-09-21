@@ -266,7 +266,12 @@ fn value(number: Number) -> JsValue {
 fn immediate(value: &JsValue) -> bool {
     matches!(
         value,
-        JsValue::Undefined | JsValue::Null | JsValue::Bool(_) | JsValue::Int(_) | JsValue::Float(_)
+        JsValue::Undefined
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_)
     )
 }
 fn binary(
@@ -299,7 +304,7 @@ fn release_displaced(
 }
 
 /// Only inline scalars can be discarded without touching runtime storage.
-/// String and BigInt now own arena edges, so their last release must follow
+/// String and heap BigInt own arena edges, so their last release must follow
 /// the same readiness/publication discipline as objects and symbols.
 fn primitive_release_owner(value: &JsValue) -> bool {
     immediate(value)

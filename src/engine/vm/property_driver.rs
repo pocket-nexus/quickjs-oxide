@@ -543,6 +543,7 @@ fn complete_read(
                         | JsValue::Bool(_)
                         | JsValue::Int(_)
                         | JsValue::Float(_)
+                        | JsValue::ShortBigInt(_)
                 ));
         let mut discarded = [None, None];
         for destination in discarded.iter_mut().take(consume) {

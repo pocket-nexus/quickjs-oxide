@@ -46,6 +46,7 @@ impl ArrayNextStep {
             (_, RawValue::Bool(value)) => JsValue::Bool(*value),
             (_, RawValue::Int(value)) => JsValue::Int(*value),
             (_, RawValue::Float(value)) => JsValue::Float(*value),
+            (_, RawValue::ShortBigInt(value)) => JsValue::ShortBigInt(*value),
             _ => return Ok(None),
         };
         let shape = state.heap.shape(object.shape)?;

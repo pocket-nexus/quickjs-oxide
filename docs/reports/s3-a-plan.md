@@ -85,10 +85,10 @@ String/BigInt，8B 无从谈起。
    `collection_key.rs`（`same_value_zero`/`hash`）、StrictEq、switch
    字符串匹配改为「id 相等快路 + arena 解引用内容兜底」；动工先盘点
    全部 `RawValue` 相等性使用点。
-7. BigInt：当前实现为 `RawValue::BigInt(BigIntId)` 全 arena，包含 `Short`。
-   **该决定进入回退修复，不再把短整数内联推迟到 A4**：§8 的 R1 优先在
-   16B `JsValue`/`RawValue` 内恢复完整 `ShortBigInt(i64)`，真正 Heap BigInt
-   保留句柄；公共 API 与算术内核保持不变。表示修复已按 §8.7 实施，性能关闭仍须对应测量。将来 8B NaN-box 的短整数编码范围另行决策，不限制本轮 i64。
+7. BigInt：原先 Short 也全 arena 的决定已由 §8.7 修订：当前 16B
+   `JsValue`/`RawValue` 使用完整 `ShortBigInt(i64)` 立即值，真正 Heap BigInt
+   保留 `BigIntId`；公共 API 与算术内核保持不变。性能关闭仍须对应测量。
+   不把恢复短值优化推迟到 A4；将来 8B NaN-box 的短整数编码范围另行决策。
 8. 内存语义注意：字符串/BigInt 从「`Rc` 独立分配」变为「arena 节点 +
    free-list 复用 + generation」——teardown 的 `live == 0` 断言与
    `GcStats`/`HeapCounts` 公共诊断（`api/mod.rs:15` 导出）口径需同步
@@ -822,3 +822,11 @@ teardown 断言：
 按用户要求不执行测试。现阶段只确认上述源码成本已移除；后续以该批不可变
 提交的同协议 benchmark/profile 判断各回退是否关闭。未完成的语义门禁和
 §8.1 逐项性能门禁仍有效，不能据本批补丁宣称阶段 A 完成。
+
+
+第一轮 profile 还定位到 ShortBigInt 在 `vm/stack.rs::copy_value` 漏掉 scalar
+分支，落入 `inline(never)` 的 copy_reference。固定工作量 bigint32 cycles
+仍高于 pre-A 20.2%，揭示上游 400 ns 粗粒度结果不能作为关闭证明。已追补该
+分支，并补齐 run immediate release、ordinary/IC、dense pop、array iterator、
+inline scalar push 与原始参数 scalar 判定；这些均是 Short 无边值准入，不
+放宽 Math/ToNumber 的 Number 类型检查。追补效果另用新提交测量。

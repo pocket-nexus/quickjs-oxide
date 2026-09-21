@@ -119,6 +119,7 @@ impl Runtime {
             Some(RawValue::Bool(v)) => JsValue::Bool(*v),
             Some(RawValue::Int(v)) => JsValue::Int(*v),
             Some(RawValue::Float(v)) => JsValue::Float(*v),
+            Some(RawValue::ShortBigInt(v)) => JsValue::ShortBigInt(*v),
             _ => return Ok(None),
         };
         if length != 0 {
