@@ -1,6 +1,6 @@
 # S3-A 计划：8B 值表示——融合实施
 
-> 状态：W1–W5 已有实现，所有权修复与终态收敛进行中；W6 尚未验收。起点为 pre-A 代码基线。本文档是
+> 状态：W1–W5 的 16B 实现已收口；性能仍有回退，本轮按要求不运行测试，W6 尚未验收。当前证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
 > `performance-architecture.md` §4（方案 A）的实施计划与验收规则；若两处
 > 表述冲突，**以本文档为准**。约束与证据附录继承
 > `performance-architecture.md` §0/§11/附录。
@@ -434,7 +434,9 @@ dup/release。按值传参不保证寄存器传递或计数下降；必须检查
   `--workspace --all-targets -- -D warnings` 零警告，`cargo fmt --check` /
   source-layout / rust-only 全绿。
 
-### 7.4 实现状态与 A 阶段验收口径（2026-09-21）
+### 7.4 早期实现状态与 A 阶段验收口径（历史快照）
+
+下表为早期状态，当前实现与证据以 §7.8 和收口报告为准。
 
 | 手段 | 状态 | 覆盖 | 缺口 |
 | --- | --- | --- | --- |
@@ -486,7 +488,9 @@ python3 scripts/checks/run-oracle-isolated.py \
 若没有开工前不可变 receipt，须如实标注“从 pre-A commit 重建”，固定
 commit、构建 flags、二进制 hash 与工作负载 hash，不能倒填为原始实测。
 
-### 7.6 本轮终态收敛的源码证据（未替代 W6）
+### 7.6 前一收敛快照的源码证据（历史，未替代 W6）
+
+本节记录早期迁移状态；下列残余适配已由 §7.8 后续实现继续收口，不代表当前待办。
 
 尺寸由现有编译期断言约束：`JsValue = 16B`、`AtomIdx = 4B`、
 `ShapeEntry = 8B`、`RawValue ≤ 16B`。两种值均无 Copy/Drop；生产环境无
@@ -538,17 +542,32 @@ Promise.finally 的具体挂起记录在取消/异常时释放 settlement，thun
 上述尚未闭合的内部调用链及 §5 门禁未有完整证据前，A 仍不得标记验收完成。
 
 
-### 7.7 当前收敛快照的验证记录（2026-09-21）
+### 7.7 历史验证记录（仅对应 d184986f）
 
-- `cargo test --locked --workspace --all-targets --all-features -- --include-ignored`
-  已完整通过；库含 profiling/test262-host 共 2576 个用例，oracle 开启固定
-  QJS_ORACLE，并执行默认 ignored 压力用例。正常 teardown 断言保留。
-- Rust 1.88 全 workspace/all-targets/all-features clippy `-D warnings` 通过。
-- String/BigInt 的 15 个 array/call/spread 路径验证原节点身份和最终释放；
-  编号/命名 RegExp 捕获复用原节点。profiling 原地字符串追加和 IC 命中
-  断言通过，bound merge 记录实际 move，新增路径没有伪造 root/copy 计数。
-- 完整 Test262 首轮仅新增同一 TypedArray/from_string 用例的 strict/sloppy
-  两个 engine-fault。已修复 suspend 对 CallInput 字符串/BigInt 输入的重复
-  释放；String/BigInt generator receiver 与该场景的回归已通过。
-- 最终完整 Test262 与同协议 benchmark receipt 正在生成；最终数字另记
-  `s3-a-closure.md`。本记录不把历史或旧源码测试视为当前源码通过。
+`d184986f0da982931f35a3f2d923f10f5857756a` 曾完整通过 2576 个库测试和
+912 个 oracle 测试（包含 ignored），正常 teardown 断言保留。完整 Test262
+80032 eligible 中 79982 pass，43 runtime / 7 parse 失败与固定基线一致。
+源码指纹为 `f3fde6dacadbfdfca58b1eb7c3381e5e9f17af827eced765440d88f8320409d0`。
+
+后续 builtins、异常传输、包装对象和失败交接迁移改变了源码。本节通过记录
+**不能用于认证当前版本**；本轮按用户要求不运行 unit/oracle/Test262。
+
+### 7.8 当前实现收口（2026-09-21）
+
+W1–W5 的 16B 路线已完成本轮实现收口：内部普通值与异常值使用 JsValue；
+String/BigInt 属性、容器、包装对象保留 arena 句柄；API/真实 host 边界才物化
+Value。global/VarRef、Proxy/general descriptors、Iterator callback/close reason、
+JSON module 和 legacy async-from-sync 内部链已完成迁移与具名边界盘点。
+
+Step/Resume/实际挂起 owner 统一回收；交接遵守先验证和预留、再 take 的顺序。
+构造器 newTarget/argv、Promise、String concat、Proxy trap、VM discard、
+数值结果部分入栈、暂停编码/恢复失败均有显式释放。JsValue/RawValue 无 Drop，
+没有增加通用逐值 RAII，oracle 期望与 teardown 断言保持原要求。
+
+源码、静态检查及性能 receipt 详见 本地记录（不纳入 Git）。
+W6 当前源码语义门禁待执行，不能声称当前版本已证明零泄漏或零 oracle 偏差；
+A4 的 8B NaN-box 仍是独立测量阶段，不计入本轮 16B 工作流。
+
+最终性能快照为 `161bdbb2`：属性读取下降约 16%/19%/29%，但 scaling 耗时比
+几何均值 +4.9%，BigInt 算术耗时 2–2.5×，已完成的 V8 两项约降分 9%。
+不能据表示收口宣称全部性能目标完成；回退、部分采样与后续顺序见收口报告。
