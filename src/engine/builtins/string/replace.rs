@@ -67,6 +67,9 @@ impl Drop for StringReplaceResumeState {
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        if let Some(read) = self.step_pending.read.take() {
+            read.release(&self.runtime);
+        }
         if let Some(value) = self.step_pending.value.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -729,7 +732,7 @@ mod tests {
             panic!("primitive replace must complete locally")
         };
         assert_eq!(
-            runtime.root_value(&value).unwrap(),
+            runtime.root_and_release_jsvalue(value).unwrap(),
             Value::String(JsString::from_static("axbax"))
         );
         assert_eq!(
@@ -741,6 +744,10 @@ mod tests {
                 .unwrap_or(0),
             0
         );
+        invocation.release(&runtime).unwrap();
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
     }
 
     #[test]

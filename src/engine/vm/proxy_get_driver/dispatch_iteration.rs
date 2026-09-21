@@ -2,7 +2,7 @@
 use super::JsValue;
 use super::{
     DirectCallTarget, Error, Finish, IteratorProgress, Next, Progress, Query, Resume, ReturnOwner,
-    RunningExecution, Runtime, Step, Value, continue_iterator, runtime_error_to_vm_error,
+    RunningExecution, Runtime, Step, continue_iterator, runtime_error_to_vm_error,
 };
 
 #[inline(never)]
@@ -119,12 +119,8 @@ pub(super) fn advance(
                     crate::engine::builtins::ArrayMutationKind::Push(
                         crate::engine::builtins::native::ArrayPushKind::Push,
                     ),
-                    Value::Object(object),
-                    vec![
-                        runtime
-                            .root_and_release_jsvalue(value)
-                            .map_err(runtime_error_to_vm_error)?,
-                    ],
+                    object,
+                    vec![value],
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -229,16 +225,22 @@ pub(super) fn advance(
             Step::ObjectTag { receiver } => {
                 let receiver = receiver.take().expect("selected Step field");
 
-                *step = crate::engine::builtins::ObjectStringStep::start(
-                    runtime,
-                    realm,
-                    crate::engine::builtins::ObjectStringKind::Tag,
-                    &super::super::call::NativeInvocation::Call {
-                        this_value: receiver,
-                    },
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .into();
+                *step = runtime
+                    .dispatch_borrowed_invocation(
+                        super::super::call::NativeInvocation::Call {
+                            this_value: receiver,
+                        },
+                        |invocation| {
+                            crate::engine::builtins::ObjectStringStep::start(
+                                runtime,
+                                realm,
+                                crate::engine::builtins::ObjectStringKind::Tag,
+                                invocation,
+                            )
+                        },
+                    )
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
                 continue;
             }
             Step::RegExpExec {

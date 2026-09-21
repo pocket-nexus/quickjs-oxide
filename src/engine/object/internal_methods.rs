@@ -17,7 +17,7 @@ use crate::engine::builtins::CanonicalNumericIndex;
 use crate::engine::heap::{ContextId, ObjectPayload, ProxyData};
 use crate::engine::object::operations::{
     InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
-    PropertySetRejection, complete_to_validation_record, descriptor_to_validation_record,
+    complete_to_validation_record, descriptor_to_validation_record,
 };
 use crate::engine::object::property::validate_and_apply_property_descriptor;
 use crate::engine::object::{
@@ -827,7 +827,13 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Completion, RuntimeError> {
-        let mut step = ProxyGetStep::start(self, realm, object.clone(), key.clone(), receiver)?;
+        let mut step = ProxyGetStep::start(
+            self,
+            realm,
+            object.clone(),
+            key.clone(),
+            self.into_jsvalue(receiver)?,
+        )?;
         loop {
             step = match step {
                 ProxyGetStep::Complete(completion) => return Ok(completion),
@@ -839,19 +845,15 @@ impl Runtime {
                 }
                 ProxyGetStep::Call { mut resume } => {
                     let target = resume.take_call_target();
-                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|value| self.root_and_release_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     {
                         let completion = match target {
                             DirectCallTarget::Callable(callable) => {
-                                self.call_internal(realm, &callable, receiver, &arguments)?
+                                self.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                             }
                             DirectCallTarget::NonCallableProxy(proxy) => {
-                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                                self.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
                             }
                         };
                         resume.resume(self, completion)?
@@ -891,15 +893,17 @@ impl Runtime {
                 Ok(NativeConversion::Value(InternalSetResult::Rejected(reason)))
             }
             PropertySetAction::Call { payload } => {
-                let crate::engine::object::operations::PropertySetterCall {
-                    setter,
-                    receiver,
-                    argument,
-                } = *payload;
+                let (setter, receiver, argument) = payload.into_parts();
 
                 let _operation = self.operation();
-                match self.call_internal(realm, &setter, receiver, &[argument])? {
-                    Completion::Return(_) => {
+                match self.call_internal_jsvalue(
+                    realm,
+                    &setter,
+                    self.into_jsvalue(receiver)?,
+                    vec![argument],
+                )? {
+                    Completion::Return(value) => {
+                        self.release_jsvalue(value)?;
                         Ok(NativeConversion::Value(InternalSetResult::Accepted))
                     }
                     Completion::Throw(value) => Ok(NativeConversion::Throw(
@@ -910,44 +914,11 @@ impl Runtime {
         }
     }
 
-    /// Only encountered special targets reach this dispatch. Ordinary own
-    /// writes do not pre-classify or walk any prototype here.
-    pub(super) fn try_special_set(
-        &self,
-        kind: SpecialKind,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &Value,
-        receiver: &Value,
-    ) -> Result<Option<NativeConversion<InternalSetResult>>, RuntimeError> {
-        if matches!(kind, SpecialKind::Proxy) {
-            return self
-                .proxy_set(realm, object, key, value.clone(), receiver.clone())
-                .map(Some);
-        }
-        if matches!(kind, SpecialKind::ModuleNamespace) {
-            return Ok(Some(NativeConversion::Value(InternalSetResult::Rejected(
-                PropertySetRejection::ReadOnly,
-            ))));
-        }
-        if !matches!(kind, SpecialKind::TypedArray) {
-            return Ok(None);
-        }
-        let Some(step) = self.prepare_typed_array_set(object, key, value, receiver)? else {
-            return Ok(None);
-        };
-        Ok(Some(match step.finish_sync(self, realm)? {
-            NativeConversion::Value(_) => NativeConversion::Value(InternalSetResult::Accepted),
-            NativeConversion::Throw(value) => NativeConversion::Throw(value),
-        }))
-    }
-
     pub(crate) fn prepare_typed_array_set(
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: &Value,
+        value: &JsValue,
         receiver: &Value,
     ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
         self.prepare_typed_array_set_in_realm(None, object, key, value, receiver)
@@ -958,7 +929,7 @@ impl Runtime {
         _realm: Option<ContextId>,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: &Value,
+        value: &JsValue,
         receiver: &Value,
     ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
         use crate::engine::builtins::TypedWriteStep;
@@ -969,12 +940,12 @@ impl Runtime {
             ))),
             TypedSetSelection::Element(index) => {
                 if let Some(realm) = _realm
-                    && !matches!(value, Value::Object(_))
+                    && !matches!(value, JsValue::Object(_))
                 {
                     return TypedWriteStep::set_primitive(self, realm, object, index, value)
                         .map(Some);
                 }
-                TypedWriteStep::set(self, object.clone(), index, value.clone()).map(Some)
+                TypedWriteStep::set(self, object.clone(), index, self.dup_jsvalue(value)?).map(Some)
             }
         }
     }
@@ -984,10 +955,10 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: &Value,
+        value: &JsValue,
         receiver: &Value,
     ) -> Result<Option<NativeConversion<bool>>, RuntimeError> {
-        if matches!(value, Value::Object(_)) {
+        if matches!(value, JsValue::Object(_)) {
             return Err(RuntimeError::Invariant(
                 "primitive typed Set received an object",
             ));
@@ -1334,9 +1305,21 @@ impl Runtime {
         owned_arguments
             .try_reserve_exact(arguments.len())
             .map_err(|_| RuntimeError::Invariant("Proxy call arguments allocation failed"))?;
-        owned_arguments.extend_from_slice(arguments);
-        let mut step =
-            ProxyCallStep::start(self, realm, proxy.clone(), this_value, owned_arguments)?;
+        for argument in arguments {
+            owned_arguments.push(self.unroot_value(argument)?);
+        }
+        let receiver = self.into_jsvalue(this_value)?;
+        self.call_proxy_jsvalue(realm, proxy, receiver, owned_arguments)
+    }
+
+    pub(crate) fn call_proxy_jsvalue(
+        &self,
+        realm: ContextId,
+        proxy: &ObjectRef,
+        receiver: crate::engine::value::JsValue,
+        arguments: Vec<crate::engine::value::JsValue>,
+    ) -> Result<Completion, RuntimeError> {
+        let mut step = ProxyCallStep::start(self, realm, proxy.clone(), receiver, arguments)?;
         loop {
             step = match step {
                 ProxyCallStep::Complete(completion) => return Ok(completion),
@@ -1351,19 +1334,15 @@ impl Runtime {
                 }
                 ProxyCallStep::Call { mut resume } => {
                     let target = resume.take_call_target();
-                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|value| self.root_and_release_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     {
                         let completion = match target {
                             DirectCallTarget::Callable(callable) => {
-                                self.call_internal(realm, &callable, receiver, &arguments)?
+                                self.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                             }
                             DirectCallTarget::NonCallableProxy(proxy) => {
-                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                                self.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
                             }
                         };
                         resume.resume(self, completion)?
@@ -1373,12 +1352,12 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn construct_proxy(
+    pub(crate) fn construct_proxy_jsvalue(
         &self,
         realm: ContextId,
         proxy: &ConstructorRef,
         new_target: ConstructNewTarget,
-        arguments: &[Value],
+        arguments: Vec<crate::engine::value::JsValue>,
     ) -> Result<Completion, RuntimeError> {
         construct::finish(
             self,
@@ -1388,7 +1367,7 @@ impl Runtime {
                 realm,
                 proxy.clone(),
                 new_target,
-                arguments.to_vec(),
+                arguments,
             )?,
         )
     }

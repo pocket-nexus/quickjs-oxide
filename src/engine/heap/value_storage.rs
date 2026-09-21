@@ -16,6 +16,24 @@ impl Heap {
         }
     }
 
+    /// Mutable payload access requires a single owning arena edge. The
+    /// JsString append kernel additionally authenticates its Rc buffer owner,
+    /// covering public roots, constants, and payloads shared by distinct nodes.
+    pub(crate) fn unique_string_mut(
+        &mut self,
+        id: StringId,
+    ) -> Result<Option<&mut JsString>, HeapError> {
+        if self.strong_count(RawId::String(id))? != 1 {
+            return Ok(None);
+        }
+        match &mut self.live_node_mut(RawId::String(id))?.data {
+            NodeData::String(value) => Ok(Some(value)),
+            _ => Err(HeapError::Invariant(
+                "typed string mutation reached another node payload",
+            )),
+        }
+    }
+
     /// Trusted shared read for a live `StringId` held by an owning edge.
     #[inline]
     pub(crate) fn string_fast(&self, id: StringId) -> &JsString {

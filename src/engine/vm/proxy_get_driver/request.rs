@@ -460,7 +460,7 @@ pub(super) enum Step {
         value: Option<JsValue>,
         resume: Option<Resume>,
     },
-    ArgumentsComplete(Option<NativeConversion<Vec<Value>>>),
+    ArgumentsComplete(Option<NativeConversion<Vec<JsValue>>>),
     SnapshotEnumerable {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
@@ -1086,7 +1086,10 @@ impl Resume {
             Self::ProxySet(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Define(resume) => resume.resume(runtime, completion).map(Into::into),
             Self::Setter => Ok(Step::SetComplete(Some(match completion {
-                Completion::Return(_) => PropertySetAction::Complete,
+                Completion::Return(value) => {
+                    runtime.release_jsvalue(value)?;
+                    PropertySetAction::Complete
+                }
                 Completion::Throw(value) => {
                     PropertySetAction::Throw(runtime.root_and_release_jsvalue(value)?)
                 }
@@ -1348,13 +1351,20 @@ impl Resume {
     pub(super) fn arguments(
         self,
         runtime: &Runtime,
-        result: NativeConversion<Vec<Value>>,
+        result: NativeConversion<Vec<JsValue>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             Self::Invoke(resume) => resume.arguments(runtime, result).map(Into::into),
-            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
-                "argument list has no matching continuation",
-            )),
+            _ => {
+                if let NativeConversion::Value(values) = result {
+                    for value in values {
+                        let _ = runtime.release_jsvalue(value);
+                    }
+                }
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "argument list has no matching continuation",
+                ))
+            }
         }
     }
 }

@@ -533,7 +533,7 @@ enum BindingRead {
     Value(JsValue),
     Getter {
         getter: crate::engine::object::CallableRef,
-        receiver: Value,
+        receiver: JsValue,
     },
     Query(EnvironmentStep),
 }
@@ -665,7 +665,12 @@ pub(super) fn prepare_environment_read(
         }
         Some(CompleteOrdinaryPropertyDescriptor::Accessor {
             get: Some(getter), ..
-        }) => Ok(OrdinaryRead::Call { getter, receiver }),
+        }) => Ok(OrdinaryRead::Call {
+            getter,
+            receiver: runtime
+                .into_jsvalue(receiver)
+                .map_err(runtime_error_to_vm_error)?,
+        }),
         Some(CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. }) => {
             Ok(OrdinaryRead::Complete(Some(JsValue::Undefined)))
         }
@@ -753,20 +758,13 @@ fn read_global_binding(
         OrdinaryRead::Call { getter, receiver } => Ok(BindingRead::Getter { getter, receiver }),
         OrdinaryRead::Special {
             object, receiver, ..
-        } => {
-            // The special receiver is a public root; entering the internal
-            // step duplicates its edge at this boundary.
-            let receiver = runtime
-                .unroot_value(&receiver)
-                .map_err(runtime_error_to_vm_error)?;
-            Ok(BindingRead::Query(EnvironmentStep::read(
-                runtime,
-                executable.realm,
-                object,
-                key,
-                receiver,
-            )))
-        }
+        } => Ok(BindingRead::Query(EnvironmentStep::read(
+            runtime,
+            executable.realm,
+            object,
+            key,
+            receiver,
+        ))),
     }
 }
 

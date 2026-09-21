@@ -52,8 +52,7 @@ enum Phase {
     Method {
         resume: MethodResume,
         key: PropertyKey,
-        receiver: Value,
-        arguments: Vec<Value>,
+        inputs: GetInputs,
     },
     Forward {
         _rooted: RootedProxy,
@@ -67,13 +66,30 @@ enum Phase {
     },
 }
 
+// Owns the receiver while the observable trap lookup is suspended or rejected.
+struct GetInputs {
+    runtime: Runtime,
+    receiver: Option<JsValue>,
+    arguments: Vec<JsValue>,
+}
+impl Drop for GetInputs {
+    fn drop(&mut self) {
+        if let Some(value) = self.receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
+
 impl ProxyGetStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
         proxy: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
+        receiver: JsValue,
     ) -> Result<Self, RuntimeError> {
         Self::start_buffered(runtime, realm, proxy, key, receiver, Vec::new())
     }
@@ -82,14 +98,18 @@ impl ProxyGetStep {
         realm: ContextId,
         proxy: ObjectRef,
         key: PropertyKey,
-        receiver: Value,
-        arguments: Vec<Value>,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
     ) -> Result<Self, RuntimeError> {
         debug_assert!(arguments.is_empty());
+        let inputs = GetInputs {
+            runtime: runtime.clone(),
+            receiver: Some(receiver),
+            arguments,
+        };
         runtime.validate_object_and_key(&proxy, &key)?;
-        runtime.validate_value_domain(&receiver, "property receiver")?;
         let step = MethodStep::start(runtime, realm, proxy, "get")?;
-        method(runtime, realm, key, receiver, arguments, step)
+        method(runtime, realm, key, inputs, step)
     }
 }
 
@@ -97,8 +117,7 @@ fn method(
     runtime: &Runtime,
     realm: ContextId,
     key: PropertyKey,
-    receiver: Value,
-    mut arguments: Vec<Value>,
+    mut inputs: GetInputs,
     step: MethodStep,
 ) -> Result<ProxyGetStep, RuntimeError> {
     Ok(match step {
@@ -111,7 +130,7 @@ fn method(
                 None => ProxyGetStep::request_read(
                     rooted.target.clone(),
                     key,
-                    runtime.into_jsvalue(receiver)?,
+                    inputs.receiver.take().expect("proxy get receiver"),
                     ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
                         pending_effect: ProxyGetStepPending::new(runtime.clone()),
                         realm,
@@ -119,13 +138,14 @@ fn method(
                     })),
                 ),
                 Some(target) => {
-                    let key_value = runtime.property_key_value(&key)?;
-                    arguments.extend([Value::Object(rooted.target.clone()), key_value, receiver]);
-                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
-                    let arguments = arguments
-                        .into_iter()
-                        .map(|value| runtime.into_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let key_value = runtime.into_jsvalue(runtime.property_key_value(&key)?)?;
+                    inputs.arguments.extend([
+                        JsValue::Object(rooted.target.clone().into_handle()),
+                        key_value,
+                        inputs.receiver.take().expect("proxy get receiver"),
+                    ]);
+                    let receiver = JsValue::Object(rooted.handler.clone().into_handle());
+                    let arguments = std::mem::take(&mut inputs.arguments);
                     ProxyGetStep::request_call(
                         target,
                         receiver,
@@ -153,8 +173,7 @@ fn method(
                     phase: Phase::Method {
                         resume,
                         key,
-                        receiver,
-                        arguments,
+                        inputs,
                     },
                 })),
             )
@@ -177,14 +196,12 @@ impl ProxyGetResume {
             Phase::Method {
                 resume,
                 key,
-                receiver,
-                arguments,
+                inputs,
             } => method(
                 runtime,
                 realm,
                 key,
-                receiver,
-                arguments,
+                inputs,
                 resume.resume(runtime, Completion::Return(value))?,
             ),
             Phase::Forward { .. } => Ok(ProxyGetStep::Complete(Completion::Return(value))),
@@ -457,7 +474,7 @@ mod tests {
             context.realm,
             proxy,
             runtime.intern_property_key("x").unwrap(),
-            Value::Undefined,
+            JsValue::Undefined,
         )
         .unwrap();
         assert_eq!(runtime.0.proxy_method_depth.get(), 1);
@@ -493,7 +510,7 @@ mod tests {
             context.realm,
             proxy,
             runtime.intern_property_key("x").unwrap(),
-            Value::Undefined,
+            JsValue::Undefined,
         )
         .unwrap() else {
             panic!("expected method read");

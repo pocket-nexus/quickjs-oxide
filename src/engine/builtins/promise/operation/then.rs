@@ -48,6 +48,7 @@ impl PromiseStep {
             let __pending_field_key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
             let __pending_field_resume = Box::new(PromiseResume {
+                runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::ThenConstructor {
@@ -73,6 +74,7 @@ pub(super) fn constructor(
     match result {
         Completion::Throw(value) => Ok(PromiseStep::Complete(Completion::Throw(value))),
         Completion::Return(JsValue::Undefined) => Box::new(PromiseResume {
+            runtime: runtime.clone(),
             pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: Phase::ThenCapability { promise, handlers },
@@ -85,6 +87,7 @@ pub(super) fn constructor(
             let __pending_field_key =
                 PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
             let __pending_field_resume = Box::new(PromiseResume {
+                runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::ThenSpecies { promise, handlers },
@@ -123,6 +126,7 @@ pub(super) fn species(
         }
     };
     Box::new(PromiseResume {
+        runtime: runtime.clone(),
         pending_effect: super::PromiseStepPending::default(),
         realm,
         phase: Phase::ThenCapability { promise, handlers },
@@ -196,6 +200,7 @@ impl PromiseStep {
             let __pending_field_key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
             let __pending_field_resume = Box::new(PromiseResume {
+                runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::ThenConstructor { promise, handlers },

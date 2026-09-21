@@ -65,7 +65,8 @@ impl ProtoSourceResume {
                     ObjectRef::from_owned_handle(runtime.clone(), prototype),
                 ))
             }
-            Completion::Return(_) => {
+            Completion::Return(value) => {
+                runtime.release_jsvalue(value)?;
                 match runtime.function_realm_from_value(self.0.realm, &self.0.new_target)? {
                     NativeConversion::Value(realm) => {
                         NativeConversion::Value(ConstructorPrototypeSource::Realm(realm))

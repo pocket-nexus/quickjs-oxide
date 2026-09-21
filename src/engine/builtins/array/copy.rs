@@ -32,6 +32,7 @@ impl std::ops::DerefMut for CopyResume {
 }
 const _: () = assert!(std::mem::size_of::<CopyResume>() <= 8);
 pub(crate) struct CopyResumeState {
+    runtime: Runtime,
     pending_effect: CopyStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
@@ -42,6 +43,13 @@ pub(crate) struct CopyResumeState {
     backwards: bool,
     offset: u64,
     phase: Phase,
+}
+impl Drop for CopyResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl CopyStep {
     pub(crate) fn start(
@@ -54,6 +62,7 @@ impl CopyStep {
         backwards: bool,
     ) -> Result<Self, RuntimeError> {
         CopyResume(Box::new(CopyResumeState {
+            runtime: runtime.clone(),
             pending_effect: CopyStepPending::default(),
             scheduler_set_key: None,
             realm,

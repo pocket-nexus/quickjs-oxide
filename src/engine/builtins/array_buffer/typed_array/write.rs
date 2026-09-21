@@ -1,11 +1,13 @@
 //! Integer indexed writes retain their owners, then reacquire buffer access.
 use super::element::ElementStep;
+#[cfg(test)]
+use crate::engine::value::Value;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
 };
 
 pub(crate) enum TypedWriteStep {
@@ -32,24 +34,33 @@ const _: () = assert!(std::mem::size_of::<TypedWriteResume>() <= 8);
 pub(crate) struct TypedWriteResumeState {
     object: ObjectRef,
     index: Option<u64>,
-    _value: Value,
+    value: Option<JsValue>,
+}
+impl Drop for TypedWriteResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            let _ = self.object.runtime().release_jsvalue(value);
+        }
+    }
 }
 impl TypedWriteStep {
     pub(crate) fn set(
         runtime: &Runtime,
         object: ObjectRef,
         index: Option<u64>,
-        value: Value,
+        value: JsValue,
     ) -> Result<Self, RuntimeError> {
-        let element = runtime.typed_array_snapshot(&object)?.element;
+        let resume = TypedWriteResume(Box::new(TypedWriteResumeState {
+            object,
+            index,
+            value: Some(value),
+        }));
+        let element = runtime.typed_array_snapshot(&resume.object)?.element;
+        let value = runtime.dup_jsvalue(resume.value.as_ref().expect("typed write value"))?;
         Ok(Self::Element {
             element,
-            value: runtime.into_jsvalue(value.clone())?,
-            resume: TypedWriteResume(Box::new(TypedWriteResumeState {
-                object,
-                index,
-                _value: value,
-            })),
+            value,
+            resume,
         })
     }
     /// Primitive Set performs the same conversion before reacquiring buffer
@@ -59,7 +70,7 @@ impl TypedWriteStep {
         realm: ContextId,
         object: &ObjectRef,
         index: Option<u64>,
-        value: &Value,
+        value: &JsValue,
     ) -> Result<Self, RuntimeError> {
         Self::set_primitive_result(runtime, realm, object, index, value).map(Self::Complete)
     }
@@ -70,20 +81,16 @@ impl TypedWriteStep {
         realm: ContextId,
         object: &ObjectRef,
         index: Option<u64>,
-        value: &Value,
+        value: &JsValue,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
-        if matches!(value, Value::Object(_)) {
+        if matches!(value, JsValue::Object(_)) {
             return Err(RuntimeError::Invariant(
                 "primitive typed Set received an object",
             ));
         }
         let element = runtime.typed_array_snapshot(object)?.element;
-        let result = super::element::encode_primitive(
-            runtime,
-            realm,
-            element,
-            runtime.unroot_value(value)?,
-        )?;
+        let result =
+            super::element::encode_primitive(runtime, realm, element, runtime.dup_jsvalue(value)?)?;
         finish_element(runtime, object, index, result)
     }
     pub(crate) fn define(
@@ -107,15 +114,7 @@ impl TypedWriteStep {
         let DescriptorField::Present(value) = &descriptor.value else {
             return Ok(Self::Complete(NativeConversion::Value(true)));
         };
-        Ok(Self::Element {
-            element: state.snapshot.element,
-            value: runtime.into_jsvalue(value.clone())?,
-            resume: TypedWriteResume(Box::new(TypedWriteResumeState {
-                object,
-                index: Some(index),
-                _value: value.clone(),
-            })),
-        })
+        Self::set(runtime, object, Some(index), runtime.unroot_value(value)?)
     }
     /// Advance only a primitive input through the shared conversion and write
     /// kernels. Object inputs retain the original request for the owned driver.
@@ -259,7 +258,7 @@ mod tests {
                     Value::Object(runtime.new_object(None).unwrap())
                 };
                 let key = runtime.intern_property_key(key).unwrap();
-                let value = context.eval(input).unwrap();
+                let value = runtime.into_jsvalue(context.eval(input).unwrap()).unwrap();
                 let result = if wrapper {
                     runtime
                         .prepare_typed_array_set_in_realm(
@@ -282,6 +281,7 @@ mod tests {
                         )
                         .unwrap()
                 };
+                runtime.release_jsvalue(value).unwrap();
                 assert!(matches!(
                     (expected, result),
                     ("decline", None)
@@ -316,13 +316,13 @@ mod tests {
                     context.realm,
                     &object,
                     &key,
-                    &Value::Int(257),
+                    &JsValue::Int(257),
                     &receiver
                 )
                 .unwrap(),
             Some(NativeConversion::Value(true))
         ));
-        let bigint = context.eval("1n").unwrap();
+        let bigint = runtime.into_jsvalue(context.eval("1n").unwrap()).unwrap();
         assert!(matches!(
             runtime
                 .try_typed_array_set_primitive(context.realm, &object, &key, &bigint, &receiver)
@@ -342,7 +342,9 @@ mod tests {
                 .unwrap(),
             Some(NativeConversion::Value(true))
         ));
-        let value = Value::Object(runtime.new_object(None).unwrap());
+        let value = runtime
+            .into_jsvalue(Value::Object(runtime.new_object(None).unwrap()))
+            .unwrap();
         assert!(matches!(
             TypedWriteStep::set_primitive_result(&runtime, context.realm, &object, Some(0), &value),
             Err(RuntimeError::Invariant(
@@ -361,6 +363,8 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        runtime.release_jsvalue(value).unwrap();
+        runtime.release_jsvalue(bigint).unwrap();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -396,7 +400,13 @@ mod tests {
                 )
                 .unwrap()
             } else {
-                TypedWriteStep::set(&runtime, view, Some(0), Value::Object(value)).unwrap()
+                TypedWriteStep::set(
+                    &runtime,
+                    view,
+                    Some(0),
+                    runtime.into_jsvalue(Value::Object(value)).unwrap(),
+                )
+                .unwrap()
             };
             let resume = take_element(&runtime, step);
             runtime.run_gc().unwrap();

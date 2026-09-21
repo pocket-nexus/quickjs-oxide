@@ -165,7 +165,7 @@ impl Runtime {
             );
             return None;
         };
-        match raw {
+        let result = match raw {
             RawValue::Object(function) => {
                 let selected = if keep_receiver {
                     let object = state.heap.object_fast(*function);
@@ -207,7 +207,12 @@ impl Runtime {
             RawValue::Int(value) => Some(JsValue::Int(*value)),
             RawValue::Float(value) => Some(JsValue::Float(*value)),
             RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => None,
+        };
+        #[cfg(feature = "profiling")]
+        if result.is_some() {
+            crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
         }
+        result
     }
 }
 

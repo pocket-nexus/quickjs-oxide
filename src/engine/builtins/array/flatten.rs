@@ -49,6 +49,7 @@ impl std::ops::DerefMut for FlattenResume {
 }
 const _: () = assert!(std::mem::size_of::<FlattenResume>() <= 8);
 pub(crate) struct FlattenResumeState {
+    runtime: Runtime,
     pending_effect: FlattenStepPending,
     realm: ContextId,
     kind: ArrayFlattenKind,
@@ -67,6 +68,21 @@ pub(crate) struct FlattenResumeState {
     target_limit: u64,
     frame_limit: usize,
     return_count: bool,
+}
+impl Drop for FlattenResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl FlattenStep {
     pub(crate) fn start(
@@ -94,6 +110,7 @@ impl FlattenStep {
             source.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             FlattenResume(Box::new(FlattenResumeState {
+                runtime: runtime.clone(),
                 pending_effect: FlattenStepPending::default(),
                 realm,
                 kind,
@@ -140,6 +157,7 @@ impl FlattenStep {
         frame_limit: usize,
     ) -> Result<Self, RuntimeError> {
         FlattenResume(Box::new(FlattenResumeState {
+            runtime: runtime.clone(),
             pending_effect: FlattenStepPending::default(),
             realm,
             kind: ArrayFlattenKind::Flat,
@@ -317,6 +335,7 @@ impl FlattenResume {
                     Value::Object(
                         self.0
                             .target
+                            .take()
                             .ok_or(RuntimeError::Invariant("flatten target missing"))?,
                     )
                 };

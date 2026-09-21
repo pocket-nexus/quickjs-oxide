@@ -87,6 +87,29 @@ impl Heap {
         Ok(cleanup)
     }
 
+    /// Exchange two owned edges without a retain/release pair. The caller
+    /// releases the returned previous edge after ending this storage borrow.
+    /// Validation failure returns the unpublished replacement unchanged.
+    pub(crate) fn replace_var_ref_value_owned(
+        &mut self,
+        id: VarRefId,
+        replacement: RawValue,
+    ) -> Result<RawValue, (HeapError, RawValue)> {
+        let validation = self.var_ref(id).and_then(|current| {
+            validate_var_ref_value(
+                current.kind,
+                current.is_lexical,
+                current.is_const,
+                &replacement,
+            )
+        });
+        if let Err(error) = validation {
+            return Err((error, replacement));
+        }
+        let cell = self.var_ref_mut(id).expect("validated live VarRef");
+        Ok(std::mem::replace(&mut cell.value, replacement))
+    }
+
     /// Restricted equivalent of replacement for a mutable, initialized cell
     /// whose old and new values own no heap/atom/primitive-storage edge.
     /// Declining leaves both the cell and all pending cleanup untouched.

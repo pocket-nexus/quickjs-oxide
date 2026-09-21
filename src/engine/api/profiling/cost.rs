@@ -10,7 +10,7 @@ use std::rc::{Rc, Weak};
 mod buffers;
 pub use buffers::CallBufferCost;
 pub(crate) use buffers::{
-    record_call_buffer_capacity, record_call_buffer_copies, record_call_buffer_initialized,
+    record_call_buffer_capacity, record_call_buffer_initialized,
     record_call_buffer_js_value_copies, record_call_buffer_moves, record_call_buffer_observed,
     record_call_buffer_share, record_call_raw_buffer_copies,
 };
@@ -403,11 +403,11 @@ mod tests {
         }
         {
             let inner = CostProfile::start();
-            context.eval("1+2").unwrap();
+            drop(context.eval("1+2").unwrap());
             assert_eq!(inner.snapshot().parse.attempts, 1);
             assert_eq!(outer.snapshot(), before);
         }
-        context.eval("3+4").unwrap();
+        drop(context.eval("3+4").unwrap());
         assert_eq!(outer.snapshot().parse.attempts, 2);
     }
 
@@ -426,7 +426,7 @@ mod tests {
             panic!("profile unwind probe");
         });
         assert!(unwind.is_err());
-        context.eval("42").unwrap();
+        drop(context.eval("42").unwrap());
         assert_eq!(outer.snapshot().parse.attempts, 2);
     }
 
@@ -501,7 +501,7 @@ mod disassembly_tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let profile = CostProfile::start();
-        context.eval("0").unwrap();
+        drop(context.eval("0").unwrap());
         let before = profile.snapshot();
         assert!(before.code_disassembly.is_none());
         profile.capture_disassembly();

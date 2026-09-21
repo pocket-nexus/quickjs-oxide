@@ -141,7 +141,13 @@ impl AsyncResume {
     ) -> Result<AsyncStep, RuntimeError> {
         match std::mem::replace(&mut self.phase, Phase::Body) {
             Phase::Body => self.body(VmRunOutcome::Complete(completion)),
-            Phase::Settled => self.finish(), // Consume either JS completion from the internal resolving pair.
+            Phase::Settled => {
+                // The internal resolving pair's reply is ignored, including a
+                // stack-overflow throw. It still owns one value edge.
+                let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                self.runtime.release_jsvalue(value)?;
+                self.finish()
+            }
             Phase::Await(mut activation) => {
                 let promise = match completion {
                     Completion::Throw(reason) => return self.settle(Completion::Throw(reason)),

@@ -459,7 +459,7 @@ struct ModuleEvaluationDfs {
     next_index: usize,
     stack: Vec<ModuleId>,
     entries: HashMap<ModuleId, ModuleDfsEntry>,
-    exception: Option<Value>,
+    exception: Option<JsValue>,
 }
 
 struct ModuleResolveFrame {
@@ -574,7 +574,7 @@ enum ModuleEvaluationVisit {
     Evaluating,
     EvaluatingAsync,
     Evaluated,
-    Errored(Value),
+    Errored(JsValue),
     Poisoned,
 }
 
@@ -3534,14 +3534,9 @@ impl Runtime {
         cache: ContextId,
         cycle_root: ModuleId,
         active: &[ModuleId],
-        exception: &Value,
+        exception: &JsValue,
     ) -> Result<(), RuntimeError> {
-        self.validate_value_domain(exception, "module evaluation exception")?;
-        let converted = self.raw_property_value(exception)?;
-        let raw = converted.raw();
-        // Clone duplicates only the handle; the guard keeps the producer edge
-        // accountable after the records and the pending-exception slot consume
-        // the value.
+        let raw = exception.as_raw();
         let mut evaluating = Vec::with_capacity(active.len());
         for &id in active {
             let record = self.module_record(RawModuleRef { cache, module: id })?;
@@ -3583,8 +3578,6 @@ impl Runtime {
             state.release_owned_raw_root_committed(previous);
         }
         drop(state);
-        // The records and the pending-exception slot retained their own edges;
-        // the guard balances the boundary conversion's producer edge.
         Ok(())
     }
 

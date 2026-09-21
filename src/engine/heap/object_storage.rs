@@ -435,7 +435,26 @@ impl Heap {
         id: ObjectId,
         value: RawValue,
     ) -> Result<(), HeapError> {
-        let next_len = {
+        let next_len = self.fresh_array_next_length(id)?;
+
+        self.append_array_dense_value(id, value)?;
+        let replacement = if let Ok(length) = i32::try_from(next_len) {
+            RawValue::Int(length)
+        } else {
+            RawValue::Float(f64::from(next_len))
+        };
+        let object = self
+            .object_mut(id)
+            .expect("fresh Array disappeared after retaining its appended value");
+        let Some(PropertySlot::Data(length)) = object.slots.first_mut() else {
+            unreachable!("fresh Array length slot changed after preflight")
+        };
+        *length = replacement;
+        Ok(())
+    }
+
+    fn fresh_array_next_length(&self, id: ObjectId) -> Result<u32, HeapError> {
+        Ok({
             let object = self.object(id)?;
             let ObjectPayload::Array { dense: Some(dense) } = &object.payload else {
                 return Err(HeapError::Invariant(
@@ -472,21 +491,47 @@ impl Heap {
             dense_len.checked_add(1).ok_or(HeapError::Overflow {
                 operation: "growing fresh Array length",
             })?
-        };
+        })
+    }
 
-        self.append_array_dense_value(id, value)?;
-        let replacement = if let Ok(length) = i32::try_from(next_len) {
-            RawValue::Int(length)
-        } else {
-            RawValue::Float(f64::from(next_len))
+    /// Adopt an owned element, including its atom edge, with no retain/release
+    /// pair. On error nothing is published and the exact input owner is returned.
+    pub(crate) fn append_fresh_array_dense_value_owned(
+        &mut self,
+        id: ObjectId,
+        value: RawValue,
+    ) -> Result<(), (HeapError, RawValue)> {
+        let prepared = (|| {
+            if !is_map_storable_value(&value) {
+                return Err(HeapError::Invariant(
+                    "fast Array contains an internal value sentinel",
+                ));
+            }
+            let next_len = self.fresh_array_next_length(id)?;
+            let ObjectPayload::Array { dense: Some(dense) } = &mut self.object_mut(id)?.payload
+            else {
+                unreachable!("validated dense Array changed before reservation")
+            };
+            dense.try_reserve(1).map_err(|_| HeapError::Allocation {
+                operation: "growing fast Array storage",
+            })?;
+            Ok(next_len)
+        })();
+        let next_len = match prepared {
+            Ok(length) => length,
+            Err(error) => return Err((error, value)),
         };
-        let object = self
-            .object_mut(id)
-            .expect("fresh Array disappeared after retaining its appended value");
+        let object = self.object_mut(id).expect("validated fresh Array");
+        let ObjectPayload::Array { dense: Some(dense) } = &mut object.payload else {
+            unreachable!("validated dense Array changed before publication")
+        };
+        dense.push(value);
         let Some(PropertySlot::Data(length)) = object.slots.first_mut() else {
-            unreachable!("fresh Array length slot changed after preflight")
+            unreachable!("validated fresh Array length slot")
         };
-        *length = replacement;
+        *length = i32::try_from(next_len)
+            .map(RawValue::Int)
+            .unwrap_or_else(|_| RawValue::Float(f64::from(next_len)));
         Ok(())
     }
 

@@ -1359,6 +1359,24 @@ impl Heap {
     /// Allocate a captured-variable cell and transfer ownership of its value
     /// to the heap. The returned reference is normally owned by the active
     /// frame; closure objects retain the same `VarRefId` when published.
+    /// Publish a captured cell by adopting the complete value edge. Rejection
+    /// returns the input record unchanged; no partial edge retain is possible.
+    pub(crate) fn allocate_var_ref_owned(
+        &mut self,
+        var_ref: VarRefData,
+    ) -> Result<VarRefId, (HeapError, VarRefData)> {
+        if let Err(error) = validate_var_ref_payload(&var_ref) {
+            return Err((error, var_ref));
+        }
+        let (index, generation) = match self.reserve(HeapNodeKind::VarRef) {
+            Ok(slot) => slot,
+            Err(error) => return Err((error, var_ref)),
+        };
+        self.publish(index, NodeData::VarRef(var_ref))
+            .expect("fresh VarRef reservation must publish exactly once");
+        Ok(VarRefId { index, generation })
+    }
+
     pub fn allocate_var_ref(&mut self, var_ref: VarRefData) -> Result<VarRefId, HeapError> {
         validate_var_ref_payload(&var_ref)?;
         let (index, generation) = self.reserve(HeapNodeKind::VarRef)?;

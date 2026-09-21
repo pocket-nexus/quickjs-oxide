@@ -4,42 +4,33 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::value::{JsValue, Value};
 
 impl Runtime {
-    /// Internal-value form of [`Runtime::set_pending_exception`]: consumes the
-    /// value's edges after the pending-exception root has retained its copy.
+    /// Move one owned internal edge into the pending-exception slot.
     pub(crate) fn set_pending_exception_jsvalue(&self, value: JsValue) -> Result<(), RuntimeError> {
         let _operation = self.operation();
-        let raw = value.as_raw();
-        {
-            let mut state = self.0.state.borrow_mut();
-            state.retain_raw_root(raw.clone())?;
-            if let Some(previous) = state.pending_exception.replace(raw) {
-                state.release_owned_raw_root(previous)?;
-            }
+        let mut state = self.0.state.borrow_mut();
+        if let Some(previous) = state.pending_exception.replace(value.into_raw()) {
+            state.release_owned_raw_root(previous)?;
         }
-        // `raw` owns its own retained occurrence; the consumed value's edges
-        // are no longer needed.
-        self.release_jsvalue(value)?;
         Ok(())
     }
 
     pub(crate) fn set_pending_exception(&self, value: Value) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
         self.validate_value_domain(&value, "exception value")?;
-        let converted = self.raw_property_value(&value)?;
-        let raw = converted.raw();
-        // The conversion carries one producer-owned string/BigInt node edge;
-        // the pending-exception root retains its own occurrence below, so the
-        // guard balances the producer edge on every exit.
-        {
-            let mut state = self.0.state.borrow_mut();
-            state.retain_raw_root(raw.clone())?;
-            if let Some(previous) = state.pending_exception.replace(raw) {
-                state.release_owned_raw_root(previous)?;
-            }
-        }
-        // `raw` now owns its own retained occurrence.
-        drop(value);
-        Ok(())
+        self.set_pending_exception_jsvalue(self.into_jsvalue(value)?)
+    }
+
+    pub(crate) fn take_pending_exception_jsvalue(&self) -> Result<Option<JsValue>, RuntimeError> {
+        let _operation = self.operation();
+        self.0
+            .state
+            .borrow_mut()
+            .pending_exception
+            .take()
+            .map(|raw| {
+                JsValue::from_raw(raw)
+                    .ok_or(RuntimeError::Invariant("pending exception is not a value"))
+            })
+            .transpose()
     }
 
     pub(crate) fn take_pending_exception(&self) -> Result<Option<Value>, RuntimeError> {

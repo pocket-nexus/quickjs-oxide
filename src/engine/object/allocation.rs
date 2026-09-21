@@ -17,7 +17,7 @@ use crate::engine::object::{
     CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
 };
 use crate::engine::realm::bindings::GlobalBindingCreationMode;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use std::collections::HashMap;
 
 impl Runtime {
@@ -160,41 +160,51 @@ impl Runtime {
         realm: ContextId,
         values: Vec<crate::engine::value::JsValue>,
     ) -> Result<ObjectRef, RuntimeError> {
-        let array = self.new_array(realm)?;
+        let mut values = values.into_iter();
+        let result = (|| {
+            let array = self.new_array(realm)?;
+            for value in values.by_ref() {
+                self.append_fresh_array_value_jsvalue(&array, value)?;
+            }
+            Ok(array)
+        })();
+        // Allocation or publication may fail before the suffix was consumed.
+        // These owners never entered the Array and must all be surrendered.
+        let mut cleanup = Ok(());
         for value in values {
-            self.append_fresh_array_value_jsvalue(&array, value)?;
+            let released = self.release_jsvalue(value);
+            if cleanup.is_ok() {
+                cleanup = released;
+            }
         }
-        Ok(array)
+        cleanup?;
+        result
     }
 
-    /// Internal-value form of [`Runtime::append_fresh_array_value`]. The dense
-    /// store retains its own copy edge transactionally; the consumed value's
-    /// edge is released before returning.
+    /// Adopt an internal element's heap/atom edge directly into dense storage.
+    /// Both success and failure consume the producer owner; a failed transaction
+    /// returns its unchanged raw owner for release outside the state borrow.
     pub(crate) fn append_fresh_array_value_jsvalue(
         &self,
         array: &ObjectRef,
         value: crate::engine::value::JsValue,
     ) -> Result<(), RuntimeError> {
         if !array.belongs_to(self) {
+            self.release_jsvalue(value)?;
             return Err(RuntimeError::WrongRuntime("Array"));
         }
-        let raw = value.as_raw();
-        let mut state = self.0.state.borrow_mut();
-        let retained_atoms = state.retain_raw_value_atoms(std::iter::once(&raw))?;
-        let appended = state
+        let appended = self
+            .0
+            .state
+            .borrow_mut()
             .heap
-            .append_fresh_array_dense_value(array.object_id(), raw);
+            .append_fresh_array_dense_value_owned(array.object_id(), value.into_raw());
         match appended {
-            Ok(()) => {
-                drop(state);
-                self.release_jsvalue(value)?;
-                Ok(())
-            }
-            Err(error) => {
-                let released = state.release_atoms(retained_atoms);
-                drop(state);
-                self.release_jsvalue(value)?;
-                released?;
+            Ok(()) => Ok(()),
+            Err((error, raw)) => {
+                self.release_jsvalue(
+                    crate::engine::value::JsValue::from_raw(raw).expect("internal Array element"),
+                )?;
                 Err(error.into())
             }
         }
@@ -240,36 +250,53 @@ impl Runtime {
         value: Value,
         done: bool,
     ) -> Result<ObjectRef, RuntimeError> {
-        #[cfg(test)]
-        {
-            let mut state = self.0.state.borrow_mut();
-            state.iterator_result_allocations = state
-                .iterator_result_allocations
-                .checked_add(1)
-                .expect("iterator-result allocation counter overflow");
-        }
-        let prototype_id = self.0.state.borrow().heap.context(realm)?.object_prototype;
-        let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype_id)?;
-        let result = self.new_object(Some(&prototype))?;
-        for (name, value) in [("value", value), ("done", Value::Bool(done))] {
-            let key = self.intern_property_key(name)?;
-            if !self.define_own_property(
-                &result,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )? {
-                return Err(RuntimeError::Invariant(
-                    "iterator result property definition was rejected",
-                ));
+        self.new_iterator_result_jsvalue(realm, self.into_jsvalue(value)?, done)
+    }
+
+    /// A fresh result object copies the internal value handle into its data
+    /// slot; the consumed producer edge is released on every exit.
+    pub(crate) fn new_iterator_result_jsvalue(
+        &self,
+        realm: ContextId,
+        value: crate::engine::value::JsValue,
+        done: bool,
+    ) -> Result<ObjectRef, RuntimeError> {
+        let outcome = (|| {
+            #[cfg(test)]
+            {
+                let mut state = self.0.state.borrow_mut();
+                state.iterator_result_allocations = state
+                    .iterator_result_allocations
+                    .checked_add(1)
+                    .expect("iterator-result allocation counter overflow");
             }
+            let prototype_id = self.0.state.borrow().heap.context(realm)?.object_prototype;
+            let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype_id)?;
+            let result = self.new_object(Some(&prototype))?;
+            for (name, stored) in [
+                ("value", &value),
+                ("done", &crate::engine::value::JsValue::Bool(done)),
+            ] {
+                let key = self.intern_property_key(name)?;
+                match self.define_selected_set_data(&result, &key, stored, false)? {
+                    crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {}
+                    _ => {
+                        return Err(RuntimeError::Invariant(
+                            "iterator result property definition was rejected",
+                        ));
+                    }
+                }
+            }
+            Ok(result)
+        })();
+        let released = self.release_jsvalue(value);
+        match outcome {
+            Ok(value) => {
+                released?;
+                Ok(value)
+            }
+            Err(error) => Err(error),
         }
-        Ok(result)
     }
 
     pub(crate) fn new_primitive_object(
@@ -526,28 +553,16 @@ impl Runtime {
         &self,
         realm: ContextId,
         target: &CallableRef,
-        this_value: &Value,
-        arguments: &[Value],
+        this_value: &JsValue,
+        arguments: &[JsValue],
     ) -> Result<CallableRef, RuntimeError> {
         let _operation = self.operation();
         if !target.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("bound function target"));
         }
-        self.validate_value_domain(this_value, "bound this value")?;
-        for argument in arguments {
-            self.validate_value_domain(argument, "bound function argument")?;
-        }
-
-        let converted_this = self.raw_property_value(this_value)?;
-        let mut converted_arguments = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            converted_arguments.push(self.raw_property_value(argument)?);
-        }
-        let raw_this = converted_this.raw();
-        let raw_arguments = converted_arguments
-            .iter()
-            .map(|converted| converted.raw())
-            .collect::<Vec<_>>();
+        // The object transaction retains each borrowed input edge exactly once.
+        let raw_this = this_value.as_raw();
+        let raw_arguments = arguments.iter().map(JsValue::as_raw).collect::<Vec<_>>();
         let is_constructor = self.is_constructor(target.as_object())?;
 
         let mut state = self.0.state.borrow_mut();
@@ -935,6 +950,54 @@ impl Runtime {
 mod owned_callable_tests {
     use super::*;
     use crate::engine::vm::call::DirectCallTarget;
+
+    #[test]
+    fn internal_array_adopts_edges_and_releases_rejected_input() {
+        use crate::engine::value::JsValue;
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let string = runtime
+            .into_jsvalue(Value::String(JsString::from_static("owned")))
+            .unwrap();
+        let JsValue::String(string_id) = &string else {
+            unreachable!()
+        };
+        let string_id = *string_id;
+        let before = runtime.heap_counts().string_nodes;
+        let array = runtime
+            .new_array_from_values_jsvalue(context.realm, vec![string])
+            .unwrap();
+        assert_eq!(runtime.heap_counts().string_nodes, before);
+        {
+            let state = runtime.0.state.borrow();
+            let stored = state
+                .heap
+                .object(array.object_id())
+                .unwrap()
+                .dense_array_value(0)
+                .unwrap();
+            assert!(matches!(stored, RawValue::String(id) if *id == string_id));
+        }
+        drop(array);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.string(string_id).is_err());
+
+        let object = runtime.new_object(None).unwrap();
+        let rejected = runtime
+            .into_jsvalue(Value::String(JsString::from_static("rejected")))
+            .unwrap();
+        let JsValue::String(rejected_id) = &rejected else {
+            unreachable!()
+        };
+        let rejected_id = *rejected_id;
+        assert!(
+            runtime
+                .append_fresh_array_value_jsvalue(&object, rejected)
+                .is_err()
+        );
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.string(rejected_id).is_err());
+    }
 
     #[test]
     fn owned_and_borrowed_callable_promotion_share_payload_rules() {

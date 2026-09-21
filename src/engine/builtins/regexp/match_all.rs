@@ -82,9 +82,8 @@ impl Runtime {
             match self.call_regexp_string_iterator_next_raw(realm, invocation.dup(self)?)? {
                 NativeInvokeOutcome::Completion(completion) => Ok(completion),
                 NativeInvokeOutcome::IteratorNextRaw { value, done } => {
-                    let value = self.root_and_release_jsvalue(value)?;
                     Ok(Completion::Return(self.into_jsvalue(Value::Object(
-                        self.new_iterator_result(realm, value, done)?,
+                        self.new_iterator_result_jsvalue(realm, value, done)?,
                     ))?))
                 }
             }

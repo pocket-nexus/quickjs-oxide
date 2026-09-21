@@ -99,24 +99,28 @@ pub(in crate::engine::vm) fn complete_local_add(
                     Err(error) => return Err(error),
                 },
             };
-            // A prepend never appends into the shared constant buffer; only an
-            // append may extend a uniquely-owned local. The handle form always
-            // commits a fresh node and releases the replaced local edge.
-            let string = super::super::numeric::string_payload(runtime, *id)?;
+            // Keep the local's arena identity only when both its owning edge
+            // and its payload buffer are unique. Cloning the left payload here
+            // would itself disable the existing Rc uniqueness optimization.
             if !prepend {
-                let mut candidate = string.clone();
-                if candidate
-                    .try_concat_in_place(&suffix)
-                    .map_err(Error::from)?
-                {
-                    let value = super::super::numeric::allocate_string_jsvalue(runtime, candidate)?;
-                    let old = std::mem::replace(left, value);
-                    runtime
-                        .release_jsvalue(old)
-                        .map_err(runtime_error_to_vm_error)?;
-                    return Ok(PreparedAdd::Appended);
+                let appended = {
+                    let mut state = runtime.0.state.borrow_mut();
+                    match state
+                        .heap
+                        .unique_string_mut(*id)
+                        .map_err(|error| runtime_error_to_vm_error(error.into()))?
+                    {
+                        Some(string) => string.try_concat_in_place(&suffix).map_err(Error::from),
+                        None => Ok(false),
+                    }
+                };
+                match appended {
+                    Ok(true) => return Ok(PreparedAdd::Appended),
+                    Ok(false) => {}
+                    Err(error) => return Ok(PreparedAdd::Result(Err(error))),
                 }
             }
+            let string = super::super::numeric::string_payload(runtime, *id)?;
             return Ok(PreparedAdd::Result(
                 super::super::numeric::allocate_string_jsvalue(
                     runtime,
@@ -285,7 +289,7 @@ mod tests {
         assert!(
             matches!(
                 completion,
-                crate::engine::vm::Completion::Return(Value::Bool(true))
+                crate::engine::vm::Completion::Return(crate::engine::value::JsValue::Bool(true))
             ),
             "{completion:?}"
         );

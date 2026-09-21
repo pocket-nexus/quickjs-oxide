@@ -131,7 +131,10 @@ impl EachResume {
         }
         match reply {
             Completion::Throw(value) => Ok(EachStep::Complete(Completion::Throw(value))),
-            Completion::Return(_) => self.next(runtime),
+            Completion::Return(value) => {
+                runtime.release_jsvalue(value)?;
+                self.next(runtime)
+            }
         }
     }
 }

@@ -9,24 +9,41 @@ use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
-use crate::engine::value::Value;
+use crate::engine::value::JsValue;
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn execute_bytecode_callable(
+    pub(crate) fn execute_bytecode_callable_jsvalue(
         &self,
         caller_realm: ContextId,
         callable: &CallableRef,
-        this_value: Value,
-        new_target: Value,
-        arguments: &[Value],
+        this_value: JsValue,
+        new_target: JsValue,
+        arguments: Vec<JsValue>,
         bytecode: FunctionBytecodeRef,
         closure_slots: crate::engine::vm::closure::ClosureSlots,
     ) -> Result<Completion, RuntimeError> {
-        if self.bytecode_call_would_overflow() {
-            return self.bytecode_stack_overflow_completion(caller_realm, &bytecode);
-        }
-        if !bytecode.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("function bytecode"));
+        let mut arguments = arguments;
+        let validation = (|| {
+            if self.bytecode_call_would_overflow() {
+                return self
+                    .bytecode_stack_overflow_completion(caller_realm, &bytecode)
+                    .map(Some);
+            }
+            if !bytecode.belongs_to(self) {
+                return Err(RuntimeError::WrongRuntime("function bytecode"));
+            }
+            Ok(None)
+        })();
+        match validation {
+            Ok(None) => {}
+            result => {
+                let _ = self.release_jsvalue(this_value);
+                let _ = self.release_jsvalue(new_target);
+                for value in arguments.drain(..) {
+                    let _ = self.release_jsvalue(value);
+                }
+                return result.map(|value| value.expect("root call rejection"));
+            }
         }
         let entry = prepare_call(
             self,
@@ -83,35 +100,32 @@ pub(in crate::engine::vm) fn prepare_call(
     runtime: &Runtime,
     caller_realm: crate::engine::heap::ContextId,
     callable: &crate::engine::object::CallableRef,
-    receiver: Value,
-    new_target: Value,
-    arguments: &[Value],
+    receiver: JsValue,
+    new_target: JsValue,
+    arguments: Vec<JsValue>,
     bytecode: crate::engine::code::rooted::FunctionBytecodeRef,
     closure_slots: crate::engine::vm::closure::ClosureSlots,
 ) -> Result<FrameEntry, crate::engine::api::runtime_error::RuntimeError> {
     use crate::engine::api::runtime_error::RuntimeError;
-    let prepared = runtime.prepare_owned_bytecode_frame(
-        callable,
-        runtime.into_jsvalue(receiver)?,
-        runtime.into_jsvalue(new_target)?,
-        bytecode,
-    )?;
+    let prepared =
+        match runtime.prepare_owned_bytecode_frame(callable, receiver, new_target, bytecode) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                for value in arguments {
+                    let _ = runtime.release_jsvalue(value);
+                }
+                return Err(error);
+            }
+        };
     if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
+        for value in arguments {
+            let _ = runtime.release_jsvalue(value);
+        }
         return Err(RuntimeError::Engine(Error::internal(
             "function object closure slot count does not match bytecode metadata",
         )));
     }
-    let mut original_arguments = Vec::new();
-    original_arguments
-        .try_reserve_exact(arguments.len())
-        .map_err(|_| {
-            RuntimeError::Engine(Error::internal(
-                "original argument snapshot allocation failed",
-            ))
-        })?;
-    for value in arguments {
-        original_arguments.push(runtime.unroot_value(value)?);
-    }
+    let original_arguments = arguments;
     let local_count = if prepared.executable.has_captured_locals {
         prepared.executable.local_definitions.len()
     } else {
@@ -131,7 +145,7 @@ pub(in crate::engine::vm) fn prepare_call(
     crate::engine::api::profiling::record_owned_call_storage(
         size_of::<crate::engine::vm::frame::FrameBody>(),
         cold.reusable_captured_locals.capacity(),
-        original_arguments.capacity() * size_of::<Value>(),
+        original_arguments.capacity() * size_of::<JsValue>(),
     );
     let entry = FrameEntry {
         property_generation: 0,

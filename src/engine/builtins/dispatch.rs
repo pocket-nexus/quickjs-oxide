@@ -31,35 +31,8 @@ fn native_invocation_input(invocation: NativeInvocation) -> crate::engine::value
 }
 
 impl Runtime {
-    /// Tail-forward an ordinary `Function.prototype.call` invocation without
-    /// retaining an otherwise redundant native frame around the target call.
-    /// This preserves QuickJS's observable forwarding while using a Rust-side
-    /// trampoline; upstream retains a thin C frame. Recursive `.call(...)`
-    /// chains remain governed by the eventual target family's stack budget.
-    pub(crate) fn forward_function_prototype_call(
-        &self,
-        realm: ContextId,
-        this_value: Value,
-        arguments: &[Value],
-    ) -> Result<NativeConversion<(DirectCallTarget, Value)>, RuntimeError> {
-        let target = match self.direct_call_target_from_value(this_value) {
-            Ok(target) => target,
-            Err(RuntimeError::Engine(error)) if error.kind() == ErrorKind::Type => {
-                return Ok(NativeConversion::Throw(self.new_native_error_from_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    &error,
-                )?));
-            }
-            Err(error) => return Err(error),
-        };
-        let this_argument = arguments.first().cloned().unwrap_or(Value::Undefined);
-        Ok(NativeConversion::Value((target, this_argument)))
-    }
-
-    /// Internal-value form of [`Runtime::concatenate_bound_arguments`]. The
-    /// bound roots transfer into internal values without a retain/release pair;
-    /// the caller's argument edges move into the merged buffer.
+    /// Move bound and caller argument edges into one internal buffer without
+    /// materializing payloads or retaining transferred values.
     pub(crate) fn concatenate_bound_arguments_jsvalue(
         &self,
         realm: ContextId,
@@ -68,102 +41,111 @@ impl Runtime {
     ) -> Result<NativeConversion<Vec<crate::engine::value::JsValue>>, RuntimeError> {
         const MAX_CALL_ARGUMENTS: usize = 65_534;
 
-        let overflow = match bound_arguments.len().checked_add(call_arguments.len()) {
-            Some(total) if total <= MAX_CALL_ARGUMENTS => None,
-            _ => Some(self.new_native_error(realm, NativeErrorKind::Internal, "stack overflow")?),
-        };
-        if let Some(value) = overflow {
+        let overflow = bound_arguments
+            .len()
+            .checked_add(call_arguments.len())
+            .is_none_or(|total| total > MAX_CALL_ARGUMENTS);
+        if overflow {
             for argument in bound_arguments.into_iter().chain(call_arguments) {
-                self.release_jsvalue(argument)?;
+                let _ = self.release_jsvalue(argument);
             }
-            return Ok(NativeConversion::Throw(value));
+            return Ok(NativeConversion::Throw(self.new_native_error(
+                realm,
+                NativeErrorKind::Internal,
+                "stack overflow",
+            )?));
         }
         let total = bound_arguments.len() + call_arguments.len();
         let mut arguments = Vec::with_capacity(total);
         arguments.extend(bound_arguments);
         arguments.extend(call_arguments);
-        Ok(NativeConversion::Value(arguments))
-    }
-
-    pub(crate) fn concatenate_bound_arguments(
-        &self,
-        realm: ContextId,
-        bound_arguments: &[Value],
-        call_arguments: &[Value],
-    ) -> Result<NativeConversion<Vec<Value>>, RuntimeError> {
-        const MAX_CALL_ARGUMENTS: usize = 65_534;
-
-        let Some(total) = bound_arguments.len().checked_add(call_arguments.len()) else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
-        };
-        if total > MAX_CALL_ARGUMENTS {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
-        }
-        let mut arguments = Vec::with_capacity(total);
-        arguments.extend_from_slice(bound_arguments);
-        arguments.extend_from_slice(call_arguments);
         #[cfg(feature = "profiling")]
         {
-            use crate::engine::api::profiling::{
-                record_call_buffer_capacity, record_call_buffer_copies,
-            };
-            record_call_buffer_capacity("bound.merge", 0, arguments.capacity(), size_of::<Value>());
-            record_call_buffer_copies("bound.merge", bound_arguments);
-            record_call_buffer_copies("bound.merge", call_arguments);
+            crate::engine::api::profiling::record_call_buffer_capacity(
+                "bound.merge",
+                0,
+                arguments.capacity(),
+                size_of::<crate::engine::value::JsValue>(),
+            );
+            crate::engine::api::profiling::record_call_buffer_moves("bound.merge", total);
         }
         Ok(NativeConversion::Value(arguments))
     }
 
     pub(crate) fn call_internal(
         &self,
-        mut caller_realm: ContextId,
+        caller_realm: ContextId,
         callable: &CallableRef,
         this_value: Value,
         arguments: &[Value],
     ) -> Result<Completion, RuntimeError> {
-        self.0.state.borrow().heap.context(caller_realm)?;
         self.validate_value_domain(&this_value, "call this value")?;
         for argument in arguments {
             self.validate_value_domain(argument, "call argument")?;
         }
+        let mut converted = Vec::new();
+        for argument in arguments {
+            match self.unroot_value(argument) {
+                Ok(value) => converted.push(value),
+                Err(error) => {
+                    for value in converted {
+                        let _ = self.release_jsvalue(value);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let receiver = match self.into_jsvalue(this_value) {
+            Ok(value) => value,
+            Err(error) => {
+                for value in converted {
+                    let _ = self.release_jsvalue(value);
+                }
+                return Err(error);
+            }
+        };
+        self.call_internal_jsvalue(caller_realm, callable, receiver, converted)
+    }
+
+    /// Consumes the internal call edges, including every rejected entry.
+    pub(crate) fn call_internal_jsvalue(
+        &self,
+        mut caller_realm: ContextId,
+        callable: &CallableRef,
+        this_value: JsValue,
+        arguments: Vec<JsValue>,
+    ) -> Result<Completion, RuntimeError> {
         let mut callable = callable.clone();
-        let mut this_value = this_value;
-        let mut arguments = arguments.to_vec();
-        // Function.prototype.call consumes one argument per forwarded logical
-        // frame. Advance a window into the owned argv instead of repeatedly
-        // allocating and copying every shrinking suffix.
-        let mut argument_start = 0_usize;
+        let mut receiver = Some(this_value);
+        let mut arguments = arguments;
+        let mut argument_start = 0;
         let mut forwarded_call_frames = Vec::new();
-        let result = (|| loop {
-            match self.bytecode_for_callable(&callable)? {
-                CallableExecution::Bytecode {
-                    bytecode,
-                    closure_slots,
-                } => {
-                    return self.execute_bytecode_callable(
-                        caller_realm,
-                        &callable,
-                        this_value,
-                        Value::Undefined,
-                        &arguments[argument_start..],
+        let result = (|| {
+            self.0.state.borrow().heap.context(caller_realm)?;
+            loop {
+                match self.bytecode_for_callable(&callable)? {
+                    CallableExecution::Bytecode {
                         bytecode,
                         closure_slots,
-                    );
-                }
-                CallableExecution::Native {
-                    target,
-                    realm,
-                    min_readable_args,
-                } => {
-                    if target == NativeFunctionId::FunctionPrototypeCall {
+                    } => {
+                        for value in arguments.drain(..argument_start) {
+                            self.release_jsvalue(value)?;
+                        }
+                        return self.execute_bytecode_callable_jsvalue(
+                            caller_realm,
+                            &callable,
+                            receiver.take().expect("call receiver"),
+                            JsValue::Undefined,
+                            std::mem::take(&mut arguments),
+                            bytecode,
+                            closure_slots,
+                        );
+                    }
+                    CallableExecution::Native {
+                        target,
+                        realm,
+                        min_readable_args,
+                    } => {
                         if self.native_call_would_overflow(target) {
                             return Ok(Completion::Throw(self.new_native_error_jsvalue(
                                 caller_realm,
@@ -171,101 +153,121 @@ impl Runtime {
                                 "stack overflow",
                             )?));
                         }
-                        forwarded_call_frames.push(self.push_native_active_frame(
-                            callable.as_object().clone(),
-                            realm,
-                            target,
-                            arguments.len() - argument_start,
-                            (arguments.len() - argument_start).max(usize::from(min_readable_args)),
-                        )?);
-                        match self.forward_function_prototype_call(
-                            realm,
-                            this_value,
-                            &arguments[argument_start..],
-                        )? {
-                            NativeConversion::Value((target, next_this)) => {
-                                caller_realm = realm;
-                                this_value = next_this;
-                                if argument_start < arguments.len() {
-                                    argument_start += 1;
+                        if target == NativeFunctionId::FunctionPrototypeCall {
+                            forwarded_call_frames.push(
+                                self.push_native_active_frame(
+                                    callable.as_object().clone(),
+                                    realm,
+                                    target,
+                                    arguments.len() - argument_start,
+                                    (arguments.len() - argument_start)
+                                        .max(usize::from(min_readable_args)),
+                                )?,
+                            );
+                            let target = match self.direct_call_target_from_jsvalue(
+                                receiver.take().expect("call receiver"),
+                            ) {
+                                Ok(target) => target,
+                                Err(RuntimeError::Engine(error))
+                                    if error.kind() == ErrorKind::Type =>
+                                {
+                                    return Ok(Completion::Throw(
+                                        self.new_native_error_from_error_jsvalue(
+                                            realm,
+                                            NativeErrorKind::Type,
+                                            &error,
+                                        )?,
+                                    ));
                                 }
-                                match target {
-                                    DirectCallTarget::Callable(target) => {
-                                        callable = target;
-                                        continue;
+                                Err(error) => return Err(error),
+                            };
+                            receiver = Some(self.dup_jsvalue(
+                                arguments.get(argument_start).unwrap_or(&JsValue::Undefined),
+                            )?);
+                            argument_start += usize::from(argument_start < arguments.len());
+                            caller_realm = realm;
+                            match target {
+                                DirectCallTarget::Callable(target) => {
+                                    callable = target;
+                                    continue;
+                                }
+                                DirectCallTarget::NonCallableProxy(proxy) => {
+                                    for value in arguments.drain(..argument_start) {
+                                        self.release_jsvalue(value)?;
                                     }
-                                    DirectCallTarget::NonCallableProxy(proxy) => {
-                                        return self.call_proxy(
-                                            caller_realm,
-                                            &proxy,
-                                            this_value,
-                                            &arguments[argument_start..],
-                                        );
-                                    }
+                                    return self.call_proxy_jsvalue(
+                                        caller_realm,
+                                        &proxy,
+                                        receiver.take().expect("call receiver"),
+                                        std::mem::take(&mut arguments),
+                                    );
                                 }
                             }
+                        }
+                        let execution_realm = if target.uses_calling_realm() {
+                            caller_realm
+                        } else {
+                            realm
+                        };
+                        for value in arguments.drain(..argument_start) {
+                            self.release_jsvalue(value)?;
+                        }
+                        return Self::ordinary_native_completion(
+                            self.invoke_native_function_jsvalue(
+                                &callable,
+                                execution_realm,
+                                target,
+                                min_readable_args,
+                                NativeInvocation::Call {
+                                    this_value: receiver.take().expect("call receiver"),
+                                },
+                                std::mem::take(&mut arguments),
+                                crate::engine::vm::call::NativeInvokeMode::Ordinary,
+                            )?,
+                        );
+                    }
+                    CallableExecution::Bound {
+                        target,
+                        this_value,
+                        arguments: bound,
+                    } => {
+                        self.release_jsvalue(receiver.replace(this_value).expect("call receiver"))?;
+                        for value in arguments.drain(..argument_start) {
+                            self.release_jsvalue(value)?;
+                        }
+                        arguments = match self.concatenate_bound_arguments_jsvalue(
+                            caller_realm,
+                            bound,
+                            std::mem::take(&mut arguments),
+                        )? {
+                            NativeConversion::Value(arguments) => arguments,
                             NativeConversion::Throw(value) => {
                                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
                             }
-                        }
+                        };
+                        argument_start = 0;
+                        callable = target;
                     }
-                    if self.native_call_would_overflow(target) {
-                        return Ok(Completion::Throw(self.new_native_error_jsvalue(
+                    CallableExecution::Proxy => {
+                        for value in arguments.drain(..argument_start) {
+                            self.release_jsvalue(value)?;
+                        }
+                        return self.call_proxy_jsvalue(
                             caller_realm,
-                            NativeErrorKind::Internal,
-                            "stack overflow",
-                        )?));
+                            callable.as_object(),
+                            receiver.take().expect("call receiver"),
+                            std::mem::take(&mut arguments),
+                        );
                     }
-                    let execution_realm = if target.uses_calling_realm() {
-                        caller_realm
-                    } else {
-                        realm
-                    };
-                    return self.call_native_function(
-                        &callable,
-                        execution_realm,
-                        target,
-                        min_readable_args,
-                        this_value,
-                        &arguments[argument_start..],
-                    );
-                }
-                CallableExecution::Bound {
-                    target,
-                    this_value: bound_this,
-                    arguments: bound_arguments,
-                } => {
-                    let mut bound_values = Vec::new();
-                    bound_values
-                        .try_reserve_exact(bound_arguments.len())
-                        .map_err(|_| RuntimeError::Invariant("bound argument allocation failed"))?;
-                    for value in bound_arguments {
-                        bound_values.push(self.root_and_release_jsvalue(value)?);
-                    }
-                    arguments = match self.concatenate_bound_arguments(
-                        caller_realm,
-                        &bound_values,
-                        &arguments[argument_start..],
-                    )? {
-                        NativeConversion::Value(arguments) => arguments,
-                        NativeConversion::Throw(value) => {
-                            return Ok(Completion::Throw(self.into_jsvalue(value)?));
-                        }
-                    };
-                    argument_start = 0;
-                    callable = target;
-                    this_value = self.root_and_release_jsvalue(bound_this)?;
-                }
-                CallableExecution::Proxy => {
-                    return self.call_proxy(
-                        caller_realm,
-                        callable.as_object(),
-                        this_value,
-                        &arguments[argument_start..],
-                    );
                 }
             }
         })();
+        if let Some(receiver) = receiver {
+            let _ = self.release_jsvalue(receiver);
+        }
+        for argument in arguments {
+            let _ = self.release_jsvalue(argument);
+        }
         let mut frame_error = None;
         while let Some(frame) = forwarded_call_frames.pop() {
             if let Err(error) = frame.finish()
@@ -274,7 +276,14 @@ impl Runtime {
                 frame_error = Some(error);
             }
         }
-        frame_error.map_or(result, Err)
+        if let Some(error) = frame_error {
+            if let Ok(Completion::Return(value) | Completion::Throw(value)) = result {
+                let _ = self.release_jsvalue(value);
+            }
+            Err(error)
+        } else {
+            result
+        }
     }
 
     fn call_function_prototype_call(

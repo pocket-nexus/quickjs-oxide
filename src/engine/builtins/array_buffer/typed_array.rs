@@ -1508,8 +1508,13 @@ impl Runtime {
         value: &Value,
     ) -> Result<NativeConversion<()>, RuntimeError> {
         Ok(
-            match write::TypedWriteStep::set(self, object.clone(), Some(index), value.clone())?
-                .finish_sync(self, realm)?
+            match write::TypedWriteStep::set(
+                self,
+                object.clone(),
+                Some(index),
+                self.unroot_value(value)?,
+            )?
+            .finish_sync(self, realm)?
             {
                 NativeConversion::Value(_) => NativeConversion::Value(()),
                 NativeConversion::Throw(value) => NativeConversion::Throw(value),

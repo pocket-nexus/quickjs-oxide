@@ -68,15 +68,11 @@ impl ElementStep {
                 }
                 Self::Call { mut resume } => {
                     let callable = resume.take_call_callable();
-                    let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|value| runtime.root_and_release_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     resume.resume(
                         runtime,
-                        runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                        runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                     )?
                 }
             };
@@ -90,22 +86,25 @@ pub(super) fn encode_primitive(
     element: TypedArrayElementKind,
     value: JsValue,
 ) -> Result<NativeConversion<[u8; 8]>, RuntimeError> {
-    let value = runtime.root_and_release_jsvalue(value)?;
-    Ok(if element.is_bigint() {
-        match runtime.bigint_from_primitive(realm, value)? {
-            NativeConversion::Value(bigint) => {
-                NativeConversion::Value(typed_array_encode_bigint(&bigint)?)
+    let result = (|| {
+        Ok(if element.is_bigint() {
+            match runtime.bigint_from_primitive_jsvalue(realm, &value)? {
+                NativeConversion::Value(bigint) => {
+                    NativeConversion::Value(typed_array_encode_bigint(&bigint)?)
+                }
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
             }
-            NativeConversion::Throw(value) => NativeConversion::Throw(value),
-        }
-    } else {
-        match runtime.number_from_primitive(realm, &value)? {
-            NativeConversion::Value(number) => {
-                NativeConversion::Value(typed_array_encode_number(element, number))
+        } else {
+            match runtime.number_from_primitive_jsvalue(realm, &value)? {
+                NativeConversion::Value(number) => {
+                    NativeConversion::Value(typed_array_encode_number(element, number))
+                }
+                NativeConversion::Throw(value) => NativeConversion::Throw(value),
             }
-            NativeConversion::Throw(value) => NativeConversion::Throw(value),
-        }
-    })
+        })
+    })();
+    runtime.release_jsvalue(value)?;
+    result
 }
 fn from_primitive(
     runtime: &Runtime,

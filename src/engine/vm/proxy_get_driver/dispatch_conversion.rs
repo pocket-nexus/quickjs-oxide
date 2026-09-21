@@ -71,10 +71,16 @@ pub(super) fn primitive(
             Step::ArgumentsComplete(result) => {
                 let result = result.take().expect("selected Step field");
 
-                let parent = query
-                    .parents
-                    .pop()
-                    .ok_or_else(|| Error::internal("argument list lost its continuation"))?;
+                let Some(parent) = query.parents.pop() else {
+                    if let crate::engine::value::conversion::NativeConversion::Value(values) =
+                        result
+                    {
+                        for value in values {
+                            let _ = runtime.release_jsvalue(value);
+                        }
+                    }
+                    return Err(Error::internal("argument list lost its continuation"));
+                };
                 *step = parent
                     .arguments(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -114,10 +120,7 @@ pub(super) fn primitive(
 
                 // Only a request which can suspend needs a parent owner. Complete
                 // results (including JS throws) use the same typed reply consumer.
-                let value = runtime
-                    .root_and_release_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
-                let next = crate::engine::value::conversion::number::NumberStep::start(
+                let next = crate::engine::value::conversion::number::NumberStep::start_jsvalue(
                     runtime, realm, value,
                 )
                 .map_err(runtime_error_to_vm_error)?;

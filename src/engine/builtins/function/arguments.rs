@@ -10,14 +10,13 @@ use crate::engine::{
 const MAX_APPLY_ARGUMENTS: u64 = 65_534;
 
 pub(crate) enum ArgumentsStep {
-    Complete(NativeConversion<Vec<Value>>),
+    Complete(NativeConversion<Vec<JsValue>>),
     Read {
         object: ObjectRef,
         key: PropertyKey,
         resume: ArgumentsResume,
     },
     Number {
-        value: JsValue,
         resume: ArgumentsResume,
     },
 }
@@ -37,12 +36,25 @@ const _: () = assert!(std::mem::size_of::<ArgumentsResume>() <= 8);
 pub(crate) struct ArgumentsResumeState {
     realm: ContextId,
     carrier: ObjectRef,
+    number_value: Option<JsValue>,
     phase: Phase,
+}
+impl Drop for ArgumentsResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.number_value.take() {
+            let _ = self.carrier.runtime().release_jsvalue(value);
+        }
+        if let Phase::Item { values, .. } = &mut self.phase {
+            for value in values.drain(..) {
+                let _ = self.carrier.runtime().release_jsvalue(value);
+            }
+        }
+    }
 }
 enum Phase {
     Length,
     Number,
-    Item { length: usize, values: Vec<Value> },
+    Item { length: usize, values: Vec<JsValue> },
 }
 impl ArgumentsStep {
     pub(crate) fn start(
@@ -55,7 +67,7 @@ impl ArgumentsStep {
                 runtime.new_native_error(realm, NativeErrorKind::Type, "not a object")?,
             )));
         };
-        if let Some(result) = runtime.prepare_fast_array_arguments(realm, &carrier)? {
+        if let Some(result) = runtime.prepare_fast_array_arguments_jsvalue(realm, &carrier)? {
             return Ok(Self::Complete(result));
         }
         Ok(Self::Read {
@@ -64,19 +76,24 @@ impl ArgumentsStep {
             resume: ArgumentsResume(Box::new(ArgumentsResumeState {
                 realm,
                 carrier,
+                number_value: None,
                 phase: Phase::Length,
             })),
         })
     }
 }
 impl ArgumentsResume {
+    pub(crate) fn take_number_value(&mut self) -> JsValue {
+        self.0.number_value.take().expect("arguments number")
+    }
+
     pub(crate) fn read(
         mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<ArgumentsStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(ArgumentsStep::Complete(NativeConversion::Throw(
                     runtime.root_and_release_jsvalue(value)?,
@@ -86,10 +103,8 @@ impl ArgumentsResume {
         match std::mem::replace(&mut self.0.phase, Phase::Number) {
             Phase::Length => {
                 self.0.phase = Phase::Number;
-                Ok(ArgumentsStep::Number {
-                    value: runtime.into_jsvalue(value)?,
-                    resume: self,
-                })
+                self.0.number_value = Some(value);
+                Ok(ArgumentsStep::Number { resume: self })
             }
             Phase::Item { length, mut values } => {
                 values.push(value);
@@ -97,9 +112,12 @@ impl ArgumentsResume {
                 crate::engine::api::profiling::record_call_buffer_moves("apply.indexed", 1);
                 self.next(runtime, length, values)
             }
-            Phase::Number => Err(RuntimeError::Invariant(
-                "argument length received an untyped reply",
-            )),
+            Phase::Number => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "argument length received an untyped reply",
+                ))
+            }
         }
     }
     pub(crate) fn number(
@@ -130,7 +148,9 @@ impl ArgumentsResume {
         }
         let length = usize::try_from(length)
             .map_err(|_| RuntimeError::Invariant("argument-list length does not fit usize"))?;
-        if let Some(values) = runtime.fast_array_like_values(&self.0.carrier, length as u32)? {
+        if let Some(values) =
+            runtime.fast_array_like_values_jsvalue(&self.0.carrier, length as u32)?
+        {
             return Ok(ArgumentsStep::Complete(NativeConversion::Value(values)));
         }
         let mut values = Vec::new();
@@ -144,7 +164,7 @@ impl ArgumentsResume {
             "apply.indexed",
             0,
             values.capacity(),
-            size_of::<Value>(),
+            size_of::<JsValue>(),
         );
         self.next(runtime, length, values)
     }
@@ -152,13 +172,14 @@ impl ArgumentsResume {
         mut self,
         runtime: &Runtime,
         length: usize,
-        values: Vec<Value>,
+        values: Vec<JsValue>,
     ) -> Result<ArgumentsStep, RuntimeError> {
         if values.len() == length {
             return Ok(ArgumentsStep::Complete(NativeConversion::Value(values)));
         }
-        let key = runtime.intern_property_key(&values.len().to_string())?;
+        let index = values.len();
         self.0.phase = Phase::Item { length, values };
+        let key = runtime.property_key_for_index(index as u64)?;
         Ok(ArgumentsStep::Read {
             object: self.0.carrier.clone(),
             key,
@@ -170,7 +191,7 @@ pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
     mut step: ArgumentsStep,
-) -> Result<NativeConversion<Vec<Value>>, RuntimeError> {
+) -> Result<NativeConversion<Vec<JsValue>>, RuntimeError> {
     loop {
         step = match step {
             ArgumentsStep::Complete(result) => return Ok(result),
@@ -182,8 +203,8 @@ pub(crate) fn finish(
                 runtime,
                 runtime.get_property_in_realm(realm, &object, &key)?,
             )?,
-            ArgumentsStep::Number { value, resume } => {
-                let value = runtime.root_and_release_jsvalue(value)?;
+            ArgumentsStep::Number { mut resume } => {
+                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
                 resume.number(runtime, runtime.native_to_number(realm, &value)?)?
             }
         };

@@ -44,6 +44,16 @@ pub(crate) struct ArrayNextResumeState {
 
     requested_read: Option<crate::engine::object::OrdinaryRead>,
 }
+impl Drop for ArrayNextResumeState {
+    fn drop(&mut self) {
+        if let Some(read) = self.requested_read.take() {
+            read.release(self.iterator.runtime());
+        }
+        if let Some(value) = self.requested_value.take() {
+            let _ = self.iterator.runtime().release_jsvalue(value);
+        }
+    }
+}
 enum Phase {
     Length,
     Number,
@@ -133,7 +143,7 @@ impl ArrayNextStep {
 enum NextAction {
     Complete(NativeInvokeOutcome),
     Read(PropertyKey),
-    Number(Value),
+    Number(JsValue),
 }
 
 impl ArrayNextResume {
@@ -143,7 +153,7 @@ impl ArrayNextResume {
         reply: Completion,
     ) -> Result<NextAction, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(NextAction::Complete(NativeInvokeOutcome::Completion(
                     Completion::Throw(value),
@@ -157,21 +167,34 @@ impl ArrayNextResume {
             }
             Phase::Value => {
                 let value = if self.0.kind == ArrayIteratorKind::KeyAndValue {
-                    Value::Object(runtime.new_array_from_values(
-                        self.0.realm,
-                        vec![Runtime::array_length_value(self.0.index), value],
-                    )?)
+                    JsValue::Object(
+                        runtime
+                            .new_array_from_values_jsvalue(
+                                self.0.realm,
+                                vec![
+                                    crate::engine::value::number::operations::Number::compact(
+                                        self.0.index as f64,
+                                    )
+                                    .into(),
+                                    value,
+                                ],
+                            )?
+                            .into_handle(),
+                    )
                 } else {
                     value
                 };
                 Ok(NextAction::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                    value: runtime.into_jsvalue(value)?,
+                    value,
                     done: false,
                 }))
             }
-            Phase::Number => Err(RuntimeError::Invariant(
-                "Array Iterator number phase received completion",
-            )),
+            Phase::Number => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "Array Iterator number phase received completion",
+                ))
+            }
         }
     }
     fn number_once(
@@ -266,9 +289,9 @@ impl ArrayNextResume {
                             }
                         }
                     }
-                    NextAction::Number(value) if !matches!(value, Value::Object(_)) => {
+                    NextAction::Number(value) if !matches!(value, JsValue::Object(_)) => {
                         let NumberStep::Complete(reply) =
-                            NumberStep::start(runtime, self.0.realm, value)?
+                            NumberStep::start_jsvalue(runtime, self.0.realm, value)?
                         else {
                             return Err(RuntimeError::Invariant(
                                 "primitive iterator number suspended",
@@ -316,7 +339,7 @@ impl ArrayNextResume {
     }
     fn wait(
         mut self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         action: NextAction,
     ) -> Result<ArrayNextStep, RuntimeError> {
         match action {
@@ -327,7 +350,7 @@ impl ArrayNextResume {
                 Ok(ArrayNextStep::Read { resume: self })
             }
             NextAction::Number(value) => {
-                self.requested_value = Some(runtime.into_jsvalue(value)?);
+                self.requested_value = Some(value);
                 Ok(ArrayNextStep::Number { resume: self })
             }
         }

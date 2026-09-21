@@ -16,7 +16,7 @@ use crate::engine::builtins::native::NativeFunctionId;
 
 use crate::engine::heap::{
     ContextId, IteratorConsumerKind, IteratorHelperData, IteratorHelperKind, IteratorRealmData,
-    IteratorResumeKind, ObjectData,
+    IteratorResumeKind, ObjectData, RawValue,
 };
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{
@@ -403,35 +403,56 @@ impl Runtime {
         Ok(NativeConversion::Value(callable))
     }
 
+    fn dup_iterator_raw(&self, raw: &RawValue) -> Result<JsValue, RuntimeError> {
+        let value = JsValue::from_raw(raw.clone()).ok_or(RuntimeError::Invariant(
+            "iterator value was an internal sentinel",
+        ))?;
+        self.dup_jsvalue(&value)
+    }
+
+    fn iterator_callable_jsvalue(
+        &self,
+        realm: ContextId,
+        value: &JsValue,
+    ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
+        if let JsValue::Object(id) = value {
+            let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+            if let Some(callable) = self.as_callable(&object)? {
+                return Ok(NativeConversion::Value(callable));
+            }
+        }
+        Ok(NativeConversion::Throw(self.new_native_error(
+            realm,
+            NativeErrorKind::Type,
+            "not a function",
+        )?))
+    }
+
     fn new_iterator_wrap(
         &self,
         realm: ContextId,
-        source: &Value,
-        next: &Value,
+        source: &JsValue,
+        next: &JsValue,
     ) -> Result<ObjectRef, RuntimeError> {
         let prototype = self.iterator_realm_data(realm)?.wrap_prototype;
         let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
-        let converted_source = self.raw_property_value(source)?;
-        let converted_next = self.raw_property_value(next)?;
-        // The conversions allocated string/BigInt nodes with producer edges;
-        // the object retains its own copy edges, so the guards balance the
-        // producer edges on every exit below.
+        let raw_source = source.as_raw();
+        let raw_next = next.as_raw();
         let mut state = self.0.state.borrow_mut();
         let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
-        let retained_atoms =
-            match state.retain_raw_value_atoms([&converted_source.raw(), &converted_next.raw()]) {
-                Ok(atoms) => atoms,
-                Err(error) => {
-                    let cleanup = state.heap.release_shape(shape)?;
-                    state.apply_cleanup(cleanup)?;
-                    return Err(error);
-                }
-            };
+        let retained_atoms = match state.retain_raw_value_atoms([&raw_source, &raw_next]) {
+            Ok(atoms) => atoms,
+            Err(error) => {
+                let cleanup = state.heap.release_shape(shape)?;
+                state.apply_cleanup(cleanup)?;
+                return Err(error);
+            }
+        };
         let object = match state.heap.allocate_object(ObjectData::iterator_wrap(
             shape,
             Vec::new(),
-            converted_source.raw(),
-            converted_next.raw(),
+            raw_source,
+            raw_next,
         )) {
             Ok(object) => object,
             Err(error) => {
@@ -481,22 +502,17 @@ impl Runtime {
         &self,
         realm: ContextId,
         source: &ObjectRef,
-        next: &Value,
-        callback: &Value,
+        next: &JsValue,
+        callback: &JsValue,
         count: i64,
         kind: IteratorHelperKind,
     ) -> Result<ObjectRef, RuntimeError> {
         let prototype = self.iterator_realm_data(realm)?.helper_prototype;
         let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
-        let converted_next = self.raw_property_value(next)?;
-        let converted_callback = self.raw_property_value(callback)?;
-        // The conversions allocated string/BigInt nodes with producer edges;
-        // the object retains its own copy edges, so the guards balance the
-        // producer edges on every exit below.
         let data = IteratorHelperData {
             source: source.object_id(),
-            next: converted_next.raw(),
-            callback: converted_callback.raw(),
+            next: next.as_raw(),
+            callback: callback.as_raw(),
             inner: None,
             count,
             kind,

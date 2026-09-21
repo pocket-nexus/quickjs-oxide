@@ -451,9 +451,7 @@ pub(super) fn get(
                     }
                     OrdinaryRead::Call { getter, receiver } => (
                         DirectCallTarget::Callable(getter),
-                        runtime
-                            .into_jsvalue(receiver)
-                            .map_err(runtime_error_to_vm_error)?,
+                        receiver,
                         Vec::new(),
                         resume,
                     ),
@@ -464,28 +462,28 @@ pub(super) fn get(
                             .frames
                             .can_push_with_continuations(query.continuation_depth())
                         {
+                            runtime
+                                .release_jsvalue(receiver)
+                                .map_err(runtime_error_to_vm_error)?;
                             *step = resume
                                 .resume(runtime, overflow(runtime, realm)?)
                                 .map_err(runtime_error_to_vm_error)?;
                             continue;
                         }
-                        query.parents.try_reserve(1).map_err(|_| {
-                            Error::internal("property continuation allocation failed")
-                        })?;
+                        if query.parents.try_reserve(1).is_err() {
+                            let _ = runtime.release_jsvalue(receiver);
+                            return Err(Error::internal("property continuation allocation failed"));
+                        }
+                        let arguments = match execution.slots.take_argument_buffer(3) {
+                            Ok(arguments) => arguments,
+                            Err(error) => {
+                                let _ = runtime.release_jsvalue(receiver);
+                                return Err(error);
+                            }
+                        };
                         query.parents.push(resume);
                         *step = ProxyGetStep::start_buffered(
-                            runtime,
-                            realm,
-                            object,
-                            key,
-                            receiver,
-                            execution
-                                .slots
-                                .take_argument_buffer(3)?
-                                .into_iter()
-                                .map(|argument| runtime.root_and_release_jsvalue(argument))
-                                .collect::<Result<Vec<_>, _>>()
-                                .map_err(runtime_error_to_vm_error)?,
+                            runtime, realm, object, key, receiver, arguments,
                         )
                         .map_err(runtime_error_to_vm_error)?
                         .into();

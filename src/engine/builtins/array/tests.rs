@@ -268,3 +268,86 @@ fn rqsort_cursor_orders_partition_insertion_and_large_inputs() {
         );
     }
 }
+
+#[test]
+fn array_copy_build_sort_and_push_preserve_payload_nodes() {
+    let runtime = Runtime::new();
+    let weak = std::rc::Rc::downgrade(&runtime.0);
+    {
+        let mut context = runtime.new_context();
+        for payload in ["'shared payload'", "123456789012345678901234567890n"] {
+            let arrays = eval_object(
+                &mut context,
+                &format!(
+                    r#"
+                (() => {{
+                    let source = [{payload}], pushed = [];
+                    pushed.push(source[0]);
+                    return [source, source.with(0, source[0]),
+                        source.toSpliced(0, 0, source[0]), source.toReversed(),
+                        source.toSorted(), Array.of(source[0]), Array.from(source),
+                        pushed, source.slice(), source.sort(), [...source],
+                        (function(v) {{ return [v]; }}).apply(null, source),
+                        Reflect.apply(function(v) {{ return [v]; }}, null, {{length:1, get 0() {{ return source[0]; }} }}),
+                        Reflect.construct(function(v) {{ return [v]; }}, source),
+                        (function(v) {{ return [v]; }}).bind(null, source[0]).apply(null, [])];
+                }})()
+            "#
+                ),
+            );
+            let state = runtime.0.state.borrow();
+            let crate::engine::heap::ObjectPayload::Array { dense: Some(outer) } =
+                &state.heap.object(arrays.object_id()).unwrap().payload
+            else {
+                panic!("outer array")
+            };
+            let mut expected = None;
+            for (case, raw) in outer.iter().enumerate() {
+                let RawValue::Object(id) = raw else {
+                    panic!("inner array")
+                };
+                let crate::engine::heap::ObjectPayload::Array { dense: Some(inner) } =
+                    &state.heap.object(*id).unwrap().payload
+                else {
+                    panic!("dense result")
+                };
+                let handle = match inner.first().unwrap() {
+                    RawValue::String(id) => JsValue::String(*id),
+                    RawValue::BigInt(id) => JsValue::BigInt(*id),
+                    _ => panic!("heap payload"),
+                };
+                if let Some(expected) = &expected {
+                    assert_eq!(
+                        &handle,
+                        expected,
+                        "{payload}: {}",
+                        [
+                            "source",
+                            "with",
+                            "toSpliced",
+                            "toReversed",
+                            "toSorted",
+                            "of",
+                            "from",
+                            "push",
+                            "slice",
+                            "sort",
+                            "spread",
+                            "apply",
+                            "Reflect.apply",
+                            "Reflect.construct",
+                            "bound apply"
+                        ][case]
+                    );
+                } else {
+                    expected = Some(handle);
+                }
+            }
+        }
+    }
+    drop(runtime);
+    assert!(
+        weak.upgrade().is_none(),
+        "array owner kept the runtime alive"
+    );
+}

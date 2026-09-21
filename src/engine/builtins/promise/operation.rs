@@ -28,9 +28,66 @@ pub(crate) enum PromiseStep {
 }
 
 pub(crate) struct PromiseResume {
+    runtime: Runtime,
     pending_effect: PromiseStepPending,
     realm: ContextId,
     phase: Phase,
+}
+
+impl Drop for PromiseResume {
+    fn drop(&mut self) {
+        for value in [
+            self.pending_effect.next_method.take(),
+            self.pending_effect.read_receiver.take(),
+            self.pending_effect.call_receiver.take(),
+            self.pending_effect.prototype_new_target.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for values in [
+            self.pending_effect.call_arguments.take(),
+            self.pending_effect.construct_arguments.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(Completion::Return(value) | Completion::Throw(value)) =
+            self.pending_effect.close_completion.take()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(step) = self.pending_effect.nested_step.take() {
+            step.release(&self.runtime);
+        }
+        if let Phase::ConvenienceCapability { arguments, .. } = &mut self.phase {
+            for value in arguments.readable.drain(..) {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
+}
+impl PromiseStep {
+    fn release(self, runtime: &Runtime) {
+        match self {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => {
+                let _ = runtime.release_jsvalue(value);
+            }
+            Self::Next { resume }
+            | Self::Close { resume }
+            | Self::Nested { resume }
+            | Self::Read { resume }
+            | Self::Call { resume }
+            | Self::Construct { resume }
+            | Self::Prototype { resume } => drop(resume),
+        }
+    }
 }
 
 enum Phase {
@@ -98,6 +155,7 @@ enum Phase {
 
 impl PromiseStep {
     pub(super) fn ignore_return(realm: ContextId, callable: CallableRef, argument: Value) -> Self {
+        let runtime = callable.runtime().clone();
         {
             let __pending_field_callable = callable;
             let __pending_field_receiver = JsValue::Undefined;
@@ -109,6 +167,7 @@ impl PromiseStep {
                     .expect("Promise ignore-return argument conversion"),
             }];
             let __pending_field_resume = Box::new(PromiseResume {
+                runtime: runtime.clone(),
                 pending_effect: PromiseStepPending::default(),
                 realm,
                 phase: Phase::IgnoreReturn,
@@ -168,6 +227,7 @@ impl PromiseStep {
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
+                        runtime: runtime.clone(),
                         pending_effect: PromiseStepPending::default(),
                         realm,
                         phase: Phase::CatchThen {
@@ -220,6 +280,7 @@ impl PromiseStep {
                 Ok({
                     let __pending_field_new_target = runtime.dup_jsvalue(new_target)?;
                     let __pending_field_resume = Box::new(PromiseResume {
+                        runtime: runtime.clone(),
                         pending_effect: PromiseStepPending::default(),
                         realm,
                         phase: Phase::ConstructorPrototype { executor },
@@ -277,15 +338,21 @@ impl PromiseStep {
         if already_resolved.replace(true) {
             return Ok(Self::Complete(Completion::Return(JsValue::Undefined)));
         }
-        let resolution = runtime.root_value(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Promise resolving argv was not padded"),
-        )?)?;
+        let resolution = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Promise resolving argv was not padded",
+        ))?;
         let promise = ObjectRef::from_borrowed_handle(runtime.clone(), promise)?;
         if kind == PromiseResolvingKind::Reject {
-            runtime.settle_promise(realm, &promise, PromiseState::Rejected, resolution)?;
-        } else if let Value::Object(object) = resolution {
+            runtime.settle_promise(
+                realm,
+                &promise,
+                PromiseState::Rejected,
+                runtime.dup_jsvalue(resolution)?,
+            )?;
+        } else if let JsValue::Object(id) = resolution {
+            let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
             if object == promise {
-                let reason = runtime.new_native_error(
+                let reason = runtime.new_native_error_jsvalue(
                     realm,
                     crate::engine::api::error::NativeErrorKind::Type,
                     "promise self resolution",
@@ -297,6 +364,7 @@ impl PromiseStep {
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
+                        runtime: runtime.clone(),
                         pending_effect: PromiseStepPending::default(),
                         realm,
                         phase: Phase::ResolveThen {
@@ -312,7 +380,12 @@ impl PromiseStep {
                 });
             }
         } else {
-            runtime.settle_promise(realm, &promise, PromiseState::Fulfilled, resolution)?;
+            runtime.settle_promise(
+                realm,
+                &promise,
+                PromiseState::Fulfilled,
+                runtime.dup_jsvalue(resolution)?,
+            )?;
         }
         Ok(Self::Complete(Completion::Return(JsValue::Undefined)))
     }
@@ -335,11 +408,13 @@ impl PromiseStep {
 
 impl PromiseResume {
     pub(crate) fn prototype(
-        self: Box<Self>,
+        mut self: Box<Self>,
         runtime: &Runtime,
         result: NativeConversion<ConstructorPrototypeSource>,
     ) -> Result<PromiseStep, RuntimeError> {
-        let Phase::ConstructorPrototype { executor } = self.phase else {
+        let Phase::ConstructorPrototype { executor } =
+            std::mem::replace(&mut self.phase, Phase::Identity)
+        else {
             return Err(RuntimeError::Invariant(
                 "Promise prototype reply has wrong phase",
             ));
@@ -369,6 +444,7 @@ impl PromiseResume {
             let __pending_field_receiver = JsValue::Undefined;
             let __pending_field_arguments = arguments;
             let __pending_field_resume = Box::new(Self {
+                runtime: runtime.clone(),
                 pending_effect: PromiseStepPending::default(),
                 realm: self.realm,
                 phase: Phase::ConstructorExecutor {
@@ -389,12 +465,12 @@ impl PromiseResume {
     }
 
     pub(crate) fn resume(
-        self: Box<Self>,
+        mut self: Box<Self>,
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<PromiseStep, RuntimeError> {
         let realm = self.realm;
-        match self.phase {
+        match std::mem::replace(&mut self.phase, Phase::Identity) {
             Phase::ConvenienceCapability { .. } => Err(RuntimeError::Invariant(
                 "Promise convenience expected capability",
             )),
@@ -426,6 +502,7 @@ impl PromiseResume {
                             .map(|value| runtime.into_jsvalue(value))
                             .collect::<Result<Vec<_>, _>>()?;
                         let __pending_field_resume = Box::new(Self {
+                            runtime: runtime.clone(),
                             pending_effect: PromiseStepPending::default(),
                             realm,
                             phase: Phase::Identity,
@@ -444,7 +521,10 @@ impl PromiseResume {
             )),
             Phase::Aggregate(phase) => aggregate::resume(runtime, realm, phase, completion),
             Phase::IgnoreReturn => Ok(PromiseStep::Complete(match completion {
-                Completion::Return(_) => Completion::Return(JsValue::Undefined),
+                Completion::Return(value) => {
+                    runtime.release_jsvalue(value)?;
+                    Completion::Return(JsValue::Undefined)
+                }
                 other => other,
             })),
             Phase::Identity => Ok(PromiseStep::Complete(completion)),
@@ -471,6 +551,7 @@ impl PromiseResume {
                     let __pending_field_arguments =
                         vec![JsValue::Undefined, runtime.into_jsvalue(handler)?];
                     let __pending_field_resume = Box::new(Self {
+                        runtime: runtime.clone(),
                         pending_effect: PromiseStepPending::default(),
                         realm,
                         phase: Phase::Identity,
@@ -490,6 +571,7 @@ impl PromiseResume {
                     let __pending_field_receiver = JsValue::Undefined;
                     let __pending_field_arguments = vec![reason];
                     let __pending_field_resume = Box::new(Self {
+                        runtime: runtime.clone(),
                         pending_effect: PromiseStepPending::default(),
                         realm,
                         phase: Phase::Identity,
@@ -522,6 +604,7 @@ impl PromiseResume {
                     let __pending_field_receiver = JsValue::Undefined;
                     let __pending_field_arguments = vec![value];
                     let __pending_field_resume = Box::new(Self {
+                        runtime: runtime.clone(),
                         pending_effect: PromiseStepPending::default(),
                         realm,
                         phase: Phase::Identity,
@@ -557,12 +640,9 @@ impl PromiseResume {
                 resolution,
             } => {
                 match completion {
-                    Completion::Throw(reason) => runtime.settle_promise(
-                        realm,
-                        &promise,
-                        PromiseState::Rejected,
-                        runtime.root_and_release_jsvalue(reason)?,
-                    )?,
+                    Completion::Throw(reason) => {
+                        runtime.settle_promise(realm, &promise, PromiseState::Rejected, reason)?
+                    }
                     Completion::Return(then) => {
                         let callable = match &then {
                             JsValue::Object(id) => {
@@ -585,7 +665,7 @@ impl PromiseResume {
                                 realm,
                                 &promise,
                                 PromiseState::Fulfilled,
-                                Value::Object(resolution),
+                                JsValue::Object(resolution.into_handle()),
                             )?;
                         }
                     }
@@ -601,6 +681,7 @@ impl PromiseResume {
                         let __pending_field_receiver = JsValue::Undefined;
                         let __pending_field_arguments = vec![reason];
                         let __pending_field_resume = Box::new(Self {
+                            runtime: runtime.clone(),
                             pending_effect: PromiseStepPending::default(),
                             realm,
                             phase: Phase::ReturnPromise(capability.promise),
@@ -619,7 +700,8 @@ impl PromiseResume {
             }
             Phase::ReturnPromise(promise) => Ok(PromiseStep::Complete(match completion {
                 Completion::Throw(value) => Completion::Throw(value),
-                Completion::Return(_) => {
+                Completion::Return(value) => {
+                    runtime.release_jsvalue(value)?;
                     Completion::Return(runtime.into_jsvalue(Value::Object(promise))?)
                 }
             })),
@@ -632,11 +714,13 @@ impl PromiseResume {
 
 impl PromiseResume {
     pub(crate) fn next(
-        self: Box<Self>,
+        mut self: Box<Self>,
         runtime: &Runtime,
         result: crate::engine::builtins::object::ObjectIteratorStep,
     ) -> Result<PromiseStep, RuntimeError> {
-        let Phase::Aggregate(aggregate::Phase::Next(state)) = self.phase else {
+        let Phase::Aggregate(aggregate::Phase::Next(state)) =
+            std::mem::replace(&mut self.phase, Phase::Identity)
+        else {
             return Err(RuntimeError::Invariant(
                 "Promise iterator reply has wrong phase",
             ));

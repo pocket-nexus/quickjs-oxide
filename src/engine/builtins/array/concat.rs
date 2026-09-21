@@ -45,6 +45,7 @@ impl std::ops::DerefMut for ConcatResume {
 }
 const _: () = assert!(std::mem::size_of::<ConcatResume>() <= 8);
 pub(crate) struct ConcatResumeState {
+    runtime: Runtime,
     pending_effect: ConcatStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
@@ -55,6 +56,16 @@ pub(crate) struct ConcatResumeState {
     next_index: u64,
     index: u64,
     length: u64,
+}
+impl Drop for ConcatResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ConcatStep {
     pub(crate) fn start(
@@ -88,6 +99,7 @@ impl ConcatStep {
         Ok(Self::request_species(
             source,
             ConcatResume(Box::new(ConcatResumeState {
+                runtime: runtime.clone(),
                 pending_effect: ConcatStepPending::default(),
                 scheduler_set_key: None,
                 realm,

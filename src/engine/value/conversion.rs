@@ -9,7 +9,7 @@ use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::heap::ContextId;
 
 use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol};
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 impl Runtime {
@@ -233,7 +233,15 @@ impl Runtime {
         realm: ContextId,
         value: &Value,
     ) -> Result<NativeConversion<f64>, RuntimeError> {
-        let mut step = number::NumberStep::start(self, realm, value.clone())?;
+        self.native_to_number_jsvalue(realm, self.unroot_value(value)?)
+    }
+
+    pub(crate) fn native_to_number_jsvalue(
+        &self,
+        realm: ContextId,
+        value: JsValue,
+    ) -> Result<NativeConversion<f64>, RuntimeError> {
+        let mut step = number::NumberStep::start_jsvalue(self, realm, value)?;
         loop {
             step = match step {
                 number::NumberStep::Complete(result) => return Ok(result),
@@ -244,18 +252,66 @@ impl Runtime {
                 }
                 number::NumberStep::Call { mut resume } => {
                     let callable = resume.take_call_callable();
-                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|argument| self.root_and_release_jsvalue(argument))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     resume.resume(
                         self,
-                        self.call_internal(realm, &callable, receiver, &arguments)?,
+                        self.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                     )?
                 }
             };
+        }
+    }
+
+    /// Borrow a primitive internal value; no public root or arena node is created.
+    pub(crate) fn number_from_primitive_jsvalue(
+        &self,
+        realm: ContextId,
+        value: &JsValue,
+    ) -> Result<NativeConversion<f64>, RuntimeError> {
+        if matches!(value, JsValue::Object(_)) {
+            return Err(RuntimeError::Invariant(
+                "ToNumber primitive completion received an object",
+            ));
+        }
+        match crate::engine::vm::to_number_jsvalue(self, value) {
+            Ok(number) => Ok(NativeConversion::Value(number)),
+            Err(error) => {
+                let Some(kind) = NativeErrorKind::from_javascript_error(error.kind()) else {
+                    return Err(RuntimeError::Engine(error));
+                };
+                Ok(NativeConversion::Throw(
+                    self.new_native_error_from_error(realm, kind, &error)?,
+                ))
+            }
+        }
+    }
+
+    /// Borrow the stored primitive payload for ToBigInt without re-materializing it.
+    pub(crate) fn bigint_from_primitive_jsvalue(
+        &self,
+        realm: ContextId,
+        value: &JsValue,
+    ) -> Result<NativeConversion<crate::engine::value::bigint::JsBigInt>, RuntimeError> {
+        match value {
+            JsValue::BigInt(id) => Ok(NativeConversion::Value(
+                self.0.state.borrow().heap.bigint(*id)?.clone(),
+            )),
+            JsValue::Bool(value) => Ok(NativeConversion::Value(
+                crate::engine::value::bigint::JsBigInt::from(i64::from(*value)),
+            )),
+            JsValue::String(id) => {
+                let string = self.0.state.borrow().heap.string(*id)?.clone();
+                self.native_bigint_from_string(realm, &string)
+            }
+            JsValue::Object(_) => Err(RuntimeError::Invariant(
+                "ToBigInt primitive completion received an object",
+            )),
+            _ => Ok(NativeConversion::Throw(self.new_native_error(
+                realm,
+                NativeErrorKind::Type,
+                "cannot convert to bigint",
+            )?)),
         }
     }
 

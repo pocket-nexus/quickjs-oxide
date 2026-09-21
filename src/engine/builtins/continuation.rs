@@ -282,7 +282,7 @@ pub(crate) enum NativeStep {
 impl NativeOperation {
     pub(crate) fn synchronous(
         &self,
-        arguments: &[crate::engine::value::Value],
+        arguments: &[crate::engine::value::JsValue],
     ) -> Option<SynchronousNative> {
         match self {
             Self::Pure(target) => Some(SynchronousNative::Pure(*target)),
@@ -290,7 +290,7 @@ impl NativeOperation {
                 if matches!(kind, super::native::PrimitiveKind::Boolean)
                     || !matches!(
                         arguments.first(),
-                        Some(crate::engine::value::Value::Object(_))
+                        Some(crate::engine::value::JsValue::Object(_))
                     ) =>
             {
                 Some(SynchronousNative::PrimitiveConstructor(*kind))
@@ -305,7 +305,7 @@ impl NativeOperation {
                 arguments
                     .iter()
                     .take(count)
-                    .all(|value| !matches!(value, crate::engine::value::Value::Object(_)))
+                    .all(|value| !matches!(value, crate::engine::value::JsValue::Object(_)))
                     .then_some(SynchronousNative::Math(*kind))
             }
             _ => None,

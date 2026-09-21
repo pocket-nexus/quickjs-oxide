@@ -1,6 +1,6 @@
 # S3-A 计划：8B 值表示——融合实施
 
-> 状态：待实施。起点为 pre-A 代码基线，无前置实现资产。本文档是
+> 状态：W1–W5 已有实现，所有权修复与终态收敛进行中；W6 尚未验收。起点为 pre-A 代码基线。本文档是
 > `performance-architecture.md` §4（方案 A）的实施计划与验收规则；若两处
 > 表述冲突，**以本文档为准**。约束与证据附录继承
 > `performance-architecture.md` §0/§11/附录。
@@ -237,7 +237,8 @@ Test262 `--check`/`--focused`/`--full` 零回归（清理 `GIT_*`，只产
 current-source receipt，不改 `current.conf`）→
 `check-source-layout.py` + rust-only 门禁 → benchmark receipts
 （`property_read_probe.py` + `scaling.py` + `run.py`，串行、独立输出
-目录，协议见 §5）→ profiling 计数器无漂移 → 实测结果记入本文档。
+目录，协议见 §5）→ profiling 计数器符合实际执行路径（消除 root/dup 后的
+下降属于预期收益，需逐项解释；禁止仅为保留旧数字而增加计数）→ 实测结果记入本文档。
 
 **委托执行交底**：任务拆分委托时，提示词必须包含 §1 终态设计、§1.2
 所有权纪律、§2 放置规则与「临时构造不接受」条款；评审先看设计一致性，
@@ -318,8 +319,9 @@ current-source receipt，不改 `current.conf`）→
 - teardown 报告：`live != 0` 时打印 `[ledger]`（外部根 + 残余边数 + 创建
   调用栈）与 `[atom-ledger]`（非 pinned 且 refs > 0 的 atom，最多 8 条），
   随后照常 assert；`QJS_TEARDOWN_PROBE` 保留「只打印不 panic」的诊断语义。
-- 首次实战：oracle 套件 `math_values_match_pinned_quickjs` 的 529 节点
-  泄漏被直接定位到测试嵌入路径创建的 realm/context 根。
+- 创建栈只能定位幸存节点的创建位置，不能直接证明遗漏释放发生在该位置。
+  realm/context 创建的大量节点可以被一个遗漏的外部边连带保活；须结合
+  `strong − 内部入边` 与实际所有权交接路径定位根因。
 
 ### 7.2 边界边守卫（scoped edge guard）——用编译器消灭「忘释放生产者边」
 
@@ -391,17 +393,20 @@ current-source receipt，不改 `current.conf`）→
 **决定**：
 
 1. **采纳即 by value**：吞掉值所有权的存储/记录/缓冲函数参数一律取
-   `JsValue`（或 `RawValue`）by value；调用方在值消失后再无处可 release，
-   「存了忘放」在类型上不成立。
+   `JsValue`（或 `RawValue`）by value，并明确成功与失败的边责任：成功交接，
+   失败释放或连同错误返还。值类型没有 Drop，按值传参本身不会释放边，
+   也不能阻止调用方丢弃值或 `.clone()` 复制非拥有句柄。
 2. **产出即 owned**：返回 owned 值的函数保持 by-value 返回，值类型标注
-   `#[must_use]`——「创建后既没存也没放」作为语句出现时编译器告警。
+   `#[must_use]`——仅提示未使用结果，`drop(JsValue)`/`drop(RawValue)`
+   不会释放边，不能用它们消除告警来代替 `release_jsvalue`。
 3. **dup 显式化**：调用方需要「存完再用」时显式 `dup_jsvalue`；dup 从被调
    函数内部挪到调用方可见处。
 4. 执行与 W3 尾部/W4 签名切换同波完成（同一批调用点），逐文件推进，
    编译器驱动。
 
-**性能论证**：by-value 16B 枚举传参 = 寄存器移动，codegen 不变；每个采纳点
-**删掉一对 dup/release**（借入 dup + 事后 release），严格更少计数动作。
+**性能验收**：仅在实现实际转移原有生产者边时，采纳点才消除一对
+dup/release。按值传参不保证寄存器传递或计数下降；必须检查函数体、错误
+出口和 profiling。纯借读接口保留借用，不机械改写。
 
 **已知覆盖缺口（诚实清单）**：`let v = pop();` 后遗忘（赋值未用）Rust 不告警；
 槽位 pop/丢弃的手工 release 不受签名规则覆盖——二者由 7.1 账本检测。
@@ -419,7 +424,9 @@ current-source receipt，不改 `current.conf`）→
 - 采纳签名改 by value（本轮清单）：`retain_raw_root`、`root_raw_value`、
   `decode_raw_jsvalue`（suspend 与 async-from-sync 两处实现）、
   `CollectionIndex::insert/remove` 由 `&RawValue` 改为 `RawValue`；调用方在
-  仍需句柄处显式 `.clone()`，dups 从被调方挪到调用方。
+  仍需句柄处显式 `.clone()`。这些历史签名变更本身不是所有权迁移证明：
+  `RawValue::clone()` 只复制句柄、不 retain；`root_raw_value` 仍新增公共根，
+  不自动释放输入边。应按函数契约分别审计借读、dup、消费与失败出口。
 - 诚实缺口：行式 rg 清单低估了规模——全仓实际有约 106 个 `&Value` 与 28 个
   `&RawValue` 参数签名；属性写、dense array、typed array 等 `&Value` 采纳
   路径仍是借用签名。按 §7.3「逐文件推进，编译器驱动」在下一波继续。
@@ -435,9 +442,113 @@ current-source receipt，不改 `current.conf`）→
 | 7.2 边守卫 | 完成 | `raw_property_value` 全部 41 个调用点 + 源级规则 | 两个通用辅助保留为 `drop(ConvertedValue::new(...))`；`roots.rs` 一处非守卫释放（不调用转换函数，规则允许） |
 | 7.3 move 优先 | 部分完成 | `#[must_use]` 三类型 + 全仓零 allow；6 个采纳函数改 by-value | 约 106 个 `&Value`、28 个 `&RawValue` 签名仍为借用，属性写/dense array/typed array 待逐文件推进 |
 
-**A 阶段 §7 验收线（已达到）**：`raw_property_value` 调用点无手写释放、
-全仓 `unused_must_use` 零 allow、teardown 账本能对幸存节点给出创建栈。
-**A 阶段不阻塞**：7.3 剩余 `&Value` 采纳面（多数经手 RAII `Value`，泄漏
-风险画像不同），按「逐文件推进，编译器驱动」列入 B/D 阶段持续清理。
-**仍待完成**：oracle 套件 ~19 个既有 realm 级泄漏修复（7.1 已定位来源）、
-Test262 `--check`/`--focused`/`--full`、基准 receipts 与 W6 结果记录。
+**A 阶段尚未验收**：上述历史实现与局部门禁不替代 §1–§5 的完整要求。
+内部 `Value` 往返、String/BigInt store 再分配属于 W4/W5 终态缺口，不能仅
+以 §7 检查通过为由延期到 B/D。纯借读签名本身不是缺口。
+
+**失败清单纠正**：oracle 测试语义断言失败后，`Runtime::drop` 的泄漏断言
+可能再次 panic，导致测试二进制 SIGABRT；此前同一进程中的“剩余失败数”
+和“约 19 个 realm 泄漏”均不可靠，也不能把未执行测试视为通过。
+
+### 7.5 本轮验收基础设施与证据边界
+
+- `scripts/checks/run-oracle-isolated.py` 对编译后的精确 Rust 测试二进制先
+  `--list`，再逐测试 `--exact` 独立进程运行；有界并行、进程组超时终止，
+  每测试保存日志及 JSON receipt，区分失败、abort、signal、timeout、
+  ignored、缺汇总及缺测试。汇总必须与枚举集合逐一配平。
+- runner 强制移除 `QJS_TEARDOWN_PROBE`，保留正常 teardown/release 断言；
+  用该变量获得的诊断输出不能作为通过证据。过滤运行明确记录 scope，
+  `passed` 只表示所选范围，完整 oracle 验收还要求 `full_scope=true`。
+- debug teardown 独立检查非 pinned atom 存活数，覆盖 heap 已空而 atom
+  仍泄漏的情况。pinned intrinsic atoms 不纳入泄漏；global symbol 注册表
+  是非拥有索引，不能豁免非 pinned symbol 的剩余引用。
+- Symbol 的内部值释放保留共享借用的 Cell 快路；可变借用期间以 `AtomIdx`
+  进入现有 deferred 队列，避免 owner Drop 为 branding 强行借用而 panic。
+- 若 Runtime 自身被 Rc 环保活、析构完全没发生，teardown 无法检测；这仍需
+  审计宿主回调/挂起 owner 的持有关系及专门生命周期回归，不能声称账本完备。
+- 本节描述实现能力，不宣称本轮 oracle、Test262 或基准已经通过；最终结果
+  必须附当前源码 receipt。源码修复完成后统一执行门禁，不重复跑全套定位。
+
+隔离运行示例（测试二进制路径取 `cargo --message-format=json` 的当前构建产物，
+不得用 glob 随意挑旧二进制）：
+
+```sh
+cargo test --locked -p quickjs-oxide-cli --test oracle --no-run --message-format=json
+python3 scripts/checks/run-oracle-isolated.py \
+  --binary /absolute/current/debug/deps/oracle-HASH \
+  --output target/s3-a-oracle-isolated --jobs 4 --timeout 120
+```
+
+**基线证据**：pre-A 实现回退点为 `deac0a39`；随后仅文档修订的
+`85afd564` 可作为同代码基线重新构建。现有 `target/bench-e-baseline` 与
+`target/bench-e-*` 为较早阶段资产，路径元数据不足以认证它就是 A 的固定
+分母；`target/bench-f-*` 含 PGO 配置，也不能直接用作 §5 的同协议比较。
+若没有开工前不可变 receipt，须如实标注“从 pre-A commit 重建”，固定
+commit、构建 flags、二进制 hash 与工作负载 hash，不能倒填为原始实测。
+
+### 7.6 本轮终态收敛的源码证据（未替代 W6）
+
+尺寸由现有编译期断言约束：`JsValue = 16B`、`AtomIdx = 4B`、
+`ShapeEntry = 8B`、`RawValue ≤ 16B`。两种值均无 Copy/Drop；生产环境无
+PartialEq（`JsValue` 的测试专用表示比较不用于语言相等性）。A4 的 u64 编码
+仍独立，不把 16B 工作流的完成误写为已经得到 8B。
+
+本轮直接保留句柄的路径包括：普通属性读取、VM Set 的 assigned operand、
+普通属性新增/覆写、dense 数组新增/覆写、稀疏 Array index 定义、mapped
+Arguments 写入、setter 调用参数、TypedArray Set 原始值与元素数值转换、
+Array length 两次 ToNumber 原始值。Array index 的内部定义复用
+`PropertyDescriptor<RawValue>` 与原有 SameValue/事务规则；StringId 不变
+回归覆盖普通属性、dense 和 sparse 路径，尚需当前构建执行证据。
+
+`SetResume`、`ArrayLengthResume`、`TypedWriteResume`、setter/转换请求等
+控制流 owner 持有运行时（或现有 ObjectRef 的运行时）并清理未交接的边；
+没有给 `JsValue`/`RawValue` 增加 Drop。ArrayLength 保留 QuickJS 非数字
+输入两次 ToNumber 的顺序，并复用同一 resume 分配。
+
+后续同轮实现已将 Promise settlement、Promise.finally settlement capture、
+WeakMap（包括 computed callback 的结果）、FinalizationRegistry heldValue、
+挂起 normalized_this、private field、dense push/pop、unmapped Arguments、
+Function.bind 捕获与 async generator request 输入改为传递原句柄。
+Promise.finally 的具体挂起记录在取消/异常时释放 settlement，thunk 创建时
+复制同一 raw handle；WeakMap 与 FinalizationRegistry 在事务中保留输入边。
+普通 computed literal 定义与 iterator append 也直接使用 raw descriptor 核心。
+这些是源码事实，不等于当前源码已取得全套 oracle/基准通过证据。
+
+**剩余适配必须逐点分类**：公开 API、真实宿主输入、常量 publish 和真正的
+字符串/BigInt 创建点可产生 arena 节点；内部 `Value` 往返后又进存储不因此
+变成合法创建点。最终源码盘点应使用具名调用链，而不是不稳定的行数/总数：
+
+- `code/runtime.rs` 的常量 publish、`qjs_value_printer` 的公开 Value 输入属于
+  边界；Arguments length 是新建数字，不能用转换调用数量推断 arena 分配。
+- 一般 ordinary 与 dense/sparse Array Define 已用 raw descriptor 核心保留
+  当前值，attribute-only 修改不再重建 String/BigInt；公开输入只转换显式
+  value 字段一次。`try_define_ordinary_value` 先确认可处理再转换，decline
+  不分配。普通 Set 已覆盖 canonical existing/missing own property。
+  但 Proxy/general Define producer 仍有公开 Value 描述符，global/VarRef
+  特殊存储仍有旧适配，不能因此声称所有内部 descriptor 流均已无往返。
+- iterator wrap/from/helper/concat 捕获、module evaluation failure 缓存、
+  pending exception 的内部入口已改为 JsValue 原句柄；公共 Value 入口保留
+  在适配层。helper 的部分 callback item/close reason 仍有 Value 算法状态，
+  不能把捕获存储闭合等同于 D1 全局无 Value。
+- RegExp result 的编号捕获和命名组共享原 StringId，indices 对象身份保留；
+  capture substring 与 input 首次发布属于真实创建。JSON module 默认导出
+  和 legacy async-from-sync Value 适配仍应按具体内部调用者分类。
+
+不能把 `raw_property_value` 有守卫、或测试未泄漏，当成 store 无分配的证明。
+上述尚未闭合的内部调用链及 §5 门禁未有完整证据前，A 仍不得标记验收完成。
+
+
+### 7.7 当前收敛快照的验证记录（2026-09-21）
+
+- `cargo test --locked --workspace --all-targets --all-features -- --include-ignored`
+  已完整通过；库含 profiling/test262-host 共 2576 个用例，oracle 开启固定
+  QJS_ORACLE，并执行默认 ignored 压力用例。正常 teardown 断言保留。
+- Rust 1.88 全 workspace/all-targets/all-features clippy `-D warnings` 通过。
+- String/BigInt 的 15 个 array/call/spread 路径验证原节点身份和最终释放；
+  编号/命名 RegExp 捕获复用原节点。profiling 原地字符串追加和 IC 命中
+  断言通过，bound merge 记录实际 move，新增路径没有伪造 root/copy 计数。
+- 完整 Test262 首轮仅新增同一 TypedArray/from_string 用例的 strict/sloppy
+  两个 engine-fault。已修复 suspend 对 CallInput 字符串/BigInt 输入的重复
+  释放；String/BigInt generator receiver 与该场景的回归已通过。
+- 最终完整 Test262 与同协议 benchmark receipt 正在生成；最终数字另记
+  `s3-a-closure.md`。本记录不把历史或旧源码测试视为当前源码通过。

@@ -76,9 +76,11 @@ impl ComputedStep {
             ));
         };
         if let Some(value) = runtime.find_weak_map_record(&map, key)? {
-            return Ok(Self::Complete(Completion::Return(
-                runtime.into_jsvalue(runtime.root_raw_value(value.clone())?)?,
-            )));
+            return Ok(Self::Complete(Completion::Return(runtime.dup_jsvalue(
+                &JsValue::from_raw(value).ok_or(RuntimeError::Invariant(
+                    "WeakMap value has an internal sentinel",
+                ))?,
+            )?)));
         }
         Ok(Self::Call {
             callable,
@@ -100,12 +102,15 @@ impl ComputedResume {
         match reply {
             Completion::Throw(value) => Ok(ComputedStep::Complete(Completion::Throw(value))),
             Completion::Return(value) => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                runtime.delete_weak_map_record(&self.0.map, self.0.key)?;
-                runtime.set_weak_map_record(&self.0.map, self.0.key, value.clone())?;
-                Ok(ComputedStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(value)?,
-                )))
+                let stored = (|| {
+                    runtime.delete_weak_map_record(&self.0.map, self.0.key)?;
+                    runtime.set_weak_map_record(&self.0.map, self.0.key, &value)
+                })();
+                if let Err(error) = stored {
+                    runtime.release_jsvalue(value)?;
+                    return Err(error);
+                }
+                Ok(ComputedStep::Complete(Completion::Return(value)))
             }
         }
     }
@@ -122,16 +127,10 @@ pub(crate) fn finish(
                 callable,
                 arguments,
                 resume,
-            } => {
-                let arguments = arguments
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                resume.resume(
-                    runtime,
-                    runtime.call_internal(realm, &callable, Value::Undefined, &arguments)?,
-                )?
-            }
+            } => resume.resume(
+                runtime,
+                runtime.call_internal_jsvalue(realm, &callable, JsValue::Undefined, arguments)?,
+            )?,
         };
     }
 }

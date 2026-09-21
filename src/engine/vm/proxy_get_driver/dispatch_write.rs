@@ -254,15 +254,9 @@ pub(super) fn set(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
                 query.parents.push(Resume::SetLength(resume));
-                *step = crate::engine::object::ArrayLengthStep::start(
-                    runtime,
-                    Some(realm),
-                    runtime
-                        .root_and_release_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?,
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .into();
+                *step = crate::engine::object::ArrayLengthStep::start(runtime, Some(realm), value)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
                 continue;
             }
             Step::SetSpecial {
@@ -278,16 +272,19 @@ pub(super) fn set(
                 let receiver = receiver.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                let rooted_value = runtime
-                    .root_and_release_jsvalue(value)
+                let rooted_receiver = match runtime.root_and_release_jsvalue(receiver) {
+                    Ok(receiver) => receiver,
+                    Err(error) => {
+                        let _ = runtime.release_jsvalue(value);
+                        return Err(runtime_error_to_vm_error(error));
+                    }
+                };
+                let result =
+                    runtime.prepare_typed_array_set(&object, &key, &value, &rooted_receiver);
+                runtime
+                    .release_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?;
-                let rooted_receiver = runtime
-                    .root_and_release_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?;
-                match runtime
-                    .prepare_typed_array_set(&object, &key, &rooted_value, &rooted_receiver)
-                    .map_err(runtime_error_to_vm_error)?
-                {
+                match result.map_err(runtime_error_to_vm_error)? {
                     None => {
                         *step = resume
                             .special(runtime, None)
@@ -310,11 +307,7 @@ pub(super) fn set(
                 if let crate::engine::object::operations::PropertySetAction::Call { payload } =
                     action
                 {
-                    let crate::engine::object::operations::PropertySetterCall {
-                        setter,
-                        receiver,
-                        argument,
-                    } = *payload;
+                    let (setter, receiver, argument) = payload.into_parts();
 
                     *step = Step::Call {
                         target: Some(DirectCallTarget::Callable(setter)),
@@ -323,11 +316,7 @@ pub(super) fn set(
                                 .into_jsvalue(receiver)
                                 .map_err(runtime_error_to_vm_error)?,
                         ),
-                        arguments: Some(vec![
-                            runtime
-                                .into_jsvalue(argument)
-                                .map_err(runtime_error_to_vm_error)?,
-                        ]),
+                        arguments: Some(vec![argument]),
                         resume: Some(Resume::Setter),
                     };
                     continue;
@@ -401,9 +390,7 @@ pub(super) fn set(
                     Some(realm),
                     object,
                     key,
-                    runtime
-                        .root_and_release_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?,
+                    value,
                     runtime
                         .root_and_release_jsvalue(receiver)
                         .map_err(runtime_error_to_vm_error)?,

@@ -17,7 +17,7 @@ pub(crate) use cost::{
     CompilePhase, PhaseTimer, cost_profile_active, record_compiler_storage, record_lowered_function,
 };
 pub(crate) use cost::{
-    record_call_buffer_capacity, record_call_buffer_copies, record_call_buffer_initialized,
+    record_call_buffer_capacity, record_call_buffer_initialized,
     record_call_buffer_js_value_copies, record_call_buffer_moves, record_call_buffer_observed,
     record_call_buffer_share, record_call_raw_buffer_copies,
 };
@@ -219,7 +219,7 @@ mod tests {
     fn profiling_snapshot_is_read_only_and_counts_owned_storage_once() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("globalThis.buffer = new ArrayBuffer(4096); globalThis.alias = buffer; globalThis.view = new Uint8Array(buffer); globalThis.array = [1, 2, 3]; globalThis.ran = 0; Object.defineProperty(globalThis, 'trap', {get() { throw 42; }}); Promise.resolve().then(() => ran++);").unwrap();
+        drop(context.eval("globalThis.buffer = new ArrayBuffer(4096); globalThis.alias = buffer; globalThis.view = new Uint8Array(buffer); globalThis.array = [1, 2, 3]; globalThis.ran = 0; Object.defineProperty(globalThis, 'trap', {get() { throw 42; }}); Promise.resolve().then(() => ran++);").unwrap());
         let first = runtime.memory_snapshot();
         let second = runtime.memory_snapshot();
         assert_eq!(first, second);
@@ -244,9 +244,11 @@ mod tests {
         let (runtime, trace) =
             Runtime::new_with_allocation_trace(SystemHostServices::default(), 128);
         let mut context = runtime.new_context();
-        context
-            .eval("globalThis.items = []; for (let i = 0; i < 200; i++) items.push({i});")
-            .unwrap();
+        drop(
+            context
+                .eval("globalThis.items = []; for (let i = 0; i < 200; i++) items.push({i});")
+                .unwrap(),
+        );
         let alias = runtime.clone();
         let during = trace.snapshot();
         assert!(!during.finished);

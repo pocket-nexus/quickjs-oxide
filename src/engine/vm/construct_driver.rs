@@ -97,12 +97,28 @@ pub(super) fn enter_default_derived(
     let constructor = match runtime.constructor_from_value(realm, target) {
         Ok(NativeConversion::Value(constructor)) => constructor,
         Ok(NativeConversion::Throw(value)) => {
+            runtime
+                .release_jsvalue(new_target)
+                .map_err(runtime_error_to_vm_error)?;
+            for argument in arguments {
+                runtime
+                    .release_jsvalue(argument)
+                    .map_err(runtime_error_to_vm_error)?;
+            }
             let value = runtime
                 .into_jsvalue(value)
                 .map_err(runtime_error_to_vm_error)?;
             return Ok(CallStep::Complete(Completion::Throw(value)));
         }
         Err(error) => {
+            runtime
+                .release_jsvalue(new_target)
+                .map_err(runtime_error_to_vm_error)?;
+            for argument in arguments {
+                runtime
+                    .release_jsvalue(argument)
+                    .map_err(runtime_error_to_vm_error)?;
+            }
             return super::driver::rejected_call(runtime, realm, runtime_error_to_vm_error(error));
         }
     };
@@ -607,7 +623,10 @@ mod owned_definition_tests {
                 .unwrap();
             let _costs = profile.snapshot();
             assert!(
-                matches!(result, Completion::Return(Value::Int(42))),
+                matches!(
+                    result,
+                    Completion::Return(crate::engine::value::JsValue::Int(42))
+                ),
                 "{source}: {result:?}"
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());
@@ -633,7 +652,10 @@ mod owned_definition_tests {
                 .unwrap();
             let _costs = profile.snapshot();
             assert!(
-                matches!(result, Completion::Return(Value::Int(42))),
+                matches!(
+                    result,
+                    Completion::Return(crate::engine::value::JsValue::Int(42))
+                ),
                 "{source}: {result:?}"
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());

@@ -332,9 +332,9 @@ impl Runtime {
         match self.call_string_iterator_next_raw(realm, invocation)? {
             NativeInvokeOutcome::Completion(completion) => Ok(completion),
             NativeInvokeOutcome::IteratorNextRaw { value, done } => {
-                let value = self.root_and_release_jsvalue(value)?;
                 Ok(Completion::Return(JsValue::Object(
-                    self.new_iterator_result(realm, value, done)?.into_handle(),
+                    self.new_iterator_result_jsvalue(realm, value, done)?
+                        .into_handle(),
                 )))
             }
         }

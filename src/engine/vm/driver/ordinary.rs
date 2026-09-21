@@ -169,8 +169,8 @@ pub(super) fn enter_selected(
 fn native_observes_activation(
     runtime: &Runtime,
     target: crate::engine::builtins::native::NativeFunctionId,
-    receiver: &crate::engine::value::Value,
-    arguments: &[crate::engine::value::Value],
+    receiver: &crate::engine::value::JsValue,
+    arguments: &[crate::engine::value::JsValue],
 ) -> bool {
     use crate::engine::{
         builtins::native::{
@@ -178,7 +178,7 @@ fn native_observes_activation(
             WeakSetNativeKind as WS,
         },
         heap::ObjectPayload,
-        value::Value,
+        value::JsValue,
     };
     if matches!(target, N::NumberPredicate(_)) {
         return false;
@@ -195,15 +195,19 @@ fn native_observes_activation(
         return arguments.iter().any(|value| {
             !matches!(
                 value,
-                Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Null | Value::Undefined
+                JsValue::Int(_)
+                    | JsValue::Float(_)
+                    | JsValue::Bool(_)
+                    | JsValue::Null
+                    | JsValue::Undefined
             )
         });
     }
-    let Value::Object(object) = receiver else {
+    let JsValue::Object(object) = receiver else {
         return true;
     };
     let state = runtime.0.state.borrow();
-    let Ok(object) = state.heap.object(object.object_id()) else {
+    let Ok(object) = state.heap.object(*object) else {
         return true;
     };
     !match (target, &object.payload) {
@@ -213,11 +217,11 @@ fn native_observes_activation(
         (N::Set(S::Add | S::Has | S::Delete | S::Clear), ObjectPayload::Set { .. }) => true,
         (N::WeakMap(W::Get | W::Has | W::Delete), ObjectPayload::WeakMap { .. }) => true,
         (N::WeakMap(W::Set), ObjectPayload::WeakMap { .. }) => {
-            matches!(arguments.first(), Some(Value::Object(_)))
+            matches!(arguments.first(), Some(JsValue::Object(_)))
         }
         (N::WeakSet(WS::Has | WS::Delete), ObjectPayload::WeakSet { .. }) => true,
         (N::WeakSet(WS::Add), ObjectPayload::WeakSet { .. }) => {
-            matches!(arguments.first(), Some(Value::Object(_)))
+            matches!(arguments.first(), Some(JsValue::Object(_)))
         }
         _ => false,
     }
@@ -319,7 +323,7 @@ mod layout_tests {
         let mut context = runtime.new_context();
         // Resolve the lazy builtin once; the selected own-data path must be
         // exercised, while first-access autoinit keeps its canonical fallback.
-        context.eval("Math.min").unwrap();
+        drop(context.eval("Math.min").unwrap());
         let profile = CostProfile::start();
         assert_eq!(
             context

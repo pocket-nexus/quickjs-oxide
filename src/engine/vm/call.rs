@@ -81,17 +81,32 @@ impl Runtime {
                             )?;
                             self.dup_jsvalue(&value)
                         };
+                    let mut owned_arguments = Vec::new();
+                    owned_arguments
+                        .try_reserve_exact(arguments.len())
+                        .map_err(|_| {
+                            RuntimeError::Invariant("bound argument snapshot allocation failed")
+                        })?;
                     let this_value = to_internal(&this_value)?;
-                    let arguments = arguments
-                        .iter()
-                        .map(to_internal)
-                        .collect::<Result<Vec<_>, _>>()?;
+                    for raw in arguments.iter() {
+                        match to_internal(raw) {
+                            Ok(value) => owned_arguments.push(value),
+                            Err(error) => {
+                                let _ = self.release_jsvalue(this_value);
+                                for value in owned_arguments {
+                                    let _ = self.release_jsvalue(value);
+                                }
+                                return Err(error);
+                            }
+                        }
+                    }
+                    let arguments = owned_arguments;
                     #[cfg(feature = "profiling")]
                     {
                         crate::engine::api::profiling::record_call_buffer_observed(
                             "bound.rooted_snapshot",
                             arguments.capacity(),
-                            size_of::<Value>(),
+                            size_of::<JsValue>(),
                         );
                         crate::engine::api::profiling::record_call_buffer_js_value_copies(
                             "bound.rooted_snapshot",
@@ -435,75 +450,91 @@ impl Runtime {
         &self,
         caller_realm: ContextId,
         mut constructor: ConstructorRef,
-        mut new_target: ConstructNewTarget,
+        new_target: ConstructNewTarget,
         mut arguments: Vec<crate::engine::value::JsValue>,
     ) -> Result<NativeConversion<NormalizedConstructor>, RuntimeError> {
-        self.0.state.borrow().heap.context(caller_realm)?;
-        if !constructor.as_object().belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("constructor"));
-        }
-        match &new_target {
-            ConstructNewTarget::Validated(target) if !target.as_object().belongs_to(self) => {
+        let mut new_target = Some(new_target);
+        let result = (|| {
+            self.0.state.borrow().heap.context(caller_realm)?;
+            if !constructor.as_object().belongs_to(self) {
                 return Err(RuntimeError::WrongRuntime("constructor"));
             }
-            // Internal values carry no runtime branding.
-            _ => {}
-        }
-        loop {
-            if !self.is_constructor(constructor.as_object())? {
-                for argument in arguments.drain(..) {
-                    self.release_jsvalue(argument)?;
+            match new_target.as_ref().expect("new target") {
+                ConstructNewTarget::Validated(target) if !target.as_object().belongs_to(self) => {
+                    return Err(RuntimeError::WrongRuntime("constructor"));
                 }
-                new_target.release(self)?;
-                return Ok(NativeConversion::Throw(self.new_not_constructor_error(
-                    caller_realm,
-                    &Value::Object(constructor.as_object().clone()),
-                )?));
+                // Internal values carry no runtime branding.
+                _ => {}
             }
-            if self.is_proxy_object(constructor.as_object())? {
-                return Ok(NativeConversion::Value(NormalizedConstructor {
-                    target: ConstructorTarget::Proxy(constructor),
-                    new_target,
-                    arguments,
-                }));
-            }
-            let callable = self.as_callable(constructor.as_object())?.ok_or_else(|| {
-                RuntimeError::Engine(Error::new(ErrorKind::Type, "not a function"))
-            })?;
-            match self.bytecode_for_callable(&callable)? {
-                CallableExecution::Bound {
-                    target,
-                    arguments: bound,
-                    ..
-                } => {
-                    // The bound payload roots transfer into internal values
-                    // without a retain/release pair; the accumulated argument
-                    // edges move into the merged buffer.
-                    arguments = match self.concatenate_bound_arguments_jsvalue(
+            loop {
+                if !self.is_constructor(constructor.as_object())? {
+                    for argument in arguments.drain(..) {
+                        self.release_jsvalue(argument)?;
+                    }
+                    new_target.take().expect("new target").release(self)?;
+                    return Ok(NativeConversion::Throw(self.new_not_constructor_error(
                         caller_realm,
-                        bound,
-                        arguments,
-                    )? {
-                        NativeConversion::Value(arguments) => arguments,
-                        NativeConversion::Throw(value) => {
-                            return Ok(NativeConversion::Throw(value));
-                        }
-                    };
-                    new_target.retarget_bound_identity(self, &constructor, &target)?;
-                    constructor = ConstructorRef::from_validated_callable(&target);
+                        &Value::Object(constructor.as_object().clone()),
+                    )?));
                 }
-                classification => {
+                if self.is_proxy_object(constructor.as_object())? {
                     return Ok(NativeConversion::Value(NormalizedConstructor {
-                        target: ConstructorTarget::Ordinary {
-                            callable,
-                            classification,
-                        },
-                        new_target,
-                        arguments,
+                        target: ConstructorTarget::Proxy(constructor),
+                        new_target: new_target.take().expect("new target"),
+                        arguments: std::mem::take(&mut arguments),
                     }));
                 }
+                let callable = self.as_callable(constructor.as_object())?.ok_or_else(|| {
+                    RuntimeError::Engine(Error::new(ErrorKind::Type, "not a function"))
+                })?;
+                match self.bytecode_for_callable(&callable)? {
+                    CallableExecution::Bound {
+                        target,
+                        this_value,
+                        arguments: bound,
+                    } => {
+                        // Construction ignores bound this, but classification still
+                        // handed us its owned edge.
+                        self.release_jsvalue(this_value)?;
+                        // The bound payload roots transfer into internal values
+                        // without a retain/release pair; the accumulated argument
+                        // edges move into the merged buffer.
+                        arguments = match self.concatenate_bound_arguments_jsvalue(
+                            caller_realm,
+                            bound,
+                            std::mem::take(&mut arguments),
+                        )? {
+                            NativeConversion::Value(arguments) => arguments,
+                            NativeConversion::Throw(value) => {
+                                return Ok(NativeConversion::Throw(value));
+                            }
+                        };
+                        new_target
+                            .as_mut()
+                            .expect("new target")
+                            .retarget_bound_identity(self, &constructor, &target)?;
+                        constructor = ConstructorRef::from_validated_callable(&target);
+                    }
+                    classification => {
+                        return Ok(NativeConversion::Value(NormalizedConstructor {
+                            target: ConstructorTarget::Ordinary {
+                                callable,
+                                classification,
+                            },
+                            new_target: new_target.take().expect("new target"),
+                            arguments: std::mem::take(&mut arguments),
+                        }));
+                    }
+                }
             }
+        })();
+        if let Some(new_target) = new_target {
+            let _ = new_target.release(self);
         }
+        for argument in arguments {
+            let _ = self.release_jsvalue(argument);
+        }
+        result
     }
 
     pub(crate) fn construct_internal_with_new_target(
@@ -513,12 +544,29 @@ impl Runtime {
         new_target: ConstructNewTarget,
         arguments: &[Value],
     ) -> Result<Completion, RuntimeError> {
-        // Public-root arguments entering the internal constructor convention
-        // are duplicated; the caller's roots release through their Drop path.
-        let arguments = arguments
-            .iter()
-            .map(|argument| self.unroot_value(argument))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut converted = Vec::new();
+        for argument in arguments {
+            match self.unroot_value(argument) {
+                Ok(value) => converted.push(value),
+                Err(error) => {
+                    let _ = new_target.release(self);
+                    for value in converted {
+                        let _ = self.release_jsvalue(value);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        self.construct_internal_jsvalue(caller_realm, constructor, new_target, converted)
+    }
+
+    pub(crate) fn construct_internal_jsvalue(
+        &self,
+        caller_realm: ContextId,
+        constructor: &ConstructorRef,
+        new_target: ConstructNewTarget,
+        arguments: Vec<JsValue>,
+    ) -> Result<Completion, RuntimeError> {
         let NormalizedConstructor {
             target,
             new_target,
@@ -534,110 +582,144 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        // This synchronous host path consumes public roots; the normalized
-        // internal owners are rooted at this boundary and their internal
-        // edges are released.
-        let arguments = arguments
-            .into_iter()
-            .map(|argument| self.root_and_release_jsvalue(argument))
-            .collect::<Result<Vec<_>, _>>()?;
-        let (callable, classification) = match target {
-            ConstructorTarget::Proxy(constructor) => {
-                return self.construct_proxy(caller_realm, &constructor, new_target, &arguments);
-            }
-            ConstructorTarget::Ordinary {
-                callable,
-                classification,
-            } => (callable, classification),
-        };
-        match classification {
-            CallableExecution::Native {
-                target,
-                realm,
-                min_readable_args,
-            } => {
-                let execution_realm = if target.uses_calling_realm() {
-                    caller_realm
-                } else {
-                    realm
-                };
-                self.construct_native_function(
-                    &callable,
-                    execution_realm,
-                    target,
-                    min_readable_args,
-                    self.root_and_release_jsvalue(new_target.into_value())?,
-                    &arguments,
-                )
-            }
-            CallableExecution::Bytecode {
-                bytecode,
-                closure_slots,
-            } => {
-                let constructor_kind = self
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .function_bytecode(bytecode.bytecode_id())?
-                    .metadata
-                    .constructor_kind;
-                match constructor_kind {
-                    ConstructorKind::None => {
-                        return Err(RuntimeError::Invariant(
-                            "constructor bit disagrees with bytecode constructor metadata",
-                        ));
-                    }
-                    ConstructorKind::Derived => {
-                        let completion = self.execute_bytecode_callable(
-                            caller_realm,
-                            &callable,
-                            Value::Undefined,
-                            self.root_and_release_jsvalue(new_target.into_value())?,
-                            &arguments,
-                            bytecode,
-                            closure_slots,
-                        )?;
-                        return match completion {
-                            Completion::Return(
-                                value @ crate::engine::value::JsValue::Object(_),
-                            ) => Ok(Completion::Return(value)),
-                            Completion::Throw(value) => Ok(Completion::Throw(value)),
-                            Completion::Return(_) => Err(RuntimeError::Invariant(
-                                "derived constructor bytecode returned an unvalidated primitive",
-                            )),
-                        };
-                    }
-                    ConstructorKind::Base => {}
+        let mut new_target = Some(new_target);
+        let mut arguments = arguments;
+        let result = (|| {
+            let (callable, classification) = match target {
+                ConstructorTarget::Proxy(constructor) => {
+                    return self.construct_proxy_jsvalue(
+                        caller_realm,
+                        &constructor,
+                        new_target.take().expect("new target"),
+                        std::mem::take(&mut arguments),
+                    );
                 }
-                let raw_new_target = self.root_and_release_jsvalue(new_target.into_value())?;
-                let this_value =
-                    match self.create_from_constructor_value(caller_realm, &raw_new_target)? {
-                        Completion::Return(value) => value,
-                        Completion::Throw(value) => return Ok(Completion::Throw(value)),
+                ConstructorTarget::Ordinary {
+                    callable,
+                    classification,
+                } => (callable, classification),
+            };
+            match classification {
+                CallableExecution::Native {
+                    target,
+                    realm,
+                    min_readable_args,
+                } => {
+                    let execution_realm = if target.uses_calling_realm() {
+                        caller_realm
+                    } else {
+                        realm
                     };
-                let this_argument = self.root_value(&this_value)?;
-                let completion = self.execute_bytecode_callable(
-                    caller_realm,
-                    &callable,
-                    this_argument,
-                    raw_new_target,
-                    &arguments,
+                    Self::ordinary_native_completion(self.invoke_native_function_jsvalue(
+                        &callable,
+                        execution_realm,
+                        target,
+                        min_readable_args,
+                        NativeInvocation::Construct {
+                            new_target: new_target.take().expect("new target").into_value(),
+                        },
+                        std::mem::take(&mut arguments),
+                        NativeInvokeMode::Ordinary,
+                    )?)
+                }
+                CallableExecution::Bytecode {
                     bytecode,
                     closure_slots,
-                )?;
-                Ok(match completion {
-                    Completion::Return(value @ crate::engine::value::JsValue::Object(_)) => {
-                        Completion::Return(value)
+                } => {
+                    let constructor_kind = self
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .function_bytecode(bytecode.bytecode_id())?
+                        .metadata
+                        .constructor_kind;
+                    match constructor_kind {
+                        ConstructorKind::None => {
+                            return Err(RuntimeError::Invariant(
+                                "constructor bit disagrees with bytecode constructor metadata",
+                            ));
+                        }
+                        ConstructorKind::Derived => {
+                            let completion = self.execute_bytecode_callable_jsvalue(
+                                caller_realm,
+                                &callable,
+                                JsValue::Undefined,
+                                new_target.take().expect("new target").into_value(),
+                                std::mem::take(&mut arguments),
+                                bytecode,
+                                closure_slots,
+                            )?;
+                            return match completion {
+                                completion @ (Completion::Return(JsValue::Object(_))
+                                | Completion::Throw(_)) => Ok(completion),
+                                Completion::Return(value) => {
+                                    self.release_jsvalue(value)?;
+                                    Err(RuntimeError::Invariant(
+                                        "derived constructor bytecode returned an unvalidated primitive",
+                                    ))
+                                }
+                            };
+                        }
+                        ConstructorKind::Base => {}
                     }
-                    Completion::Throw(value) => Completion::Throw(value),
-                    Completion::Return(_) => Completion::Return(this_value),
-                })
+                    let this_value = {
+                        // Prototype lookup's public adapter borrows this root;
+                        // the constructor argv remains internal throughout.
+                        let target_root =
+                            self.root_value(&new_target.as_ref().expect("new target").value())?;
+                        match self.create_from_constructor_value(caller_realm, &target_root)? {
+                            Completion::Return(value) => value,
+                            Completion::Throw(value) => return Ok(Completion::Throw(value)),
+                        }
+                    };
+                    let this_argument = match self.dup_jsvalue(&this_value) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let _ = self.release_jsvalue(this_value);
+                            return Err(error);
+                        }
+                    };
+                    let completion = self.execute_bytecode_callable_jsvalue(
+                        caller_realm,
+                        &callable,
+                        this_argument,
+                        new_target.take().expect("new target").into_value(),
+                        std::mem::take(&mut arguments),
+                        bytecode,
+                        closure_slots,
+                    );
+                    match completion {
+                        Ok(Completion::Return(value @ JsValue::Object(_))) => {
+                            self.release_jsvalue(this_value)?;
+                            Ok(Completion::Return(value))
+                        }
+                        Ok(Completion::Throw(value)) => {
+                            self.release_jsvalue(this_value)?;
+                            Ok(Completion::Throw(value))
+                        }
+                        Ok(Completion::Return(value)) => {
+                            self.release_jsvalue(value)?;
+                            Ok(Completion::Return(this_value))
+                        }
+                        Err(error) => {
+                            self.release_jsvalue(this_value)?;
+                            Err(error)
+                        }
+                    }
+                }
+                CallableExecution::Proxy | CallableExecution::Bound { .. } => Err(
+                    RuntimeError::Invariant("constructor dispatch was not normalized"),
+                ),
             }
-            CallableExecution::Proxy | CallableExecution::Bound { .. } => Err(
-                RuntimeError::Invariant("constructor dispatch was not normalized"),
-            ),
+        })();
+        if let Some(new_target) = new_target {
+            let _ = new_target.release(self);
         }
+        for argument in arguments {
+            let _ = self.release_jsvalue(argument);
+        }
+        result
     }
 
     pub(crate) fn constructor_prototype_source(
@@ -678,7 +760,8 @@ impl Runtime {
             Completion::Return(JsValue::Object(prototype)) => {
                 ObjectRef::from_owned_handle(self.clone(), prototype)
             }
-            Completion::Return(_) => {
+            Completion::Return(value) => {
+                self.release_jsvalue(value)?;
                 let realm = if matches!(new_target, Value::Undefined) {
                     caller_realm
                 } else {
@@ -696,54 +779,6 @@ impl Runtime {
         Ok(Completion::Return(JsValue::Object(
             self.new_object(Some(&prototype))?.into_handle(),
         )))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn construct_native_function(
-        &self,
-        callable: &CallableRef,
-        realm: ContextId,
-        target: NativeFunctionId,
-        min_readable_args: u8,
-        new_target: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        let outcome = self.invoke_native_function(
-            callable,
-            realm,
-            target,
-            min_readable_args,
-            NativeInvocation::Construct {
-                new_target: self.unroot_value(&new_target)?,
-            },
-            arguments,
-            NativeInvokeMode::Ordinary,
-        )?;
-        Self::ordinary_native_completion(outcome)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn call_native_function(
-        &self,
-        callable: &CallableRef,
-        realm: ContextId,
-        target: NativeFunctionId,
-        min_readable_args: u8,
-        this_value: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        let outcome = self.invoke_native_function(
-            callable,
-            realm,
-            target,
-            min_readable_args,
-            NativeInvocation::Call {
-                this_value: self.unroot_value(&this_value)?,
-            },
-            arguments,
-            NativeInvokeMode::Ordinary,
-        )?;
-        Self::ordinary_native_completion(outcome)
     }
 
     pub(crate) fn ordinary_native_completion(
@@ -780,6 +815,43 @@ impl Runtime {
             arguments,
             mode,
         )?;
+        self.invoke_prepared_native(native::PreparedNativeCall {
+            activation,
+            invocation,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn invoke_native_function_jsvalue(
+        &self,
+        callable: &CallableRef,
+        realm: ContextId,
+        target: NativeFunctionId,
+        min_readable_args: u8,
+        invocation: NativeInvocation,
+        arguments: Vec<JsValue>,
+        mode: NativeInvokeMode,
+    ) -> Result<NativeInvokeOutcome, RuntimeError> {
+        let prepared = self.prepare_native_invocation_jsvalue(
+            callable,
+            realm,
+            target,
+            min_readable_args,
+            invocation,
+            arguments,
+            mode,
+        )?;
+        self.invoke_prepared_native(prepared)
+    }
+
+    fn invoke_prepared_native(
+        &self,
+        prepared: native::PreparedNativeCall,
+    ) -> Result<NativeInvokeOutcome, RuntimeError> {
+        let native::PreparedNativeCall {
+            activation,
+            invocation,
+        } = prepared;
         let result = match activation.mode {
             NativeInvokeMode::Ordinary => self
                 .dispatch_native_function(
@@ -792,6 +864,7 @@ impl Runtime {
                 .map(NativeInvokeOutcome::Completion),
             NativeInvokeMode::IteratorNextRaw => {
                 if activation.target.descriptor().cproto != NativeCProto::IteratorNext {
+                    invocation.release(self)?;
                     Err(RuntimeError::Invariant(
                         "raw iterator-next dispatch targeted another native cproto",
                     ))

@@ -46,9 +46,33 @@ pub(crate) enum CopyStep {
 }
 
 pub(crate) struct PreparedCopyRead {
-    pub(crate) read: crate::engine::object::OrdinaryRead,
-    pub(crate) key: PropertyKey,
-    pub(crate) resume: CopyResume,
+    read: Option<crate::engine::object::OrdinaryRead>,
+    key: Option<PropertyKey>,
+    resume: Option<CopyResume>,
+}
+impl PreparedCopyRead {
+    pub(crate) fn into_parts(
+        mut self,
+    ) -> (crate::engine::object::OrdinaryRead, PropertyKey, CopyResume) {
+        (
+            self.read.take().expect("copy read"),
+            self.key.take().expect("copy key"),
+            self.resume.take().expect("copy resume"),
+        )
+    }
+}
+impl Drop for PreparedCopyRead {
+    fn drop(&mut self) {
+        if let Some(read) = self.read.take() {
+            read.release(
+                self.resume
+                    .as_ref()
+                    .expect("copy read owner")
+                    .target
+                    .runtime(),
+            );
+        }
+    }
 }
 pub(crate) struct CopyResume(Box<CopyResumeState>);
 impl std::ops::Deref for CopyResume {
@@ -213,9 +237,9 @@ impl CopyResume {
                             "copy_selected_read_publish",
                         );
                         return Ok(CopyStep::PreparedRead(Box::new(PreparedCopyRead {
-                            read,
-                            key,
-                            resume: self,
+                            read: Some(read),
+                            key: Some(key),
+                            resume: Some(self),
                         })));
                     }
                 }
@@ -300,7 +324,7 @@ pub(crate) fn finish(
         step = match step {
             CopyStep::Complete(result) => return Ok(result),
             CopyStep::PreparedRead(prepared) => {
-                let PreparedCopyRead { read, key, resume } = *prepared;
+                let (read, key, resume) = prepared.into_parts();
                 let completion = match runtime.finish_prepared_read(realm, &key, read)? {
                     NativeConversion::Value(value) => {
                         Completion::Return(runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?)

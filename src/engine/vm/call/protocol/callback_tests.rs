@@ -12,11 +12,11 @@ fn recycled_callback_frames_do_not_reuse_another_functions_static_key() {
 fn lazy_getters_and_proxy_traps_reuse_storage_and_return_directly() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
+    drop(context
         .eval(
             "var getterObject={get x(){return 1}};var trapObject=new Proxy({},{get(){return 1}});",
         )
-        .unwrap();
+        .unwrap());
     let profile = CostProfile::start();
     assert_eq!(
         context
@@ -77,12 +77,12 @@ fn lazy_property_callbacks_preserve_observer_stacks_trap_invariants_and_reentry(
 fn proxy_get_trap_selection_cache_reports_hits_and_preserves_invariants() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
+    drop(context
         .eval(
             "var hitTrap=new Proxy({},{get(){return 7}});\
              var accessorReads=0;var accessorTrap=new Proxy({},{get get(){accessorReads++;return function(){return 3}}});",
         )
-        .unwrap();
+        .unwrap());
     let profile = CostProfile::start();
     assert_eq!(
         context
@@ -155,13 +155,15 @@ fn trap_cache_does_not_retain_the_runtime() {
     let weak = {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
-            .eval(
-                "var retainedHandler={get:function(){return 1}};\
+        drop(
+            context
+                .eval(
+                    "var retainedHandler={get:function(){return 1}};\
                  var retainedProxy=new Proxy({},retainedHandler);\
                  for(var i=0;i<8;i++)retainedProxy.x;",
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         runtime.run_gc().unwrap();
         assert_eq!(context.eval("retainedProxy.x").unwrap(), Value::Int(1));
         std::rc::Rc::downgrade(&runtime.0)
@@ -176,7 +178,7 @@ fn trap_cache_does_not_retain_the_runtime() {
 fn native_leaf_proofs_skip_materialization_but_errors_and_objects_observe() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval("function mathLeaf(x){return Math.min(x,7)}; function mathOuter(x){return mathLeaf(x)};").unwrap();
+    drop(context.eval("function mathLeaf(x){return Math.min(x,7)}; function mathOuter(x){return mathLeaf(x)};").unwrap());
     let profile = CostProfile::start();
     assert_eq!(
         context

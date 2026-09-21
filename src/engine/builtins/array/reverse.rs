@@ -38,6 +38,7 @@ impl std::ops::DerefMut for ReverseResume {
 }
 const _: () = assert!(std::mem::size_of::<ReverseResume>() <= 8);
 pub(crate) struct ReverseResumeState {
+    runtime: Runtime,
     pending_effect: ReverseStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
@@ -47,6 +48,16 @@ pub(crate) struct ReverseResumeState {
     upper: u64,
     lower_value: Option<Value>,
     upper_value: Option<Value>,
+}
+impl Drop for ReverseResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl ReverseStep {
     pub(crate) fn start(
@@ -72,6 +83,7 @@ impl ReverseStep {
             object.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             ReverseResume(Box::new(ReverseResumeState {
+                runtime: runtime.clone(),
                 pending_effect: ReverseStepPending::default(),
                 scheduler_set_key: None,
                 realm,
@@ -147,7 +159,7 @@ impl ReverseResume {
     fn next(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
         if self.0.lower >= self.0.upper {
             return Ok(ReverseStep::Complete(Completion::Return(
-                runtime.into_jsvalue(Value::Object(self.0.object))?,
+                runtime.into_jsvalue(Value::Object(self.0.object.clone()))?,
             )));
         }
         self.0.phase = Phase::LowerHas;

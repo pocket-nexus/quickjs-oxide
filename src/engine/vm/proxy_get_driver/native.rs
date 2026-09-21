@@ -42,10 +42,8 @@ pub(super) fn finish_result(
                 super::super::call::NativeInvokeMode::Ordinary,
                 NativeInvokeOutcome::IteratorNextRaw { value, done },
             ) => {
-                let value = runtime
-                    .root_and_release_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
-                let result = runtime.new_iterator_result(call.activation.realm, value, done)?;
+                let result =
+                    runtime.new_iterator_result_jsvalue(call.activation.realm, value, done)?;
                 Ok(NativeInvokeOutcome::Completion(Completion::Return(
                     JsValue::Object(result.into_handle()),
                 )))
@@ -140,8 +138,8 @@ pub(super) fn begin_synchronous(
     target: crate::engine::builtins::native::NativeFunctionId,
     defining_realm: crate::engine::heap::ContextId,
     min_readable_args: u8,
-    receiver: Value,
-    arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
     kind: crate::engine::builtins::continuation::SynchronousNative,
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<Completion, Error> {
@@ -158,9 +156,7 @@ pub(super) fn begin_synchronous(
             target,
             min_readable_args,
             super::super::call::NativeInvocation::Call {
-                this_value: runtime
-                    .into_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?,
+                this_value: receiver,
             },
             arguments,
             super::super::call::NativeInvokeMode::Ordinary,
@@ -306,14 +302,7 @@ fn capture_native_step(
                     let kind = selected
                         .take_operation()
                         .ok_or_else(|| Error::internal("selected replace has no continuation"))?;
-                    let receiver = runtime
-                        .root_and_release_jsvalue(receiver)
-                        .map_err(runtime_error_to_vm_error)?;
-                    let arguments = arguments
-                        .into_iter()
-                        .map(|argument| runtime.root_and_release_jsvalue(argument))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(runtime_error_to_vm_error)?;
+
                     begin_local(
                         runtime,
                         slots,
@@ -427,13 +416,20 @@ pub(super) fn begin_local(
     target: crate::engine::builtins::native::NativeFunctionId,
     defining_realm: crate::engine::heap::ContextId,
     min_readable_args: u8,
-    receiver: Value,
-    arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
     kind: crate::engine::builtins::continuation::NativeOperation,
     selected: Option<super::super::frames::NativeClassification>,
     nested_budget: bool,
 ) -> Result<LocalNativeResult, Error> {
-    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
+    if let Err(error) = slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)
+    {
+        let _ = runtime.release_jsvalue(receiver);
+        for argument in arguments {
+            let _ = runtime.release_jsvalue(argument);
+        }
+        return Err(error);
+    }
     let native_realm = if target.uses_calling_realm() {
         realm
     } else {
@@ -446,9 +442,7 @@ pub(super) fn begin_local(
             target,
             min_readable_args,
             super::super::call::NativeInvocation::Call {
-                this_value: runtime
-                    .into_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?,
+                this_value: receiver,
             },
             arguments,
             super::super::call::NativeInvokeMode::Ordinary,
@@ -594,7 +588,7 @@ pub(super) fn start_into(
     min_readable_args: u8,
     mode: super::super::call::NativeInvokeMode,
     invocation: super::super::call::NativeInvocation,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
     resume: Resume,
     output: &mut Step,
 ) -> Result<(), Error> {
@@ -626,7 +620,7 @@ pub(super) fn start_selected_into(
     min_readable_args: u8,
     mode: super::super::call::NativeInvokeMode,
     invocation: super::super::call::NativeInvocation,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
     mut resume: Resume,
     output: &mut Step,
     selected: Option<super::super::frames::NativeClassification>,
@@ -645,13 +639,13 @@ pub(super) fn start_selected_into(
             defining_realm
         };
         let result = runtime
-            .invoke_native_function(
+            .invoke_native_function_jsvalue(
                 &callable,
                 native_realm,
                 target,
                 min_readable_args,
                 invocation,
-                &arguments,
+                arguments,
                 mode,
             )
             .map_err(runtime_error_to_vm_error)?;
@@ -662,6 +656,9 @@ pub(super) fn start_selected_into(
         .can_push_with_continuations(query.continuation_depth())
         || runtime.host_stack_would_overflow()
     {
+        for argument in arguments {
+            let _ = runtime.release_jsvalue(argument);
+        }
         invocation
             .release(runtime)
             .map_err(runtime_error_to_vm_error)?;
@@ -719,7 +716,7 @@ pub(super) fn begin_into(
     min_readable_args: u8,
     mode: super::super::call::NativeInvokeMode,
     invocation: super::super::call::NativeInvocation,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
     kind: crate::engine::builtins::continuation::NativeOperation,
     output: &mut Step,
     waiting_call: &mut Option<PreparedNativeCall>,
@@ -753,14 +750,21 @@ pub(super) fn begin_selected_into(
     min_readable_args: u8,
     mode: super::super::call::NativeInvokeMode,
     invocation: super::super::call::NativeInvocation,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
     kind: crate::engine::builtins::continuation::NativeOperation,
     output: &mut Step,
     waiting_call: &mut Option<PreparedNativeCall>,
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     debug_assert!(waiting_call.is_none());
-    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
+    if let Err(error) = slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)
+    {
+        let _ = invocation.release(runtime);
+        for argument in arguments {
+            let _ = runtime.release_jsvalue(argument);
+        }
+        return Err(error);
+    }
     let native_realm = if matches!(mode, super::super::call::NativeInvokeMode::IteratorNextRaw)
         || target.uses_calling_realm()
     {
@@ -866,12 +870,16 @@ pub(super) fn compact_array_next_into(
     callable: crate::engine::object::CallableRef,
     _defining_realm: crate::engine::heap::ContextId,
     min_readable_args: u8,
-    receiver: Value,
+    receiver: JsValue,
     output: &mut Step,
     waiting_call: &mut Option<PreparedNativeCall>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     debug_assert!(waiting_call.is_none());
-    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
+    if let Err(error) = slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)
+    {
+        let _ = runtime.release_jsvalue(receiver);
+        return Err(error);
+    }
     let call = runtime
         .prepare_array_next_owned(callable, realm, min_readable_args, receiver)
         .map_err(runtime_error_to_vm_error)?;
@@ -1503,10 +1511,14 @@ mod selected_replace_local_tests {
             target,
             realm,
             minimum,
-            input,
+            runtime.into_jsvalue(input).unwrap(),
             vec![
-                search,
-                Value::String(crate::engine::value::JsString::from_static("b")),
+                runtime.into_jsvalue(search).unwrap(),
+                runtime
+                    .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
+                        "b",
+                    )))
+                    .unwrap(),
             ],
             kind,
             Some(selected),

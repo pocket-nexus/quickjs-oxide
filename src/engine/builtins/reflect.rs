@@ -33,11 +33,11 @@ impl Runtime {
     /// their distinct mapped/unmapped shape-slot representation and are
     /// reconstructed without observable property lookup. The owning object
     /// stays rooted while raw values are promoted to public roots.
-    pub(crate) fn fast_array_like_values(
+    pub(crate) fn fast_array_like_values_jsvalue(
         &self,
         object: &ObjectRef,
         expected_len: u32,
-    ) -> Result<Option<Vec<Value>>, RuntimeError> {
+    ) -> Result<Option<Vec<JsValue>>, RuntimeError> {
         let raw_values = {
             let state = self.0.state.borrow();
             let object_data = state.heap.object(object.object_id())?;
@@ -158,24 +158,63 @@ impl Runtime {
                 &raw_values,
             );
         }
-        let values = raw_values
-            .iter()
-            .map(|value| self.root_raw_value(value.clone()))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(raw_values.len())
+            .map_err(|_| HeapError::Allocation {
+                operation: "retaining fast argument snapshot",
+            })?;
+        for raw in raw_values {
+            let borrowed =
+                JsValue::from_raw(raw).ok_or(RuntimeError::Invariant("argument storage value"))?;
+            match self.dup_jsvalue(&borrowed) {
+                Ok(value) => values.push(value),
+                Err(error) => {
+                    for value in values {
+                        let _ = self.release_jsvalue(value);
+                    }
+                    return Err(error);
+                }
+            }
+        }
         #[cfg(feature = "profiling")]
         {
-            // This iterator borrows raw_values and cannot reuse its backing Vec.
             crate::engine::api::profiling::record_call_buffer_observed(
-                "arguments.fast_rooted",
+                "arguments.fast_internal",
                 values.capacity(),
-                size_of::<Value>(),
+                size_of::<JsValue>(),
             );
-            crate::engine::api::profiling::record_call_buffer_copies(
-                "arguments.fast_rooted",
+            crate::engine::api::profiling::record_call_buffer_js_value_copies(
+                "arguments.fast_internal",
                 &values,
             );
         }
         Ok(Some(values))
+    }
+
+    #[cfg(all(test, feature = "profiling"))]
+    pub(crate) fn fast_array_like_values(
+        &self,
+        object: &ObjectRef,
+        expected_len: u32,
+    ) -> Result<Option<Vec<Value>>, RuntimeError> {
+        let Some(values) = self.fast_array_like_values_jsvalue(object, expected_len)? else {
+            return Ok(None);
+        };
+        let mut values = values.into_iter();
+        let mut rooted = Vec::new();
+        while let Some(value) = values.next() {
+            match self.root_and_release_jsvalue(value) {
+                Ok(value) => rooted.push(value),
+                Err(error) => {
+                    for value in values {
+                        let _ = self.release_jsvalue(value);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(Some(rooted))
     }
 
     /// Install the global `Reflect` `JS_OBJECT_DEF` equivalent. The object is
@@ -256,11 +295,11 @@ impl Runtime {
     /// it has entered `build_arg_list`.
     /// Classify an Array argument carrier without invoking length or index getters.
     /// None leaves the caller free to choose an explicit property-reading protocol.
-    pub(crate) fn prepare_fast_array_arguments(
+    pub(crate) fn prepare_fast_array_arguments_jsvalue(
         &self,
         realm: ContextId,
         object: &ObjectRef,
-    ) -> Result<Option<NativeConversion<Vec<Value>>>, RuntimeError> {
+    ) -> Result<Option<NativeConversion<Vec<JsValue>>>, RuntimeError> {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -306,8 +345,38 @@ impl Runtime {
                 "too many arguments in function call (only 65534 allowed)",
             )?)));
         }
-        self.fast_array_like_values(object, length as u32)
+        self.fast_array_like_values_jsvalue(object, length as u32)
             .map(|values| values.map(NativeConversion::Value))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepare_fast_array_arguments(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+    ) -> Result<Option<NativeConversion<Vec<Value>>>, RuntimeError> {
+        Ok(
+            match self.prepare_fast_array_arguments_jsvalue(realm, object)? {
+                None => None,
+                Some(NativeConversion::Throw(value)) => Some(NativeConversion::Throw(value)),
+                Some(NativeConversion::Value(values)) => {
+                    let mut rooted = Vec::new();
+                    let mut values = values.into_iter();
+                    while let Some(value) = values.next() {
+                        match self.root_and_release_jsvalue(value) {
+                            Ok(value) => rooted.push(value),
+                            Err(error) => {
+                                for value in values {
+                                    let _ = self.release_jsvalue(value);
+                                }
+                                return Err(error);
+                            }
+                        }
+                    }
+                    Some(NativeConversion::Value(rooted))
+                }
+            },
+        )
     }
 
     pub(crate) fn call_reflect(

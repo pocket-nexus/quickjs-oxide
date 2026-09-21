@@ -9,7 +9,7 @@ use crate::engine::api::error::Error;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::ContextId;
 use crate::engine::object::ObjectRef;
-use crate::engine::value::Value;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::CallInput;
 use crate::engine::vm::frames::{ActiveFrameGuard, ActiveFrameToken};
 use crate::engine::vm::stack::FrameStorage;
@@ -66,12 +66,12 @@ pub(super) enum ConstructorReturn {
 #[derive(Default)]
 pub(super) struct FrameRare {
     pub property_keys: std::collections::HashMap<u32, crate::engine::object::PropertyKey>,
-    pub normalized_this: Option<Value>,
+    pub normalized_this: Option<JsValue>,
     property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub iterator_wait: Option<crate::engine::vm::iterator_driver::PendingIterator>,
     pub resume_throw: Option<Value>,
     pub regions: Vec<crate::engine::vm::VmUnwindRegion>,
-    pub eval_arguments: Option<Vec<crate::engine::value::Value>>,
+    pub eval_arguments: Option<Vec<crate::engine::value::JsValue>>,
     pub constructor_return: Option<ConstructorReturn>,
     pub conversion: Option<crate::engine::vm::conversion_driver::ConversionWait>,
 }
@@ -365,7 +365,36 @@ impl Drop for FrameStore {
     }
 }
 
+impl Drop for FrameCold {
+    fn drop(&mut self) {
+        self.release_normalized_this();
+        self.release_eval_arguments();
+    }
+}
+
 impl FrameCold {
+    pub(super) fn release_eval_arguments(&mut self) {
+        if let Some(values) = self
+            .rare
+            .get_mut()
+            .and_then(|rare| rare.eval_arguments.take())
+        {
+            for value in values {
+                let _ = self.function.runtime().release_jsvalue(value);
+            }
+        }
+    }
+
+    pub(super) fn release_normalized_this(&mut self) {
+        if let Some(value) = self
+            .rare
+            .get_mut()
+            .and_then(|rare| rare.normalized_this.take())
+        {
+            let _ = self.function.runtime().release_jsvalue(value);
+        }
+    }
+
     pub(super) fn has_pending_query(&self) -> bool {
         self.rare
             .get()

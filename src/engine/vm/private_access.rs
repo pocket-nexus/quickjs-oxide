@@ -84,13 +84,15 @@ pub(super) fn step(
     let realm = frame.executable.realm;
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
+    let mut value = None;
+    let mut base_owner = None;
     let result = (|| -> Result<(), Error> {
-        let value = if matches!(access, Access::Put | Access::Define) {
+        value = if matches!(access, Access::Put | Access::Define) {
             Some(execution.slots.pop(&mut frame.window)?)
         } else {
             None
         };
-        let base = execution.slots.pop(&mut frame.window)?;
+        base_owner = Some(execution.slots.pop(&mut frame.window)?);
         let source = match source {
             PrivateNameSource::Local(index) => PrivateSource::Local(
                 frame.executable.local_definitions[usize::from(index)],
@@ -123,7 +125,7 @@ pub(super) fn step(
             }
             if access == Access::In {
                 let Value::Object(receiver) = runtime
-                    .root_and_release_jsvalue(base)
+                    .root_and_release_jsvalue(base_owner.take().unwrap())
                     .map_err(runtime_error_to_vm_error)?
                 else {
                     return Err(Error::new(ErrorKind::Type, "invalid 'in' operand"));
@@ -155,7 +157,12 @@ pub(super) fn step(
             } else {
                 let method = private_bindings::optional_callable(runtime, source, kind)?
                     .ok_or_else(|| Error::new(ErrorKind::Type, "not an object"))?;
-                let receiver = private_bindings::branded_receiver(runtime, &method, kind, base)?;
+                let receiver = private_bindings::branded_receiver(
+                    runtime,
+                    &method,
+                    kind,
+                    base_owner.take().unwrap(),
+                )?;
                 if access == Access::GetKeep {
                     execution.slots.push(
                         &mut frame.window,
@@ -174,7 +181,7 @@ pub(super) fn step(
             return Ok(());
         }
         let Value::Object(receiver) = runtime
-            .root_and_release_jsvalue(base)
+            .root_and_release_jsvalue(base_owner.take().unwrap())
             .map_err(runtime_error_to_vm_error)?
         else {
             return Err(Error::new(
@@ -218,31 +225,14 @@ pub(super) fn step(
                                 .map_err(runtime_error_to_vm_error)?,
                         )?;
                     }
-                    execution.slots.push(
-                        &mut frame.window,
-                        runtime
-                            .into_jsvalue(value)
-                            .map_err(runtime_error_to_vm_error)?,
-                    )?;
+                    execution.slots.push(&mut frame.window, value)?;
                 }
                 Access::Put => runtime
-                    .set_private_field_own(
-                        &receiver,
-                        &name,
-                        runtime
-                            .root_and_release_jsvalue(value.unwrap())
-                            .map_err(runtime_error_to_vm_error)?,
-                    )
+                    .set_private_field_own(&receiver, &name, value.take().unwrap())
                     .map_err(runtime_error_to_vm_error)?,
                 Access::Define => {
                     runtime
-                        .define_private_field_own(
-                            &receiver,
-                            &name,
-                            runtime
-                                .root_and_release_jsvalue(value.unwrap())
-                                .map_err(runtime_error_to_vm_error)?,
-                        )
+                        .define_private_field_own(&receiver, &name, value.take().unwrap())
                         .map_err(runtime_error_to_vm_error)?;
                     execution.slots.push(
                         &mut frame.window,
@@ -256,6 +246,16 @@ pub(super) fn step(
         }
         Ok(())
     })();
+    if let Some(value) = value {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
+    }
+    if let Some(base) = base_owner {
+        runtime
+            .release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
+    }
     match result {
         Ok(()) => {
             frame.resume_pc = frame
@@ -321,11 +321,7 @@ fn enter_accessor(
         arguments
             .try_reserve_exact(1)
             .map_err(|_| Error::internal("setter arguments allocation failed"))?;
-        arguments.push(
-            runtime
-                .root_and_release_jsvalue(execution.slots.pop(&mut frame.window)?)
-                .map_err(runtime_error_to_vm_error)?,
-        );
+        arguments.push(execution.slots.pop(&mut frame.window)?);
     }
     let base = execution.slots.pop(&mut frame.window)?;
     if access == Access::GetKeep {
@@ -346,7 +342,7 @@ fn enter_accessor(
         execution,
         id,
         callable,
-        Value::Object(receiver),
+        JsValue::Object(receiver.into_handle()),
         arguments,
         if setter {
             ReturnValue::Discard

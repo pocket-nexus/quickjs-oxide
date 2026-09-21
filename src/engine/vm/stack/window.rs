@@ -1,5 +1,5 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
-use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore, Value};
+use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
 
 pub(in crate::engine::vm) enum LinkedReadCompletion {
     Completed,
@@ -40,7 +40,7 @@ impl FrameTransaction<'_> {
         logical_active_depth: usize,
         count: usize,
         method: bool,
-    ) -> Result<(Vec<Value>, Value), Error> {
+    ) -> Result<(Vec<JsValue>, JsValue), Error> {
         self.store
             .reserve_native_argument_depth(logical_active_depth.saturating_add(1))?;
         self.store
@@ -548,6 +548,7 @@ fn local_add_values(left: &JsValue, right: &JsValue) -> bool {
 mod primitive_transaction_tests {
     use super::*;
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
+    use crate::engine::value::Value;
     use crate::engine::vm::stack::FrameStorage;
 
     fn linked_executable(

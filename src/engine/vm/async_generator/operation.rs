@@ -47,6 +47,29 @@ enum Cleanup {
 }
 impl Drop for AsyncGeneratorResume {
     fn drop(&mut self) {
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.output, JsValue::Undefined));
+        for value in [
+            self.pending_effect.resolve_value.take(),
+            self.pending_effect.call_value.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(input) = self.pending_effect.run_input.take() {
+            let value = match input {
+                VmActivationResume::Initial => JsValue::Undefined,
+                VmActivationResume::AwaitFulfill(value)
+                | VmActivationResume::AwaitReject(value)
+                | VmActivationResume::Generator(
+                    VmResume::Next(value) | VmResume::Return(value) | VmResume::Throw(value),
+                ) => value,
+            };
+            let _ = self.runtime.release_jsvalue(value);
+        }
         if let Some(generator) = &self.generator {
             match self.cleanup {
                 Cleanup::None => {}
@@ -75,14 +98,9 @@ impl AsyncGeneratorStep {
                 "AsyncGenerator operation received constructor invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .map(|value| runtime.dup_jsvalue(value))
-            .transpose()?
-            .ok_or(RuntimeError::Invariant(
-                "AsyncGenerator operation argv was not padded",
-            ))?;
+        let argument = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "AsyncGenerator operation argv was not padded",
+        ))?;
         if let NativeFunctionId::AsyncGeneratorPrototypeResume(kind) = target {
             let capability = runtime.new_default_promise_capability(realm)?;
             let promise = runtime.into_jsvalue(Value::Object(capability.promise.clone()))?;
@@ -129,7 +147,7 @@ impl AsyncGeneratorStep {
             runtime.enqueue_async_generator_request(
                 generator,
                 kind,
-                runtime.root_and_release_jsvalue(argument)?,
+                runtime.dup_jsvalue(argument)?,
                 &capability,
             )?;
             let state = runtime
@@ -212,9 +230,9 @@ impl AsyncGeneratorStep {
                 )?;
                 resume.detach(AsyncGeneratorState::Executing)?;
                 let input = if kind == AsyncGeneratorResumeKind::AwaitFulfill {
-                    VmActivationResume::AwaitFulfill(argument)
+                    VmActivationResume::AwaitFulfill(runtime.dup_jsvalue(argument)?)
                 } else {
-                    VmActivationResume::AwaitReject(argument)
+                    VmActivationResume::AwaitReject(runtime.dup_jsvalue(argument)?)
                 };
                 Ok({
                     let __pending_field_activation = Box::new(rooted);
@@ -243,11 +261,11 @@ impl AsyncGeneratorStep {
                 runtime.finish_async_generator_completed_return(&generator)?;
                 let settlement = if kind == AsyncGeneratorResumeKind::ReturnFulfill {
                     AsyncGeneratorSettlement::Resolve {
-                        value: runtime.root_and_release_jsvalue(argument)?,
+                        value: runtime.root_value(argument)?,
                         done: true,
                     }
                 } else {
-                    AsyncGeneratorSettlement::Reject(runtime.root_and_release_jsvalue(argument)?)
+                    AsyncGeneratorSettlement::Reject(runtime.root_value(argument)?)
                 };
                 // Completed-return reactions service exactly one request.
                 resume.settle(settlement, false)
@@ -544,11 +562,12 @@ impl AsyncGeneratorResume {
                 "async generator expected body outcome",
             )),
             Phase::Settled { pump } => {
-                if pump {
-                    self.pump()
-                } else {
-                    self.finish()
+                match completion {
+                    Completion::Return(value) | Completion::Throw(value) => {
+                        self.runtime.release_jsvalue(value)?
+                    }
                 }
+                if pump { self.pump() } else { self.finish() }
             }
             Phase::Await(mut activation) => {
                 let promise = match completion {

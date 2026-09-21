@@ -49,6 +49,7 @@ impl std::ops::DerefMut for SortResume {
 }
 const _: () = assert!(std::mem::size_of::<SortResume>() <= 8);
 pub(crate) struct SortResumeState {
+    runtime: Runtime,
     pending_effect: SortStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
@@ -60,13 +61,38 @@ pub(crate) struct SortResumeState {
     cursor: u64,
     undefined_count: u64,
     defined_count: u64,
-    values: Vec<Value>,
+    values: Vec<JsValue>,
     slots: Vec<ArraySortSlot>,
     logical_capacity: usize,
     // Keep rqsort's fixed partition stack outside each copied domain reply.
     machine: Box<SortMachine>,
     left: usize,
     right: usize,
+}
+impl Drop for SortResumeState {
+    fn drop(&mut self) {
+        for value in self.values.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for slot in self.slots.drain(..) {
+            let _ = self.runtime.release_jsvalue(slot.value);
+        }
+        for value in [
+            self.pending_effect.number_value.take(),
+            self.pending_effect.string_value.take(),
+            self.pending_effect.set_value.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(arguments) = self.pending_effect.call_arguments.take() {
+            for value in arguments {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+    }
 }
 impl SortStep {
     pub(crate) fn start(
@@ -102,6 +128,7 @@ impl SortStep {
             object.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             SortResume(Box::new(SortResumeState {
+                runtime: runtime.clone(),
                 pending_effect: SortStepPending::default(),
                 scheduler_set_key: None,
                 realm,
@@ -138,13 +165,13 @@ impl SortResume {
         result: Completion,
     ) -> Result<SortStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(SortStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(SortStep::request_number(runtime.into_jsvalue(value)?, self))
+                Ok(SortStep::request_number(value, self))
             }
             Phase::CollectRead => {
                 self.collect_value(value);
@@ -152,11 +179,11 @@ impl SortResume {
                 self.collect_next(runtime)
             }
             Phase::CompareCall => {
-                if let Value::Int(value) = value {
+                if let JsValue::Int(value) = value {
                     return self.compared(runtime, order_from_number(f64::from(value)));
                 }
                 self.0.phase = Phase::CompareNumber;
-                Ok(SortStep::request_number(runtime.into_jsvalue(value)?, self))
+                Ok(SortStep::request_number(value, self))
             }
             _ => Err(RuntimeError::Invariant("Array sort value phase mismatch")),
         }
@@ -178,9 +205,11 @@ impl SortResume {
             Phase::LengthNumber => {
                 self.0.length = Runtime::length_from_number(number);
                 if self.0.copying {
-                    self.0.values = match runtime
-                        .native_allocate_fast_array_values(self.0.realm, self.0.length)?
-                    {
+                    self.0.values = match runtime.native_allocate_fast_array_values(
+                        self.0.realm,
+                        self.0.length,
+                        || JsValue::Undefined,
+                    )? {
                         NativeConversion::Value(values) => values,
                         NativeConversion::Throw(value) => {
                             return Ok(SortStep::Complete(Completion::Throw(
@@ -198,10 +227,26 @@ impl SortResume {
     fn collect_next(mut self, runtime: &Runtime) -> Result<SortStep, RuntimeError> {
         if self.0.cursor == self.0.length {
             if self.0.copying {
-                (self.0.slots, self.0.undefined_count) =
-                    Runtime::collect_dense_array_sort_slots(&self.0.values)?;
-                self.0.object = runtime
-                    .new_array_from_values(self.0.realm, std::mem::take(&mut self.0.values))?;
+                for index in 0..self.0.values.len() {
+                    Runtime::reserve_array_sort_slot_capacity(
+                        &mut self.0.slots,
+                        &mut self.0.logical_capacity,
+                    )?;
+                    let value = &self.0.values[index];
+                    if matches!(value, JsValue::Undefined) {
+                        self.0.undefined_count += 1;
+                    } else {
+                        self.0.slots.push(ArraySortSlot {
+                            value: runtime.dup_jsvalue(value)?,
+                            cached_string: None,
+                            original_position: index as u64,
+                        });
+                    }
+                }
+                self.0.object = runtime.new_array_from_values_jsvalue(
+                    self.0.realm,
+                    std::mem::take(&mut self.0.values),
+                )?;
             }
             *self.0.machine = SortMachine::new(self.0.slots.len());
             return self.sort_next(runtime, None);
@@ -219,10 +264,11 @@ impl SortResume {
             self,
         ))
     }
-    fn collect_value(&mut self, value: Value) {
+    fn collect_value(&mut self, value: JsValue) {
         if self.0.copying {
-            self.0.values[self.0.cursor as usize] = value;
-        } else if matches!(value, Value::Undefined) {
+            let previous = std::mem::replace(&mut self.0.values[self.0.cursor as usize], value);
+            let _ = self.0.runtime.release_jsvalue(previous);
+        } else if matches!(value, JsValue::Undefined) {
             self.0.undefined_count += 1;
         } else {
             self.0.slots.push(ArraySortSlot {
@@ -291,10 +337,11 @@ impl SortResume {
                     self.0.left = left;
                     self.0.right = right;
                     if let Some(callable) = &self.0.comparator {
-                        if self.0.slots[left]
-                            .value
-                            .same_quickjs_representation(&self.0.slots[right].value)
-                        {
+                        if same_representation(
+                            runtime,
+                            &self.0.slots[left].value,
+                            &self.0.slots[right].value,
+                        )? {
                             reply = Some(
                                 self.0.slots[left]
                                     .original_position
@@ -304,14 +351,15 @@ impl SortResume {
                         }
                         let callable = callable.clone();
                         self.0.phase = Phase::CompareCall;
-                        return Ok(SortStep::request_call(
-                            callable,
-                            vec![
-                                runtime.into_jsvalue(self.0.slots[left].value.clone())?,
-                                runtime.into_jsvalue(self.0.slots[right].value.clone())?,
-                            ],
-                            self,
-                        ));
+                        let left = runtime.dup_jsvalue(&self.0.slots[left].value)?;
+                        let right = match runtime.dup_jsvalue(&self.0.slots[right].value) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                let _ = runtime.release_jsvalue(left);
+                                return Err(error);
+                            }
+                        };
+                        return Ok(SortStep::request_call(callable, vec![left, right], self));
                     }
                     if let (Some(left_string), Some(right_string)) = (
                         &self.0.slots[left].cached_string,
@@ -336,14 +384,14 @@ impl SortResume {
         if self.0.slots[self.0.left].cached_string.is_none() {
             self.0.phase = Phase::LeftString;
             return Ok(SortStep::request_string(
-                runtime.into_jsvalue(self.0.slots[self.0.left].value.clone())?,
+                runtime.dup_jsvalue(&self.0.slots[self.0.left].value)?,
                 self,
             ));
         }
         if self.0.slots[self.0.right].cached_string.is_none() {
             self.0.phase = Phase::RightString;
             return Ok(SortStep::request_string(
-                runtime.into_jsvalue(self.0.slots[self.0.right].value.clone())?,
+                runtime.dup_jsvalue(&self.0.slots[self.0.right].value)?,
                 self,
             ));
         }
@@ -404,8 +452,9 @@ impl SortResume {
         while self.0.cursor < self.0.defined_count {
             let slot = &mut self.0.slots[self.0.cursor as usize];
             slot.cached_string.take();
-            let value = std::mem::replace(&mut slot.value, Value::Undefined);
+            let value = std::mem::replace(&mut slot.value, JsValue::Undefined);
             if slot.original_position == self.0.cursor {
+                runtime.release_jsvalue(value)?;
                 self.0.cursor += 1;
                 continue;
             }
@@ -413,11 +462,11 @@ impl SortResume {
             return Ok(SortStep::request_set(
                 self.0.object.clone(),
                 runtime.property_key_for_index(self.0.cursor)?,
-                runtime.into_jsvalue(value)?,
+                value,
                 self,
             ));
         }
-        drop(std::mem::take(&mut self.0.slots));
+        self.0.slots.clear();
         if self.0.cursor < self.0.defined_count + self.0.undefined_count {
             self.0.phase = Phase::Write;
             return Ok(SortStep::request_set(
@@ -436,7 +485,7 @@ impl SortResume {
             ));
         }
         Ok(SortStep::Complete(Completion::Return(
-            runtime.into_jsvalue(Value::Object(self.0.object))?,
+            runtime.into_jsvalue(Value::Object(self.0.object.clone()))?,
         )))
     }
     pub(crate) fn set(
@@ -703,3 +752,42 @@ const _: () = assert!(std::mem::size_of::<SortStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<SortStep>() <= 64);
+
+/// QuickJS's comparator elision compares representation, not content equality.
+fn same_representation(
+    runtime: &Runtime,
+    left: &JsValue,
+    right: &JsValue,
+) -> Result<bool, RuntimeError> {
+    Ok(match (left, right) {
+        (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
+        (JsValue::Bool(left), JsValue::Bool(right)) => left == right,
+        (JsValue::Int(left), JsValue::Int(right)) => left == right,
+        (JsValue::Float(left), JsValue::Float(right)) => left.to_bits() == right.to_bits(),
+        (JsValue::Symbol(left), JsValue::Symbol(right)) => left == right,
+        (JsValue::Object(left), JsValue::Object(right)) => left == right,
+        (JsValue::String(left), JsValue::String(right)) => {
+            if left == right {
+                true
+            } else {
+                let state = runtime.0.state.borrow();
+                state
+                    .heap
+                    .string(*left)?
+                    .same_representation(state.heap.string(*right)?)
+            }
+        }
+        (JsValue::BigInt(left), JsValue::BigInt(right)) => {
+            if left == right {
+                true
+            } else {
+                let state = runtime.0.state.borrow();
+                state
+                    .heap
+                    .bigint(*left)?
+                    .same_representation(state.heap.bigint(*right)?)
+            }
+        }
+        _ => false,
+    })
+}

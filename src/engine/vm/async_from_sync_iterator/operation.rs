@@ -32,9 +32,46 @@ pub(crate) enum FromSyncStep {
     Close { resume: Box<FromSyncResume> },
 }
 pub(crate) struct FromSyncResume {
+    runtime: Runtime,
     pending_effect: FromSyncStepPending,
     realm: ContextId,
     phase: Phase,
+}
+impl Drop for FromSyncResume {
+    fn drop(&mut self) {
+        for value in [
+            self.pending_effect.read_receiver.take(),
+            self.pending_effect.call_receiver.take(),
+            self.pending_effect.resolve_value.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(values) = self.pending_effect.call_arguments.take() {
+            for value in values {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
+        if let Some(Completion::Return(value) | Completion::Throw(value)) =
+            self.pending_effect.close_completion.take()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        match &mut self.phase {
+            Phase::Method(state)
+            | Phase::Result(state)
+            | Phase::Done { state, .. }
+            | Phase::Value { state, .. }
+            | Phase::Promise { state, .. } => {
+                for value in state.arguments.drain(..) {
+                    let _ = self.runtime.release_jsvalue(value);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 enum Phase {
     Method(State),
@@ -53,15 +90,16 @@ struct State {
     kind: GeneratorResumeKind,
     arguments: Vec<JsValue>,
 }
-fn continuation(realm: ContextId, phase: Phase) -> Box<FromSyncResume> {
+fn continuation(runtime: &Runtime, realm: ContextId, phase: Phase) -> Box<FromSyncResume> {
     Box::new(FromSyncResume {
+        runtime: runtime.clone(),
         pending_effect: FromSyncStepPending::default(),
         realm,
         phase,
     })
 }
 fn settle(
-    _runtime: &Runtime,
+    runtime: &Runtime,
     realm: ContextId,
     capability: RootedPromiseCapability,
     completion: Completion,
@@ -74,7 +112,8 @@ fn settle(
         let __pending_field_callable = callable;
         let __pending_field_receiver = JsValue::Undefined;
         let __pending_field_arguments = vec![value];
-        let __pending_field_resume = continuation(realm, Phase::Settled(capability.promise));
+        let __pending_field_resume =
+            continuation(runtime, realm, Phase::Settled(capability.promise));
         FromSyncStep::request_call(
             __pending_field_callable,
             __pending_field_receiver,
@@ -130,7 +169,7 @@ impl FromSyncStep {
             return Ok({
                 let __pending_field_iterator = iterator;
                 let __pending_field_completion = Completion::Throw(reason);
-                let __pending_field_resume = continuation(realm, Phase::Identity);
+                let __pending_field_resume = continuation(runtime, realm, Phase::Identity);
                 Self::request_close(
                     __pending_field_iterator,
                     __pending_field_completion,
@@ -199,7 +238,7 @@ impl FromSyncStep {
             },
         };
         match kind {
-            GeneratorResumeKind::Next => continuation(realm, Phase::Method(state)).resume(
+            GeneratorResumeKind::Next => continuation(runtime, realm, Phase::Method(state)).resume(
                 runtime,
                 Completion::Return(decode_raw_jsvalue(runtime, cached_next.clone())?),
             ),
@@ -212,7 +251,7 @@ impl FromSyncStep {
                     } else {
                         "throw"
                     })?;
-                let __pending_field_resume = continuation(realm, Phase::Method(state));
+                let __pending_field_resume = continuation(runtime, realm, Phase::Method(state));
                 Self::request_read(
                     __pending_field_receiver,
                     __pending_field_key,
@@ -249,12 +288,18 @@ impl FromSyncResume {
         }
         if let Phase::Settled(promise) = phase {
             return match completion {
-                Completion::Return(_) => Ok(FromSyncStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(Value::Object(promise))?,
-                ))),
-                Completion::Throw(_) => Err(RuntimeError::Invariant(
-                    "intrinsic Promise resolving function threw",
-                )),
+                Completion::Return(value) => {
+                    runtime.release_jsvalue(value)?;
+                    Ok(FromSyncStep::Complete(Completion::Return(
+                        runtime.into_jsvalue(Value::Object(promise))?,
+                    )))
+                }
+                Completion::Throw(value) => {
+                    runtime.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "intrinsic Promise resolving function threw",
+                    ))
+                }
             };
         }
         let value = match completion {
@@ -279,6 +324,9 @@ impl FromSyncResume {
                     | Phase::Done { state, .. }
                     | Phase::Value { state, .. }
                     | Phase::Promise { state, .. } => {
+                        for argument in state.arguments {
+                            runtime.release_jsvalue(argument)?;
+                        }
                         self.settle(runtime, state.capability, Completion::Throw(reason))?
                     }
                     Phase::MissingThrow(capability) | Phase::Reject(capability) => {
@@ -298,8 +346,7 @@ impl FromSyncResume {
                                 .into_iter()
                                 .next()
                                 .unwrap_or(JsValue::Undefined);
-                            let value = runtime.root_and_release_jsvalue(value)?;
-                            let result = runtime.new_iterator_result(realm, value, true)?;
+                            let result = runtime.new_iterator_result_jsvalue(realm, value, true)?;
                             self.settle(
                                 runtime,
                                 state.capability,
@@ -382,7 +429,9 @@ impl FromSyncResume {
                 })
             }
             Phase::Done { state, result } => {
-                let done = runtime.value_to_boolean_jsvalue(&value)?;
+                let done = runtime.value_to_boolean_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                let done = done?;
                 Ok({
                     let __pending_field_receiver = runtime.into_jsvalue(Value::Object(result))?;
                     let __pending_field_key = runtime

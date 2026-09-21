@@ -6,7 +6,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::frame::{FrameCold, FrameEntry, ReturnTarget};
 use crate::engine::vm::stack::FrameStorage;
@@ -56,60 +56,74 @@ impl BytecodeCallRequest {
             caller_realm,
             return_to,
         } = self;
-        storage.reserve()?;
-        let prepared = runtime
-            .prepare_owned_bytecode_frame(&callable, receiver, new_target, bytecode)
-            .map_err(runtime_error_to_vm_error)?;
-        if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
-            return Err(Error::internal(
-                "function object closure slot count does not match bytecode metadata",
-            ));
+        if let Err(error) = storage.reserve() {
+            let _ = runtime.release_jsvalue(receiver);
+            let _ = runtime.release_jsvalue(new_target);
+            for argument in arguments {
+                let _ = runtime.release_jsvalue(argument);
+            }
+            return Err(error);
         }
-        let local_count = prepared.executable.local_definitions.len();
-        let (flags, flag_bytes) = if prepared.executable.has_captured_locals {
-            storage.capture_flags(local_count)?
-        } else {
-            (Vec::new(), 0)
-        };
-        let active_frame = prepared.active_frame.token();
-        let (cold, frame_bytes) = storage.install(FrameCold {
-            rare: std::cell::OnceCell::new(),
-            return_to: Some(return_to),
-            entry_guard: Some(prepared.active_frame),
-            function: (callable.into_object()).into(),
-            closure_slots,
-            reusable_captured_locals: flags,
-            input: (prepared.input).into(),
-        });
-        let entry = FrameEntry {
-            property_generation: 0,
-            iterator_generation: 0,
-            caller_realm,
-            active_frame,
+        let mut arguments = arguments;
+        let result = (|| {
+            let prepared = runtime
+                .prepare_owned_bytecode_frame(&callable, receiver, new_target, bytecode)
+                .map_err(runtime_error_to_vm_error)?;
+            if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
+                return Err(Error::internal(
+                    "function object closure slot count does not match bytecode metadata",
+                ));
+            }
+            let local_count = prepared.executable.local_definitions.len();
+            let (flags, flag_bytes) = if prepared.executable.has_captured_locals {
+                storage.capture_flags(local_count)?
+            } else {
+                (Vec::new(), 0)
+            };
+            let active_frame = prepared.active_frame.token();
+            let (cold, frame_bytes) = storage.install(FrameCold {
+                rare: std::cell::OnceCell::new(),
+                return_to: Some(return_to),
+                entry_guard: Some(prepared.active_frame),
+                function: (callable.into_object()).into(),
+                closure_slots,
+                reusable_captured_locals: flags,
+                input: (prepared.input).into(),
+            });
+            let entry = FrameEntry {
+                property_generation: 0,
+                iterator_generation: 0,
+                caller_realm,
+                active_frame,
 
-            initialize_bindings: true,
-            executable: prepared.executable,
-            cold,
-            storage: FrameStorage {
-                original_arguments: arguments,
-                parameters: Vec::new(),
-                locals: Vec::new(),
-                operands: Vec::new(),
-            },
-        };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "call_callee_owner_transferred",
-        );
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_call_storage(
-            frame_bytes,
-            flag_bytes,
-            entry.storage.original_arguments.capacity() * size_of::<Value>(),
-        );
-        #[cfg(not(feature = "profiling"))]
-        let _ = (frame_bytes, flag_bytes);
-        Ok(entry)
+                initialize_bindings: true,
+                executable: prepared.executable,
+                cold,
+                storage: FrameStorage {
+                    original_arguments: std::mem::take(&mut arguments),
+                    parameters: Vec::new(),
+                    locals: Vec::new(),
+                    operands: Vec::new(),
+                },
+            };
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "call_callee_owner_transferred",
+            );
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_call_storage(
+                frame_bytes,
+                flag_bytes,
+                entry.storage.original_arguments.capacity() * size_of::<JsValue>(),
+            );
+            #[cfg(not(feature = "profiling"))]
+            let _ = (frame_bytes, flag_bytes);
+            Ok(entry)
+        })();
+        for argument in arguments {
+            let _ = runtime.release_jsvalue(argument);
+        }
+        result
     }
 }
 
@@ -127,11 +141,13 @@ pub(in crate::engine::vm) fn normalize_callback(
     runtime: &Runtime,
     realm: ContextId,
     mut callable: CallableRef,
-    mut receiver: Value,
-    mut arguments: Vec<Value>,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
 ) -> Result<crate::engine::value::conversion::NativeConversion<NormalizedCallback>, Error> {
     use crate::engine::value::conversion::NativeConversion;
-    loop {
+    let mut receiver = Some(receiver);
+    let mut arguments = arguments;
+    let result = (|| loop {
         match runtime
             .bytecode_for_callable(&callable)
             .map_err(runtime_error_to_vm_error)?
@@ -141,44 +157,37 @@ pub(in crate::engine::vm) fn normalize_callback(
                 this_value,
                 arguments: bound,
             } => {
-                let bound = bound
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()
+                runtime
+                    .release_jsvalue(receiver.replace(this_value).expect("callback receiver"))
                     .map_err(runtime_error_to_vm_error)?;
                 arguments = match runtime
-                    .concatenate_bound_arguments(realm, &bound, &arguments)
+                    .concatenate_bound_arguments_jsvalue(
+                        realm,
+                        bound,
+                        std::mem::take(&mut arguments),
+                    )
                     .map_err(runtime_error_to_vm_error)?
                 {
                     NativeConversion::Value(arguments) => arguments,
-                    NativeConversion::Throw(value) => {
-                        return Ok(NativeConversion::Throw(value));
-                    }
+                    NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
                 };
-                receiver = runtime
-                    .root_and_release_jsvalue(this_value)
-                    .map_err(runtime_error_to_vm_error)?;
                 callable = target;
             }
             classification => {
-                // The normalized owners enter the internal call convention:
-                // their root edges are duplicated; the caller's roots release
-                // through the public Drop path.
-                let receiver = runtime
-                    .unroot_value(&receiver)
-                    .map_err(runtime_error_to_vm_error)?;
-                let arguments = arguments
-                    .iter()
-                    .map(|argument| runtime.unroot_value(argument))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(runtime_error_to_vm_error)?;
                 return Ok(NativeConversion::Value(NormalizedCallback {
                     callable,
-                    receiver,
-                    arguments,
+                    receiver: receiver.take().expect("callback receiver"),
+                    arguments: std::mem::take(&mut arguments),
                     classification,
                 }));
             }
         }
+    })();
+    if let Some(receiver) = receiver {
+        let _ = runtime.release_jsvalue(receiver);
     }
+    for argument in arguments {
+        let _ = runtime.release_jsvalue(argument);
+    }
+    result
 }

@@ -53,12 +53,18 @@ pub(super) fn finish(
                 value
             } else {
                 runtime
+                    .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
+                runtime
                     .into_jsvalue(receiver)
                     .map_err(runtime_error_to_vm_error)?
             })
         }
         (Completion::Return(value), Some(ConstructorReturn::Derived)) => {
             if !matches!(value, JsValue::Object(_)) {
+                runtime
+                    .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
                 return Err(Error::internal(
                     "derived constructor bytecode returned an unvalidated primitive",
                 ));

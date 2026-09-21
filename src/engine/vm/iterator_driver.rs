@@ -13,8 +13,7 @@ use crate::engine::{
     builtins::native::{ArrayIteratorKind, NativeFunctionId},
     heap::{ContextId, ObjectKind, ObjectPayload},
     object::{
-        CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-        WellKnownSymbol, operations::PropertyDefineOutcome,
+        CallableRef, ObjectRef, PropertyKey, WellKnownSymbol, operations::PropertyDefineOutcome,
     },
     value::JsValue,
 };
@@ -943,15 +942,16 @@ impl PendingIteratorState {
                 ))
             }
             Stage::Probe => {
-                let probe = runtime
-                    .root_value(&value)
-                    .map_err(runtime_error_to_vm_error)?;
-                self.builtin_probe = super::iterator_support::is_direct_native_target(
+                let probe = super::iterator_support::is_direct_native_target(
                     runtime,
-                    &probe,
+                    &value,
                     NativeFunctionId::ArrayPrototypeIterator(ArrayIteratorKind::Value),
-                )?;
-                drop(probe);
+                );
+                if let Err(error) = probe {
+                    let _ = runtime.release_jsvalue(value);
+                    return Err(error);
+                }
+                self.builtin_probe = probe.expect("checked probe result");
                 // Release the first result before the second observable GetIterator lookup.
                 runtime
                     .release_jsvalue(value)
@@ -1028,34 +1028,13 @@ impl PendingIteratorState {
                 if matches!(self.mode, Mode::Start { .. }) {
                     return Ok(Action::Finish);
                 }
-                let iterable = runtime
-                    .root_value(&self.iterable)
-                    .map_err(runtime_error_to_vm_error)?;
-                let next = runtime
-                    .root_value(&self.next)
-                    .map_err(runtime_error_to_vm_error)?;
-                let fast = super::iterator_support::append_fast_array_values(
+                self.fast = super::iterator_support::append_fast_array_values(
                     runtime,
-                    &iterable,
-                    &next,
+                    &self.iterable,
+                    &self.next,
                     self.builtin_probe,
-                )?;
-                drop(iterable);
-                drop(next);
-                self.fast = match fast {
-                    Some(values) => {
-                        let mut internal = Vec::with_capacity(values.len());
-                        for value in values {
-                            internal.push(
-                                runtime
-                                    .into_jsvalue(value)
-                                    .map_err(runtime_error_to_vm_error)?,
-                            );
-                        }
-                        Some(internal.into_iter())
-                    }
-                    None => None,
-                };
+                )?
+                .map(Vec::into_iter);
                 self.ready = true;
                 self.stage = Stage::Next;
                 Ok(Action::Reply(Completion::Return(JsValue::Undefined)))
@@ -1092,28 +1071,18 @@ impl PendingIteratorState {
                 let key = runtime
                     .property_key_for_index(self.position as u64)
                     .map_err(|e| Error::internal(e.to_string()))?;
-                let value_root = runtime
-                    .root_value(&value)
-                    .map_err(runtime_error_to_vm_error)?;
-                let outcome = runtime
-                    .define_own_property_in_realm(
-                        Some(self.realm),
-                        self.array
-                            .as_ref()
-                            .ok_or_else(|| Error::internal("Append lost its target"))?,
-                        &key,
-                        &OrdinaryPropertyDescriptor {
-                            value: DescriptorField::Present(value_root),
-                            writable: DescriptorField::Present(true),
-                            enumerable: DescriptorField::Present(true),
-                            configurable: DescriptorField::Present(true),
-                            ..OrdinaryPropertyDescriptor::new()
-                        },
-                    )
-                    .map_err(runtime_error_to_vm_error)?;
+                let outcome = runtime.define_selected_set_data(
+                    self.array
+                        .as_ref()
+                        .ok_or_else(|| Error::internal("Append lost its target"))?,
+                    &key,
+                    &value,
+                    false,
+                );
                 runtime
                     .release_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?;
+                let outcome = outcome.map_err(runtime_error_to_vm_error)?;
                 match outcome {
                     PropertyDefineOutcome::Defined(true) => {}
                     PropertyDefineOutcome::Defined(false) => {
@@ -1182,11 +1151,11 @@ fn one_resident_owner_per_iterator_operation_and_none_for_disabled_close() {
     for count in [0, 4] {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("function collect(n){let i=0;let it={ [Symbol.iterator](){return this},next(){return {get value(){return i},get done(){return i++>=n}}}}; let total=0;for(let x of it)total+=x;return total}").unwrap();
+        drop(context.eval("function collect(n){let i=0;let it={ [Symbol.iterator](){return this},next(){return {get value(){return i},get done(){return i++>=n}}}}; let total=0;for(let x of it)total+=x;return total}").unwrap());
         let profile = CostProfile::start();
         assert_eq!(
             context.eval(&format!("collect({count})")).unwrap(),
-            Value::Int(count * (count + 1) / 2)
+            crate::engine::value::Value::Int(count * (count + 1) / 2)
         );
         let costs = profile.snapshot();
         assert_eq!(

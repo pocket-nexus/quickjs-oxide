@@ -33,6 +33,7 @@ impl PromiseStep {
             let __pending_field_receiver = JsValue::Object(thenable.into_handle());
             let __pending_field_arguments = arguments;
             let __pending_field_resume = Box::new(PromiseResume {
+                runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::Thenable(reject),
@@ -63,6 +64,7 @@ impl PromiseStep {
             })
             .transpose()?;
         let resume = Box::new(PromiseResume {
+            runtime: runtime.clone(),
             pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: Phase::Reaction(targets),

@@ -11,15 +11,7 @@ use crate::engine::code::bytecode::ArgumentsKind;
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName,
 };
-use crate::engine::value::{JsValue, Value};
-
-fn root_values(runtime: &Runtime, values: Vec<JsValue>) -> Result<Vec<Value>, Error> {
-    values
-        .into_iter()
-        .map(|value| runtime.root_and_release_jsvalue(value))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(runtime_error_to_vm_error)
-}
+use crate::engine::value::JsValue;
 
 pub(super) fn arguments(
     runtime: &Runtime,
@@ -34,7 +26,6 @@ pub(super) fn arguments(
             let values = execution
                 .slots
                 .snapshot_actual_arguments(&frame.window, runtime)?;
-            let values = root_values(runtime, values)?;
             runtime.new_unmapped_arguments_object(frame.executable.realm, values)
         }
         ArgumentsKind::Mapped => {
@@ -86,9 +77,8 @@ pub(super) fn rest(
         execution
             .slots
             .snapshot_argument_tail(&frame.window, runtime, usize::from(start))?;
-    let values = root_values(runtime, values)?;
     runtime
-        .new_array_from_values(frame.executable.realm, values)
+        .new_array_from_values_jsvalue(frame.executable.realm, values)
         .map(|object| JsValue::Object(object.into_handle()))
         .map_err(runtime_error_to_vm_error)
 }

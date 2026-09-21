@@ -377,10 +377,16 @@ pub(in crate::engine::vm) fn branded_receiver(
 ) -> Result<ObjectRef, Error> {
     use crate::engine::api::error::ErrorKind;
     // Resolve HomeObject's brand before validating the receiver, as QuickJS does.
-    runtime
-        .require_private_method_brand(callable, kind)
-        .map_err(runtime_error_to_vm_error)?;
+    if let Err(error) = runtime.require_private_method_brand(callable, kind) {
+        runtime
+            .release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
+        return Err(runtime_error_to_vm_error(error));
+    }
     let JsValue::Object(receiver) = base else {
+        runtime
+            .release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
         return Err(Error::new(ErrorKind::Type, "not an object"));
     };
     let receiver = ObjectRef::from_owned_handle(runtime.clone(), receiver);

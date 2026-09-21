@@ -34,7 +34,7 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
     let global_262 = eval(&mut context, "globalThis.$262");
     assert!(matches!(global_262, Value::Object(object) if object == installed));
 
-    eval(&mut context, FIXTURE);
+    drop(eval(&mut context, FIXTURE));
     let transcript = text(eval(&mut context, "createRealmTranscript.join('\\n')"));
     assert_eq!(format!("{transcript}\n"), QUICKJS_2026_06_04);
 

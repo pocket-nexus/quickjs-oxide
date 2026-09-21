@@ -65,12 +65,13 @@ impl std::ops::DerefMut for IndexedResume {
 }
 const _: () = assert!(std::mem::size_of::<IndexedResume>() <= 8);
 pub(crate) struct IndexedResumeState {
+    runtime: Runtime,
     pending_effect: IndexedStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
     kind: IndexedKind,
     object: ObjectRef,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
     actual: usize,
     phase: Phase,
     length: i64,
@@ -78,8 +79,24 @@ pub(crate) struct IndexedResumeState {
     index: i64,
     end: i64,
     direction: i64,
-    values: Vec<Value>,
+    values: Vec<JsValue>,
     replacement: i64,
+}
+impl Drop for IndexedResumeState {
+    fn drop(&mut self) {
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for value in self.values.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.number_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.pending_effect.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl IndexedStep {
     pub(crate) fn start(
@@ -103,30 +120,36 @@ impl IndexedStep {
                     )));
                 }
             };
+        let mut resume = IndexedResume(Box::new(IndexedResumeState {
+            runtime: runtime.clone(),
+            pending_effect: IndexedStepPending::default(),
+            scheduler_set_key: None,
+            realm,
+            kind,
+            object,
+            arguments: Vec::new(),
+            actual: arguments.actual_arg_count,
+            phase: Phase::Length,
+            length: 0,
+            bounds: [0; 3],
+            index: 0,
+            end: 0,
+            direction: 1,
+            values: Vec::new(),
+            replacement: -1,
+        }));
+        resume
+            .0
+            .arguments
+            .try_reserve_exact(arguments.readable.len())
+            .map_err(|_| RuntimeError::Invariant("Array indexed argv allocation failed"))?;
+        for value in &arguments.readable {
+            resume.0.arguments.push(runtime.dup_jsvalue(value)?);
+        }
         Ok(Self::request_read(
-            object.clone(),
+            resume.0.object.clone(),
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            IndexedResume(Box::new(IndexedResumeState {
-                pending_effect: IndexedStepPending::default(),
-                scheduler_set_key: None,
-                realm,
-                kind,
-                object,
-                arguments: arguments
-                    .readable
-                    .iter()
-                    .map(|value| runtime.root_value(value))
-                    .collect::<Result<Vec<_>, _>>()?,
-                actual: arguments.actual_arg_count,
-                phase: Phase::Length,
-                length: 0,
-                bounds: [0; 3],
-                index: 0,
-                end: 0,
-                direction: 1,
-                values: Vec::new(),
-                replacement: -1,
-            })),
+            resume,
         ))
     }
 }
@@ -139,12 +162,8 @@ impl IndexedResume {
         self.0.scheduler_set_key.take().expect("waiting Set key")
     }
 
-    fn argument(&self, index: usize) -> Value {
-        self.0
-            .arguments
-            .get(index)
-            .cloned()
-            .unwrap_or(Value::Undefined)
+    fn argument(&self, index: usize) -> &JsValue {
+        self.0.arguments.get(index).unwrap_or(&JsValue::Undefined)
     }
     pub(crate) fn resume(
         mut self,
@@ -152,38 +171,39 @@ impl IndexedResume {
         result: Completion,
     ) -> Result<IndexedStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(IndexedStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(IndexedStep::request_number(
-                    runtime.into_jsvalue(value)?,
-                    self,
-                ))
+                Ok(IndexedStep::request_number(value, self))
             }
             Phase::Read => match self.0.kind {
-                IndexedKind::At => Ok(IndexedStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(value)?,
-                ))),
+                IndexedKind::At => Ok(IndexedStep::Complete(Completion::Return(value))),
                 IndexedKind::With | IndexedKind::ToReversed => {
                     let output = if matches!(self.0.kind, IndexedKind::ToReversed) {
                         self.0.length - self.0.index - 1
                     } else {
                         self.0.index
                     };
-                    self.0.values[output as usize] = value;
+                    let previous = std::mem::replace(&mut self.0.values[output as usize], value);
+                    runtime.release_jsvalue(previous)?;
                     self.advance(runtime)
                 }
                 IndexedKind::Search(kind) => {
                     let search = self.argument(0);
                     let found = if kind == ArraySearchKind::Includes {
-                        search.same_value_zero(&value)
+                        Ok(crate::engine::value::collection_key::same_value_zero(
+                            &runtime.0.state.borrow().heap,
+                            &search.as_raw(),
+                            &value.as_raw(),
+                        ))
                     } else {
-                        search.strict_equal(&value)
+                        runtime.strict_equal_jsvalue(search, &value)
                     };
-                    if found {
+                    runtime.release_jsvalue(value)?;
+                    if found? {
                         let result = if kind == ArraySearchKind::Includes {
                             Value::Bool(true)
                         } else {
@@ -198,7 +218,10 @@ impl IndexedResume {
                 }
                 _ => Err(RuntimeError::Invariant("Array indexed read kind mismatch")),
             },
-            Phase::Copy => self.complete(runtime),
+            Phase::Copy => {
+                runtime.release_jsvalue(value)?;
+                self.complete(runtime)
+            }
             _ => Err(RuntimeError::Invariant(
                 "Array indexed value phase mismatch",
             )),
@@ -260,9 +283,11 @@ impl IndexedResume {
         if let Some(argument) = argument {
             let value = self.argument(argument);
             let omitted = match self.0.kind {
-                IndexedKind::Fill => argument >= self.0.actual || matches!(value, Value::Undefined),
+                IndexedKind::Fill => {
+                    argument >= self.0.actual || matches!(value, JsValue::Undefined)
+                }
                 IndexedKind::CopyWithin if argument == 2 => {
-                    argument >= self.0.actual || matches!(value, Value::Undefined)
+                    argument >= self.0.actual || matches!(value, JsValue::Undefined)
                 }
                 IndexedKind::Search(_) => argument >= self.0.actual,
                 _ => false,
@@ -276,11 +301,9 @@ impl IndexedResume {
                 };
                 return self.bound(runtime, index + 1);
             }
+            let value = runtime.dup_jsvalue(value)?;
             self.0.phase = Phase::Bound(index);
-            return Ok(IndexedStep::request_number(
-                runtime.into_jsvalue(value)?,
-                self,
-            ));
+            return Ok(IndexedStep::request_number(value, self));
         }
         self.0.index = self.0.bounds[0];
         self.0.end = self.0.length;
@@ -346,7 +369,11 @@ impl IndexedResume {
         self.next(runtime)
     }
     fn allocate(&mut self, runtime: &Runtime) -> Result<Option<Value>, RuntimeError> {
-        match runtime.native_allocate_fast_array_values(self.0.realm, self.0.length as u64)? {
+        match runtime.native_allocate_fast_array_values(
+            self.0.realm,
+            self.0.length as u64,
+            || JsValue::Undefined,
+        )? {
             NativeConversion::Value(values) => {
                 self.0.values = values;
                 Ok(None)
@@ -364,7 +391,9 @@ impl IndexedResume {
                 return self.complete(runtime);
             }
             if matches!(self.0.kind, IndexedKind::With) && self.0.index == self.0.replacement {
-                self.0.values[self.0.index as usize] = self.argument(1);
+                let value = runtime.dup_jsvalue(self.argument(1))?;
+                let previous = std::mem::replace(&mut self.0.values[self.0.index as usize], value);
+                runtime.release_jsvalue(previous)?;
                 self.0.index += 1;
                 continue;
             }
@@ -374,7 +403,7 @@ impl IndexedResume {
                 return Ok(IndexedStep::request_set(
                     self.0.object.clone(),
                     key,
-                    runtime.into_jsvalue(self.argument(0))?,
+                    runtime.dup_jsvalue(self.argument(0))?,
                     self,
                 ));
             }
@@ -386,15 +415,18 @@ impl IndexedResume {
             return Ok(IndexedStep::request_has(self.0.object.clone(), key, self));
         }
     }
-    fn complete(self, runtime: &Runtime) -> Result<IndexedStep, RuntimeError> {
+    fn complete(mut self, runtime: &Runtime) -> Result<IndexedStep, RuntimeError> {
         let value = match self.0.kind {
             IndexedKind::With | IndexedKind::ToReversed => {
-                Value::Object(runtime.new_array_from_values(self.0.realm, self.0.values)?)
+                Value::Object(runtime.new_array_from_values_jsvalue(
+                    self.0.realm,
+                    std::mem::take(&mut self.0.values),
+                )?)
             }
             IndexedKind::Search(ArraySearchKind::Includes) => Value::Bool(false),
             IndexedKind::Search(_) => Value::Int(-1),
             IndexedKind::At => Value::Undefined,
-            _ => Value::Object(self.0.object),
+            _ => Value::Object(self.0.object.clone()),
         };
         Ok(IndexedStep::Complete(Completion::Return(
             runtime.into_jsvalue(value)?,

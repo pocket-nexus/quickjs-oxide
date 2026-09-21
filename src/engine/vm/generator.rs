@@ -200,8 +200,7 @@ impl Runtime {
         match self.call_generator_prototype_resume_raw(realm, kind, invocation, arguments)? {
             NativeInvokeOutcome::Completion(completion) => Ok(completion),
             NativeInvokeOutcome::IteratorNextRaw { value, done } => {
-                let value = self.root_and_release_jsvalue(value)?;
-                let result = self.new_iterator_result(realm, value, done)?;
+                let result = self.new_iterator_result_jsvalue(realm, value, done)?;
                 Ok(Completion::Return(
                     self.into_jsvalue(Value::Object(result))?,
                 ))

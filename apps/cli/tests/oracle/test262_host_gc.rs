@@ -91,7 +91,7 @@ fn test262_gc_reentry_matches_pinned_quickjs_lifecycle_transcript() {
     let mut context = runtime.new_context();
     install_test262_gc(&mut context);
 
-    eval(&mut context, FIXTURE);
+    drop(eval(&mut context, FIXTURE));
     assert!(
         runtime.is_job_pending(),
         "$262.gc must leave Promise and finalization jobs queued"
