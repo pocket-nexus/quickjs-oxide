@@ -11,6 +11,7 @@ use crate::engine::{
     },
 };
 
+#[inline]
 pub(super) fn supported(slots: &RunSlots<'_>, kind: NumericKind) -> bool {
     kind.primitive_arithmetic()
         && (0..if kind.unary() { 1 } else { 2 }).all(

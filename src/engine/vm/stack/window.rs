@@ -308,6 +308,8 @@ impl RunSlots<'_> {
             .replace_local_pending_current(self.window, index, value)
     }
 
+    // Preserve the direct SlotStore call at numeric operand consumers.
+    #[inline]
     pub(in crate::engine::vm) fn pop(&mut self) -> Result<JsValue, Error> {
         self.store.pop_current(self.window)
     }
