@@ -908,7 +908,7 @@ impl Runtime {
         let result = match activation.mode {
             NativeInvokeMode::Ordinary => self
                 .dispatch_native_function(
-                    &activation.callable,
+                    activation.callable(),
                     activation.target,
                     activation.realm,
                     invocation,
