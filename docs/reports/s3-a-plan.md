@@ -1,6 +1,6 @@
 # S3-A 计划：8B 值表示——融合实施
 
-> 状态：阶段 A 阻塞于性能回退；先完成 §8 全部回退修复，再推进 W6 验收及后续优化。W1–W5 已有 16B 实现快照，但不代表收益达标。必要正确性验证已补齐（§8.10），性能门禁仍未通过。历史证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
+> 状态：阶段 A 阻塞于性能回退；先完成 §8 全部回退修复，再推进 W6 验收及后续优化。W1–W5 已有 16B 实现快照，但不代表收益达标。最新实现/性能/完整正确性证据见 §8.11（d0deb0fe）；短 BigInt 已基本恢复，长 BigInt 与其他回退仍阻塞门禁。历史证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
 > `performance-architecture.md` §4（方案 A）的实施计划与验收规则；若两处
 > 表述冲突，**以本文档为准**。约束与证据附录继承
 > `performance-architecture.md` §0/§11/附录。
@@ -1011,3 +1011,104 @@ runner binary SHA256：
 当前已有必要的语义与 debug teardown 验证证据；这只覆盖实际执行的用例，
 不是对所有程序零泄漏的无限保证。性能回退仍按 §8.9 阻断阶段 A，不能因为
 本轮正确性验证通过就推进 A4 或后续阶段。
+
+
+### 8.11 继续回退修复：最终快照 d0deb0fe（2026-09-21）
+
+**结论：不是只剩 BigInt，也没有宣告阶段 A 完成。** 本轮把已确认的实现成本落地，验证了收益；短 BigInt 固定工作量恢复到 pre-A 附近，长 BigInt 的主要回退显著缩小，但仍未消除。Map/Set、动态删除、部分数组/索引/编译组以及 V8 仍阻塞 §8 门禁，不能推进 A4。完整分组、三次原始样本、二进制/工作负载指纹、profile 和验证范围见 本地记录（不纳入 Git）。§8.9–8.10 是此前 f29/dc787 快照，不代表本节的新结果。
+
+#### 已定位、实现并验证的机制
+
+代码、测试及汇编确认了下述机制；除 R5 两处内联的窄对照外，多数性能数据是组合补丁结果，不能把组合收益全部归给某一个补丁。
+
+| 新增成本或缺口 | 本轮实现与证据 | 关闭边界 |
+| --- | --- | --- |
+| 纯 BigInt 两个操作数分别借用 heap、clone/drop payload Rc | 同一次共享借用直接调用原 `JsBigInt` 内核；Short/Short 不借 heap | 保留混合类型与回调转换顺序、错误文案；算术算法没换 |
+| 每个长结果都新建 arena 节点 | consuming 算术可转移唯一输入节点；独立计算新 payload 后替换，公共 Rc 不变 | borrowed add、额外持有边、相同 id 的两份输入均不能非法复用；Short 结果仍内联 |
+| 16B BigInt 载荷在 publish 中做 392B、399B 两次复制 | String/BigInt 专用叶节点直接发布；最终 BigInt 汇编只有 16B payload store，栈帧从 824B 降至 16B | 保留 free-list、generation、weak-link、ledger 检查；不是更换 arena 布局 |
+| 叶节点 retain/release 经过不必要的可变借用、通用分派与宽 cleanup | validated shared retain；直接叶节点释放、单次身份校验；公共 Heap API 仍返回准确 cleanup 计数 | trace、借用冲突、旧 zero queue、错误与 deferred drain 原顺序保留；没有关闭断言 |
+| native finish 正常路径搬运宽 Result；后续又发现两次 136B activation 搬运 | 冷错误构造与正常值分开；原地取出 callable 后释放参数；最终汇编确认两次整段搬运消失 | native frame 在错误构造时仍有效；callable 先于参数释放，finish 失败释放产出值 |
+| 固定宽度 hash 落入通用字节分块；单个图边反复构造 Edges | 专用 u8/u16/u32/usize 写入，保持原端序映射；直接扩展 0/1 个 raw edge，批量 spill 使用迭代器剩余长度 | GC 边不删、顺序不变，事务 retain/rollback 不变 |
+| ordinary own-read 和普通原型链 fallback 各临时创建 receiver ObjectRef | 两条内部入口都借用已有 base 的 ObjectId；只有返回 Special 或其他确需独立 owner 的位置保留 promotion | 公共域校验、getter/receiver/prototype 独立所有权保留；新增测试准备 getter 后释放 base 仍能调用 |
+| TypedArray 数值叶读取往返公共 Value | 数值 decoder 返回 Number，再投影内部 JsValue；BigInt typed 路径保持原样 | Uint32 边界、负零、Infinity、NaN payload 测试通过；不能据此宣布 typed benchmark 全关闭 |
+| R4 新增 VM 包装调用使纯 Short 又多执行指令 | 反汇编发现 numeric completion 的两个操作数各多一次 RunSlots::pop 包装调用，run 另调用 supported；只对这两个已有小函数增加内联指示 | R5/R6 汇编确认直接 pop_current、无 supported callsite；不是盲目改所有函数的内联 |
+
+实现提交：`39911ad1`（第一批）、`dc038e36`（叶引用/native 原地清理）、`93febb08`（两处 VM 内联）、`d0deb0fe`（剩余 ordinary fallback receiver 借用）。`JsValue=16B`、`RawValue≤16B`、`AtomIdx=4B`、`ShapeEntry=8B` 约束保持；没有恢复公共 Value 内部传输，没有放宽 oracle，也没有把 16B 宣称为已实现 8B 或整机内存减半。
+
+#### BigInt 三方交错固定工作量
+
+同机、同 Rust 1.94.1、无 PGO、LTO off/CGU16；每格 3 次交错执行，比较中位 cycles。baseline=`85afd564`，before=`f29c620b`，after=`d0deb0fe`。每次 1000×1000 的原算术内核，独立 Python 大整数计算期望输出，全部校验成功。正值表示更慢。
+
+| 工作量 | f29 对 pre-A | 最终对 pre-A | 最终指令数对 pre-A |
+| --- | ---: | ---: | ---: |
+| bigint32 | +8.33% | -0.29% | -1.12% |
+| bigint64 | +26.26% | +11.37% | +9.69% |
+| bigint256 | +90.84% | +38.45% | +40.69% |
+
+不能混用跨轮数据：R3 为 +2.67/+17.98/+58.35%，R4 为 +7.42/+21.41/+44.16%；短值的反复促成了上述 codegen 排查。只增加两个内联指示的 R5 窄对照为 −0.47/+9.56/+37.66%，最终 R6 再次维持短值接近基线。此前“短 +9%、长 +87%”是旧快照；最终三方数据以本表为准。短值约零差距不能包装成显著加速，也不代表所有 BigInt 宽度已经关闭。
+
+原上游 Date.now/min-of-many bigint 基准仍单独保存，32/64 的粗粒度相等不能代替固定工作量。profile 中旧通用释放分派不再是长 BigInt 的主要热符号；实际还存在 live-edge dup/retain、arena 分配/回收以及 VM 绑定和结果交接。不能把全部剩余 cycles 都归给某个 self 百分比，也不能声称乘法算法本身变慢。
+
+#### 完整 scaling 台账（最终对 pre-A，wall-time 中位数 %）
+
+下面每组均实际执行 3 次并核对输出；列顺序为 size 32/128/512/2048，RegExp 仅 32/128。小进程组含启动、编译及销毁成本，正回退仍保留；样本区间重叠不是自动关闭许可。
+
+| case | 各 size 的最终变化 |
+| --- | --- |
+| map-int | +4.25% / +4.78% / +4.65% / +11.01% |
+| map-string | +11.54% / +19.11% / +12.09% / +16.70% |
+| set | +9.19% / +8.52% / +8.57% / +8.56% |
+| map-churn | -5.21% / -2.54% / +8.95% / +5.85% |
+| set-churn | +7.07% / +12.25% / +2.97% / +4.14% |
+| set-intersection | +9.24% / +8.56% / +5.09% / +9.23% |
+| prop-write | -4.58% / -4.37% / +1.68% / -0.34% |
+| prop-delete | +9.22% / +10.06% / +9.06% / +10.16% |
+| array-truncate | +8.66% / +0.66% / +2.69% / +1.85% |
+| scope | -11.26% / -0.67% / +1.98% / -9.73% |
+| constants | -15.54% / +8.57% / +2.10% / +0.43% |
+| module | +8.44% / -13.10% / -3.86% / +3.28% |
+| module-imports | -20.90% / +0.68% / -1.78% / -0.71% |
+| long-key | +3.14% / +0.36% / -0.94% / +0.24% |
+| map-iterate-churn | -0.86% / -0.61% / -2.49% / +1.21% |
+| set-iterate-churn | -0.21% / -0.23% / -1.46% / -2.56% |
+| array-index | -3.58% / +1.37% / +0.53% / -2.22% |
+| array-holey | -0.57% / -4.06% / -1.86% / +0.42% |
+| typed-index | +6.55% / +2.33% / +5.21% / +5.22% |
+| arguments | -9.64% / -4.38% / -6.51% / -21.07% |
+| mapped-arguments | +4.75% / +0.93% / +1.27% / +4.76% |
+| regexp-groups | +0.91% / +0.25% |
+
+86 组中 66 组优于本轮同跑 f29，但仍有 55 组中位数慢于 pre-A；不能用平均改善抵消任一未关闭项。每格原始样本位于证据 JSON，可据此核对 min/max，不能只保留有利规模。
+
+V8 仍仅 Richards/DeltaBlue 两项（三次/引擎），没有伪造完整 V8 suite 分数。property read probe 使用 2000 万次、3 repeats；它只是数据属性读取诊断，不代表整个引擎。
+
+
+| V8 case | pre-A score | 最终 score | 分数变化（越高越好） |
+| --- | ---: | ---: | ---: |
+| richards | 41.4 | 38.4 | -7.25% |
+| deltablue | 52.9 | 49.4 | -6.62% |
+
+| property probe | pre-A ns/op | 最终 ns/op | 耗时变化 |
+| --- | ---: | ---: | ---: |
+| prop_read_int | 226.18 | 201.72 | -10.81% |
+| prop_read_obj | 284.31 | 244.59 | -13.97% |
+| prop_read_string | 388.90 | 270.67 | -30.40% |
+
+#### 必要正确性验证与尚未关闭的工作
+
+最终源码重新构建后运行完整隔离 core/oracle，正常 teardown，无 probe 模式、无忽略失败列表、无 abort 掩盖。其他 workspace 目标和 MSRV 1.88 clippy 也检查；完整 Test262 与 frozen vector 逐项比较，focused 从本次完整结果派生，不重复执行。具体计数与源码指纹如下。
+
+- 最终 core **2585/2585**，oracle **912/912**，其余 workspace **184/184**；include-ignored，无失败、abort 或遗漏。
+- 完整 Test262：102037 variants，80032 eligible，79982 pass；既有 43 fail-runtime/7 fail-parse 完全不变，unsupported/skipped 也与冻结向量逐项一致。focused **6844/6844** 是本次 full 的派生核验。
+- 最终源码 `d0deb0fe`，engine semantics fingerprint `e9de7bd3af59542ab80bb732fc0ce399a4eb72532bd5fc1756af6347d8ce32d9`。MSRV 1.88 all-targets/all-features clippy、fmt、source-layout 696 files、diff check 通过。
+- R3/R4 有各自独立 core/oracle 完整记录，R4 另有完整 Test262 记录；R5 只改两处内联，执行 443 项 VM 单测和 24 项数值 oracle（467/467），没有为此重复 Test262。R6 新的 fallback owner 改动先通过 148 项 object 测试，再做上述最终集成验证。
+
+
+剩余工作按以下证据边界推进，不进入 A4：
+
+1. **长 BigInt**：已证明本轮 arena/ownership/codegen 修复有效，尚有非零回退。下一步对 VM 已有 live edge 的复制/归还做窄 A/B，分离 checked identity、计数、宽 Error 返回与 caller 搬运；保留外部入口完整检查和引用计数溢出规则。当前没有证据允许直接删 retain、把共享节点当唯一或跳过 generation。此项是待验证方案，未标为关闭。
+2. **Map/Set、V8**：两条新增临时 receiver root 和 native 搬运已消除，仍慢说明它们不是全部根因。继续对共享的 property/call 准备、对象引用处理及 frame handoff 分摊固定工作量成本；旧有 ObjectRef clone、Map hash/链索引算法不能直接冒充本轮新增原因。V8 adaptive profile 的总 cycles 不作固定工作量比较。
+3. **动态键/数组/RegExp**：hash/leaf/edge 修复已落地，但剩余组须按字符串生成、atom intern、属性变更和回收分别测量。不得为了减少 graph edge 成本漏掉 captures/groups 的必要引用。RegExp 接近基线也不等于所有正值自动验收。
+4. **TypedArray、compile/module 等小组**：本轮仍有正回退或跨轮变动，保持待查。需要增加单次有效工作量、用同一最终二进制做配对计数/编译阶段 profile；不能把已有 JsString::eq 热点或一次中位数差直接当新增算法回退。TypedArray 桥消除的局部机制不等于全部 typed workload 收益已经拿到。
+
+本节列出的已确认成本对应修复均已合入本轮；剩余假设需要下一轮独立因果实验。**本节不等于“所有回退已修复”，阶段 A 门禁仍未通过。**
