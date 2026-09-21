@@ -16,8 +16,8 @@ use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{
-    CallableExecution, DirectCallTarget, NativeArguments, NativeInvocation,
-    NativeInvocationAdaptation, NativeInvokeOutcome,
+    AdaptedNativeInvocation, CallableExecution, DirectCallTarget, NativeArguments,
+    NativeInvocation, NativeInvocationAdaptation, NativeInvokeOutcome,
 };
 use crate::engine::vm::frames::ActiveFrameKind;
 
@@ -323,23 +323,59 @@ impl Runtime {
         self.adapt_native_invocation_input(target, realm, invocation, arguments)
     }
 
-    pub(crate) fn adapt_native_invocation_borrowed(
+    pub(crate) fn adapt_native_invocation_borrowed<'a>(
         &self,
         target: NativeFunctionId,
         realm: ContextId,
-        invocation: &NativeInvocation,
+        invocation: &'a NativeInvocation,
         arguments: &NativeArguments,
-    ) -> Result<NativeInvocationAdaptation, RuntimeError> {
-        self.adapt_native_invocation_input(target, realm, invocation.dup(self)?, arguments)
+    ) -> Result<NativeInvocationAdaptation<AdaptedNativeInvocation<'a>>, RuntimeError> {
+        self.validate_native_invocation(target, realm, arguments)?;
+        let unchanged = matches!(
+            (target.descriptor().cproto, invocation),
+            (
+                NativeCProto::Generic
+                    | NativeCProto::GenericMagic
+                    | NativeCProto::UnaryF64
+                    | NativeCProto::BinaryF64
+                    | NativeCProto::IteratorNext,
+                NativeInvocation::Call { .. },
+            ) | (
+                NativeCProto::Constructor
+                    | NativeCProto::ConstructorMagic
+                    | NativeCProto::ConstructorOrFunction
+                    | NativeCProto::ConstructorOrFunctionMagic,
+                NativeInvocation::Construct { .. },
+            )
+        );
+        if unchanged {
+            return Ok(NativeInvocationAdaptation::Invoke(
+                AdaptedNativeInvocation::Borrowed(invocation),
+            ));
+        }
+        Ok(
+            match self.adapt_native_invocation_input(
+                target,
+                realm,
+                invocation.dup(self)?,
+                arguments,
+            )? {
+                NativeInvocationAdaptation::Invoke(invocation) => {
+                    NativeInvocationAdaptation::Invoke(AdaptedNativeInvocation::Owned(invocation))
+                }
+                NativeInvocationAdaptation::Complete(completion) => {
+                    NativeInvocationAdaptation::Complete(completion)
+                }
+            },
+        )
     }
 
-    fn adapt_native_invocation_input(
+    fn validate_native_invocation(
         &self,
         target: NativeFunctionId,
         realm: ContextId,
-        invocation: NativeInvocation,
         arguments: &NativeArguments,
-    ) -> Result<NativeInvocationAdaptation, RuntimeError> {
+    ) -> Result<(), RuntimeError> {
         let frame =
             self.0
                 .state
@@ -356,7 +392,6 @@ impl Runtime {
             readable_arg_count,
         } = frame.kind
         else {
-            invocation.release(self)?;
             return Err(RuntimeError::Invariant(
                 "native handler was not the top active frame",
             ));
@@ -366,10 +401,23 @@ impl Runtime {
             || actual_arg_count != arguments.actual_arg_count
             || readable_arg_count != arguments.readable.len()
         {
-            invocation.release(self)?;
             return Err(RuntimeError::Invariant(
                 "active native frame disagrees with handler arguments",
             ));
+        }
+        Ok(())
+    }
+
+    fn adapt_native_invocation_input(
+        &self,
+        target: NativeFunctionId,
+        realm: ContextId,
+        invocation: NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<NativeInvocationAdaptation, RuntimeError> {
+        if let Err(error) = self.validate_native_invocation(target, realm, arguments) {
+            let _ = invocation.release(self);
+            return Err(error);
         }
         // Some handlers do not inspect their adapted this/new-target input,
         // but keeping it rooted for the full dispatch is part of the ABI.

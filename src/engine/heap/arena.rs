@@ -134,6 +134,9 @@ impl Heap {
         Ok(())
     }
 
+    // Expose the concrete payload variant to allocation sites, so leaf nodes
+    // do not travel through an opaque wide-enum copy in no-LTO builds.
+    #[inline]
     pub(in crate::engine::heap) fn publish(
         &mut self,
         index: u32,
