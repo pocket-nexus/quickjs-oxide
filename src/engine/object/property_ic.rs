@@ -201,7 +201,7 @@ impl Runtime {
         // String/BigInt clone their backing owner; Object/Symbol retain their
         // heap count. The handler slot owner keeps the source alive meanwhile.
         let mut state = self.0.state.borrow_mut();
-        state.retain_raw_root(&raw)?;
+        state.retain_raw_root(raw.clone())?;
         drop(state);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("proxy_trap_read.hit");
@@ -558,15 +558,15 @@ mod tests {
             number(&cache, &runtime, context.realm_id(), &obj),
             Some(1.0)
         );
-        context.eval("o.x=9").unwrap();
+        drop(context.eval("o.x=9").unwrap());
         assert_eq!(
             number(&cache, &runtime, context.realm_id(), &obj),
             Some(9.0)
         );
-        context.eval("delete o.x").unwrap();
+        drop(context.eval("delete o.x").unwrap());
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
         install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        context.eval("o.x=11").unwrap();
+        drop(context.eval("o.x=11").unwrap());
         install(&cache, &runtime, context.realm_id(), &obj, key.atom());
         assert!(matches!(cache.state.get(), State::Megamorphic(_)));
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
@@ -584,7 +584,7 @@ mod tests {
             let obj = object(context.eval("var p={x:3}; var o={x:1}; o").unwrap());
             let cache = PropertyReadCache::default();
             install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-            context.eval(mutation).unwrap();
+            drop(context.eval(mutation).unwrap());
             assert_eq!(
                 number(&cache, &runtime, context.realm_id(), &obj),
                 None,
@@ -614,12 +614,12 @@ mod tests {
                 number(&cache, &runtime, context.realm_id(), &obj),
                 Some(3.0)
             );
-            context.eval("p.x=8").unwrap();
+            drop(context.eval("p.x=8").unwrap());
             assert_eq!(
                 number(&cache, &runtime, context.realm_id(), &obj),
                 Some(8.0)
             );
-            context.eval(mutation).unwrap();
+            drop(context.eval(mutation).unwrap());
             assert_eq!(
                 number(&cache, &runtime, context.realm_id(), &obj),
                 None,
@@ -662,11 +662,11 @@ mod tests {
             number(&cache, &runtime, context.realm_id(), &obj),
             Some(1.0)
         );
-        context.eval("delete o.p1").unwrap();
+        drop(context.eval("delete o.p1").unwrap());
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
         let cache = PropertyReadCache::default();
         install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        context.eval("o.more=6").unwrap();
+        drop(context.eval("o.more=6").unwrap());
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
     }
     #[test]
@@ -708,12 +708,12 @@ mod tests {
             number(&cache, &runtime, context.realm_id(), &obj),
             Some(4.0)
         );
-        context.eval("o.x=5; o[0]=8").unwrap();
+        drop(context.eval("o.x=5; o[0]=8").unwrap());
         assert_eq!(
             number(&cache, &runtime, context.realm_id(), &obj),
             Some(5.0)
         );
-        context.eval("delete o[1]").unwrap();
+        drop(context.eval("delete o[1]").unwrap());
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
     }
     #[test]
@@ -728,9 +728,11 @@ mod tests {
             number(&cache, &runtime, context.realm_id(), &obj),
             Some(1.0)
         );
-        context
-            .eval("for(var i=0;i<100;i++) o['p'+i]=i; delete o.p0")
-            .unwrap();
+        drop(
+            context
+                .eval("for(var i=0;i<100;i++) o['p'+i]=i; delete o.p0")
+                .unwrap(),
+        );
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
     }
     #[test]
@@ -770,7 +772,7 @@ mod tests {
                         state.heap.property_layout_epoch(),
                     )
                 };
-                context.eval(mutation).unwrap();
+                drop(context.eval(mutation).unwrap());
                 let state = runtime.0.state.borrow();
                 assert_eq!(
                     state.heap.object(receiver.object_id()).unwrap().shape,

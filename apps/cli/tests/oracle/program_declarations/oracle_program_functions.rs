@@ -386,8 +386,8 @@ fn program_function_cross_realm_matches_pinned_c_api() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
-    defining.eval("globalThis.realmTag='A'").unwrap();
-    caller.eval("globalThis.realmTag='B'").unwrap();
+    drop(defining.eval("globalThis.realmTag='A'").unwrap());
+    drop(caller.eval("globalThis.realmTag='B'").unwrap());
 
     let bytecode = defining
         .compile("function crossRealmFunction(){return realmTag}crossRealmFunction")
@@ -497,12 +497,16 @@ fn program_function_cross_realm_matches_pinned_c_api() {
         Some(defining_reference_prototype)
     );
 
-    defining
-        .eval("Function.aFunctionGets=0;Function.aFunctionSets=0")
-        .unwrap();
-    caller
-        .eval("Function.bFunctionGets=0;Function.bFunctionSets=0")
-        .unwrap();
+    drop(
+        defining
+            .eval("Function.aFunctionGets=0;Function.aFunctionSets=0")
+            .unwrap(),
+    );
+    drop(
+        caller
+            .eval("Function.bFunctionGets=0;Function.bFunctionSets=0")
+            .unwrap(),
+    );
     define_global_accessor(
         &runtime,
         &mut defining,
@@ -613,9 +617,11 @@ fn rust_property_observations() -> Vec<String> {
         descriptor_text(&runtime, &mut context, "__qjo_config_function")
     ));
 
-    context
-        .eval("Function.functionGets=0;Function.functionSets=0")
-        .unwrap();
+    drop(
+        context
+            .eval("Function.functionGets=0;Function.functionSets=0")
+            .unwrap(),
+    );
     define_global_accessor(
         &runtime,
         &mut context,
@@ -698,9 +704,11 @@ fn rust_property_observations() -> Vec<String> {
         descriptor_text(&runtime, &mut context, "__qjo_fixed_hidden_function")
     ));
 
-    context
-        .eval("Function.fixedAccessorGets=0;Function.fixedAccessorSets=0")
-        .unwrap();
+    drop(
+        context
+            .eval("Function.fixedAccessorGets=0;Function.fixedAccessorSets=0")
+            .unwrap(),
+    );
     define_global_accessor(
         &runtime,
         &mut context,
@@ -752,7 +760,7 @@ fn rust_property_observations() -> Vec<String> {
         descriptor_text(&runtime, &mut context, "__qjo_function_priority")
     ));
 
-    context.eval("globalThis.__qjo_function_marker=0").unwrap();
+    drop(context.eval("globalThis.__qjo_function_marker=0").unwrap());
     define_global_data(
         &runtime,
         &mut context,
@@ -792,9 +800,11 @@ fn rust_property_observations() -> Vec<String> {
         false,
         true,
     );
-    context
-        .eval("globalThis.__qjo_sealed_function_marker=0")
-        .unwrap();
+    drop(
+        context
+            .eval("globalThis.__qjo_sealed_function_marker=0")
+            .unwrap(),
+    );
     let global = context.global_object().unwrap();
     runtime.prevent_extensions(&global).unwrap();
     let sealed_existing = observe_rust_eval(

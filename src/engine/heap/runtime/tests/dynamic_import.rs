@@ -31,14 +31,14 @@ fn dynamic_import_policy_rejects_precompiled_trees_before_instantiation() {
 fn dynamic_import_policy_vm_guard_precedes_specifier_conversion() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
+    drop(context
         .eval(
             "var policyConversionCount = 0;\n\
              var policyImport = function () {\n\
                return import({ toString: function () { policyConversionCount++; return 'fixture'; } });\n\
              };",
         )
-        .unwrap();
+        .unwrap());
     let wrapper = context.compile("policyImport();").unwrap();
 
     runtime.set_dynamic_import_bytecode_allowed(false);

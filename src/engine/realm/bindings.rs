@@ -278,7 +278,7 @@ impl Runtime {
                 let value = state.heap.var_ref(root.id())?.value.clone();
                 (flags, value)
             };
-            let value = self.root_raw_value(&value)?;
+            let value = self.root_raw_value(value.clone())?;
             let replacement = self.new_var_ref_rooted(
                 value,
                 false,
@@ -474,7 +474,7 @@ impl Runtime {
                 }
             }
             PropertySlot::Data(value) => {
-                let value = self.into_jsvalue(self.root_raw_value(value)?)?;
+                let value = self.into_jsvalue(self.root_raw_value(value.clone())?)?;
                 self.write_var_ref(&root, value)?;
                 if hidden_root
                     .as_ref()

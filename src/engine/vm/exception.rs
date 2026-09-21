@@ -11,7 +11,7 @@ impl Runtime {
         let raw = value.as_raw();
         {
             let mut state = self.0.state.borrow_mut();
-            state.retain_raw_root(&raw)?;
+            state.retain_raw_root(raw.clone())?;
             if let Some(previous) = state.pending_exception.replace(raw) {
                 state.release_owned_raw_root(previous)?;
             }
@@ -32,7 +32,7 @@ impl Runtime {
         // guard balances the producer edge on every exit.
         {
             let mut state = self.0.state.borrow_mut();
-            state.retain_raw_root(&raw)?;
+            state.retain_raw_root(raw.clone())?;
             if let Some(previous) = state.pending_exception.replace(raw) {
                 state.release_owned_raw_root(previous)?;
             }

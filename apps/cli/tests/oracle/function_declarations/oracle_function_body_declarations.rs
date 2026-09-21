@@ -238,8 +238,8 @@ fn function_body_declaration_cross_realm_regression() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
-    defining.eval("globalThis.realmTag='A'").unwrap();
-    caller.eval("globalThis.realmTag='B'").unwrap();
+    drop(defining.eval("globalThis.realmTag='A'").unwrap());
+    drop(caller.eval("globalThis.realmTag='B'").unwrap());
 
     let bytecode = defining
         .compile(

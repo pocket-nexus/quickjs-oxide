@@ -77,7 +77,7 @@ fn loader2_observes_effective_attributes_only_on_cache_miss() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__attributeLoader2 === 42");
     assert_eq!(
         &*controls.checks.borrow(),
@@ -164,7 +164,7 @@ fn attribute_check_precedes_following_syntax_and_all_resolution_callbacks() {
             "pkg/entry.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__attributeCheckRetry === 42");
     assert_eq!(controls.loads.borrow().len(), 1);
 }
@@ -214,7 +214,7 @@ fn dependency_attribute_check_failure_rolls_back_graph_for_retry() {
             "pkg/entry.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__attributeRollback === 42");
     assert_eq!(
         controls
@@ -254,7 +254,7 @@ fn loader2_failure_unpublishes_root_and_retries_with_same_attributes() {
     let module = context
         .compile_module_with_filename(source, "pkg/entry.js")
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__loader2Retry === 42");
     assert_eq!(controls.checks.borrow().len(), 2);
     assert_eq!(controls.loads.borrow().len(), 2);

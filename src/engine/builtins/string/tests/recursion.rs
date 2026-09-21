@@ -320,7 +320,7 @@ fn owned_string_conversion_families_fit_small_stack_and_enforce_logical_limit() 
             SOURCE_MIXED_STRING_CASE_RECURSE,
             SOURCE_MIXED_STRING_NORMALIZE_RECURSE,
         ] {
-            context.eval(source).unwrap();
+            drop(context.eval(source).unwrap());
         }
         for (function, expected) in [
             ("stringSubrangeRecurse", &["x", "x", "x"][..]),
@@ -367,7 +367,7 @@ fn owned_string_constructor_families_fit_small_stack_and_enforce_logical_limit()
     on_owned_string_stack(|| {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval(SOURCE_STRING_CONSTRUCTOR_RECURSE).unwrap();
+        drop(context.eval(SOURCE_STRING_CONSTRUCTOR_RECURSE).unwrap());
         for (function, expected) in [
             ("stringConstructorRecurse", "x"),
             ("stringFromCharCodeRecurse", "A"),
@@ -388,7 +388,7 @@ fn owned_string_match_getters_fit_small_stack_and_enforce_logical_limit() {
     on_owned_string_stack(|| {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval(SOURCE_STRING_INCLUDES_FAMILY_RECURSE).unwrap();
+        drop(context.eval(SOURCE_STRING_INCLUDES_FAMILY_RECURSE).unwrap());
         for kind in 0..3 {
             assert_eq!(
                 context
@@ -406,7 +406,7 @@ fn owned_string_regexp_search_fits_small_stack_and_enforces_logical_limit() {
     on_owned_string_stack(|| {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval(SOURCE_MIXED_SEARCH_RECURSE).unwrap();
+        drop(context.eval(SOURCE_MIXED_SEARCH_RECURSE).unwrap());
         for kind in 0..2 {
             assert_eq!(
                 context

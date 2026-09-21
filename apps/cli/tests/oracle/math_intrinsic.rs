@@ -548,10 +548,12 @@ fn math_methods_are_not_constructable() {
             context.construct(&callable, &[]),
             Err(RuntimeError::Exception)
         ));
-        context
-            .take_exception()
-            .unwrap_or_else(|error| panic!("take new Math.{name} exception: {error}"))
-            .unwrap_or_else(|| panic!("new Math.{name} did not publish an exception"));
+        drop(
+            context
+                .take_exception()
+                .unwrap_or_else(|error| panic!("take new Math.{name} exception: {error}"))
+                .unwrap_or_else(|| panic!("new Math.{name} did not publish an exception")),
+        );
     }
 }
 

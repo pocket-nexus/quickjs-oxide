@@ -483,7 +483,7 @@ fn assert_rejected_native_error(
 ) {
     let snapshot = promise_snapshot(runtime, promise);
     assert_eq!(snapshot.state, PromiseState::Rejected);
-    let Value::Object(error) = runtime.root_raw_value(&snapshot.result).unwrap() else {
+    let Value::Object(error) = runtime.root_raw_value(snapshot.result.clone()).unwrap() else {
         panic!("rejected Promise reason was not an Error object");
     };
     let name = runtime.intern_property_key("name").unwrap();
@@ -512,14 +512,14 @@ fn compiled_loader_reentry_matches_pinned_quickjs_order_and_context() {
     let mut context = runtime.new_context();
     let expected_id = context.id();
     let expected_realm = context.realm_id();
-    context.eval("globalThis.reentryOrder = [];").unwrap();
+    drop(context.eval("globalThis.reentryOrder = [];").unwrap());
     let module = context
         .compile_module_with_filename(
             "import './outer.js'; globalThis.reentryOrder.push('entry');",
             "reentry-entry.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_eq!(depth.get(), 0);
     assert_eq!(maximum_load_depth.get(), 1);
     assert_eq!(
@@ -642,7 +642,7 @@ fn parse_time_cache_failure_rolls_back_both_same_name_constructions() {
         .compile_module_with_filename("globalThis.__parseCacheRetry = 42;", "same.js")
         .unwrap();
     assert_eq!(retry.raw.module.0, 2);
-    context.execute_module(&retry).unwrap();
+    drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__parseCacheRetry === 42");
     assert_eq!(controls.checks.get(), 1);
     assert!(!context.has_exception());
@@ -785,7 +785,7 @@ fn nested_prefix_load_failure_preserves_the_exception_and_construction_owner() {
         .compile_module_with_filename("globalThis.__prefixLoadRetry = 42;", "outer.js")
         .unwrap();
     assert_eq!(retry.raw.module.0, 2);
-    context.execute_module(&retry).unwrap();
+    drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__prefixLoadRetry === 42");
     assert!(!context.has_exception());
 }
@@ -887,7 +887,7 @@ fn nested_prefix_load_panic_preserves_the_payload_and_recovers() {
         .compile_module_with_filename("globalThis.__prefixPanicRetry = 42;", "outer.js")
         .unwrap();
     assert_eq!(retry.raw.module.0, 2);
-    context.execute_module(&retry).unwrap();
+    drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__prefixPanicRetry === 42");
     assert!(!context.has_exception());
 }
@@ -931,7 +931,7 @@ fn resolved_parsing_cycle_is_poisoned_before_failed_probe_rollback() {
         .compile_module_with_filename("globalThis.__cycleFailureRetry = 42;", "outer.js")
         .unwrap();
     assert_eq!(retry.raw.module.0, 2);
-    context.execute_module(&retry).unwrap();
+    drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__cycleFailureRetry === 42");
     assert!(!context.has_exception());
 }
@@ -999,7 +999,7 @@ fn resolved_parsing_cycle_rollback_preserves_the_original_panic() {
         .compile_module_with_filename("globalThis.__cyclePanicRetry = 42;", "outer.js")
         .unwrap();
     assert_eq!(retry.raw.module.0, 2);
-    context.execute_module(&retry).unwrap();
+    drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__cyclePanicRetry === 42");
     assert!(!context.has_exception());
 }
@@ -1088,7 +1088,7 @@ fn referenced_failed_parsing_identity_is_aborted_without_quickjs_aba() {
         context.link_module(&probe),
         Err(RuntimeError::AbortedModule)
     );
-    context.execute_module(&retry).unwrap();
+    drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__parseCacheSafeRetry === 42");
     assert_eq!(controls.checks.get(), 1);
     assert_eq!(controls.loads.borrow().as_slice(), ["before.js"]);
@@ -1124,7 +1124,7 @@ fn checker_panic_aborts_the_parsing_slot_and_reentry_depth_recovers() {
         .compile_module_with_filename("globalThis.__parseCachePanicRetry = 42;", "panic.js")
         .unwrap();
     assert_eq!(retry.raw.module.0, 1);
-    context.execute_module(&retry).unwrap();
+    drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__parseCachePanicRetry === 42");
     assert_eq!(controls.checks.get(), 1);
     assert!(!context.has_exception());
@@ -1186,7 +1186,7 @@ fn recursive_context_loader_overflow_is_catchable_and_runtime_recovers() {
                     "recovery-entry.js",
                 )
                 .unwrap();
-            context.execute_module(&recovered).unwrap();
+            drop(context.execute_module(&recovered).unwrap());
             assert_script_true(&mut context, "__moduleReentryRecovered === 42");
             assert_eq!(context.eval("6 * 7").unwrap(), Value::Int(42));
         })
@@ -1215,7 +1215,7 @@ fn failed_nested_compilation_does_not_rollback_suspended_outer_resolution() {
     assert!(observed_nested_failure.get());
     assert_eq!(nested_missing_loads.get(), 1);
     assert!(!context.has_exception());
-    context.execute_module(&entry).unwrap();
+    drop(context.execute_module(&entry).unwrap());
     assert_script_true(&mut context, "__nestedFailureRecovered === 42");
     assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
 }
@@ -1245,7 +1245,7 @@ fn provisional_parse_gc_preserves_import_meta_properties_until_source_completion
         .unwrap();
     assert_eq!(controls.checks.get(), 1);
     assert!(controls.marker_survived_checker_gc.get());
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__provisionalMetaAnswer === 42");
     let global = context.global_object().unwrap();
     let key = runtime

@@ -771,9 +771,11 @@ fn iterator_concat_cross_realm_graph_and_native_next_use_the_current_realm() {
         "caller TypeError prototype",
     );
 
-    caller
-        .eval("globalThis.__qjoConcatMarker=Object()")
-        .expect("install caller concat marker");
+    drop(
+        caller
+            .eval("globalThis.__qjoConcatMarker=Object()")
+            .expect("install caller concat marker"),
+    );
     let marker = eval_object(
         &mut caller,
         "globalThis.__qjoConcatMarker",

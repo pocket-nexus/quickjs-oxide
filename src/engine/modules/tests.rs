@@ -881,7 +881,7 @@ fn assert_static_loader_exception(
     let module = context
         .compile_module_with_filename(source, "pkg/entry.js")
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__abruptRetry === 42");
     let expected_loads = usize::from(phase == AbruptLoaderPhase::Load) + 1;
     assert_eq!(loads.borrow().len(), expected_loads);

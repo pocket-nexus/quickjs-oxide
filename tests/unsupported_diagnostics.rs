@@ -50,12 +50,14 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
         #[cfg(not(feature = "test262-host"))]
         panic!("the Test262 host is unavailable without test262-host");
     }
-    context
-        .eval(
-            "globalThis.__dynamicImportBodyRuns = 0; \
+    drop(
+        context
+            .eval(
+                "globalThis.__dynamicImportBodyRuns = 0; \
              globalThis.__dynamicImportResult = 'pending';",
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
 
     let Value::Object(_) = context
         .eval(source)

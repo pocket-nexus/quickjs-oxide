@@ -398,7 +398,7 @@ mod tests {
             .unwrap();
         (
             snapshot.state,
-            runtime.root_raw_value(&snapshot.result).unwrap(),
+            runtime.root_raw_value(snapshot.result.clone()).unwrap(),
         )
     }
 

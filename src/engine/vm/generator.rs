@@ -798,7 +798,7 @@ mod tests {
                 .unwrap(),
             Value::Bool(true)
         );
-        context.eval("__gcGenerator = undefined").unwrap();
+        drop(context.eval("__gcGenerator = undefined").unwrap());
         drop(generator);
         assert!(runtime.run_gc().unwrap().cleanup.finalized_objects >= 1);
         assert_eq!(runtime.heap_counts().zombies, 0);

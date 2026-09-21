@@ -1030,9 +1030,11 @@ fn install_worker_host(
     let function = context
         .compile_with_options(source, &options)
         .map_err(|error| worker_host_error(runtime, context, "compile", error))?;
-    context
-        .execute(&function)
-        .map_err(|error| worker_host_error(runtime, context, "execute", error))?;
+    drop(
+        context
+            .execute(&function)
+            .map_err(|error| worker_host_error(runtime, context, "execute", error))?,
+    );
     let installed = match agent_session {
         Some(session) => context.install_test262_host_with_agent(session),
         None => context.install_test262_host(),
@@ -2051,7 +2053,7 @@ mod tests {
         let runtime_compilation = context
             .compile("Function(\"return import('./fixture_FIXTURE.js')\");")
             .unwrap();
-        context.execute(&runtime_compilation).unwrap();
+        drop(context.execute(&runtime_compilation).unwrap());
 
         let unexpected_initial = context.compile("import('./fixture_FIXTURE.js');").unwrap();
         let error = authenticate_dynamic_import_bytecode(

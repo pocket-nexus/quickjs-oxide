@@ -734,7 +734,7 @@ fn string_addition_builds_ropes_and_reports_the_quickjs_length_error() {
 fn await_fulfilment_and_rejection_use_the_same_published_core() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval("var fulfilled=0,rejected=0; async function f(){return 2+await 5;} async function g(){try{await Promise.reject(7);}catch(e){return e+3;}} f().then(x=>fulfilled=x);g().then(x=>rejected=x);").unwrap();
+    drop(context.eval("var fulfilled=0,rejected=0; async function f(){return 2+await 5;} async function g(){try{await Promise.reject(7);}catch(e){return e+3;}} f().then(x=>fulfilled=x);g().then(x=>rejected=x);").unwrap());
     while runtime.is_job_pending() {
         runtime.execute_pending_job().unwrap();
     }
@@ -748,7 +748,7 @@ fn await_fulfilment_and_rejection_use_the_same_published_core() {
 fn dynamic_import_preserves_argument_evaluation_before_async_conversion() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval("var importTrace='';function spec(){importTrace+='s';return {toString(){importTrace+='t';throw 7;}};}function opts(){importTrace+='o';return {};}var importError;import(spec(),opts()).catch(e=>importError=e);").unwrap();
+    drop(context.eval("var importTrace='';function spec(){importTrace+='s';return {toString(){importTrace+='t';throw 7;}};}function opts(){importTrace+='o';return {};}var importError;import(spec(),opts()).catch(e=>importError=e);").unwrap());
     while runtime.is_job_pending() {
         runtime.execute_pending_job().unwrap();
     }

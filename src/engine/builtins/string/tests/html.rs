@@ -320,9 +320,10 @@ fn string_create_html_escapes_only_quotes_and_preserves_raw_utf16_nul_and_ropes(
 fn string_create_html_small_limit_latches_too_long_but_attribute_throw_wins() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"globalThis.createHtmlLimitLog="";
+    drop(
+        context
+            .eval(
+                r#"globalThis.createHtmlLimitLog="";
                 globalThis.createHtmlLimitReceiver=Object();
                 createHtmlLimitReceiver[Symbol.toPrimitive]=function(hint){
                     createHtmlLimitLog+="r:"+hint+",";return "B"
@@ -339,8 +340,9 @@ fn string_create_html_small_limit_latches_too_long_but_attribute_throw_wins() {
                 createHtmlLimitThrow[Symbol.toPrimitive]=function(hint){
                     createHtmlLimitLog+="t:"+hint+",";throw 72
                 };"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let receiver = context.eval("createHtmlLimitReceiver").unwrap();
     let attribute = context.eval("createHtmlLimitAttribute").unwrap();
     let extra = context.eval("createHtmlLimitExtra").unwrap();
@@ -400,7 +402,7 @@ fn string_create_html_small_limit_latches_too_long_but_attribute_throw_wins() {
         "the exact CreateHTML output limit was rejected",
     );
 
-    context.eval("createHtmlLimitLog=''").unwrap();
+    drop(context.eval("createHtmlLimitLog=''").unwrap());
     let throwing_attribute = context.eval("createHtmlLimitThrow").unwrap();
     let arguments = NativeArguments {
         actual_arg_count: 1,
@@ -451,9 +453,10 @@ fn string_create_html_reservation_oom_uses_defining_realm_is_latched_and_recover
     };
     assert_ne!(defining_internal_error, caller_internal_error);
 
-    caller
-        .eval(
-            r#"globalThis.createHtmlReservationLog="";
+    drop(
+        caller
+            .eval(
+                r#"globalThis.createHtmlReservationLog="";
                 globalThis.createHtmlReservationReceiver=Object();
                 createHtmlReservationReceiver[Symbol.toPrimitive]=function(hint){
                     createHtmlReservationLog+="r:"+hint+",";return "B"
@@ -466,8 +469,9 @@ fn string_create_html_reservation_oom_uses_defining_realm_is_latched_and_recover
                 createHtmlReservationThrow[Symbol.toPrimitive]=function(hint){
                     createHtmlReservationLog+="t:"+hint+",";throw 73
                 };"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let receiver = caller.eval("createHtmlReservationReceiver").unwrap();
     let attribute = caller.eval("createHtmlReservationAttribute").unwrap();
 
@@ -506,7 +510,7 @@ fn string_create_html_reservation_oom_uses_defining_realm_is_latched_and_recover
         "runtime did not recover after CreateHTML reservation OOM",
     );
 
-    caller.eval("createHtmlReservationLog=''").unwrap();
+    drop(caller.eval("createHtmlReservationLog=''").unwrap());
     let throwing_attribute = caller.eval("createHtmlReservationThrow").unwrap();
     crate::engine::value::fail_next_create_html_reservation_for_test();
     assert_eq!(

@@ -19,7 +19,7 @@ fn deep_star_resolution_uses_an_explicit_frame_stack() {
                     "entry.js",
                 )
                 .unwrap();
-            context.execute_module(&module).unwrap();
+            drop(context.execute_module(&module).unwrap());
             assert_script_true(&mut context, "__deepStarAnswer === 42");
         })
         .unwrap()
@@ -47,7 +47,7 @@ fn deep_cyclic_graph_uses_explicit_resolve_link_and_evaluation_stacks() {
                 )
                 .unwrap();
             context.link_module(&module).unwrap();
-            context.execute_module(&module).unwrap();
+            drop(context.execute_module(&module).unwrap());
             assert_script_true(
                 &mut context,
                 &format!("__deepModuleRuns === {MODULE_COUNT} && __deepModuleEntry === true"),
@@ -159,7 +159,7 @@ fn context_module_cache_is_oldest_first_and_loader_cache_is_per_context() {
             "pkg/oldest-entry.js",
         )
         .unwrap();
-    first_context.execute_module(&oldest).unwrap();
+    drop(first_context.execute_module(&oldest).unwrap());
     assert_script_true(&mut first_context, "__oldest === 1");
 
     let first_loaded = first_context
@@ -168,7 +168,7 @@ fn context_module_cache_is_oldest_first_and_loader_cache_is_per_context() {
             "pkg/first-entry.js",
         )
         .unwrap();
-    first_context.execute_module(&first_loaded).unwrap();
+    drop(first_context.execute_module(&first_loaded).unwrap());
 
     let mut second_context = runtime.new_context();
     let second_loaded = second_context
@@ -177,7 +177,7 @@ fn context_module_cache_is_oldest_first_and_loader_cache_is_per_context() {
             "pkg/second-entry.js",
         )
         .unwrap();
-    second_context.execute_module(&second_loaded).unwrap();
+    drop(second_context.execute_module(&second_loaded).unwrap());
     assert_eq!(&*loads.borrow(), &["pkg/loaded.js", "pkg/loaded.js"]);
     assert_script_true(&mut first_context, "__loaded === 42");
     assert_script_true(&mut second_context, "__loaded === 42");
@@ -192,9 +192,11 @@ fn first_execute_context_owns_globals_for_the_complete_module_graph() {
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
     let mut compilation_context = runtime.new_context();
-    compilation_context
-        .eval("globalThis.__realmMarker = 1")
-        .unwrap();
+    drop(
+        compilation_context
+            .eval("globalThis.__realmMarker = 1")
+            .unwrap(),
+    );
     let module = compilation_context
         .compile_module_with_filename(
             "import { value } from './dependency.js'; globalThis.__graphRootRealm = __realmMarker + value;",
@@ -203,10 +205,12 @@ fn first_execute_context_owns_globals_for_the_complete_module_graph() {
         .unwrap();
 
     let mut execution_context = runtime.new_context();
-    execution_context
-        .eval("globalThis.__realmMarker = 2")
-        .unwrap();
-    execution_context.execute_module(&module).unwrap();
+    drop(
+        execution_context
+            .eval("globalThis.__realmMarker = 2")
+            .unwrap(),
+    );
+    drop(execution_context.execute_module(&module).unwrap());
     assert_script_true(
         &mut execution_context,
         "__graphDependencyRealm === 2 && __graphRootRealm === 44",
@@ -241,7 +245,7 @@ fn module_cells_use_the_link_context_while_bytecode_keeps_its_compile_realm() {
     let link_function_prototype = link_context.eval("Function.prototype").unwrap();
     let link_array_prototype = link_context.eval("Array.prototype").unwrap();
     let link_type_error_prototype = link_context.eval("TypeError.prototype").unwrap();
-    link_context.execute_module(&module).unwrap();
+    drop(link_context.execute_module(&module).unwrap());
     let module_object_prototype = link_context
         .eval("Object.getPrototypeOf(__moduleRealmObject)")
         .unwrap();

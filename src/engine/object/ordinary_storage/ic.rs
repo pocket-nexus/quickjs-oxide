@@ -92,7 +92,7 @@ impl Runtime {
         };
         // Every heap-backed kind retains one new edge; the internal-value
         // conversion below cannot fail after the sentinel exclusion above.
-        state.retain_raw_root(&raw)?;
+        state.retain_raw_root(raw.clone())?;
         drop(state);
         let value = JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
             "internal value sentinel occupied a cached property slot",
@@ -566,7 +566,7 @@ mod tests {
                 expected,
                 "{expression}"
             );
-            context.eval("icHolder.x=99").unwrap();
+            drop(context.eval("icHolder.x=99").unwrap());
             let after = runtime
                 .try_property_ic_read_owned(&base, &code, pc, key, false, &mut native)
                 .unwrap();
@@ -675,7 +675,7 @@ mod tests {
             crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), object(&first))
                 .unwrap();
         let hint = native.take().unwrap();
-        context.eval("icNative.x=Math.max").unwrap();
+        drop(context.eval("icNative.x=Math.max").unwrap());
         let data = hint.into_parts(&first_object).unwrap();
         assert_eq!(
             data.target,

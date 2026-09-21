@@ -140,7 +140,7 @@ impl EvaluationStep {
             }
             ModuleEvaluationState::Evaluated => resume.settle(true, Value::Undefined),
             ModuleEvaluationState::Errored(reason) => {
-                resume.settle(false, runtime.root_raw_value(&reason)?)
+                resume.settle(false, runtime.root_raw_value(reason.clone())?)
             }
             ModuleEvaluationState::EvaluatingAsync => Ok(Self::Complete(Completion::Return(
                 runtime.into_jsvalue(Value::Object(promise))?,
@@ -280,7 +280,7 @@ impl EvaluationResume {
                     }
                     ModuleEvaluationState::Evaluated => self.settle(true, Value::Undefined),
                     ModuleEvaluationState::Errored(reason) => {
-                        let reason = self.runtime.root_raw_value(&reason)?;
+                        let reason = self.runtime.root_raw_value(reason.clone())?;
                         self.settle(false, reason)
                     }
                     ModuleEvaluationState::Unevaluated | ModuleEvaluationState::Evaluating => {
@@ -321,7 +321,9 @@ impl EvaluationResume {
                         }
                         ModuleEvaluationState::Evaluated => ModuleEvaluationVisit::Evaluated,
                         ModuleEvaluationState::Errored(exception) => {
-                            ModuleEvaluationVisit::Errored(runtime.root_raw_value(exception)?)
+                            ModuleEvaluationVisit::Errored(
+                                runtime.root_raw_value(exception.clone())?,
+                            )
                         }
                         ModuleEvaluationState::Poisoned => ModuleEvaluationVisit::Poisoned,
                     }
@@ -414,7 +416,7 @@ impl EvaluationResume {
                         else {
                             unreachable!();
                         };
-                        let exception = runtime.root_raw_value(&exception)?;
+                        let exception = runtime.root_raw_value(exception.clone())?;
                         if dfs.exception.replace(exception).is_some() {
                             return Err(RuntimeError::Invariant(
                                 "module evaluation recorded more than one exception",

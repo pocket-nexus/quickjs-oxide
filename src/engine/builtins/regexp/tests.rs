@@ -56,9 +56,11 @@ fn regexp_escape_is_strict_static_generic_and_non_constructible() {
 fn direct_replace_uses_a_second_buffer_while_generic_replace_keeps_the_outer_error() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval("RegExp.prototype.exec")
-        .expect("materialize the standard exec slot");
+    drop(
+        context
+            .eval("RegExp.prototype.exec")
+            .expect("materialize the standard exec slot"),
+    );
 
     fail_next_replacement_reservation_for_test();
     let Value::String(result) = context

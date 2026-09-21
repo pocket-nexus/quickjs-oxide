@@ -39,12 +39,12 @@ fn dependency_free_module_links_then_evaluates_with_module_semantics() {
 fn module_identity_evaluates_once_and_caches_abrupt_completion() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context.eval("globalThis.__moduleRuns = 0").unwrap();
+    drop(context.eval("globalThis.__moduleRuns = 0").unwrap());
     let once = context
         .compile_module("globalThis.__moduleRuns += 1")
         .unwrap();
-    context.execute_module(&once).unwrap();
-    context.execute_module(&once).unwrap();
+    drop(context.execute_module(&once).unwrap());
+    drop(context.execute_module(&once).unwrap());
     assert_script_true(&mut context, "__moduleRuns === 1");
 
     let abrupt = context.compile_module("throw 42").unwrap();
@@ -140,7 +140,7 @@ fn direct_eval_uses_module_live_cells_without_leaking_eval_var() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(
         &mut context,
         r#"
@@ -168,6 +168,6 @@ fn nested_var_preserves_quickjs_module_function_redeclaration_order() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__moduleRedeclaredAnswer === 42");
 }

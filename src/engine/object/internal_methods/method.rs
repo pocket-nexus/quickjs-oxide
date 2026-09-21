@@ -389,12 +389,14 @@ mod trap_cache_tests {
     fn trap_cache_skips_the_dynamic_read_and_follows_same_shape_overwrite() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
-            .eval(
-                "var first=function(){return 1};var second=function(){return 2};\
+        drop(
+            context
+                .eval(
+                    "var first=function(){return 1};var second=function(){return 2};\
                  var trapHandler={get:first};var trapProxy=new Proxy({},trapHandler);",
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         let proxy = object(context.eval("trapProxy").unwrap());
         let realm = context.realm;
 
@@ -412,7 +414,7 @@ mod trap_cache_tests {
 
         // Overwriting a data property keeps the shape and revision; the cache
         // stores a location, so the next operation observes the new function.
-        context.eval("trapHandler.get=second").unwrap();
+        drop(context.eval("trapHandler.get=second").unwrap());
         let MethodStep::Complete { mut resume } = start_get(&runtime, realm, &proxy) else {
             panic!("same-shape overwrite keeps the cache location")
         };
@@ -426,13 +428,13 @@ mod trap_cache_tests {
     fn accessor_proxy_handler_trap_always_uses_the_dynamic_read() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
+        drop(context
             .eval(
                 "var accessorReads=0;var accessorHandler={};\
                  Object.defineProperty(accessorHandler,'get',{get(){accessorReads++;return function(){return 5}}});\
                  var accessorProxy=new Proxy({},accessorHandler);",
             )
-            .unwrap();
+            .unwrap());
         let proxy = object(context.eval("accessorProxy").unwrap());
         for _ in 0..3 {
             assert!(
@@ -449,13 +451,15 @@ mod trap_cache_tests {
     fn proxy_handler_trap_declines_the_cache() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
-            .eval(
-                "var innerHandler={get:function(){return 1}};\
+        drop(
+            context
+                .eval(
+                    "var innerHandler={get:function(){return 1}};\
                  var proxyHandler=new Proxy(innerHandler,{});\
                  var chainedProxy=new Proxy({},proxyHandler);",
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         let proxy = object(context.eval("chainedProxy").unwrap());
         for _ in 0..3 {
             assert!(matches!(
@@ -469,11 +473,11 @@ mod trap_cache_tests {
     fn deleted_trap_location_falls_back_to_the_dynamic_read() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
+        drop(context
             .eval(
                 "var delHandler={get:function(){return 1}};var delProxy=new Proxy({},delHandler);",
             )
-            .unwrap();
+            .unwrap());
         let proxy = object(context.eval("delProxy").unwrap());
         assert!(matches!(
             start_get(&runtime, context.realm, &proxy),
@@ -483,7 +487,7 @@ mod trap_cache_tests {
             start_get(&runtime, context.realm, &proxy),
             MethodStep::Complete { .. }
         ));
-        context.eval("delete delHandler.get").unwrap();
+        drop(context.eval("delete delHandler.get").unwrap());
         assert!(
             matches!(
                 start_get(&runtime, context.realm, &proxy),
@@ -497,15 +501,15 @@ mod trap_cache_tests {
     fn revoked_proxy_is_rejected_before_the_cache_is_consulted() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context
+        drop(context
             .eval("var revocable=Proxy.revocable({},{get:function(){return 1}});var revoked=revocable.proxy;")
-            .unwrap();
+            .unwrap());
         let proxy = object(context.eval("revoked").unwrap());
         assert!(matches!(
             start_get(&runtime, context.realm, &proxy),
             MethodStep::Read { .. }
         ));
-        context.eval("revocable.revoke()").unwrap();
+        drop(context.eval("revocable.revoke()").unwrap());
         assert!(
             matches!(
                 start_get(&runtime, context.realm, &proxy),

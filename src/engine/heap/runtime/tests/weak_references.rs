@@ -196,9 +196,11 @@ var weakWellKnownReference = new WeakRef(Symbol.iterator);
         Value::String(JsString::from_static("true|true|true|true"))
     );
 
-    context
-        .eval("weakObjectTarget = null; weakLocalTarget = null;")
-        .unwrap();
+    drop(
+        context
+            .eval("weakObjectTarget = null; weakLocalTarget = null;")
+            .unwrap(),
+    );
     runtime.run_gc().unwrap();
     assert_eq!(
         context
@@ -306,9 +308,10 @@ fn finalization_jobs_share_the_promise_fifo() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
 
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
 var weakFifoLog = "";
 var weakFifoThis = null;
 var weakFifoRegistry = new FinalizationRegistry(function (held) {
@@ -321,16 +324,19 @@ weakFifoRegistry.register(weakFifoTarget, "held");
 Promise.resolve().then(function () { weakFifoLog += "promise-before,"; });
 weakFifoTarget = null;
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     runtime.run_gc().unwrap();
-    context
-        .eval(
-            r#"Promise.resolve().then(function () {
+    drop(
+        context
+            .eval(
+                r#"Promise.resolve().then(function () {
     weakFifoLog += "promise-after,";
 });"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
 
     assert_eq!(
         context.eval("weakFifoLog").unwrap(),
@@ -373,9 +379,10 @@ weakFifoTarget = null;
 fn finalization_target_death_observes_mixed_weak_object_construction_order() {
     let one_pass_runtime = Runtime::new();
     let mut one_pass = one_pass_runtime.new_context();
-    one_pass
-        .eval(
-            r#"
+    drop(
+        one_pass
+            .eval(
+                r#"
 var onePassLog = "";
 var onePassMap = new WeakMap();
 var onePassRegistry = new FinalizationRegistry(function (held) {
@@ -388,8 +395,9 @@ onePassRegistry.register(onePassTarget, "one-pass");
 onePassKey = null;
 onePassTarget = null;
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
 
     one_pass_runtime.run_gc().unwrap();
     assert!(one_pass_runtime.is_job_pending());
@@ -405,9 +413,10 @@ onePassTarget = null;
 
     let two_pass_runtime = Runtime::new();
     let mut two_pass = two_pass_runtime.new_context();
-    two_pass
-        .eval(
-            r#"
+    drop(
+        two_pass
+            .eval(
+                r#"
 var twoPassLog = "";
 var twoPassRegistry = new FinalizationRegistry(function (held) {
     twoPassLog += held;
@@ -420,8 +429,9 @@ twoPassRegistry.register(twoPassTarget, "two-pass");
 twoPassKey = null;
 twoPassTarget = null;
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
 
     two_pass_runtime.run_gc().unwrap();
     assert!(!two_pass_runtime.is_job_pending());
@@ -446,9 +456,10 @@ twoPassTarget = null;
 fn throwing_finalization_callback_does_not_discard_the_next_job() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
 var weakThrowLog = "";
 var weakThrowRegistry = new FinalizationRegistry(function (held) {
     weakThrowLog += held + ",";
@@ -462,8 +473,9 @@ weakThrowRegistry.register(weakThrowSecond, "second");
 weakThrowFirst = null;
 weakThrowSecond = null;
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     runtime.run_gc().unwrap();
 
     let error = runtime.execute_pending_job().unwrap_err();
@@ -489,9 +501,10 @@ weakThrowSecond = null;
 fn unregister_cannot_cancel_an_already_queued_finalization_job() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
 var queuedFinalizationLog = "";
 var queuedFinalizationRegistry = new FinalizationRegistry(function (held) {
     queuedFinalizationLog += held;
@@ -505,8 +518,9 @@ queuedFinalizationRegistry.register(
 );
 queuedFinalizationTarget = null;
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
 
     runtime.run_gc().unwrap();
     assert!(runtime.is_job_pending());

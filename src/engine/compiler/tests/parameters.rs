@@ -686,11 +686,11 @@ fn parameter_expression_binding_arguments_and_duplicate_order_match_quickjs() {
 fn parameter_expression_binding_cells_and_body_copies_survive_gc_independently() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
+    drop(context
         .eval(
             "var initializerRead,bodyRead;bodyRead=(function([a],f=(initializerRead=()=>a)){var read=()=>a;a=2;return read})([1])",
         )
-        .unwrap();
+        .unwrap());
     runtime.run_gc().unwrap();
     assert_eq!(
         context.eval("bodyRead()+'|'+initializerRead()").unwrap(),

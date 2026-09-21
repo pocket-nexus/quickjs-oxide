@@ -154,7 +154,7 @@ fn resolve_export_keeps_same_binding_diamonds_unambiguous() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__diamondAnswer === 42");
 }
 
@@ -184,7 +184,7 @@ fn namespace_exports_from_one_owner_share_quickjs_star_identity() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(
         &mut context,
         "__namespaceIdentity.a === 1 && !('b' in __namespaceIdentity)",
@@ -246,7 +246,7 @@ fn star_resolution_ignores_circular_and_not_found_branches() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__starBranchAnswer === 42");
 }
 
@@ -276,7 +276,7 @@ fn module_namespace_omits_an_ambiguous_star_export() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(
         &mut context,
         "!('answer' in __ambiguousNamespace) && __ambiguousNamespace.left === 2 && __ambiguousNamespace.right === 4",

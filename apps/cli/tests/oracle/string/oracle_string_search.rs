@@ -406,12 +406,16 @@ fn search_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
     );
     assert_ne!(defining_type_error, caller_type_error);
 
-    defining
-        .eval("RegExp.prototype[Symbol.search]=function(){return 41}")
-        .unwrap();
-    caller
-        .eval("RegExp.prototype[Symbol.search]=function(){return 99}")
-        .unwrap();
+    drop(
+        defining
+            .eval("RegExp.prototype[Symbol.search]=function(){return 41}")
+            .unwrap(),
+    );
+    drop(
+        caller
+            .eval("RegExp.prototype[Symbol.search]=function(){return 99}")
+            .unwrap(),
+    );
     assert_eq!(
         caller
             .call(

@@ -300,7 +300,7 @@ fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() 
         "convert-throw|"
     );
 
-    constructor_context.eval("orderLog = ''").unwrap();
+    drop(constructor_context.eval("orderLog = ''").unwrap());
     let conversion = eval_callable(
         &runtime,
         &mut constructor_context,

@@ -197,9 +197,10 @@ fn string_pad_reservation_oom_uses_defining_realm_and_runtime_recovers() {
     };
     assert_ne!(defining_internal_error, caller_internal_error);
 
-    caller
-        .eval(
-            r#"globalThis.padReservationLog="";
+    drop(
+        caller
+            .eval(
+                r#"globalThis.padReservationLog="";
                 globalThis.padReservationReceiver=Object();
                 padReservationReceiver[Symbol.toPrimitive]=function(hint){
                     padReservationLog+="receiver:"+hint+";";return "xy"
@@ -212,8 +213,9 @@ fn string_pad_reservation_oom_uses_defining_realm_and_runtime_recovers() {
                 padReservationFiller[Symbol.toPrimitive]=function(hint){
                     padReservationLog+="filler:"+hint+";";return "z"
                 };"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let receiver = caller.eval("padReservationReceiver").unwrap();
     let target = caller.eval("padReservationTarget").unwrap();
     let filler = caller.eval("padReservationFiller").unwrap();

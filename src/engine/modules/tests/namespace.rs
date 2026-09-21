@@ -30,7 +30,7 @@ fn namespace_cache_preserves_cycles_identity_and_live_cells() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(
         &mut context,
         r#"
@@ -61,7 +61,7 @@ fn self_namespace_import_export_keeps_the_preallocated_cell() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(
         &mut context,
         "__selfNamespace.self === __selfNamespace && __selfNamespace.answer === 42",

@@ -352,12 +352,16 @@ fn array_literal_iterator_and_errors_use_the_bytecode_defining_realm() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
-    defining
-        .eval("Array.prototype.arrayRealm='defining';TypeError.prototype.arrayRealm='defining'")
-        .expect("mark defining Array and TypeError prototypes");
-    caller
-        .eval("Array.prototype.arrayRealm='caller';TypeError.prototype.arrayRealm='caller'")
-        .expect("mark caller Array and TypeError prototypes");
+    drop(
+        defining
+            .eval("Array.prototype.arrayRealm='defining';TypeError.prototype.arrayRealm='defining'")
+            .expect("mark defining Array and TypeError prototypes"),
+    );
+    drop(
+        caller
+            .eval("Array.prototype.arrayRealm='caller';TypeError.prototype.arrayRealm='caller'")
+            .expect("mark caller Array and TypeError prototypes"),
+    );
     let bytecode = defining
         .compile("(function(){var a=[1,2],realm=a.arrayRealm;function X(){};var next=a.values().next;try{next.call(new X)}catch(e){return realm+'|'+e.arrayRealm}})()")
         .expect("compile defining-realm Array probe");

@@ -42,7 +42,7 @@ fn json_module_default_export_is_cached_by_normalized_name_and_keeps_json_semant
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__jsonModuleParity === true");
     assert_eq!(
         loads
@@ -95,7 +95,7 @@ fn json5_module_default_export_is_cached_and_uses_quickjs_extended_grammar() {
         )
         .unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__json5ModuleParity === true");
     assert_eq!(
         loads
@@ -133,7 +133,7 @@ fn dynamic_import_can_load_a_host_selected_json5_module() {
     assert!(drain_jobs(&runtime) > 0);
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Fulfilled);
-    let Value::Object(namespace) = runtime.root_raw_value(&snapshot.result).unwrap() else {
+    let Value::Object(namespace) = runtime.root_raw_value(snapshot.result.clone()).unwrap() else {
         panic!("dynamic JSON5 import did not fulfill with a module namespace");
     };
     let default = runtime.intern_property_key("default").unwrap();
@@ -198,7 +198,7 @@ fn invalid_json5_module_reports_quickjs_location_and_retries() {
     let module = context
         .compile_module_with_filename(source, "pkg/entry.js")
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__json5Retry === 42");
     assert_eq!(
         loads
@@ -240,7 +240,7 @@ fn json_module_live_cell_is_undefined_after_link_and_initialized_during_evaluati
         Value::Undefined
     );
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     let Value::Object(first) = context.get_property(&namespace, &default).unwrap() else {
         panic!("evaluated JSON module default was not the parsed object");
     };
@@ -251,7 +251,7 @@ fn json_module_live_cell_is_undefined_after_link_and_initialized_during_evaluati
     );
     assert_script_true(&mut context, "__jsonEvaluationValue === 42");
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_eq!(
         context.get_property(&namespace, &default).unwrap(),
         Value::Object(first)
@@ -331,7 +331,7 @@ fn invalid_json_module_reports_fixture_location_and_rolls_back_for_retry() {
     let module = context
         .compile_module_with_filename(source, "pkg/entry.js")
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__jsonRetry === 42");
     assert_eq!(
         loads

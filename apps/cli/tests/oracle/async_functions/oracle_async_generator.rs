@@ -583,7 +583,7 @@ gate
 "#,
     ));
     define_global(&mut body, "foreignGate", Value::Object(gate));
-    eval(
+    drop(eval(
         &mut body,
         r#"
 var crossRealmReason;
@@ -595,13 +595,13 @@ crossRealm().next().then(undefined, function (error) {
     crossRealmReason = error;
 });
 "#,
-    );
+    ));
 
     // PromiseResolve in the body realm first installs the thenable bridge.
     while runtime.is_job_pending() {
         runtime.execute_pending_job().unwrap();
     }
-    eval(&mut settler, "release(1)");
+    drop(eval(&mut settler, "release(1)"));
 
     let mut saw_settler_realm = false;
     while runtime.is_job_pending() {

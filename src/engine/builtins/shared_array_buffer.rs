@@ -878,7 +878,7 @@ mod tests {
                 )
                 .unwrap()
         );
-        second_context.eval("__imported.grow(4)").unwrap();
+        drop(second_context.eval("__imported.grow(4)").unwrap());
         let imported_grown = second_context
             .export_shared_array_buffer(&imported)
             .unwrap();
@@ -889,7 +889,7 @@ mod tests {
         imported_grown.write_range(0, &[33, 44]).unwrap();
         assert_eq!(exported.read_range(0, 2).unwrap(), [33, 44]);
 
-        second_context.eval("delete globalThis.__imported").unwrap();
+        drop(second_context.eval("delete globalThis.__imported").unwrap());
         drop(imported);
         second_runtime.run_gc().unwrap();
         assert_eq!(imported_grown.read_range(0, 4).unwrap(), [33, 44, 0, 0]);

@@ -903,9 +903,10 @@ mod tests {
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"$262.agent.start(`
+        drop(
+            context
+                .eval(
+                    r#"$262.agent.start(`
   $262.agent.report(Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 0));
   function message(callback) {
     try { callback(); return "missing"; }
@@ -917,8 +918,9 @@ mod tests {
   $262.agent.leaving();
   $262.agent.report("after-leaving");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         session.join_workers().unwrap();
         assert_eq!(
             take_reports(&session),
@@ -939,12 +941,14 @@ mod tests {
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"var child262 = $262.createRealm();
+        drop(
+            context
+                .eval(
+                    r#"var child262 = $262.createRealm();
 child262.agent.start("$262.agent.report('main-child')");"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         session.join_workers().unwrap();
         assert_eq!(take_reports(&session), ["main-child"]);
 
@@ -952,9 +956,10 @@ child262.agent.start("$262.agent.report('main-child')");"#,
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"$262.agent.start(`
+        drop(
+            context
+                .eval(
+                    r#"$262.agent.start(`
   $262.agent.report("outer-ready");
   $262.agent.sleep(100);
   var child262 = $262.createRealm();
@@ -963,8 +968,9 @@ child262.agent.start("$262.agent.report('main-child')");"#,
   child262.agent.start("$262.agent.report('nested-worker')");
   $262.agent.report("outer-worker");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         // Begin cleanup while the outer worker is still live. Its inherited
         // main-role realm must remain allowed to append the nested worker.
         wait_for_report(&session, "outer-ready");
@@ -996,9 +1002,10 @@ child262.agent.start("$262.agent.report('main-child')");"#,
                 .unwrap(),
             Value::Undefined
         );
-        context
-            .eval(
-                r#"$262.agent.start(`
+        drop(
+            context
+                .eval(
+                    r#"$262.agent.start(`
   $262.agent.receiveBroadcast(function (sab, value) {
     $262.agent.report("worker-0:" + value + ":" + sab.byteLength);
   });
@@ -1017,8 +1024,9 @@ $262.agent.start(`
   $262.agent.report("ready-2");
 `);
 var cohortBuffer = new SharedArrayBuffer(4);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         assert_eq!(lock_unpoisoned(&session.inner.workers).slots.len(), 3);
         wait_for_report(&session, "ready-0");
         wait_for_report(&session, "ready-1");
@@ -1026,7 +1034,7 @@ var cohortBuffer = new SharedArrayBuffer(4);"#,
         let mut ready = take_reports(&session);
         ready.sort();
         assert_eq!(ready, ["ready-0", "ready-1", "ready-2"]);
-        context.eval("$262.agent.broadcast(cohortBuffer)").unwrap();
+        drop(context.eval("$262.agent.broadcast(cohortBuffer)").unwrap());
         session.join_workers().unwrap();
         let mut reports = take_reports(&session);
         reports.sort();
@@ -1040,9 +1048,10 @@ var cohortBuffer = new SharedArrayBuffer(4);"#,
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"var ackGate = new SharedArrayBuffer(8);
+        drop(
+            context
+                .eval(
+                    r#"var ackGate = new SharedArrayBuffer(8);
 var ackGateView = new Int32Array(ackGate);
 $262.agent.start(`
   $262.agent.receiveBroadcast(function (sab, value) {
@@ -1053,18 +1062,21 @@ $262.agent.start(`
   });
   $262.agent.report("ready");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         wait_for_report(&session, "ready");
 
         // If broadcast waited for callback completion instead of its ACK,
         // the callback's finite wait would time out before this store ran.
-        context
-            .eval(
-                "$262.agent.broadcast(ackGate, 17); \
+        drop(
+            context
+                .eval(
+                    "$262.agent.broadcast(ackGate, 17); \
                  Atomics.store(ackGateView, 1, 1); Atomics.notify(ackGateView, 1);",
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         session.join_workers().unwrap();
         let reports = take_reports(&session);
         assert_eq!(&reports[..2], ["ready", "callback:17"]);
@@ -1125,9 +1137,10 @@ $262.agent.start(`
             "TypeError:must be called inside an agent|TypeError:ArrayBuffer object expected|0|1|TypeError:cannot convert bigint to number|TypeError:ordinary ArrayBuffer broadcast is unavailable across runtimes|0|TypeError:growable SharedArrayBuffer broadcast is unavailable across runtimes|0"
         );
 
-        context
-            .eval(
-                r#"var replacementBuffer = new SharedArrayBuffer(4);
+        drop(
+            context
+                .eval(
+                    r#"var replacementBuffer = new SharedArrayBuffer(4);
 $262.agent.start(`
   var roleTouched = 0;
   try {
@@ -1144,12 +1157,15 @@ $262.agent.start(`
   $262.agent.leaving();
   $262.agent.report("replacement-ready");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         wait_for_report(&session, "replacement-ready");
-        context
-            .eval("$262.agent.broadcast(replacementBuffer, -4294967295)")
-            .unwrap();
+        drop(
+            context
+                .eval("$262.agent.broadcast(replacementBuffer, -4294967295)")
+                .unwrap(),
+        );
         session.join_workers().unwrap();
         assert_eq!(
             take_reports(&session),
@@ -1169,9 +1185,10 @@ $262.agent.start(`
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"var numericShared = new SharedArrayBuffer(16);
+        drop(
+            context
+                .eval(
+                    r#"var numericShared = new SharedArrayBuffer(16);
 var numericInts = new Int32Array(numericShared, 0, 1);
 var numericBigs = new BigInt64Array(numericShared, 8, 1);
 numericInts[0] = 40;
@@ -1186,12 +1203,15 @@ $262.agent.start(`
   });
   $262.agent.report("numeric-ready");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         wait_for_report(&session, "numeric-ready");
-        context
-            .eval("$262.agent.broadcast(numericShared, 4294967297)")
-            .unwrap();
+        drop(
+            context
+                .eval("$262.agent.broadcast(numericShared, 4294967297)")
+                .unwrap(),
+        );
         session.join_workers().unwrap();
         assert_eq!(
             take_reports(&session),
@@ -1210,9 +1230,10 @@ $262.agent.start(`
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"var generationBuffer = new SharedArrayBuffer(4);
+        drop(
+            context
+                .eval(
+                    r#"var generationBuffer = new SharedArrayBuffer(4);
 $262.agent.start(`
   $262.agent.receiveBroadcast(function (sab, value) {
     $262.agent.report("first:" + value);
@@ -1225,15 +1246,18 @@ $262.agent.start(`
   });
   $262.agent.report("generation-ready");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         wait_for_report(&session, "generation-ready");
-        context
-            .eval(
-                "$262.agent.broadcast(generationBuffer, 1); \
+        drop(
+            context
+                .eval(
+                    "$262.agent.broadcast(generationBuffer, 1); \
                  $262.agent.broadcast(generationBuffer, 2);",
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         session.join_workers().unwrap();
         assert_eq!(
             take_reports(&session),
@@ -1248,9 +1272,10 @@ $262.agent.start(`
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"var synchronousReplacementBuffer = new SharedArrayBuffer(4);
+        drop(
+            context
+                .eval(
+                    r#"var synchronousReplacementBuffer = new SharedArrayBuffer(4);
 $262.agent.start(`
   $262.agent.receiveBroadcast(function () {
     $262.agent.receiveBroadcast(function () {
@@ -1260,12 +1285,15 @@ $262.agent.start(`
   });
   $262.agent.report("synchronous-ready");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         wait_for_report(&session, "synchronous-ready");
-        context
-            .eval("$262.agent.broadcast(synchronousReplacementBuffer, 1)")
-            .unwrap();
+        drop(
+            context
+                .eval("$262.agent.broadcast(synchronousReplacementBuffer, 1)")
+                .unwrap(),
+        );
         session.join_workers().unwrap();
         assert_eq!(
             take_reports(&session),
@@ -1280,9 +1308,10 @@ $262.agent.start(`
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval(
-                r#"var failureBuffer = new SharedArrayBuffer(4);
+        drop(
+            context
+                .eval(
+                    r#"var failureBuffer = new SharedArrayBuffer(4);
 $262.agent.start(`
   $262.agent.receiveBroadcast(function () {
     $262.agent.report("callback-ran");
@@ -1292,12 +1321,15 @@ $262.agent.start(`
   $262.agent.report("failure-ready");
   throw new Error("source failure");
 `);"#,
-            )
-            .unwrap();
+                )
+                .unwrap(),
+        );
         wait_for_report(&session, "failure-ready");
-        context
-            .eval("$262.agent.broadcast(failureBuffer, 0)")
-            .unwrap();
+        drop(
+            context
+                .eval("$262.agent.broadcast(failureBuffer, 0)")
+                .unwrap(),
+        );
         let error = session.join_workers().unwrap_err().to_string();
         assert!(error.contains("execute agent source"), "{error}");
         assert!(error.contains("call agent broadcast callback"), "{error}");
@@ -1315,9 +1347,11 @@ $262.agent.start(`
         let mut context = runtime.new_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
-        context
-            .eval("$262.agent.start(\"throw new Error('worker failure')\")")
-            .unwrap();
+        drop(
+            context
+                .eval("$262.agent.start(\"throw new Error('worker failure')\")")
+                .unwrap(),
+        );
         let error = session.join_workers().unwrap_err().to_string();
         assert!(error.contains("agent 0: execute agent source"), "{error}");
     }
@@ -1334,12 +1368,14 @@ $262.agent.start(`
             let mut context = runtime.new_context();
             let session = Test262AgentSession::new(Runtime::new);
             context.install_test262_host_with_agent(&session).unwrap();
-            context
-                .eval(&format!(
-                    "$262.agent.start({:?})",
-                    format!("try {{ {source} }} catch (_) {{}}")
-                ))
-                .unwrap();
+            drop(
+                context
+                    .eval(&format!(
+                        "$262.agent.start({:?})",
+                        format!("try {{ {source} }} catch (_) {{}}")
+                    ))
+                    .unwrap(),
+            );
             let error = session.join_workers().unwrap_err().to_string();
             assert!(
                 error.contains("dynamic-import bytecode policy"),
@@ -1352,14 +1388,14 @@ $262.agent.start(`
     fn zz_probe_bigint_literal() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("var x = 12345678901234567890n; 'ok'").unwrap();
+        drop(context.eval("var x = 12345678901234567890n; 'ok'").unwrap());
     }
 
     #[test]
     fn zz_probe_string_literal() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("var x = 'abcdefghij'; 'ok'").unwrap();
+        drop(context.eval("var x = 'abcdefghij'; 'ok'").unwrap());
     }
 
     #[test]
@@ -1537,13 +1573,15 @@ $262.agent.start(`
             .eval("(function(sab, value){ return sab.byteLength + value; })")
             .unwrap();
         let callable = runtime.callable_from_value(function).unwrap();
-        context
-            .call(
-                &callable,
-                Value::Undefined,
-                &[Value::Object(shared), Value::Int(1)],
-            )
-            .unwrap();
+        drop(
+            context
+                .call(
+                    &callable,
+                    Value::Undefined,
+                    &[Value::Object(shared), Value::Int(1)],
+                )
+                .unwrap(),
+        );
         drop(context);
         runtime.run_gc().unwrap();
     }
@@ -1556,9 +1594,11 @@ $262.agent.start(`
         let shared = context.import_shared_array_buffer(handle).unwrap();
         let function = context.eval("(function(){ return 1; })").unwrap();
         let callable = runtime.callable_from_value(function).unwrap();
-        context
-            .call(&callable, Value::Undefined, &[Value::Object(shared)])
-            .unwrap();
+        drop(
+            context
+                .call(&callable, Value::Undefined, &[Value::Object(shared)])
+                .unwrap(),
+        );
         drop(context);
         runtime.run_gc().unwrap();
     }
@@ -1587,7 +1627,7 @@ $262.agent.start(`
         let shared = context.import_shared_array_buffer(handle).unwrap();
         let function = context.eval("(function(){ return 1; })").unwrap();
         let callable = runtime.callable_from_value(function).unwrap();
-        context.call(&callable, Value::Object(shared), &[]).unwrap();
+        drop(context.call(&callable, Value::Object(shared), &[]).unwrap());
         drop(context);
         runtime.run_gc().unwrap();
     }
@@ -1600,9 +1640,11 @@ $262.agent.start(`
         let shared = context.import_shared_array_buffer(handle).unwrap();
         let function = context.eval("Object.keys").unwrap();
         let callable = runtime.callable_from_value(function).unwrap();
-        context
-            .call(&callable, Value::Undefined, &[Value::Object(shared)])
-            .unwrap();
+        drop(
+            context
+                .call(&callable, Value::Undefined, &[Value::Object(shared)])
+                .unwrap(),
+        );
         drop(context);
         runtime.run_gc().unwrap();
     }
@@ -1617,9 +1659,11 @@ $262.agent.start(`
             .eval("(function(sab){ return sab.byteLength; })")
             .unwrap();
         let callable = runtime.callable_from_value(function).unwrap();
-        context
-            .call(&callable, Value::Undefined, &[Value::Object(shared)])
-            .unwrap();
+        drop(
+            context
+                .call(&callable, Value::Undefined, &[Value::Object(shared)])
+                .unwrap(),
+        );
         drop(context);
         runtime.run_gc().unwrap();
     }
@@ -1634,9 +1678,11 @@ $262.agent.start(`
             .eval("(function(sab){ return Object.getPrototypeOf(sab) ? 1 : 0; })")
             .unwrap();
         let callable = runtime.callable_from_value(function).unwrap();
-        context
-            .call(&callable, Value::Undefined, &[Value::Object(shared)])
-            .unwrap();
+        drop(
+            context
+                .call(&callable, Value::Undefined, &[Value::Object(shared)])
+                .unwrap(),
+        );
         drop(context);
         runtime.run_gc().unwrap();
     }

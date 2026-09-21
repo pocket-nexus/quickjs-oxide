@@ -325,7 +325,7 @@ fn suspended_method_retains_its_home_object_across_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    eval(
+    drop(eval(
         &mut context,
         r#"
 var outcome = "pending";
@@ -348,7 +348,7 @@ iterator.next().then(function (result) {
     outcome = result.value + ":" + result.done;
 });
 "#,
-    );
+    ));
     runtime.run_gc().unwrap();
     while runtime.is_job_pending() {
         runtime.execute_pending_job().unwrap();

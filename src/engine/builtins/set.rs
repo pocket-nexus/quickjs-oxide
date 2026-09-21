@@ -498,7 +498,7 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant("Set record index overflowed"))?;
         Ok(Some((
             record_index,
-            self.into_jsvalue(self.root_raw_value(&key)?)?,
+            self.into_jsvalue(self.root_raw_value(key.clone())?)?,
         )))
     }
 
@@ -756,7 +756,7 @@ impl Runtime {
             .borrow_mut()
             .heap
             .set_set_iterator_current(iterator_id, record_index)?;
-        let value = self.root_raw_value(&key)?;
+        let value = self.root_raw_value(key.clone())?;
         let value = match kind {
             SetIteratorKind::Value => self.into_jsvalue(value)?,
             SetIteratorKind::KeyAndValue => {
@@ -943,14 +943,18 @@ mod tests {
         };
         let function = runtime.as_callable(&function).unwrap().unwrap();
 
-        context
-            .call(&function, Value::Undefined, &[])
-            .expect("warm Set Symbol ownership probe");
-        let baseline = runtime.test_atom_count();
-        for _ in 0..3 {
+        drop(
             context
                 .call(&function, Value::Undefined, &[])
-                .expect("repeat Set Symbol ownership probe");
+                .expect("warm Set Symbol ownership probe"),
+        );
+        let baseline = runtime.test_atom_count();
+        for _ in 0..3 {
+            drop(
+                context
+                    .call(&function, Value::Undefined, &[])
+                    .expect("repeat Set Symbol ownership probe"),
+            );
             assert_eq!(runtime.test_atom_count(), baseline);
         }
     }

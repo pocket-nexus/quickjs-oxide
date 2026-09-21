@@ -88,9 +88,10 @@ fn string_repeat_reservation_oom_is_catchable_in_defining_realm_and_recovers() {
     };
     assert_ne!(defining_internal_error, caller_internal_error);
 
-    caller
-        .eval(
-            r#"globalThis.repeatReservationLog="";
+    drop(
+        caller
+            .eval(
+                r#"globalThis.repeatReservationLog="";
                 globalThis.repeatReservationReceiver=Object();
                 repeatReservationReceiver[Symbol.toPrimitive]=function(hint){
                     repeatReservationLog+="receiver:"+hint+";";return "xy"
@@ -99,8 +100,9 @@ fn string_repeat_reservation_oom_is_catchable_in_defining_realm_and_recovers() {
                 repeatReservationCount[Symbol.toPrimitive]=function(hint){
                     repeatReservationLog+="count:"+hint+";";return 2
                 };"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let receiver = caller.eval("repeatReservationReceiver").unwrap();
     let count = caller.eval("repeatReservationCount").unwrap();
 

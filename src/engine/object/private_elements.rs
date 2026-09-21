@@ -171,7 +171,7 @@ impl Runtime {
                 }
             }
         };
-        self.root_raw_value(&raw)
+        self.root_raw_value(raw.clone())
     }
 
     /// Replace one existing private data field directly on `receiver`.

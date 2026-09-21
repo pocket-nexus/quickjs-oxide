@@ -513,7 +513,7 @@ impl Runtime {
             RuntimeError::Invariant("Map.prototype.get key argv was not padded"),
         )?)?);
         let value = match self.find_map_record(&map, &key)? {
-            Some((_, value)) => self.root_raw_value(&value)?,
+            Some((_, value)) => self.root_raw_value(value.clone())?,
             None => Value::Undefined,
         };
         self.release_jsvalue(key)?;
@@ -769,13 +769,13 @@ impl Runtime {
             .borrow_mut()
             .heap
             .set_map_iterator_current(iterator_id, record_index)?;
-        let key = self.root_raw_value(&key)?;
+        let key = self.root_raw_value(key.clone())?;
         let value = match kind {
             MapIteratorKind::Key => self.into_jsvalue(key)?,
-            MapIteratorKind::Value => self.into_jsvalue(self.root_raw_value(&value)?)?,
+            MapIteratorKind::Value => self.into_jsvalue(self.root_raw_value(value.clone())?)?,
             MapIteratorKind::KeyAndValue => {
                 let key = self.into_jsvalue(key)?;
-                let value = self.into_jsvalue(self.root_raw_value(&value)?)?;
+                let value = self.into_jsvalue(self.root_raw_value(value.clone())?)?;
                 self.into_jsvalue(Value::Object(
                     self.new_array_from_values_jsvalue(realm, vec![key, value])?,
                 ))?
@@ -873,14 +873,18 @@ mod tests {
         };
         let function = runtime.as_callable(&function).unwrap().unwrap();
 
-        context
-            .call(&function, Value::Undefined, &[])
-            .expect("warm Map Symbol ownership probe");
-        let baseline = runtime.test_atom_count();
-        for _ in 0..3 {
+        drop(
             context
                 .call(&function, Value::Undefined, &[])
-                .expect("repeat Map Symbol ownership probe");
+                .expect("warm Map Symbol ownership probe"),
+        );
+        let baseline = runtime.test_atom_count();
+        for _ in 0..3 {
+            drop(
+                context
+                    .call(&function, Value::Undefined, &[])
+                    .expect("repeat Map Symbol ownership probe"),
+            );
             assert_eq!(runtime.test_atom_count(), baseline);
         }
     }

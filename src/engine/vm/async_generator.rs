@@ -355,7 +355,7 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant(
                 "AsyncGenerator request queue is empty",
             ))?;
-        let result = self.root_raw_value(&request.result)?;
+        let result = self.root_raw_value(request.result.clone())?;
         let promise = ObjectRef::from_borrowed_handle(self.clone(), request.promise)?;
         let resolve = ObjectRef::from_borrowed_handle(self.clone(), request.resolve)?;
         let resolve = self.as_callable(&resolve)?.ok_or(RuntimeError::Invariant(

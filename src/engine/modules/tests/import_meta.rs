@@ -37,7 +37,7 @@ fn import_meta_is_cached_per_defining_module() {
             "pkg/entry.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     assert_script_true(&mut context, "__importMetaParity === true");
     drop(module);
     runtime.run_gc().unwrap();
@@ -87,7 +87,7 @@ fn host_gets_the_canonical_import_meta_before_linking() {
     assert!(runtime.set_prototype_of(&first, Some(&prototype)).unwrap());
     runtime.prevent_extensions(&first).unwrap();
 
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
     let global = context.global_object().unwrap();
     let observed = runtime.intern_property_key("__hostMeta").unwrap();
     assert_eq!(
@@ -165,7 +165,7 @@ fn loader_initializes_dependency_import_meta_before_source_completion() {
             "pkg/entry.js",
         )
         .unwrap();
-    context.execute_module(&module).unwrap();
+    drop(context.execute_module(&module).unwrap());
 
     let marker_key = runtime
         .intern_property_key("__dependencyMetaChecks")

@@ -519,7 +519,7 @@ impl Runtime {
             WeakMapNativeKind::Get => {
                 let value = match key {
                     Some(key) => match self.find_weak_map_record(&map, key)? {
-                        Some(value) => self.root_raw_value(&value)?,
+                        Some(value) => self.root_raw_value(value.clone())?,
                         None => Value::Undefined,
                     },
                     None => Value::Undefined,
@@ -532,7 +532,7 @@ impl Runtime {
                 };
                 if let Some(value) = self.find_weak_map_record(&map, key)? {
                     return Ok(Completion::Return(
-                        self.into_jsvalue(self.root_raw_value(&value)?)?,
+                        self.into_jsvalue(self.root_raw_value(value.clone())?)?,
                     ));
                 }
                 let value = self.root_value(

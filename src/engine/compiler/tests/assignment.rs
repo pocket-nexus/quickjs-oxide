@@ -127,7 +127,7 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
         context.eval("null[keyObject]"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("keyHint").unwrap(),
         Value::String(JsString::from_static("none"))

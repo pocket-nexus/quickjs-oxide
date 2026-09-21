@@ -249,6 +249,7 @@ impl Error for HeapError {}
 /// `value::collection_key` (id fast path plus content fallback with heap
 /// access); identity comparison uses explicit handle equality.
 #[derive(Clone, Debug)]
+#[must_use]
 pub enum RawValue {
     Undefined,
     Null,

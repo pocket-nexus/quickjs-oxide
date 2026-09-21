@@ -513,11 +513,11 @@ fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let pop = property_callable(&runtime, &mut defining, &defining_array_prototype, "pop");
     let push = property_callable(&runtime, &mut defining, &defining_array_prototype, "push");
 
-    defining
+    drop(defining
         .eval(
             "Number.prototype.length=0;Number.prototype.__defineSetter__('0',function(value){globalThis.mutatorBox=this;globalThis.mutatorValue=value})",
         )
-        .expect("install defining realm primitive push observers");
+        .expect("install defining realm primitive push observers"));
     assert_eq!(
         caller
             .call(

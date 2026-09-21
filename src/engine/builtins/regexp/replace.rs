@@ -1619,7 +1619,7 @@ mod tests {
                     && matches!(resume.0.step_pending.read.as_ref(), Some(crate::engine::object::OrdinaryRead::Call { .. }))
         ));
         // Consuming the already-selected intrinsic must not probe flags again.
-        context.eval("Object.defineProperty(coldReplace, 'flags', { get() { throw 'repeated flags'; } });").unwrap();
+        drop(context.eval("Object.defineProperty(coldReplace, 'flags', { get() { throw 'repeated flags'; } });").unwrap());
         let Completion::Return(value) = finish_replace(&runtime, context.realm, step).unwrap()
         else {
             panic!("standard replace did not return")

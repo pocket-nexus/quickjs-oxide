@@ -362,9 +362,11 @@ fn program_label_invokes_existing_global_setter_twice() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut context = runtime.new_context();
-    context
-        .eval("Function.labelSetterHits=0;Function.labelSetterValue=0")
-        .unwrap();
+    drop(
+        context
+            .eval("Function.labelSetterHits=0;Function.labelSetterValue=0")
+            .unwrap(),
+    );
     let Value::Object(getter) = context
         .eval("(function(){return Function.labelSetterValue})")
         .unwrap()
@@ -463,8 +465,8 @@ fn program_label_cross_realm_regression() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let mut defining = runtime.new_context();
     let mut caller = runtime.new_context();
-    defining.eval("globalThis.realmTag='A'").unwrap();
-    caller.eval("globalThis.realmTag='B'").unwrap();
+    drop(defining.eval("globalThis.realmTag='A'").unwrap());
+    drop(caller.eval("globalThis.realmTag='B'").unwrap());
 
     let bytecode = defining
         .compile(

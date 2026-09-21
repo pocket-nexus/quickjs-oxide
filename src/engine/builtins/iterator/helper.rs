@@ -168,8 +168,8 @@ impl HelperResumeStep {
             active: true,
         };
         let source = ObjectRef::from_borrowed_handle(runtime.clone(), state.source)?;
-        let next = runtime.root_raw_value(&state.next)?;
-        let callback = runtime.root_raw_value(&state.callback)?;
+        let next = runtime.root_raw_value(state.next.clone())?;
+        let callback = runtime.root_raw_value(state.callback.clone())?;
         let inner = state
             .inner
             .map(|inner| ObjectRef::from_borrowed_handle(runtime.clone(), inner))

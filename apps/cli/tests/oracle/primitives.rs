@@ -1226,9 +1226,9 @@ fn implemented_errors_match_quickjs_oracle() {
     }
 
     for &(description, source) in QUICKJS_ACCEPTED_DIRECTIVE_EDGES {
-        context.eval(source).unwrap_or_else(|error| {
+        drop(context.eval(source).unwrap_or_else(|error| {
             panic!("Rust unexpectedly rejected {description:?} ({source:?}): {error}")
-        });
+        }));
         let output = Command::new(&oracle)
             .args(["-e", source])
             .output()

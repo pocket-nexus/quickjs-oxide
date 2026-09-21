@@ -116,7 +116,7 @@ impl CallbackStep {
                 runtime.release_jsvalue(key)?;
                 runtime.release_jsvalue(second)?;
                 return Ok(Self::Complete(Completion::Return(
-                    runtime.into_jsvalue(runtime.root_raw_value(&value)?)?,
+                    runtime.into_jsvalue(runtime.root_raw_value(value.clone())?)?,
                 )));
             }
             if let Some(callable) = callback {
@@ -215,8 +215,8 @@ impl CallbackResume {
         *index = record_index.checked_add(1).ok_or(RuntimeError::Invariant(
             "Map forEach record index overflowed",
         ))?;
-        let key = runtime.into_jsvalue(runtime.root_raw_value(&key)?)?;
-        let value = runtime.into_jsvalue(runtime.root_raw_value(&value)?)?;
+        let key = runtime.into_jsvalue(runtime.root_raw_value(key.clone())?)?;
+        let value = runtime.into_jsvalue(runtime.root_raw_value(value.clone())?)?;
         *record = Some(
             runtime.push_active_collection_record(ActiveCollectionRecord::Map {
                 object: self.0.map.object_id(),

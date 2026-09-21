@@ -404,7 +404,7 @@ impl IterationResume {
                     let key = Runtime::normalized_map_key(runtime.into_jsvalue(value)?);
                     let groups = self.result()?;
                     let group = match runtime.find_map_record(&groups, &key)? {
-                        Some((_, value)) => match runtime.root_raw_value(&value)? {
+                        Some((_, value)) => match runtime.root_raw_value(value.clone())? {
                             Value::Object(group) => group,
                             _ => {
                                 return Err(RuntimeError::Invariant(

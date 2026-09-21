@@ -478,13 +478,15 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
         "cross-realm default Array.filter result used the caller realm",
     );
 
-    caller
-        .call(
-            &map,
-            Value::String(JsString::try_from_utf8("a").unwrap()),
-            &[Value::Object(identity.as_object().clone())],
-        )
-        .expect("cross-realm primitive Array.map");
+    drop(
+        caller
+            .call(
+                &map,
+                Value::String(JsString::try_from_utf8("a").unwrap()),
+                &[Value::Object(identity.as_object().clone())],
+            )
+            .expect("cross-realm primitive Array.map"),
+    );
     let boxed = eval_object(&mut caller, "mapReceiver", "captured map receiver");
     assert_eq!(
         runtime.get_prototype_of(&boxed).unwrap(),
@@ -492,9 +494,11 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
         "Array.map boxed its primitive receiver in the callback realm",
     );
 
-    caller
-        .eval("globalThis.callbackObject=Object()")
-        .expect("install caller callback object");
+    drop(
+        caller
+            .eval("globalThis.callbackObject=Object()")
+            .expect("install caller callback object"),
+    );
     let object_callback = eval_callable(
         &runtime,
         &mut caller,

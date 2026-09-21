@@ -416,9 +416,11 @@ fn rust_property_observations() -> Vec<String> {
         descriptor_text(&runtime, &mut context, "__qjo_var_fixed")
     ));
 
-    context
-        .eval("Function.varGets=0;Function.varSets=0;Function.varSeen='none'")
-        .unwrap();
+    drop(
+        context
+            .eval("Function.varGets=0;Function.varSets=0;Function.varSeen='none'")
+            .unwrap(),
+    );
     define_global_accessor(&runtime, &mut context, "__qjo_var_accessor");
     let accessor_no_init = observe_rust_eval(
         &runtime,
@@ -447,9 +449,11 @@ fn rust_property_observations() -> Vec<String> {
         descriptor_text(&runtime, &mut context, "__qjo_var_accessor"),
     ));
 
-    context
-        .eval("globalThis.__qjo_var_atomic_marker=0;let __qjo_var_existing_lex=9")
-        .unwrap();
+    drop(
+        context
+            .eval("globalThis.__qjo_var_atomic_marker=0;let __qjo_var_existing_lex=9")
+            .unwrap(),
+    );
     output.push(format!(
         "atomic-failure={}",
         observe_rust_eval(
@@ -471,9 +475,11 @@ fn rust_property_observations() -> Vec<String> {
         descriptor_text(&runtime, &mut context, "__qjo_var_fresh_after"),
     ));
 
-    context
-        .eval("globalThis.__qjo_var_sealed_marker=0;globalThis.__qjo_var_sealed_existing=5")
-        .unwrap();
+    drop(
+        context
+            .eval("globalThis.__qjo_var_sealed_marker=0;globalThis.__qjo_var_sealed_existing=5")
+            .unwrap(),
+    );
     let global = context.global_object().unwrap();
     runtime.prevent_extensions(&global).unwrap();
     output.push(format!(

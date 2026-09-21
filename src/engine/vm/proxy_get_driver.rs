@@ -2412,7 +2412,7 @@ mod native_scope_tests {
                 // The unchanged standard matcher predicate requires a Data
                 // native exec. Materialize that lazy property only: do not run
                 // replace or warm this execution's Query cache.
-                context.eval("RegExp.prototype.exec").unwrap();
+                drop(context.eval("RegExp.prototype.exec").unwrap());
             }
             if name == "String.prototype.replace" {
                 arguments[0] = context.eval("/a/g").unwrap();

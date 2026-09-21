@@ -14,6 +14,7 @@ pub(crate) mod js_value;
 pub(crate) use js_value::JsValue;
 
 #[derive(Clone, Debug)]
+#[must_use]
 pub enum Value {
     Undefined,
     Null,
@@ -27,7 +28,6 @@ pub enum Value {
 }
 
 impl Value {
-    #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
     pub fn number(value: f64) -> Self {
         number::operations::Number::compact(value).into()

@@ -935,7 +935,7 @@ mod immediate_cell_tests {
             const c=1; try { (()=>c=2)(); } catch(e){if(e instanceof TypeError)trace+='const';}
             return mapped(1) && strict(1) && trace==='tdzconst' && c===1;
         })()"#).unwrap(), Value::Bool(true));
-        context.eval("let immediateWriteGlobal=1;").unwrap();
+        drop(context.eval("let immediateWriteGlobal=1;").unwrap());
         assert_eq!(context.eval(r#"(()=>{
             immediateWriteGlobal=2; let a=immediateWriteGlobal;
             immediateWriteGlobal={answer:3}; let b=immediateWriteGlobal.answer;
@@ -1056,7 +1056,7 @@ mod immediate_cell_tests {
             const constant=9; function constantRead(){return constant;}
             return mapped(1) && strict(1) && tdz && constantRead()===9;
         })()"#).unwrap(), Value::Bool(true));
-        context.eval("let immediateGlobal=1;").unwrap();
+        drop(context.eval("let immediateGlobal=1;").unwrap());
         assert_eq!(context.eval(r#"(()=>{
             let first=immediateGlobal;
             immediateGlobal=2;

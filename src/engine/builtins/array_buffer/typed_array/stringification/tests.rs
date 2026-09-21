@@ -412,22 +412,26 @@ fn to_locale_string_uses_the_method_defining_realm() {
         "TypeError.prototype",
         "caller TypeError prototype",
     );
-    defining
-        .eval(
-            r#"Number.prototype.toLocaleString=function(){
+    drop(
+        defining
+            .eval(
+                r#"Number.prototype.toLocaleString=function(){
                 "use strict";
                 return "defining-"+this;
             }"#,
-        )
-        .unwrap();
-    caller
-        .eval(
-            r#"Number.prototype.toLocaleString=function(){
+            )
+            .unwrap(),
+    );
+    drop(
+        caller
+            .eval(
+                r#"Number.prototype.toLocaleString=function(){
                 "use strict";
                 return "caller-"+this;
             }"#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let method = runtime
         .as_callable(&eval_object(
             &mut defining,

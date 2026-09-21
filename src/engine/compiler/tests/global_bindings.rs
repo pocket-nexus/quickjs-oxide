@@ -141,12 +141,12 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
         context.eval("'use strict'; readonly += 2"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert!(matches!(
         context.eval("'use strict'; readonly &&= 2"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
 
     let inherited = runtime.intern_property_key("inheritedReadOnly").unwrap();
     assert!(
@@ -208,7 +208,7 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
         context.eval("'use strict'; noSetter ||= 8"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("'use strict'; noSetter &&= 8").unwrap(),
         Value::Undefined
@@ -218,7 +218,7 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
         context.eval("'use strict'; trulyMissing = 1"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     let truly_missing = runtime.intern_property_key("trulyMissing").unwrap();
     assert!(!runtime.has_own_property(&global, &truly_missing).unwrap());
 
@@ -316,13 +316,13 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
         context.eval("missingCompound += (compoundSide = 1)"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("compoundSide").unwrap(), Value::Int(0));
     assert!(matches!(
         context.eval("missingLogical ||= (compoundSide = 2)"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("compoundSide").unwrap(), Value::Int(0));
 }
 
@@ -442,7 +442,7 @@ fn global_lexical_tdz_const_shadow_and_initialization_share_the_resolved_cell() 
         context.eval("shadowed &&= 3"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
 
     context
         .create_global_lexical_for_test("mutableLexical", false, None)
@@ -455,17 +455,17 @@ fn global_lexical_tdz_const_shadow_and_initialization_share_the_resolved_cell() 
         context.eval("mutableLexical += 1"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert!(matches!(
         context.eval("mutableLexical |= 1"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     assert!(matches!(
         context.eval("mutableLexical **= 2"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     context
         .initialize_global_lexical_for_test("mutableLexical", Value::Int(4))
         .unwrap();
@@ -488,7 +488,7 @@ fn global_lexical_tdz_const_shadow_and_initialization_share_the_resolved_cell() 
         context.eval("mutableShift >>>= 1"),
         Err(RuntimeError::Exception)
     ));
-    context.take_exception().unwrap().unwrap();
+    drop(context.take_exception().unwrap().unwrap());
     context
         .initialize_global_lexical_for_test("mutableShift", Value::Int(-8))
         .unwrap();

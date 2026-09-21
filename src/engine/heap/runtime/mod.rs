@@ -217,14 +217,14 @@ impl RuntimeState {
         }
     }
 
-    pub(crate) fn retain_raw_root(&mut self, value: &RawValue) -> Result<(), RuntimeError> {
+    pub(crate) fn retain_raw_root(&mut self, value: RawValue) -> Result<(), RuntimeError> {
         match value {
-            RawValue::Object(object) => self.heap.retain_object(*object)?,
+            RawValue::Object(object) => self.heap.retain_object(object)?,
             RawValue::Symbol(index) => {
-                self.atoms.retain_index(*index)?;
+                self.atoms.retain_index(index)?;
             }
-            RawValue::String(id) => self.heap.retain_string(*id)?,
-            RawValue::BigInt(id) => self.heap.retain_bigint(*id)?,
+            RawValue::String(id) => self.heap.retain_string(id)?,
+            RawValue::BigInt(id) => self.heap.retain_bigint(id)?,
             RawValue::Private(_) => {
                 return Err(RuntimeError::Invariant(
                     "private-name identity cannot become a public runtime root",

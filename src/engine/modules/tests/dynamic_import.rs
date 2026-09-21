@@ -35,7 +35,7 @@ fn dynamic_import_load_and_finish_are_distinct_fifo_jobs_with_gc_roots() {
     assert!(runtime.execute_pending_job().unwrap().executed());
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Fulfilled);
-    let Value::Object(namespace) = runtime.root_raw_value(&snapshot.result).unwrap() else {
+    let Value::Object(namespace) = runtime.root_raw_value(snapshot.result.clone()).unwrap() else {
         panic!("dynamic import did not fulfill with a namespace object");
     };
     let answer = runtime.intern_property_key("answer").unwrap();
@@ -59,16 +59,18 @@ fn dynamic_import_waits_for_a_pending_tla_evaluation_and_reuses_it() {
     let profile = crate::engine::api::profiling::CostProfile::start();
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
             globalThis.__dynamicTlaLog = [];
             globalThis.__dynamicTlaGate = new Promise(function (resolve) {
                 globalThis.__releaseDynamicTlaGate = resolve;
             });
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let (loader, loads, _) = MapModuleLoader::new([(
         "pkg/wait.js",
         r#"
@@ -121,19 +123,23 @@ fn dynamic_import_waits_for_a_pending_tla_evaluation_and_reuses_it() {
     );
 
     runtime.run_gc().unwrap();
-    context
-        .eval("globalThis.__releaseDynamicTlaGate()")
-        .unwrap();
+    drop(
+        context
+            .eval("globalThis.__releaseDynamicTlaGate()")
+            .unwrap(),
+    );
     assert!(drain_jobs(&runtime) > 0);
 
     let first = promise_snapshot(&runtime, &first);
     let second = promise_snapshot(&runtime, &second);
     assert_eq!(first.state, PromiseState::Fulfilled);
     assert_eq!(second.state, PromiseState::Fulfilled);
-    let Value::Object(first_namespace) = runtime.root_raw_value(&first.result).unwrap() else {
+    let Value::Object(first_namespace) = runtime.root_raw_value(first.result.clone()).unwrap()
+    else {
         panic!("first dynamic import did not fulfill with a namespace object");
     };
-    let Value::Object(second_namespace) = runtime.root_raw_value(&second.result).unwrap() else {
+    let Value::Object(second_namespace) = runtime.root_raw_value(second.result.clone()).unwrap()
+    else {
         panic!("second dynamic import did not fulfill with a namespace object");
     };
     assert_eq!(first_namespace.object_id(), second_namespace.object_id());
@@ -181,7 +187,7 @@ fn dynamic_import_assimilates_a_namespace_then_export() {
     let snapshot = promise_snapshot(&runtime, &promise);
     assert_eq!(snapshot.state, PromiseState::Fulfilled);
     assert_eq!(
-        runtime.root_raw_value(&snapshot.result).unwrap(),
+        runtime.root_raw_value(snapshot.result.clone()).unwrap(),
         Value::Int(42)
     );
 }
@@ -192,9 +198,10 @@ fn dynamic_import_internal_then_observes_species_and_ignored_capability() {
     let mut context = runtime.new_context();
     let (loader, _, _) = MapModuleLoader::new([("species.js", "export const ok = true;")]);
     let _registration = runtime.set_module_loader(loader);
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
 globalThis.__dynamicSpeciesLog = "";
 Object.defineProperty(Promise, Symbol.species, {
 configurable: true,
@@ -211,8 +218,9 @@ get: function () {
 }
 });
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let promise = eval_dynamic_import(&mut context, "import('species.js')", "entry.js");
     assert_script_true(&mut context, "__dynamicSpeciesLog === ''");
 
@@ -242,9 +250,10 @@ fn dynamic_import_discards_internal_then_species_abrupt_completion() {
     let mut context = runtime.new_context();
     let (loader, _, _) = MapModuleLoader::new([("species-throw.js", "export const ok = true;")]);
     let _registration = runtime.set_module_loader(loader);
-    context
-        .eval(
-            r#"
+    drop(
+        context
+            .eval(
+                r#"
 globalThis.__dynamicSpeciesThrowLog = "";
 Object.defineProperty(Promise, Symbol.species, {
 configurable: true,
@@ -254,8 +263,9 @@ get: function () {
 }
 });
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap(),
+    );
     let promise = eval_dynamic_import(&mut context, "import('species-throw.js')", "entry.js");
 
     assert!(runtime.execute_pending_job().unwrap().executed());
