@@ -830,3 +830,143 @@ teardown 断言：
 分支，并补齐 run immediate release、ordinary/IC、dense pop、array iterator、
 inline scalar push 与原始参数 scalar 判定；这些均是 Short 无边值准入，不
 放宽 Math/ToNumber 的 Number 类型检查。追补效果另用新提交测量。
+
+
+### 8.8 修复后的 benchmark/profile 与剩余方案
+
+可复核数据已写入 本地记录（不纳入 Git）。
+第一批实现提交 `f774eaa3` 的普通/计数 release 构建都使用 rustc 1.94.1、no PGO、
+LTO off、CGU16；与 pre-A `85afd564`、修复前 `161bdbb2` 三方串行比较。
+全部 86 个 scaling 组合、每引擎每组 3 次均输出正确；这不是 oracle 测试。
+perf 使用同一普通二进制，fixed-work stat 与 997Hz flat record 分别采集，
+无 callgraph。源码、二进制、工作负载与 artifact hash 在 evidence 中，不能
+用该 profile 冒充后续 Short 快路追补提交的采样。
+
+**第一批测量，尚未包含 Short 快路追补**：
+
+| 项目 | pre-A → 修复前 → f774eaa3 | 判定 |
+| --- | --- | --- |
+| bigint32 上游 ns | 400 → 1000 → 400 | 粗时钟显示恢复；固定工作量仍 +20.2% cycles，不能关闭 |
+| bigint64 上游 ns | 400 → 1000 → 500 | 大幅挽回，但仍回退；样本并非纯 Short |
+| bigint256 上游 ns | 500 → 1000 → 1000 | 长值回退未修复 |
+| constants | f774 相对修复前耗时降低约 2–10% | 双发布成本确已删除；相对 pre-A 各规模约 -4.5% 至 +2.2%，仍需稳定性证据 |
+| prop-delete | 相对修复前降低约 1–6% | 相对 pre-A 仍 +15–21%，继续阻断 |
+| map-int / map-string | 相对 pre-A 约 +7–10% / +16–20% | 去重未消除整体回退 |
+| long-key | 相对修复前降低约 2–6% | 相对 pre-A 仍有约 +3–8% 的规模，继续阻断 |
+| Richards 分数 | 41.4 → 37.8 → 38.0 | 未关闭 |
+| DeltaBlue 分数 | 52.1 → 48.1 → 48.2 | 未关闭 |
+| property int/object/string.length | 耗时相对 pre-A -17.1% / -17.2% / -30.7% | 已有读取收益保留 |
+
+86 组中仍有 66 组中位数为正回退，几何均值 +4.59%；不是全引擎总分，
+也不是“其余 20 组已正式验收”。小幅波动和此次变化方向翻转的 case 均留待
+稳定性判定。完整逐规模数值在新 evidence，§8.1 旧快照不覆盖或倒填。
+本轮 V8 只复测已知回退的两项，其余六项未测，原覆盖缺口仍然阻断。
+
+**P1：Short 标量快路遗漏，已定位并追补。** fixed-work bigint32 的
+copy_reference/dup_jsvalue 热点发生在几乎全 Short 的循环中，不能解释成
+堆节点 retain。源码确认 copy_value 和 run immediate 判定漏 Short，已由
+`f29c620b` 补齐及静态扫查同类入口；最终复测结果另附，不沿用 f774 的结果。
+
+**P2：长 BigInt 节点和 ownership 成本，下一批高优先级。** fixed-work
+bigint256 为 1000×1000 次上游内核，cycles 2.475G→4.599G（+85.84%），
+instructions +62.06%、branches +67.49%；branch misses 仅约增加 1.5 万，
+不能用“预测失败爆炸”解释。上游 bigint64 每千次内循环中仅后 489 个 sum
+结果进 Heap，而 256 每千次约有 3000 个 Heap 结果，因此 Short 方案不可能
+单独解决长值。原算术内核未变，profile 中节点发布、dup、释放和 payload
+访问均可见。下一步先减少真正新增的节点/owner 往返：纯 Rust 算术在一个
+短 heap 借用内读取两 payload，结果离开借用后发布，消除中间 Rc 克隆及
+重复借用；同时审查叶发布和非末引用释放。不得变成跨 JS 回调的借用，也
+不得未经唯一所有权证明就覆盖原节点。payload 借用只是局部方案，不承诺
+单独消除 2× 回退。
+
+**P3：native 成功收尾的大 Result 搬运，优先于仅删 Rc clone。** map-int
+固定工作量 cycles 19.560G→21.388G（+9.35%）、instructions +3.21%。
+finish_completion_reusing 的 flat self 从约 0.31% 增至 2.15%；当前汇编
+可见正常返回分支搬运四组 16-byte 载荷及尾字段，样本集中于结果搬移。
+这支持将正常 Completion 交接与冷 RuntimeError 物化拆开，避免正常值在
+多个大 Result 临时量间搬运；必须保留 frame finish 失败时已生成值的释放、
+诊断 frame 可见性、argv 回收与 unwind owner。NativeActivation 收尾的
+额外 Runtime clone 可通过最后移交 owner 消除，但样本不支持把它当唯一主因。
+pre-A ObjectRef clone 本就执行 heap retain/state borrow，不能再当成新增成本。
+函数采样边界会随内联变化，不能把百分比差当成精确因果份额；最终需窄补丁
+机器码和端到端对照验证。set/intersection/array push 继承此共同调用方案。
+
+**P4：动态键定长 hash 与叶引用成本。** prop-delete fixed-work cycles
++23.82%、instructions +10.58%，而 branch misses 下降。after FxHasher::write
+占 self 7.61%，array-truncate 中为 6.44%；当前 `hash.rs` 只特化 write_u64，
+JsString::Hash 的 write_u32(content_hash) 落到通用 chunks/零填充/复制循环。
+优先给定长整数写入提供等价内联实现，保留原字节序/填充与 hash 一致性，
+不改 Map 随机 seed 的内容哈希。删除 dictionary 内核本身未显示新增主热点。
+`heap/gc.rs::release_reference` 对空队列的多引用 String/BigInt 先校验一次，
+随后 release_raw_no_drain 再校验一次；可在首次认证的 slot 内完成非末引用
+递减。strong==1 的就地释放已存在，不能重复报为新优化；非空队列、trace、
+zombie/溢出与错误路径仍保留原处理。专门叶发布接口是否能省宽 NodeData
+搬运仍须汇编确认，不直接升级成独立 arena 重构。
+
+**P5：RegExp 新字符串图边的收集与事务。** regexp-groups cycles +8.03%，
+instructions 基本持平；after Edges::extend/push 约占 self 5.22%/3.57%。
+真实 capture StringId 加入数组/groups 后，相对旧内嵌 JsString 新增图边，
+当前 Edges inline4 溢出后转 Vec，逐边 push。可按已知数量预留或直接遍历
+执行事务 retain，减少临时集合增长/重复遍历；必须保留回滚、完整 edges 和
+编号/命名捕获共享身份。采样仅数百，百分比是定位线索，不能精确分摊回退。
+
+**P6：仍需拆解的编译/模块、索引及 V8。** constants 单次节点发布已经修复，
+但固定工作量重复进程的 cycles 仍约 +5.15%；module 约 +3.97%，instructions
+仅 +0.23%，旧 JsString 内容比较仍是双方相近的大热点。不能将旧模块查找
+算法认定为 A 新根因。typed-index cycles +4.50%，instructions 反而约 -2.78%；
+VM/slot/typed selector 热点分布变化支持检查代码布局、借用及重复选择，但
+尚不足以锁定一个新增算法。scope、arguments、array-index/holey 的小幅或
+混合回退仍需要同源更稳定采样和具体调用链，不能从相邻 case 倒推已解决。
+V8 已进一步定位到一项明确新增的 owner 往返：
+`ordinary_storage.rs::prepare_linked_own_read_selected` 将已有存活边的
+ObjectId 临时提升为 ObjectRef，仅为调用 ordinary_read_probe_atom，退出又
+Drop；pre-A 直接借原 ObjectRef。对应 helper 在 Richards self 1.87%→3.43%、
+DeltaBlue 1.68%→2.94%。下一步让私有 probe 接收 ObjectId，由原 base/slot
+owner 保活，移除额外 retain/release 和 Runtime clone；getter receiver 及返回
+值的真实拥有边仍保留。这是比把所有 V8 回退归因 native finish 更直接的方案，
+尚待窄补丁证明收益，不将自适应样本百分比差当成准确的回退占比。
+
+这些项下一步应以窄改动 A/B 和 cache/分支计数区分执行工作、布局与测量波动，
+不能换 PGO/LTO 掩盖同协议回退。Richards/DeltaBlue 的 profile 使用上游自适应
+工作量，只作热点定位，不拿它的原始总 cycles 作固定工作量比值。
+
+本轮没有执行 unit/oracle/Test262。MSRV 1.88 全 workspace/all-targets/
+all-features Clippy -D warnings 已通过；格式、source layout、rust-only 检查
+通过。静态检查、benchmark 正确输出与性能归因各有作用，不能互相替代；
+阶段 A 和后续推进门禁保持关闭，直到逐项回退与语义证据满足原要求。
+
+
+### 8.9 最终追补快照 f29c620b：实测结论与下一步
+
+`f29c620b692b555bb4b61f1d1514ad4b9435c3f4` 已重新构建普通 release 并通过
+MSRV 全目标/全特性 Clippy；编译配置不变。最终快照重新测量了全部 86 个
+scaling 组合（每引擎每组 3 次）、上游 BigInt（3 次）和 fixed-work BigInt
+perf stat（交替顺序 3 次，并另录 after flat profile）。输出全部正确，细节
+见 evidence 的 `final_snapshot`，不与 f774 样本混合计算。
+
+| BigInt 内核 | 上游 pre-A → 最终 ns | fixed-work cycles 中位数变化 | instructions 变化 |
+| --- | --- | ---: | ---: |
+| 32 | 400 → 400 | +8.90% | +1.66% |
+| 64 | 400 → 400 | +27.16% | +15.99% |
+| 256 | 500 → 1000 | +87.11% | +62.35% |
+
+Short 误走 copy_reference/dup_jsvalue 的热点已从最终 bigint32 flat report
+中消失，固定工作量 cycles 残余由第一批的约 +20.2% 收窄至 +8.9%。这验证
+追补确实消除了该多余调用路径；**仍不能写短 BigInt 整项已无回退**，上游
+400 ns 的粗粒度相等掩盖了剩余成本。最终热点转向普通 numeric completion、
+slot replace 和 release 分派；下一步审查标量是否仍反复进入通用 fallible
+结果/清理交接，结合机器码区分调用/搬运与布局成本。64 含 Heap 晋升，256
+仍以 P2 的节点/owner 成本为主，均继续阻断。
+
+最终 scaling 仍有 69/86 组中位数变慢，耗时比几何均值 +5.06%。Map-int
+约 +8.6–9.8%、map-string +16.6–23.4%、prop-delete +16.6–19.0%、RegExp
++5.8–6.5%，均未关闭。constants 中较大规模又出现约 +15–18%，与第一批
+接近持平的结果不一致；不能选择有利快照宣布关闭，也不能未经区分就把这
+归因于 Short 补丁。保留两次完整记录，后续用稳定的编译/执行分段和配对
+采样判别。常量单次节点发布的源码事实成立，但不等于该 benchmark 已修复。
+
+属性读取与 V8 本轮最近的测量仍对应 f774；没有把其结果标成 f29 的新证据。
+本批已提交的是表示/运输中确定的冗余成本修复，性能门禁仍未通过。后续顺序：
+先 P3 native 正常结果交接、P4 定宽 hash/非末叶释放与 V8 借用 ObjectId 的
+局部补丁，再 P2 长 BigInt 和 P5 图边事务；P6 小幅/混合回退继续定向归因。
+各模块可并行实施，构建和性能采样统一串行；仍不推进 A4 或其他阶段。
