@@ -913,6 +913,9 @@ fn immediate_value(raw: &crate::engine::heap::RawValue) -> Option<Value> {
         RawValue::Bool(value) => Value::Bool(*value),
         RawValue::Int(value) => Value::Int(*value),
         RawValue::Float(value) => Value::Float(*value),
+        RawValue::ShortBigInt(value) => {
+            Value::BigInt(crate::engine::value::bigint::JsBigInt::from(*value))
+        }
         _ => return None,
     })
 }
@@ -927,6 +930,7 @@ fn immediate_value_jsvalue(raw: &crate::engine::heap::RawValue) -> Option<JsValu
         RawValue::Bool(value) => JsValue::Bool(*value),
         RawValue::Int(value) => JsValue::Int(*value),
         RawValue::Float(value) => JsValue::Float(*value),
+        RawValue::ShortBigInt(value) => JsValue::ShortBigInt(*value),
         _ => return None,
     })
 }
@@ -1082,6 +1086,7 @@ impl Runtime {
                 | JsValue::Bool(_)
                 | JsValue::Int(_)
                 | JsValue::Float(_)
+                | JsValue::ShortBigInt(_)
         ) {
             return false;
         }

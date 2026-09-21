@@ -1717,6 +1717,7 @@ pub(in crate::engine::vm) fn copy_value(
         JsValue::Bool(value) => JsValue::Bool(*value),
         JsValue::Int(value) => JsValue::Int(*value),
         JsValue::Float(value) => JsValue::Float(*value),
+        JsValue::ShortBigInt(value) => JsValue::ShortBigInt(*value),
         _ => return copy_reference(runtime, value),
     };
     #[cfg(feature = "profiling")]

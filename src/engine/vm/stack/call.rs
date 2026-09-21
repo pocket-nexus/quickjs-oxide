@@ -32,6 +32,7 @@ impl SlotStore {
                         | JsValue::Bool(_)
                         | JsValue::Int(_)
                         | JsValue::Float(_)
+                        | JsValue::ShortBigInt(_)
                 )
             {
                 // Preserve every original non-scalar owner until frame teardown,

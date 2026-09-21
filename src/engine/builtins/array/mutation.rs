@@ -146,7 +146,8 @@ impl MutationStep {
                     | JsValue::Null
                     | JsValue::Bool(_)
                     | JsValue::Int(_)
-                    | JsValue::Float(_)]
+                    | JsValue::Float(_)
+                    | JsValue::ShortBigInt(_)]
             )
         );
         #[cfg(feature = "profiling")]
