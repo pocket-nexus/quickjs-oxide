@@ -655,7 +655,10 @@ mod tests {
                 let NativeInvocationAdaptation::Invoke(value) = &borrowed else {
                     panic!("expected invocation adaptation");
                 };
-                assert_eq!(native_input(value), native_input(&prepared.invocation));
+                assert_eq!(
+                    native_input(value.as_ref()),
+                    native_input(&prepared.invocation)
+                );
             }
             let owned = runtime
                 .adapt_native_invocation(
@@ -671,10 +674,10 @@ mod tests {
                     NativeInvocationAdaptation::Invoke(owned),
                 ) => {
                     assert_eq!(
-                        std::mem::discriminant(&borrowed),
+                        std::mem::discriminant(borrowed.as_ref()),
                         std::mem::discriminant(&owned)
                     );
-                    assert_eq!(native_input(&borrowed), native_input(&owned));
+                    assert_eq!(native_input(borrowed.as_ref()), native_input(&owned));
                     borrowed.release(&runtime).unwrap();
                     owned.release(&runtime).unwrap();
                 }

@@ -1226,14 +1226,45 @@ impl Heap {
         Ok(self.release_reference(id)?.unwrap_or_default())
     }
 
-    /// Release one reference, returning runtime cleanup only when the zero
-    /// queue has work. Inspect the whole queue: an earlier no-drain release may
-    /// have queued a different node even when this reference remains nonzero.
+    /// Release one reference, returning cleanup when a node is finalized.
+    /// Inspect the whole queue: an earlier no-drain release may have queued a
+    /// different node even when this reference remains nonzero.
     #[inline]
     pub(super) fn release_reference(
         &mut self,
         id: RawId,
     ) -> Result<Option<HeapCleanup>, HeapError> {
+        // A sole live leaf has no heap/atom edges or callbacks. With no older
+        // queued work, retire it directly instead of moving the wide Node
+        // through Live -> ZeroQueued -> finish_node. Explicit string tracing
+        // retains the common path; reclamation still clears the debug ledger.
+        if matches!(id, RawId::String(_) | RawId::BigInt(_)) && self.zero_queue.is_empty() {
+            #[cfg(debug_assertions)]
+            let traced =
+                matches!(id, RawId::String(id) if super::ownership::trace_string_matches(id));
+            #[cfg(not(debug_assertions))]
+            let traced = false;
+            let index = self.validate_slot_identity(id)?;
+            if !traced
+                && matches!(&self.slots[index].state, SlotState::Live(node) if node.strong.get() == 1)
+            {
+                // Identity validation also checked the payload kind. Assignment
+                // drops the leaf in place, without moving the whole Node enum.
+                self.slots[index].state = SlotState::Vacant;
+                self.reclaim_vacant_slot(id.index())?;
+                return Ok(Some(match id {
+                    RawId::String(_) => HeapCleanup {
+                        finalized_strings: 1,
+                        ..HeapCleanup::default()
+                    },
+                    RawId::BigInt(_) => HeapCleanup {
+                        finalized_bigints: 1,
+                        ..HeapCleanup::default()
+                    },
+                    _ => unreachable!("validated leaf reference"),
+                }));
+            }
+        }
         self.release_raw_no_drain(id)?;
         if self.zero_queue.is_empty() {
             return Ok(None);

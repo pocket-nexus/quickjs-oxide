@@ -1,5 +1,7 @@
 //! Native activation owners stay local when their first shared step completes.
-use super::super::call::{NativeInvocation, NativeInvokeOutcome, PreparedNativeCall};
+use super::super::call::{
+    AdaptedNativeInvocation, NativeInvocation, NativeInvokeOutcome, PreparedNativeCall,
+};
 use super::super::stack::SlotStore;
 use super::*;
 
@@ -199,25 +201,28 @@ pub(super) fn begin_synchronous(
         )? {
             super::super::call::NativeInvocationAdaptation::Complete(result) => result,
             super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
-                // `start` only borrows the adapted invocation; release the
-                // duplicate this adapter owns once the step has captured its
-                // own edges.
-                unwind.adapted = Some(invocation);
+                // Keep changed-protocol owners guarded through body unwinding;
+                // unchanged protocols borrow the prepared invocation.
+                let invocation = match invocation {
+                    AdaptedNativeInvocation::Borrowed(invocation) => invocation,
+                    AdaptedNativeInvocation::Owned(invocation) => {
+                        unwind.adapted = Some(invocation);
+                        unwind
+                            .adapted
+                            .as_ref()
+                            .expect("adapted native invocation owner")
+                    }
+                };
                 let started = kind.start(
                     runtime,
                     native_realm,
-                    unwind
-                        .adapted
-                        .as_ref()
-                        .expect("adapted native invocation owner"),
+                    invocation,
                     &call.activation.arguments,
                     &call.activation.callable,
                 );
-                let invocation = unwind
-                    .adapted
-                    .take()
-                    .expect("adapted native invocation owner");
-                let _ = invocation.release(runtime);
+                if let Some(invocation) = unwind.adapted.take() {
+                    let _ = invocation.release(runtime);
+                }
                 started?
             }
         };
@@ -532,17 +537,22 @@ pub(super) fn begin_local(
             Ok(Some(NativeInvokeOutcome::Completion(result)))
         }
         super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
-            // `start_into` only borrows the adapted invocation; release the
-            // duplicate this adapter owns once the step has captured its own
-            // edges.
-            unwind.adapted = Some(invocation);
+            // Guard only an actual changed-protocol owner; unchanged
+            // protocols continue borrowing the prepared invocation.
+            let invocation = match invocation {
+                AdaptedNativeInvocation::Borrowed(invocation) => invocation,
+                AdaptedNativeInvocation::Owned(invocation) => {
+                    unwind.adapted = Some(invocation);
+                    unwind
+                        .adapted
+                        .as_ref()
+                        .expect("adapted native invocation owner")
+                }
+            };
             let started = kind.start_into(
                 runtime,
                 native_realm,
-                unwind
-                    .adapted
-                    .as_ref()
-                    .expect("adapted native invocation owner"),
+                invocation,
                 &call.activation.arguments,
                 &call.activation.callable,
                 |step| match capture_native_step(
@@ -558,11 +568,9 @@ pub(super) fn begin_local(
                     Err(error) => pending_error = Some(error),
                 },
             );
-            let invocation = unwind
-                .adapted
-                .take()
-                .expect("adapted native invocation owner");
-            let _ = invocation.release(runtime);
+            if let Some(invocation) = unwind.adapted.take() {
+                let _ = invocation.release(runtime);
+            }
             started.map_err(runtime_error_to_vm_error)
         }
     })();
@@ -905,21 +913,20 @@ pub(super) fn begin_selected_into(
                     crate::engine::builtins::continuation::start_array_next_into(
                         runtime,
                         native_realm,
-                        &invocation,
+                        invocation.as_ref(),
                         &mut waiting,
                     )
                 }
                 kind => kind.start_into(
                     runtime,
                     native_realm,
-                    &invocation,
+                    invocation.as_ref(),
                     &call.activation.arguments,
                     &call.activation.callable,
                     &mut waiting,
                 ),
             };
-            // The adapted invocation owns a duplicated edge; the started step
-            // captured its own copy, so release this one.
+            // Only a changed-protocol adaptation owns an extra edge.
             let _ = invocation.release(runtime);
             started.map_err(runtime_error_to_vm_error)
         }
@@ -993,7 +1000,7 @@ pub(super) fn compact_array_next_into(
             let started = crate::engine::builtins::continuation::start_array_next_into(
                 runtime,
                 realm,
-                &invocation,
+                invocation.as_ref(),
                 |step| {
                     *output = step.into();
                     waiting_written = true;

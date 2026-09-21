@@ -1004,6 +1004,29 @@ impl NativeInvocation {
     }
 }
 
+/// Adaptation may borrow the prepared owner when the ABI shape is unchanged.
+/// Only the changed-protocol variant owns an additional invocation edge.
+pub(crate) enum AdaptedNativeInvocation<'a> {
+    Borrowed(&'a NativeInvocation),
+    Owned(NativeInvocation),
+}
+
+impl AdaptedNativeInvocation<'_> {
+    pub(crate) fn as_ref(&self) -> &NativeInvocation {
+        match self {
+            Self::Borrowed(invocation) => invocation,
+            Self::Owned(invocation) => invocation,
+        }
+    }
+
+    pub(crate) fn release(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        match self {
+            Self::Borrowed(_) => Ok(()),
+            Self::Owned(invocation) => invocation.release(runtime),
+        }
+    }
+}
+
 pub(crate) enum NativeInvocationAdaptation<I = NativeInvocation> {
     Invoke(I),
     Complete(Completion),
